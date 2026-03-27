@@ -44,6 +44,8 @@ import {
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import { RPCSandboxClient } from './clients/rpc-sandbox-client';
+import { ContainerConnection } from './container-connection';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -408,7 +410,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: SandboxClient;
+  client: SandboxClient | RPCSandboxClient;
+  containerRPC: ContainerConnection | null = null;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
@@ -418,7 +421,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
-  private transport: 'http' | 'websocket' = 'http';
+  private transport: 'http' | 'websocket' | 'capnweb' = 'http';
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -551,6 +554,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
+      }),
+      ...(this.transport === 'capnweb' && {
+        transportMode: 'capnweb' as const,
+        wsUrl: 'ws://localhost:3000/capnweb'
       })
     });
   }
@@ -576,11 +583,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
-    if (transportEnv === 'websocket') {
-      this.transport = 'websocket';
+    if (transportEnv === 'websocket' || transportEnv === 'capnweb') {
+      this.transport = transportEnv;
     } else if (transportEnv != null && transportEnv !== 'http') {
       this.logger.warn(
-        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http", "websocket", or "capnweb". Defaulting to "http".`
       );
     }
 
@@ -604,8 +611,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Create client with transport based on env var (may be updated from storage)
-    this.client = this.createSandboxClient();
+    // Direct capnweb RPC connection (created before client so RPCSandboxClient can use it)
+    if (this.transport === 'capnweb') {
+      this.containerRPC = new ContainerConnection({
+        stub: this,
+        port: 3000,
+        logger: this.logger
+      });
+      this.client = new RPCSandboxClient(this.containerRPC);
+    } else {
+      this.client = this.createSandboxClient();
+    }
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -1299,6 +1315,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Disconnect WebSocket transport if active
       this.client.disconnect();
+      this.containerRPC?.disconnect();
 
       // Unmount all mounted buckets and cleanup
       for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
@@ -2796,10 +2813,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
+
+    if (content instanceof ReadableStream) {
+      return this.client.writeFileStream(path, content, session);
+    }
+
     return this.client.files.writeFile(path, content, session, {
       encoding: options.encoding
     });

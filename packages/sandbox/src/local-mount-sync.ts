@@ -1,6 +1,7 @@
 import path from 'node:path/posix';
 import type { FileWatchSSEEvent, Logger } from '@repo/shared';
 import type { SandboxClient } from './clients';
+import type { RPCSandboxClient } from './clients/rpc-sandbox-client';
 import { parseSSEStream } from './sse-parser';
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -18,7 +19,7 @@ interface LocalMountSyncOptions {
   mountPath: string;
   prefix: string | undefined;
   readOnly: boolean;
-  client: SandboxClient;
+  client: SandboxClient | RPCSandboxClient;
   sessionId: string;
   logger: Logger;
   pollIntervalMs?: number;
@@ -36,7 +37,7 @@ export class LocalMountSyncManager {
   private readonly mountPath: string;
   private readonly prefix: string | undefined;
   private readonly readOnly: boolean;
-  private readonly client: SandboxClient;
+  private readonly client: SandboxClient | RPCSandboxClient;
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;

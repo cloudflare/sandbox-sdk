@@ -40,10 +40,14 @@ export class SandboxClient {
   private transport: ITransport | null = null;
 
   constructor(options: HttpClientOptions) {
-    // Create shared transport if WebSocket mode is enabled
-    if (options.transportMode === 'websocket' && options.wsUrl) {
+    // Create shared transport if WebSocket or capnweb mode is enabled
+    if (
+      (options.transportMode === 'websocket' ||
+        options.transportMode === 'capnweb') &&
+      options.wsUrl
+    ) {
       this.transport = createTransport({
-        mode: 'websocket',
+        mode: options.transportMode,
         wsUrl: options.wsUrl,
         baseUrl: options.baseUrl,
         logger: options.logger,
@@ -133,5 +137,33 @@ export class SandboxClient {
     if (this.transport) {
       this.transport.disconnect();
     }
+  }
+
+  /**
+   * Write a file from a ReadableStream via capnweb's native pipe mechanism.
+   * Only available when using the capnweb transport.
+   *
+   * @throws Error if the transport is not capnweb
+   */
+  async writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }> {
+    if (!this.transport || this.transport.getMode() !== 'capnweb') {
+      throw new Error(
+        'Streaming file writes require the capnweb transport. ' +
+          'Set SANDBOX_TRANSPORT=capnweb to enable.'
+      );
+    }
+
+    const capnwebTransport = this
+      .transport as import('./transport').CapnwebTransport;
+    return capnwebTransport.writeFileStream(path, stream, sessionId);
   }
 }
