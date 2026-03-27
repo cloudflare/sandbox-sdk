@@ -1,3 +1,4 @@
+import { CapnwebTransport } from './capnweb-transport';
 import { HttpTransport } from './http-transport';
 import type { ITransport, TransportConfig, TransportMode } from './types';
 import { WebSocketTransport } from './ws-transport';
@@ -29,12 +30,21 @@ export interface TransportOptions extends TransportConfig {
  *   mode: 'websocket',
  *   wsUrl: 'ws://localhost:3000/ws'
  * });
+ *
+ * // capnweb transport
+ * const capnweb = createTransport({
+ *   mode: 'capnweb',
+ *   wsUrl: 'ws://localhost:3000/capnweb'
+ * });
  * ```
  */
 export function createTransport(options: TransportOptions): ITransport {
   switch (options.mode) {
     case 'websocket':
       return new WebSocketTransport(options);
+
+    case 'capnweb':
+      return new CapnwebTransport(options);
 
     default:
       return new HttpTransport(options);
