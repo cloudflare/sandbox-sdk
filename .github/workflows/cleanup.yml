@@ -1,7 +1,7 @@
 name: Cleanup
 
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
   schedule:
     - cron: '0 2 * * *'
@@ -13,36 +13,21 @@ permissions:
   pull-requests: read
 
 jobs:
-  # --- PR close: backstop cleanup for anything per-run cleanup missed ---
+  # --- PR close: worker/container cleanup ---
+  # Uses pull_request_target so it fires for fork PRs too (needs secrets).
+  # Safe: only deletes resources keyed by PR number, never executes PR code.
+  #
+  # Image tags (pr-* and ci-*) are NOT deleted here. Deleting pr-* tags was
+  # observed to break the ci-* content-addressed Docker cache, likely because
+  # they share underlying manifests and deletion triggers GC. Image cleanup
+  # happens in the daily sweep only for closed/stale PRs.
   cleanup-pr:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            docker-images.txt
-            .github/load-docker-images.sh
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-          fetch-depth: 1
-
       - name: Install wrangler
         run: npm install -g wrangler@latest
-
-      - name: Delete registry images
-        timeout-minutes: 2
-        continue-on-error: true
-        run: |
-          source .github/load-docker-images.sh
-          PR=${{ github.event.pull_request.number }}
-          for image in "${DOCKER_IMAGES[@]}"; do
-            wrangler containers images delete "$image:pr-$PR" || true
-          done
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Delete GHA caches
         timeout-minutes: 1
@@ -70,7 +55,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  # --- Daily sweep: catch anything per-run or PR-close cleanup missed ---
+  # --- Daily sweep: backstop for stale resources + image cache eviction ---
   cleanup-stale:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -88,12 +73,25 @@ jobs:
       - name: Install wrangler
         run: npm install -g wrangler@latest
 
-      - name: Clean stale resources
+      - name: Clean stale PR resources
         timeout-minutes: 10
         run: |
+          # Discover candidate PRs from BOTH containers and images so we
+          # catch orphaned resources even when one source is already cleaned.
           CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
-          PR_NUMBERS=$(echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null \
-            | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u)
+          CONTAINER_PRS=$(echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null \
+            | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u || true)
+
+          ALL_IMAGES=$(wrangler containers images list --json 2>/dev/null || echo "[]")
+          IMAGE_PRS=$(echo "$ALL_IMAGES" | jq -r '.[].tags[]?' 2>/dev/null \
+            | grep -oE '^pr-[0-9]+$' | sed 's/pr-//' | sort -u || true)
+
+          PR_NUMBERS=$(printf '%s\n' $CONTAINER_PRS $IMAGE_PRS | sort -un)
+
+          if [ -z "$PR_NUMBERS" ]; then
+            echo "No PR resources found"
+            exit 0
+          fi
 
           STALE_THRESHOLD=$((7 * 24 * 60 * 60))
           NOW=$(date +%s)
@@ -119,6 +117,7 @@ jobs:
             fi
           done
 
+          source .github/load-docker-images.sh
           for PR in $PR_NUMBERS; do
             if [ "${SHOULD_CLEAN[$PR]}" = "true" ]; then
               echo "PR #$PR is stale — cleaning up"
@@ -130,9 +129,13 @@ jobs:
                   wrangler containers delete "$id" 2>/dev/null || true
                 done
               done
-              source .github/load-docker-images.sh
+              # Delete pr-* images for closed/stale PRs. These tags are no
+              # longer referenced by any active CI run. Note: if the CF
+              # registry GC's shared manifests on tag deletion, this could
+              # invalidate ci-* tags sharing the same digest — the cache
+              # rebuilds on next use (~6 min one-time cost).
               for image in "${DOCKER_IMAGES[@]}"; do
-                wrangler containers images delete "$image:pr-$PR" || true
+                wrangler containers images delete "$image:pr-$PR" 2>/dev/null || true
               done
             fi
           done
@@ -151,6 +154,6 @@ jobs:
             if [ "$STATE" = "CLOSED" ] || [ "$STATE" = "MERGED" ] || [ "$STATE" = "NOT_FOUND" ]; then
               gh cache delete --all --ref "$REF" || true
             fi
-          done
+          done || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

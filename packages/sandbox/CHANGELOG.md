@@ -217,13 +217,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.8.0-musl
+  FROM docker.io/cloudflare/sandbox:0.7.2-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.8.0-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.2-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -446,10 +446,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.8.0
+  FROM cloudflare/sandbox:0.6.0
 
   # After
-  FROM cloudflare/sandbox:0.8.0-python
+  FROM cloudflare/sandbox:0.6.0-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

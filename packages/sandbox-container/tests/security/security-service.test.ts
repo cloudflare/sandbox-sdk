@@ -2,7 +2,7 @@
  * SecurityService Tests - Phase 0 Simplified Security Model
  *
  * Philosophy: Trust container isolation, only protect SDK control plane
- * - Port 3000 is protected (SDK control plane)
+ * - Control plane port is protected
  * - Format validation only (null bytes, length limits)
  * - No content restrictions (no path blocking, no command blocking, no URL allowlists)
  */
@@ -83,8 +83,8 @@ describe('SecurityService - Simplified Security Model', () => {
   });
 
   describe('validatePort - Protect control plane only', () => {
-    test('should block port 3000 (SDK control plane) - CRITICAL!', () => {
-      const result = service.validatePort(3000);
+    test('should block control plane port - CRITICAL!', () => {
+      const result = service.validatePort(8671);
       expect(result.isValid).toBe(false);
       expect(result.errors[0].message).toContain('control plane');
     });

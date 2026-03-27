@@ -33,6 +33,7 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  DEFAULT_CONTROL_PORT,
   filterEnvVars,
   getEnvString,
   isTerminalStatus,
@@ -112,6 +113,11 @@ type ConfigurableSandboxStub = {
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
 };
+
+const LEGACY_CONTROL_PORT = 3000;
+
+/** Header used by @cloudflare/containers switchPort() to target a specific container port. */
+const CONTAINER_TARGET_PORT_HEADER = 'cf-container-target-port';
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -375,9 +381,9 @@ export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
 }) {
   return async (request: Request, port: number) => {
-    if (!validatePort(port)) {
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be an integer between 1024 and 65535.`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
@@ -405,7 +411,7 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
-  defaultPort = 3000; // Default port for the container's Bun server
+  defaultPort = DEFAULT_CONTROL_PORT; // Overridden in constructor if SANDBOX_CONTROL_PORT env var is set
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
@@ -540,17 +546,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
+    const port = this.defaultPort;
     return new SandboxClient({
       logger: this.logger,
-      port: 3000,
+      port,
       stub: this,
+      baseUrl: `http://localhost:${port}`,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
       defaultHeaders: {
         'X-Sandbox-Id': this.ctx.id.toString()
       },
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: `ws://localhost:${port}/ws`
       })
     });
   }
@@ -559,6 +567,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     super(ctx, env);
 
     const envObj = env as Record<string, unknown>;
+
+    // Read control port from env (must happen before createSandboxClient)
+    const controlPortStr = getEnvString(envObj, 'SANDBOX_CONTROL_PORT');
+    if (controlPortStr) {
+      this.defaultPort = parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT;
+    }
+    this.envVars.SANDBOX_CONTROL_PORT = String(this.defaultPort);
+    // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
@@ -1449,13 +1465,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portOrInit?: number | RequestInit,
     portParam?: number
   ): Promise<Response> {
-    // Parse arguments to extract request and port
     const { request, port } = this.parseContainerFetchArgs(
       requestOrUrl,
       portOrInit,
       portParam
     );
 
+    const originalDefaultPort = this.defaultPort;
     const state = await this.getState();
     const containerRunning = this.ctx.container?.running;
 
@@ -1466,15 +1482,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       state.status === 'healthy' && containerRunning === false;
     if (state.status !== 'healthy' || containerRunning === false) {
       try {
-        await this.startAndWaitForPorts({
-          ports: port,
-          cancellationOptions: {
-            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-            waitInterval: this.containerTimeouts.waitIntervalMS,
-            abort: request.signal
-          }
+        this.logger.debug('Starting container with configured timeouts', {
+          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+          portTimeout: this.containerTimeouts.portReadyTimeoutMS
         });
+
+        await this.startWithLegacyFallback(port, request.signal);
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
@@ -1597,8 +1610,69 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Delegate to parent for the actual fetch (handles TCP port access internally)
-    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    // After a legacy fallback, the current request's port may still reference the
+    // originally configured control port. Remap it to the actual (fallback) port.
+    const effectivePort =
+      port === originalDefaultPort && this.defaultPort === LEGACY_CONTROL_PORT
+        ? LEGACY_CONTROL_PORT
+        : port;
+
+    return await super.containerFetch(request, effectivePort);
+  }
+
+  /**
+   * Start the container and wait for the requested port, with backwards-compatible
+   * fallback to port 3000 for older container images that predate SANDBOX_CONTROL_PORT.
+   * Succeeds silently (with or without fallback) or throws the original error.
+   */
+  private async startWithLegacyFallback(
+    port: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      await this.startAndWaitForPorts({
+        ports: port,
+        cancellationOptions: {
+          instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS,
+          abort: signal
+        }
+      });
+    } catch (e) {
+      // Fallback only applies to the control port when the container is running
+      // but not listening on the expected port (version mismatch).
+      // Throw original error
+      if (
+        port !== this.defaultPort ||
+        port === LEGACY_CONTROL_PORT ||
+        !this.ctx.container?.running
+      ) {
+        throw e;
+      }
+
+      try {
+        await this.startAndWaitForPorts({
+          ports: LEGACY_CONTROL_PORT,
+          cancellationOptions: {
+            portReadyTimeoutMS: 10_000,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: signal
+          }
+        });
+      } catch {
+        throw e;
+      }
+
+      this.logger.warn(
+        `Container responded on legacy port ${LEGACY_CONTROL_PORT} instead of ${port}. ` +
+          'Your Docker image does not support the SANDBOX_CONTROL_PORT environment variable. ' +
+          'Update your Dockerfile base image to match the SDK version. ' +
+          'This fallback will be removed in a future release.'
+      );
+      this.defaultPort = LEGACY_CONTROL_PORT;
+      this.client = this.createSandboxClient();
+    }
   }
 
   /**
@@ -1779,14 +1853,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       connectionHeader?.toLowerCase().includes('upgrade');
 
     if (isWebSocket) {
-      // WebSocket path: Let parent Container class handle WebSocket proxying
-      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      // WebSocket path: Let parent Container class handle WebSocket proxying.
+      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades.
+      const switchedPort = this.getExplicitPort(request);
+      const hasRawHeader = request.headers.has(CONTAINER_TARGET_PORT_HEADER);
+
+      // Validate only when a specific port was explicitly targeted (via switchPort).
+      // Without a switched port, this is a control-plane WebSocket (PTY, /ws, /api/ws)
+      // routed to defaultPort by Container.fetch() — no validation needed.
+      if (
+        switchedPort !== null &&
+        !validatePort(switchedPort, this.defaultPort)
+      ) {
+        requestLogger.warn(
+          'WebSocket connection rejected: invalid target port',
+          {
+            port: switchedPort,
+            path: url.pathname
+          }
+        );
+        return new Response(
+          `Invalid port for WebSocket connection: ${switchedPort}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`,
+          { status: 403 }
+        );
+      }
+
+      // If the header was present but malformed (getExplicitPort returned null),
+      // strip it so Container.fetch() doesn't re-parse it with its own lenient parseInt.
+      let wsRequest = request;
+      if (hasRawHeader && switchedPort === null) {
+        const sanitizedHeaders = new Headers(request.headers);
+        sanitizedHeaders.delete(CONTAINER_TARGET_PORT_HEADER);
+        wsRequest = new Request(request, { headers: sanitizedHeaders });
+      }
+
       try {
         requestLogger.debug('WebSocket upgrade requested', {
           path: url.pathname,
-          port: this.determinePort(url)
+          port: switchedPort ?? this.defaultPort
         });
-        return await super.fetch(request);
+        return await super.fetch(wsRequest);
       } catch (error) {
         requestLogger.error(
           'WebSocket connection failed',
@@ -1798,7 +1904,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Non-WebSocket: Use existing port determination and HTTP routing logic
-    const port = this.determinePort(url);
+    const port = this.resolvePort(url, request);
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
@@ -1811,16 +1917,41 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  private determinePort(url: URL): number {
-    // Extract port from proxy requests (e.g., /proxy/8080/*)
-    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
-    if (proxyMatch) {
-      return parseInt(proxyMatch[1], 10);
-    }
+  /**
+   * Read the port explicitly set by switchPort() from @cloudflare/containers.
+   * Returns null when no explicit port was set (control-plane requests).
+   */
+  private getExplicitPort(request: Request): number | null {
+    const raw = request.headers.get(CONTAINER_TARGET_PORT_HEADER);
+    if (raw === null) return null;
 
-    // All other requests go to control plane on port 3000
-    // This includes /api/* endpoints and any other control requests
-    return 3000;
+    // Strict digit-only parse. Malformed values (e.g. "8080abc", "8080.5")
+    // did not come from switchPort() and are treated as absent.
+    if (!/^\d+$/.test(raw)) {
+      this.logger.warn(
+        `Ignoring malformed ${CONTAINER_TARGET_PORT_HEADER} header`,
+        {
+          value: raw
+        }
+      );
+      return null;
+    }
+    return parseInt(raw, 10);
+  }
+
+  /** Extract port from proxy URL path (/proxy/8080/*), null if no match. */
+  private getProxyPort(url: URL): number | null {
+    const match = url.pathname.match(/^\/proxy\/(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  /** Resolve target port for HTTP requests: explicit port → proxy path → default. */
+  private resolvePort(url: URL, request: Request): number {
+    return (
+      this.getExplicitPort(request) ??
+      this.getProxyPort(url) ??
+      this.defaultPort
+    );
   }
 
   /**
@@ -2990,9 +3121,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     try {
-      if (!validatePort(port)) {
+      if (!validatePort(port, this.defaultPort)) {
         throw new SecurityError(
-          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+          `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
         );
       }
 
@@ -3076,9 +3207,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     try {
-      if (!validatePort(port)) {
+      if (!validatePort(port, this.defaultPort)) {
         throw new SecurityError(
-          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+          `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
         );
       }
       const sessionId = await this.ensureDefaultSession();
@@ -3233,9 +3364,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     hostname: string,
     token: string
   ): string {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.defaultPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
       );
     }
 

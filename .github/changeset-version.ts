@@ -94,7 +94,8 @@ try {
     '**/.git/**',
     '**/package.json', // Don't modify package.json (changeset does this)
     '**/package-lock.json', // Don't modify package-lock.json (npm install does this)
-    '**/.github/changeset-version.ts' // Don't modify this script itself
+    '**/.github/changeset-version.ts', // Don't modify this script itself
+    '**/CHANGELOG.md' // Historical entries should preserve their original versions
   ];
 
   // Find all matching files
