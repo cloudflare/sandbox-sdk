@@ -159,12 +159,18 @@ describe('Process Lifecycle Error Handling', () => {
       .toString(36)
       .slice(2, 8)}`;
     const scriptPath = `/workspace/${token}.sh`;
-    const pidFilePath = `/workspace/${token}.pid`;
+    const bashPidFile = `/workspace/${token}-bash.pid`;
+    const sleepPidFile = `/workspace/${token}-sleep.pid`;
+    // Capture the bash PID AND the leaf sleep PID so we can verify
+    // both the shell wrapper and the actual child are terminated.
     const scriptCode = `#!/usr/bin/env bash
-echo "$$" > '${pidFilePath}'
-sleep 120`;
+echo "$$" > '${bashPidFile}'
+sleep 120 &
+echo "$!" > '${sleepPidFile}'
+wait`;
     let processId: string | null = null;
-    let childPid: number | null = null;
+    let bashPid: number | null = null;
+    let sleepPid: number | null = null;
 
     try {
       await fetch(`${workerUrl}/api/file/write`, {
@@ -188,7 +194,10 @@ sleep 120`;
       const processData = (await startResponse.json()) as Process;
       processId = processData.id;
 
-      childPid = await waitForChildPid(pidFilePath);
+      [bashPid, sleepPid] = await Promise.all([
+        waitForChildPid(bashPidFile),
+        waitForChildPid(sleepPidFile)
+      ]);
 
       const killResponse = await fetch(
         `${workerUrl}/api/process/${processId}`,
@@ -202,9 +211,11 @@ sleep 120`;
       await waitForProcessExit(processId);
 
       for (let i = 0; i < 20; i++) {
-        if (childPid && !(await isProcessAlive(childPid))) {
-          break;
-        }
+        const [bashAlive, sleepAlive] = await Promise.all([
+          isProcessAlive(bashPid),
+          isProcessAlive(sleepPid)
+        ]);
+        if (!bashAlive && !sleepAlive) break;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     } finally {
@@ -215,19 +226,31 @@ sleep 120`;
         }).catch(() => {});
       }
 
-      if (childPid) {
-        await readExecStdout(
-          `kill -9 ${childPid} 2>/dev/null || true; rm -f '${pidFilePath}'`
-        ).catch(() => {});
-      } else {
-        await readExecStdout(`rm -f '${pidFilePath}'`).catch(() => {});
+      const pidsToKill = [bashPid, sleepPid].filter(Boolean);
+      for (const p of pidsToKill) {
+        await readExecStdout(`kill -9 ${p} 2>/dev/null || true`).catch(
+          () => {}
+        );
       }
-
-      await readExecStdout(`rm -f '${scriptPath}'`).catch(() => {});
+      await readExecStdout(
+        `rm -f '${bashPidFile}' '${sleepPidFile}' '${scriptPath}'`
+      ).catch(() => {});
     }
 
-    expect(childPid).not.toBeNull();
-    expect(await isProcessAlive(childPid!)).toBe(false);
+    expect(bashPid).not.toBeNull();
+    expect(sleepPid).not.toBeNull();
+    // Both the shell wrapper AND the leaf sleep process must be dead
+    expect(await isProcessAlive(bashPid!)).toBe(false);
+    expect(await isProcessAlive(sleepPid!)).toBe(false);
+
+    // Verify the process record reports 'killed' status
+    const statusResponse = await fetch(
+      `${workerUrl}/api/process/${processId}`,
+      { method: 'GET', headers }
+    );
+    expect(statusResponse.ok).toBe(true);
+    const record = (await statusResponse.json()) as Process;
+    expect(record.status).toBe('killed');
   }, 90000);
 
   test('should stream process logs in real-time', async () => {
@@ -361,13 +384,15 @@ console.log("Line 3");
     const pid1File = `/workspace/${token}-l1.pid`;
     const pid2File = `/workspace/${token}-l2.pid`;
     const pid3File = `/workspace/${token}-l3.pid`;
+    const sleepPidFile = `/workspace/${token}-sleep.pid`;
     const scriptPath = `/workspace/${token}.sh`;
     const innerPath = `/workspace/${token}-inner.sh`;
 
+    // Level 3 now also captures the actual leaf sleep PID
     const innerCode = [
       '#!/usr/bin/env bash',
       `echo "$$" > '${pid2File}'`,
-      `bash -c 'echo "$$" > '"'"'${pid3File}'"'"'; sleep 120'`
+      `bash -c 'echo "$$" > '"'"'${pid3File}'"'"'; sleep 120 & echo "$!" > '"'"'${sleepPidFile}'"'"'; wait'`
     ].join('\n');
 
     const scriptCode = [
@@ -402,12 +427,13 @@ console.log("Line 3");
       const processData = (await startResponse.json()) as Process;
       processId = processData.id;
 
-      const [pid1, pid2, pid3] = await Promise.all([
+      const [pid1, pid2, pid3, sleepPid] = await Promise.all([
         waitForChildPid(pid1File),
         waitForChildPid(pid2File),
-        waitForChildPid(pid3File)
+        waitForChildPid(pid3File),
+        waitForChildPid(sleepPidFile)
       ]);
-      pids = [pid1, pid2, pid3];
+      pids = [pid1, pid2, pid3, sleepPid];
 
       const killResponse = await fetch(
         `${workerUrl}/api/process/${processId}`,
@@ -431,11 +457,19 @@ console.log("Line 3");
           headers
         }).catch(() => {});
       }
-      for (const f of [pid1File, pid2File, pid3File, scriptPath, innerPath]) {
+      for (const f of [
+        pid1File,
+        pid2File,
+        pid3File,
+        sleepPidFile,
+        scriptPath,
+        innerPath
+      ]) {
         await readExecStdout(`rm -f '${f}'`).catch(() => {});
       }
     }
 
+    // All levels including the leaf sleep process must be dead
     for (const pid of pids) {
       expect(await isProcessAlive(pid)).toBe(false);
     }
@@ -501,6 +535,89 @@ console.log("Line 3");
     for (const pid of pids) {
       expect(await isProcessAlive(pid)).toBe(false);
     }
+  }, 90000);
+
+  test('should escalate to SIGKILL when process traps SIGTERM', async () => {
+    const token = `sigterm-trap-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const scriptPath = `/workspace/${token}.sh`;
+    const pidFile = `/workspace/${token}.pid`;
+    // The script traps (ignores) SIGTERM and uses a pure-bash busy wait
+    // so no child processes are spawned. This ensures the root process
+    // itself survives SIGTERM and can only be killed via SIGKILL.
+    const scriptCode = `#!/usr/bin/env bash
+trap "" SIGTERM
+echo "$$" > '${pidFile}'
+while :; do :; done`;
+    let processId: string | null = null;
+    let pid: number | null = null;
+
+    try {
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: scriptPath, content: scriptCode })
+      });
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+      });
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      processId = processData.id;
+
+      pid = await waitForChildPid(pidFile);
+
+      const killStart = Date.now();
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        { method: 'DELETE', headers }
+      );
+      expect(killResponse.status).toBe(200);
+
+      await waitForProcessExit(processId, 15000);
+      const killDuration = Date.now() - killStart;
+
+      // The kill should take at least ~5 seconds (the SIGTERM grace period)
+      // before escalating to SIGKILL.
+      expect(killDuration).toBeGreaterThanOrEqual(4000);
+
+      for (let i = 0; i < 20; i++) {
+        if (pid && !(await isProcessAlive(pid))) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      if (processId) {
+        await fetch(`${workerUrl}/api/process/${processId}`, {
+          method: 'DELETE',
+          headers
+        }).catch(() => {});
+      }
+      if (pid) {
+        await readExecStdout(`kill -9 ${pid} 2>/dev/null || true`).catch(
+          () => {}
+        );
+      }
+      await readExecStdout(`rm -f '${pidFile}' '${scriptPath}'`).catch(
+        () => {}
+      );
+    }
+
+    expect(pid).not.toBeNull();
+    expect(await isProcessAlive(pid!)).toBe(false);
+
+    // Verify the process record reports 'killed' status with exit code 137
+    const statusResponse = await fetch(
+      `${workerUrl}/api/process/${processId}`,
+      { method: 'GET', headers }
+    );
+    expect(statusResponse.ok).toBe(true);
+    const record = (await statusResponse.json()) as Process;
+    expect(record.status).toBe('killed');
+    expect(record.exitCode).toBe(137);
   }, 90000);
 
   test('should kill background processes when their session is destroyed', async () => {

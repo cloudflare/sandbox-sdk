@@ -686,6 +686,13 @@ export class Session {
    * Foreground commands from exec() run synchronously and complete before returning,
    * so they cannot be killed mid-execution (use timeout instead).
    *
+   * Process tree teardown uses /proc to walk the child hierarchy from the root
+   * PID. This covers most real-world cases but has a known limitation: if the
+   * root process exits before a fresh tree walk, descendants spawned after the
+   * initial snapshot become invisible (reparented to PID 1). A process-group
+   * (PGID) or cgroup-based approach would eliminate this gap but requires
+   * changes to how commands are spawned.
+   *
    * @param commandId - The unique command identifier
    * @param waitForExit - If true, wait for process exit and verify termination before returning. If false, attempt to kill return immediately.
    * @returns true if command was killed, false if not found or already completed
@@ -707,18 +714,6 @@ export class Session {
 
         if (!Number.isNaN(pid)) {
           let syntheticExitCode: number;
-          const waitForProcessExit = async (
-            timeoutMs: number
-          ): Promise<boolean> => {
-            const deadline = Date.now() + timeoutMs;
-            while (Date.now() < deadline) {
-              if (!this.processExists(pid)) {
-                return true;
-              }
-              await Bun.sleep(50);
-            }
-            return !this.processExists(pid);
-          };
           const waitForPidsExit = async (
             pids: number[],
             timeoutMs: number
@@ -735,34 +730,55 @@ export class Session {
 
           if (waitForExit) {
             const treePids = this.getProcessTreePids(pid);
-            this.terminateTree(pid, 'SIGTERM');
-            const exitedAfterTerm = await waitForProcessExit(5000);
-            if (!exitedAfterTerm) {
-              this.terminateTree(pid, 'SIGKILL');
-              await waitForProcessExit(5000);
-              syntheticExitCode = 137;
-            } else {
-              syntheticExitCode = 143;
+
+            // Empty tree means every process already exited before we
+            // could observe it. Write a synthetic exit code so any
+            // in-flight execStream() poll is unblocked, then report
+            // the command as already completed.
+            if (treePids.length === 0) {
+              await this.writeExitCodeIfMissing(handle.exitCodeFile, 143);
+              this.runningCommands.delete(commandId);
+              return false;
             }
 
-            let pidsAlive = treePids.filter((treePid) =>
-              this.processExists(treePid)
-            );
-            if (pidsAlive.length > 0) {
-              for (const treePid of pidsAlive) {
-                try {
-                  process.kill(treePid, 'SIGKILL');
-                } catch {
-                  // Process already exited
+            this.terminateTree(pid, 'SIGTERM');
+
+            // Wait for the entire tree — not just the root — so every
+            // descendant gets the full 5-second SIGTERM grace period.
+            const treeExitedAfterTerm = await waitForPidsExit(treePids, 5000);
+
+            if (treeExitedAfterTerm) {
+              syntheticExitCode = 143;
+            } else {
+              // Re-walk the tree from the root to discover children
+              // spawned after the initial snapshot, then SIGKILL the
+              // union of fresh + original PIDs to cover both late
+              // descendants and orphans whose parent already exited.
+              this.terminateTree(pid, 'SIGKILL');
+
+              const freshPids = this.getProcessTreePids(pid);
+              const allPids = [...new Set([...treePids, ...freshPids])];
+
+              for (const treePid of allPids) {
+                if (this.processExists(treePid)) {
+                  try {
+                    process.kill(treePid, 'SIGKILL');
+                  } catch {
+                    // Process already exited
+                  }
                 }
               }
 
-              await waitForPidsExit(pidsAlive, 5000);
-              pidsAlive = treePids.filter((treePid) =>
-                this.processExists(treePid)
-              );
+              await waitForPidsExit(allPids, 5000);
+              syntheticExitCode = 137;
             }
 
+            // Final check for any stubborn survivors
+            const freshTreeCheck = this.getProcessTreePids(pid);
+            const allKnownPids = [...new Set([...treePids, ...freshTreeCheck])];
+            const pidsAlive = allKnownPids.filter((treePid) =>
+              this.processExists(treePid)
+            );
             if (pidsAlive.length > 0) {
               this.logger.warn(
                 'killCommand did not fully terminate process tree',
@@ -797,7 +813,11 @@ export class Session {
       this.runningCommands.delete(commandId);
       return false;
     } catch (error) {
-      // Process already dead or PID invalid
+      this.logger.error(
+        'killCommand encountered an unexpected error',
+        error instanceof Error ? error : new Error(String(error)),
+        { commandId }
+      );
       this.runningCommands.delete(commandId);
       return false;
     }
