@@ -317,8 +317,8 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
 
     expect(startAndWaitSpy).toHaveBeenCalledTimes(2);
     expect(response.status).toBe(503);
-    const body = (await response.json()) as { context: { error: string } };
-    expect(body.context.error).toContain('failed to verify port');
+    const body = (await response.json()) as { context: { phase: string } };
+    expect(body.context.phase).toBe('startup');
   });
 
   it('skips fallback when container is not running', async () => {

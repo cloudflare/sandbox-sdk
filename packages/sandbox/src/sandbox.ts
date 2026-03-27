@@ -1536,8 +1536,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     e: unknown,
     staleStateDetected: boolean
   ): Response {
+    const error = e instanceof Error ? e : new Error(String(e));
+
     // 1. Provisioning: Container VM not yet available
     if (this.isNoInstanceError(e)) {
+      logCanonicalEvent(this.logger, {
+        event: 'container.startup',
+        outcome: 'error',
+        durationMs: 0,
+        errorMessage: 'provisioning',
+        error,
+        staleStateDetected
+      });
       const errorBody: ErrorResponse = {
         code: ErrorCode.INTERNAL_ERROR,
         message:
@@ -1558,22 +1568,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
-    // These will never recover on retry — fail fast so the caller gets a clear signal.
     // Checked before transient to avoid broad transient patterns (e.g., "container did not
     // start") masking specific permanent causes in wrapped error messages.
     if (this.isPermanentStartupError(e)) {
-      this.logger.error(
-        'Permanent container startup error, returning 500',
-        e instanceof Error ? e : new Error(String(e))
-      );
+      logCanonicalEvent(this.logger, {
+        event: 'container.startup',
+        outcome: 'error',
+        durationMs: 0,
+        errorMessage: 'permanent',
+        error,
+        staleStateDetected
+      });
       const errorBody: ErrorResponse = {
         code: ErrorCode.INTERNAL_ERROR,
         message:
           'Container failed to start due to a permanent error. Check your container configuration.',
-        context: {
-          phase: 'startup',
-          error: e instanceof Error ? e.message : String(e)
-        },
+        context: { phase: 'startup' },
         httpStatus: 500,
         timestamp: new Date().toISOString(),
         suggestion:
@@ -1589,31 +1599,36 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // 3. Transient startup errors: Container starting, port not ready yet
     if (this.isTransientStartupError(e)) {
-      // If startup failed after detecting stale state, the container runtime is likely stuck
-      // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
-      // next request gets a fresh instance with a clean container binding. This mirrors the
-      // recovery pattern in the base Container class for 'Network connection lost' errors.
+      // If startup failed after detecting stale state, the container runtime is likely stuck.
+      // Abort the DO so the next request gets a fresh instance with a clean container binding.
       if (staleStateDetected) {
-        this.logger.warn('container.startup', {
-          outcome: 'stale_state_abort',
-          staleStateDetected: true,
-          error: e instanceof Error ? e.message : String(e)
+        logCanonicalEvent(this.logger, {
+          event: 'container.startup',
+          outcome: 'error',
+          durationMs: 0,
+          errorMessage: 'stale_state_abort',
+          error,
+          staleStateDetected: true
         });
         this.ctx.abort();
       } else {
-        this.logger.debug('container.startup', {
-          outcome: 'transient_error',
-          staleStateDetected,
-          error: e instanceof Error ? e.message : String(e)
-        });
+        logCanonicalEvent(
+          this.logger,
+          {
+            event: 'container.startup',
+            outcome: 'error',
+            durationMs: 0,
+            errorMessage: 'transient',
+            error,
+            staleStateDetected
+          },
+          { successLevel: 'debug' }
+        );
       }
       const errorBody: ErrorResponse = {
         code: ErrorCode.INTERNAL_ERROR,
         message: 'Container is starting. Please retry in a moment.',
-        context: {
-          phase: 'startup',
-          error: e instanceof Error ? e.message : String(e)
-        },
+        context: { phase: 'startup' },
         httpStatus: 503,
         timestamp: new Date().toISOString(),
         suggestion:
@@ -1630,18 +1645,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // 4. Unrecognized errors: Treat as transient since retries are safe
     // and new platform error messages may not yet be in our pattern list.
-    this.logger.warn('container.startup', {
-      outcome: 'unrecognized_error',
-      staleStateDetected,
-      error: e instanceof Error ? e.message : String(e)
+    logCanonicalEvent(this.logger, {
+      event: 'container.startup',
+      outcome: 'error',
+      durationMs: 0,
+      errorMessage: 'unrecognized',
+      error,
+      staleStateDetected
     });
     const errorBody: ErrorResponse = {
       code: ErrorCode.INTERNAL_ERROR,
       message: 'Container is starting. Please retry in a moment.',
-      context: {
-        phase: 'startup',
-        error: e instanceof Error ? e.message : String(e)
-      },
+      context: { phase: 'startup' },
       httpStatus: 503,
       timestamp: new Date().toISOString(),
       suggestion:
