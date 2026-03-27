@@ -317,8 +317,8 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
 
     expect(startAndWaitSpy).toHaveBeenCalledTimes(2);
     expect(response.status).toBe(503);
-    const body = (await response.json()) as { context: { error: string } };
-    expect(body.context.error).toContain('failed to verify port');
+    const body = (await response.json()) as { context: { phase: string } };
+    expect(body.context.phase).toBe('startup');
   });
 
   it('skips fallback when container is not running', async () => {
@@ -443,5 +443,126 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
 
     expect(parentFetch).toHaveBeenCalledWith(expect.any(Request), 3000);
     parentFetch.mockRestore();
+  });
+});
+
+describe('CodeInterpreter client freshness after fallback', () => {
+  it('uses the current interpreter client, not a stale captured reference', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(mockCtx, {});
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    // Capture the initial interpreter client
+    const initialClient = (sandbox as any).client.interpreter;
+
+    // Simulate what startWithLegacyFallback does: recreate the client
+    (sandbox as any).defaultPort = 3000;
+    (sandbox as any).client = (sandbox as any).createSandboxClient();
+
+    // The new client's interpreter should be different
+    const newClient = (sandbox as any).client.interpreter;
+    expect(newClient).not.toBe(initialClient);
+
+    // CodeInterpreter should resolve to the NEW client, not the stale one
+    const interpreterClient = (sandbox as any).codeInterpreter
+      .interpreterClient;
+    expect(interpreterClient).toBe(newClient);
+  });
+});
+
+describe('WebSocket upgrade startup handling', () => {
+  let sandbox: Sandbox;
+  let mockCtx: any;
+  let parentFetch: ReturnType<typeof vi.spyOn>;
+  let startWithLegacyFallback: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockCtx = createMockCtx();
+    sandbox = new Sandbox(mockCtx, {});
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    parentFetch = vi
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(sandbox)), 'fetch')
+      .mockResolvedValue(new Response('ok'));
+  });
+
+  afterEach(() => {
+    parentFetch?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it('calls startWithLegacyFallback before super.fetch for control-plane WebSocket when container is not running', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'starting'
+    });
+    (sandbox as any).ctx.container = { running: false };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: { Upgrade: 'websocket', Connection: 'upgrade' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).toHaveBeenCalledWith(
+      sandbox.defaultPort,
+      expect.anything()
+    );
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('uses explicit target port for switched-port WebSocket startup', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'starting'
+    });
+    (sandbox as any).ctx.container = { running: false };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'upgrade',
+        'cf-container-target-port': '8080'
+      }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).toHaveBeenCalledWith(
+      8080,
+      expect.anything()
+    );
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('skips startup when container is already healthy and running', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'healthy'
+    });
+    (sandbox as any).ctx.container = { running: true };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: { Upgrade: 'websocket', Connection: 'upgrade' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).not.toHaveBeenCalled();
+    expect(parentFetch).toHaveBeenCalled();
   });
 });

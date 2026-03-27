@@ -976,7 +976,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         mountPath,
         prefix: options.prefix,
         readOnly: options.readOnly ?? false,
-        client: this.client,
+        getClient: () => this.client,
         sessionId,
         logger: this.logger
       });
@@ -1472,141 +1472,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     const originalDefaultPort = this.defaultPort;
-    const state = await this.getState();
-    const containerRunning = this.ctx.container?.running;
-
-    // Start container if persisted state is not healthy OR if runtime reports container is not running.
-    // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
-    // but Docker container is gone).
-    const staleStateDetected =
-      state.status === 'healthy' && containerRunning === false;
-    if (state.status !== 'healthy' || containerRunning === false) {
+    const { needsStartup, staleStateDetected } =
+      await this.checkContainerState();
+    if (needsStartup) {
       try {
-        this.logger.debug('Starting container with configured timeouts', {
-          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
-          portTimeout: this.containerTimeouts.portReadyTimeoutMS
-        });
-
-        await this.startWithLegacyFallback(port, request.signal);
+        await this.startContainer(port, request.signal);
       } catch (e) {
-        // 1. Provisioning: Container VM not yet available
-        if (this.isNoInstanceError(e)) {
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message:
-              'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { phase: 'provisioning' },
-            httpStatus: 503,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'This is expected during first deployment. The SDK will retry automatically.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 503,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '10'
-            }
-          });
-        }
-
-        // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
-        // These will never recover on retry — fail fast so the caller gets a clear signal.
-        // Checked before transient to avoid broad transient patterns (e.g., "container did not
-        // start") masking specific permanent causes in wrapped error messages.
-        if (this.isPermanentStartupError(e)) {
-          this.logger.error(
-            'Permanent container startup error, returning 500',
-            e instanceof Error ? e : new Error(String(e))
-          );
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message:
-              'Container failed to start due to a permanent error. Check your container configuration.',
-            context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
-            },
-            httpStatus: 500,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'This error will not resolve with retries. Check container logs, image name, and resource limits.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 500,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-
-        // 3. Transient startup errors: Container starting, port not ready yet
-        if (this.isTransientStartupError(e)) {
-          // If startup failed after detecting stale state, the container runtime is likely stuck
-          // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
-          // next request gets a fresh instance with a clean container binding. This mirrors the
-          // recovery pattern in the base Container class for 'Network connection lost' errors.
-          if (staleStateDetected) {
-            this.logger.warn('container.startup', {
-              outcome: 'stale_state_abort',
-              staleStateDetected: true,
-              error: e instanceof Error ? e.message : String(e)
-            });
-            this.ctx.abort();
-          } else {
-            this.logger.debug('container.startup', {
-              outcome: 'transient_error',
-              staleStateDetected,
-              error: e instanceof Error ? e.message : String(e)
-            });
-          }
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message: 'Container is starting. Please retry in a moment.',
-            context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
-            },
-            httpStatus: 503,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'The container is booting. The SDK will retry automatically.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 503,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '3'
-            }
-          });
-        }
-
-        // 4. Unrecognized errors: Treat as transient since retries are safe
-        // and new platform error messages may not yet be in our pattern list.
-        this.logger.warn('container.startup', {
-          outcome: 'unrecognized_error',
-          staleStateDetected,
-          error: e instanceof Error ? e.message : String(e)
-        });
-        const errorBody: ErrorResponse = {
-          code: ErrorCode.INTERNAL_ERROR,
-          message: 'Container is starting. Please retry in a moment.',
-          context: {
-            phase: 'startup',
-            error: e instanceof Error ? e.message : String(e)
-          },
-          httpStatus: 503,
-          timestamp: new Date().toISOString(),
-          suggestion:
-            'The SDK will retry automatically. If this persists, the container may need redeployment.'
-        };
-        return new Response(JSON.stringify(errorBody), {
-          status: 503,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': '5'
-          }
-        });
+        return this.handleStartupError(e, staleStateDetected);
       }
     }
 
@@ -1618,6 +1490,185 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         : port;
 
     return await super.containerFetch(request, effectivePort);
+  }
+
+  /**
+   * Check container state and determine if startup is needed.
+   * Returns staleStateDetected flag and whether startup is required.
+   *
+   * Separated from the actual startup call so callers can run getState()
+   * outside their try/catch for startup errors — a getState() failure should
+   * propagate directly, not be misclassified as a container startup error.
+   */
+  private async checkContainerState(): Promise<{
+    needsStartup: boolean;
+    staleStateDetected: boolean;
+  }> {
+    const state = await this.getState();
+    const containerRunning = this.ctx.container?.running;
+    const staleStateDetected =
+      state.status === 'healthy' && containerRunning === false;
+    const needsStartup =
+      state.status !== 'healthy' || containerRunning === false;
+    return { needsStartup, staleStateDetected };
+  }
+
+  /**
+   * Start the container with legacy port fallback if needed.
+   * Throws on startup failure — caller should use handleStartupError().
+   */
+  private async startContainer(
+    port: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    this.logger.debug('Starting container with configured timeouts', {
+      instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+      portTimeout: this.containerTimeouts.portReadyTimeoutMS
+    });
+    await this.startWithLegacyFallback(port, signal);
+  }
+
+  /**
+   * Classify a container startup error and return an appropriate HTTP error response.
+   * Covers provisioning, permanent, transient, and unrecognized error categories.
+   */
+  private handleStartupError(
+    e: unknown,
+    staleStateDetected: boolean
+  ): Response {
+    const error = e instanceof Error ? e : new Error(String(e));
+
+    // 1. Provisioning: Container VM not yet available
+    if (this.isNoInstanceError(e)) {
+      logCanonicalEvent(this.logger, {
+        event: 'container.startup',
+        outcome: 'error',
+        durationMs: 0,
+        errorMessage: 'provisioning',
+        error,
+        staleStateDetected
+      });
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.INTERNAL_ERROR,
+        message:
+          'Container is currently provisioning. This can take several minutes on first deployment.',
+        context: { phase: 'provisioning' },
+        httpStatus: 503,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'This is expected during first deployment. The SDK will retry automatically.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '10'
+        }
+      });
+    }
+
+    // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
+    // Checked before transient to avoid broad transient patterns (e.g., "container did not
+    // start") masking specific permanent causes in wrapped error messages.
+    if (this.isPermanentStartupError(e)) {
+      logCanonicalEvent(this.logger, {
+        event: 'container.startup',
+        outcome: 'error',
+        durationMs: 0,
+        errorMessage: 'permanent',
+        error,
+        staleStateDetected
+      });
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.INTERNAL_ERROR,
+        message:
+          'Container failed to start due to a permanent error. Check your container configuration.',
+        context: { phase: 'startup' },
+        httpStatus: 500,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    // 3. Transient startup errors: Container starting, port not ready yet
+    if (this.isTransientStartupError(e)) {
+      // If startup failed after detecting stale state, the container runtime is likely stuck.
+      // Abort the DO so the next request gets a fresh instance with a clean container binding.
+      if (staleStateDetected) {
+        logCanonicalEvent(this.logger, {
+          event: 'container.startup',
+          outcome: 'error',
+          durationMs: 0,
+          errorMessage: 'stale_state_abort',
+          error,
+          staleStateDetected: true
+        });
+        this.ctx.abort();
+      } else {
+        logCanonicalEvent(
+          this.logger,
+          {
+            event: 'container.startup',
+            outcome: 'error',
+            durationMs: 0,
+            errorMessage: 'transient',
+            error,
+            staleStateDetected
+          },
+          { successLevel: 'debug' }
+        );
+      }
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: 'Container is starting. Please retry in a moment.',
+        context: { phase: 'startup' },
+        httpStatus: 503,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'The container is booting. The SDK will retry automatically.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '3'
+        }
+      });
+    }
+
+    // 4. Unrecognized errors: Treat as transient since retries are safe
+    // and new platform error messages may not yet be in our pattern list.
+    logCanonicalEvent(this.logger, {
+      event: 'container.startup',
+      outcome: 'error',
+      durationMs: 0,
+      errorMessage: 'unrecognized',
+      error,
+      staleStateDetected
+    });
+    const errorBody: ErrorResponse = {
+      code: ErrorCode.INTERNAL_ERROR,
+      message: 'Container is starting. Please retry in a moment.',
+      context: { phase: 'startup' },
+      httpStatus: 503,
+      timestamp: new Date().toISOString(),
+      suggestion:
+        'The SDK will retry automatically. If this persists, the container may need redeployment.'
+    };
+    return new Response(JSON.stringify(errorBody), {
+      status: 503,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '5'
+      }
+    });
   }
 
   /**
@@ -1671,6 +1722,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           'This fallback will be removed in a future release.'
       );
       this.defaultPort = LEGACY_CONTROL_PORT;
+      // Rebuild the client after updating the control port.
+      // Long-lived helpers read it from the sandbox when they need it.
       this.client = this.createSandboxClient();
     }
   }
@@ -1885,6 +1938,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const sanitizedHeaders = new Headers(request.headers);
         sanitizedHeaders.delete(CONTAINER_TARGET_PORT_HEADER);
         wsRequest = new Request(request, { headers: sanitizedHeaders });
+      }
+
+      // Ensure the container is started before proxying the WebSocket upgrade.
+      // Without this, super.fetch() would hit an unresponsive or missing container.
+      const startupPort = switchedPort ?? this.defaultPort;
+      const { needsStartup: wsNeedsStartup, staleStateDetected: wsStaleState } =
+        await this.checkContainerState();
+      if (wsNeedsStartup) {
+        try {
+          await this.startContainer(startupPort, request.signal);
+        } catch (e) {
+          return this.handleStartupError(e, wsStaleState);
+        }
       }
 
       try {
