@@ -1,0 +1,13 @@
+{
+  "name": "opencode-sandbox",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.3.2",
+    "capnweb": "https://pkg.pr.new/cloudflare/capnweb@159"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@cloudflare/sandbox": "^0.7.20"
+  }
+}

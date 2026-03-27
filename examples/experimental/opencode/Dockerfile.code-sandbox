@@ -1,0 +1,18 @@
+FROM docker.io/cloudflare/sandbox:0.7.19
+
+# Copy proxy CA certificates from the host (must precede any network operations)
+ARG CA_CERT_FILE=ca-certificates.crt
+COPY ${CA_CERT_FILE} /usr/local/share/ca-certificates/proxy.crt
+RUN cat /usr/local/share/ca-certificates/proxy.crt >> /etc/ssl/certs/ca-certificates.crt
+
+# Mirror the same directory layout as the OpenCode container
+ENV HOME=/home/user
+RUN mkdir -p /home/user/project && \
+    git config --global user.email "agent@opencode.ai" && \
+    git config --global user.name "OpenCode Agent" && \
+    git config --global init.defaultBranch main && \
+    cd /home/user/project && \
+    git init && \
+    git commit --allow-empty -m "init"
+
+WORKDIR /home/user/project

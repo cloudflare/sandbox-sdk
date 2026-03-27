@@ -64,5 +64,8 @@
     "ws": "^8.18.3"
   },
   "private": true,
-  "packageManager": "npm@11.6.4"
+  "packageManager": "npm@11.6.4",
+  "dependencies": {
+    "@cloudflare/containers": "^0.2.0"
+  }
 }

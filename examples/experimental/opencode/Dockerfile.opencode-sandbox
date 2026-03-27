@@ -1,0 +1,34 @@
+FROM docker.io/cloudflare/sandbox:0.7.19
+
+# Copy proxy CA certificates from the host (must precede any network operations)
+ARG CA_CERT_FILE=ca-certificates.crt
+COPY ${CA_CERT_FILE} /usr/local/share/ca-certificates/proxy.crt
+RUN cat /usr/local/share/ca-certificates/proxy.crt >> /etc/ssl/certs/ca-certificates.crt
+
+# Install OpenCode CLI
+ENV PATH="/root/.opencode/bin:${PATH}"
+RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
+    && bash /tmp/install-opencode.sh \
+    && rm /tmp/install-opencode.sh \
+    && opencode --version
+
+# Set up git config
+ENV HOME=/home/user
+RUN mkdir -p /home/user && \
+    git config --global user.email "agent@opencode.ai" && \
+    git config --global user.name "OpenCode Agent" && \
+    git config --global init.defaultBranch main
+
+# Create a workspace with a git repo
+RUN mkdir -p /home/user/project && \
+    cd /home/user/project && \
+    git init && \
+    git commit --allow-empty -m "init"
+
+# Install the sandbox plugin (sets up Cap'n Web RPC connection)
+RUN mkdir -p /home/user/project/
+COPY opencode-sandbox/ /home/user/project/.opencode
+
+WORKDIR /home/user/project
+
+EXPOSE 4096 3001

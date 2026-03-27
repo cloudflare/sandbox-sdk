@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "opencode-prototype",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-03-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "OpenCodeSandbox",
+      "image": "./Dockerfile.opencode-sandbox",
+      "instance_type": "basic"
+    },
+    {
+      "class_name": "CodeSandbox",
+      "image": "./Dockerfile.code-sandbox",
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "OpenCodeSandbox", "name": "OPENCODE" },
+      { "class_name": "CodeSandbox", "name": "SANDBOX" }
+    ]
+  },
+  "migrations": [
+    { "new_sqlite_classes": ["OpenCodeSandbox"], "tag": "v1" },
+    { "new_sqlite_classes": ["CodeSandbox"], "tag": "v2" }
+  ]
+}

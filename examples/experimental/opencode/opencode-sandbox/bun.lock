@@ -1,0 +1,40 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "opencode-sandbox",
+      "dependencies": {
+        "@opencode-ai/plugin": "^1.3.2",
+        "capnweb": "https://pkg.pr.new/cloudflare/capnweb@159",
+      },
+      "devDependencies": {
+        "@cloudflare/sandbox": "^0.7.20",
+        "@types/bun": "latest",
+      },
+    },
+  },
+  "packages": {
+    "@cloudflare/containers": ["@cloudflare/containers@0.1.1", "", {}, "sha512-YTdobRTnTlUOUPMFemufH367A9Z8pDfZ+UboYMLbGpO0VlvEXZDiioSmXPQMHld2vRtkL31mcRii3bcbQU6fdw=="],
+
+    "@cloudflare/sandbox": ["@cloudflare/sandbox@0.7.20", "", { "dependencies": { "@cloudflare/containers": "^0.1.1", "aws4fetch": "^1.0.20" }, "peerDependencies": { "@openai/agents": "^0.3.3", "@opencode-ai/sdk": "^1.1.40", "@xterm/xterm": ">=5.0.0" }, "optionalPeers": ["@openai/agents", "@opencode-ai/sdk", "@xterm/xterm"] }, "sha512-eA/b6qgKYSJ46bfpzllqx99ewWQir+hd4Yv3GaSsa0x6MtwlO4+xLLHRSwiOZvf4xK22qTE3xTE9QOiVRrYsHQ=="],
+
+    "@opencode-ai/plugin": ["@opencode-ai/plugin@1.3.2", "", { "dependencies": { "@opencode-ai/sdk": "1.3.2", "zod": "4.1.8" } }, "sha512-eT0ZovMCOQlfTdAnfbEWgW343mJ9SHgEVfdiOSX1NMIVXac6hxE2xwUsRVTV3wLvfA6dKZhN800f8wLUEyPlyg=="],
+
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.3.2", "", {}, "sha512-u7sXVKn0kyAA5vVVHuHQfq3+3UGWOU1Sh6d/e+aS4zO8AwriTSWNQ9r8Qy5yxBH+PoeOGl5WIVdp+s2Ea2zuAg=="],
+
+    "@types/bun": ["@types/bun@1.3.11", "", { "dependencies": { "bun-types": "1.3.11" } }, "sha512-5vPne5QvtpjGpsGYXiFyycfpDF2ECyPcTSsFBMa0fraoxiQyMJ3SmuQIGhzPg2WJuWxVBoxWJ2kClYTcw/4fAg=="],
+
+    "@types/node": ["@types/node@25.5.0", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw=="],
+
+    "aws4fetch": ["aws4fetch@1.0.20", "", {}, "sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g=="],
+
+    "bun-types": ["bun-types@1.3.11", "", { "dependencies": { "@types/node": "*" } }, "sha512-1KGPpoxQWl9f6wcZh57LvrPIInQMn2TQ7jsgxqpRzg+l0QPOFvJVH7HmvHo/AiPgwXy+/Thf6Ov3EdVn1vOabg=="],
+
+    "capnweb": ["capnweb@https://pkg.pr.new/cloudflare/capnweb@159", {}],
+
+    "undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
+
+    "zod": ["zod@4.1.8", "", {}, "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ=="],
+  }
+}

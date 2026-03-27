@@ -1,0 +1,31 @@
+{
+  "name": "@cloudflare/sandbox-opencode-prototype",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Prototype: verify OpenCode SDK runs in a Durable Object with Cloudflare Containers",
+  "scripts": {
+    "build": "npm run build:certs",
+    "build:certs": "cp \"${NODE_EXTRA_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}\" ca-certificates.crt",
+    "dev": "npm run build && wrangler dev",
+    "start": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.2.0",
+    "@cloudflare/sandbox": "@cloudflare/sandbox",
+    "@opencode-ai/sdk": "^1.1.40",
+    "capnweb": "^0.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "esbuild": "0.25.12",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.76.0"
+  },
+  "author": "",
+  "license": "MIT"
+}
