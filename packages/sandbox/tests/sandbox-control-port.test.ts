@@ -445,3 +445,29 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
     parentFetch.mockRestore();
   });
 });
+
+describe('CodeInterpreter client freshness after fallback', () => {
+  it('uses the current interpreter client, not a stale captured reference', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(mockCtx, {});
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    // Capture the initial interpreter client
+    const initialClient = (sandbox as any).client.interpreter;
+
+    // Simulate what startWithLegacyFallback does: recreate the client
+    (sandbox as any).defaultPort = 3000;
+    (sandbox as any).client = (sandbox as any).createSandboxClient();
+
+    // The new client's interpreter should be different
+    const newClient = (sandbox as any).client.interpreter;
+    expect(newClient).not.toBe(initialClient);
+
+    // CodeInterpreter should resolve to the NEW client, not the stale one
+    const interpreterClient = (sandbox as any).codeInterpreter
+      .interpreterClient;
+    expect(interpreterClient).toBe(newClient);
+  });
+});
