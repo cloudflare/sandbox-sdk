@@ -21,13 +21,13 @@ export interface TransportOptions extends TransportConfig {
  * // HTTP transport (default)
  * const http = createTransport({
  *   mode: 'http',
- *   baseUrl: 'http://localhost:<port>'
+ *   baseUrl: 'http://localhost:3000'
  * });
  *
  * // WebSocket transport
  * const ws = createTransport({
  *   mode: 'websocket',
- *   wsUrl: 'ws://localhost:<port>/ws'
+ *   wsUrl: 'ws://localhost:3000/ws'
  * });
  * ```
  */

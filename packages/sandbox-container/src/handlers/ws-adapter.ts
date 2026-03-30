@@ -18,8 +18,10 @@ import {
   type WSStreamChunk
 } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
-import { CONFIG } from '../config';
 import type { Router } from '../core/router';
+
+/** Container server port - must match SERVER_PORT in server.ts */
+const SERVER_PORT = 3000;
 
 /**
  * WebSocket data attached to each connection
@@ -192,7 +194,7 @@ export class WebSocketAdapter {
     request: WSRequest
   ): Promise<void> {
     // Build URL for the request
-    const url = `http://localhost:${CONFIG.SERVER_PORT}${request.path}`;
+    const url = `http://localhost:${SERVER_PORT}${request.path}`;
 
     // Build headers
     const headers: Record<string, string> = {

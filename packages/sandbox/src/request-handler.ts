@@ -1,11 +1,5 @@
 import { switchPort } from '@cloudflare/containers';
-import {
-  createLogger,
-  DEFAULT_CONTROL_PORT,
-  getEnvString,
-  type LogContext,
-  TraceContext
-} from '@repo/shared';
+import { createLogger, type LogContext, TraceContext } from '@repo/shared';
 import { getSandbox, type Sandbox } from './sandbox';
 import { sanitizeSandboxId, validatePort } from './security';
 
@@ -35,13 +29,7 @@ export async function proxyToSandbox<
 
   try {
     const url = new URL(request.url);
-    const envObj = env as Record<string, unknown>;
-    const controlPortStr = getEnvString(envObj, 'SANDBOX_CONTROL_PORT');
-    const controlPort = controlPortStr
-      ? parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT
-      : DEFAULT_CONTROL_PORT;
-
-    const routeInfo = extractSandboxRoute(url, controlPort);
+    const routeInfo = extractSandboxRoute(url);
 
     if (!routeInfo) {
       return null; // Not a request to an exposed container port
@@ -52,8 +40,8 @@ export async function proxyToSandbox<
     const sandbox = getSandbox(env.Sandbox, sandboxId, { normalizeId: true });
 
     // Critical security check: Validate token (mandatory for all user ports)
-    // Skip check for control plane port
-    if (port !== controlPort) {
+    // Skip check for control plane port 3000
+    if (port !== 3000) {
       // Validate the token matches the port
       const isValidToken = await sandbox.validatePortToken(port, token);
       if (!isValidToken) {
@@ -93,11 +81,13 @@ export async function proxyToSandbox<
     // Build proxy request with proper headers
     let proxyUrl: string;
 
-    // Route based on target port
-    if (port !== controlPort) {
+    // Route based on the target port
+    if (port !== 3000) {
+      // Route directly to user's service on the specified port
       proxyUrl = `http://localhost:${port}${path}${url.search}`;
     } else {
-      proxyUrl = `http://localhost:${controlPort}${path}${url.search}`;
+      // Port 3000 is our control plane - route normally
+      proxyUrl = `http://localhost:3000${path}${url.search}`;
     }
 
     const headers: Record<string, string> = {
@@ -129,7 +119,7 @@ export async function proxyToSandbox<
   }
 }
 
-function extractSandboxRoute(url: URL, controlPort: number): RouteInfo | null {
+function extractSandboxRoute(url: URL): RouteInfo | null {
   // URL format: {port}-{sandboxId}-{token}.{domain}
   // Tokens are [a-z0-9_]+, so we split at the last hyphen to handle sandboxIds with hyphens (UUIDs)
   const dotIndex = url.hostname.indexOf('.');
@@ -152,7 +142,7 @@ function extractSandboxRoute(url: URL, controlPort: number): RouteInfo | null {
   }
 
   const port = parseInt(portStr, 10);
-  if (!validatePort(port, controlPort)) {
+  if (!validatePort(port)) {
     return null;
   }
 

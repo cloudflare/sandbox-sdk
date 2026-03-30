@@ -41,6 +41,9 @@ jobs:
   # --- E2E tests ---
   e2e:
     needs: build
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-main

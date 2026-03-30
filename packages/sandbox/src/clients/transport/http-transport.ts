@@ -1,4 +1,3 @@
-import { DEFAULT_CONTROL_PORT } from '@repo/shared';
 import { BaseTransport } from './base-transport';
 import type { TransportConfig, TransportMode } from './types';
 
@@ -13,9 +12,7 @@ export class HttpTransport extends BaseTransport {
 
   constructor(config: TransportConfig) {
     super(config);
-    this.baseUrl =
-      config.baseUrl ??
-      `http://localhost:${config.port ?? DEFAULT_CONTROL_PORT}`;
+    this.baseUrl = config.baseUrl ?? 'http://localhost:3000';
   }
 
   getMode(): TransportMode {
