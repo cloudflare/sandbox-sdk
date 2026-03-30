@@ -44,13 +44,34 @@ import type {
   WriteFileResult
 } from '@repo/shared';
 import type { ContainerConnection } from '../container-connection';
-import type { ExecuteResponse } from './command-client';
-import type { ExecutionCallbacks } from './interpreter-client';
-import type { TransportMode } from './transport';
-import type {
-  CreateSessionResponse,
-  DeleteSessionResponse
-} from './utility-client';
+import type { ExecuteResponse } from './index';
+
+// Inline the types that were previously imported from deleted files
+type TransportMode = 'capnweb';
+
+interface ExecutionCallbacks {
+  onStdout?: (output: { text: string; timestamp: number }) => void;
+  onStderr?: (output: { text: string; timestamp: number }) => void;
+  onResult?: (result: Record<string, unknown>) => void | Promise<void>;
+  onError?: (error: {
+    name: string;
+    message: string;
+    traceback?: string[];
+  }) => void;
+}
+
+interface CreateSessionResponse {
+  success: boolean;
+  id: string;
+  message?: string;
+  timestamp: string;
+}
+
+interface DeleteSessionResponse {
+  success: boolean;
+  sessionId: string;
+  timestamp: string;
+}
 
 // ---------------------------------------------------------------------------
 // Sub-client implementations
@@ -66,6 +87,7 @@ class RPCCommandClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: string;
     }
   ): Promise<ExecuteResponse> {
     const rpc = await this.conn.rpc();
@@ -87,6 +109,7 @@ class RPCCommandClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: string;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     const rpc = await this.conn.rpc();
@@ -541,7 +564,9 @@ class RPCInterpreterClient {
           // Import ResultImpl lazily to avoid circular deps
           if (cb.onResult) {
             const { ResultImpl } = await import('@repo/shared');
-            await cb.onResult(new ResultImpl(data));
+            await cb.onResult(
+              new ResultImpl(data) as unknown as Record<string, unknown>
+            );
           }
           break;
         case 'error':

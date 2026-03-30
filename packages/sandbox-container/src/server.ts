@@ -2,15 +2,8 @@ import { createLogger } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { type BunWebSocketTransport, newBunWebSocketRpcSession } from 'capnweb';
-import { CONFIG } from './config';
 import { Container } from './core/container';
-import { Router } from './core/router';
 import type { PtyWSData } from './handlers/pty-ws-handler';
-import {
-  type WSData as ControlWSData,
-  generateConnectionId,
-  WebSocketAdapter
-} from './handlers/ws-adapter';
 import { SandboxRPCAPI } from './rpc/sandbox-api';
 
 export type CapnwebWSData = {
@@ -19,19 +12,17 @@ export type CapnwebWSData = {
   transport?: BunWebSocketTransport;
 };
 
-export type WSData =
-  | (ControlWSData & { type: 'control' })
-  | PtyWSData
-  | CapnwebWSData;
-
-import { setupRoutes } from './routes/setup';
+export type WSData = PtyWSData | CapnwebWSData;
 
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
 
+let connectionCounter = 0;
+function generateConnectionId(): string {
+  return `conn-${++connectionCounter}-${Date.now().toString(36)}`;
+}
+
 // Global error handlers to prevent fragmented stack traces in logs
-// Bun's default handler writes stack traces line-by-line to stderr,
-// which Cloudflare captures as separate log entries
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught exception', error);
   process.exit(1);
@@ -54,20 +45,11 @@ async function createApplication(): Promise<{
     server: ReturnType<typeof serve<WSData>>
   ) => Promise<Response>;
   container: Container;
-  wsAdapter: WebSocketAdapter;
   rpcAPI: SandboxRPCAPI;
 }> {
   const container = new Container();
   await container.initialize();
 
-  const router = new Router(logger);
-  router.use(container.get('corsMiddleware'));
-  setupRoutes(router, container);
-
-  // Create WebSocket adapter with the router for control plane multiplexing
-  const wsAdapter = new WebSocketAdapter(router, logger);
-
-  // Create native RPC API that calls services directly (bypasses HTTP routing)
   const rpcAPI = new SandboxRPCAPI({
     processService: container.get('processService'),
     fileService: container.get('fileService'),
@@ -86,10 +68,10 @@ async function createApplication(): Promise<{
       req: Request,
       server: ReturnType<typeof serve<WSData>>
     ): Promise<Response> => {
+      const url = new URL(req.url);
       const upgradeHeader = req.headers.get('Upgrade');
-      if (upgradeHeader?.toLowerCase() === 'websocket') {
-        const url = new URL(req.url);
 
+      if (upgradeHeader?.toLowerCase() === 'websocket') {
         if (url.pathname === '/ws/pty') {
           const sessionId = url.searchParams.get('sessionId');
           if (!sessionId) {
@@ -118,19 +100,6 @@ async function createApplication(): Promise<{
           return new Response('WebSocket upgrade failed', { status: 500 });
         }
 
-        if (url.pathname === '/ws' || url.pathname === '/api/ws') {
-          const upgraded = server.upgrade(req, {
-            data: {
-              type: 'control' as const,
-              connectionId: generateConnectionId()
-            }
-          });
-          if (upgraded) {
-            return undefined as unknown as Response;
-          }
-          return new Response('WebSocket upgrade failed', { status: 500 });
-        }
-
         if (url.pathname === '/capnweb') {
           const upgraded = server.upgrade(req, {
             data: {
@@ -145,18 +114,27 @@ async function createApplication(): Promise<{
         }
       }
 
-      // Regular HTTP request
-      return router.route(req);
+      // Health check endpoint
+      if (url.pathname === '/health' || url.pathname === '/api/health') {
+        return new Response(
+          JSON.stringify({
+            status: 'healthy',
+            timestamp: new Date().toISOString()
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response('Not Found', { status: 404 });
     },
     container,
-    wsAdapter,
     rpcAPI
   };
 }
 
 /**
- * Start the HTTP API server on port 3000.
- * Returns server info and a cleanup function for graceful shutdown.
+ * Start the container server on port 3000.
+ * Exposes a capnweb RPC endpoint at /capnweb and PTY WebSocket at /ws/pty.
  */
 export async function startServer(): Promise<ServerInstance> {
   const app = await createApplication();
@@ -192,11 +170,6 @@ export async function startServer(): Promise<ServerInstance> {
           } else if (ws.data.type === 'capnweb') {
             const { transport } = newBunWebSocketRpcSession(ws, app.rpcAPI);
             ws.data.transport = transport;
-            logger.debug('capnweb session initialized', {
-              connectionId: ws.data.connectionId
-            });
-          } else {
-            app.wsAdapter.onOpen(ws);
           }
         } catch (error) {
           logger.error(
@@ -213,8 +186,6 @@ export async function startServer(): Promise<ServerInstance> {
               .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
-          } else {
-            app.wsAdapter.onClose(ws, code, reason);
           }
         } catch (error) {
           logger.error(
@@ -231,8 +202,6 @@ export async function startServer(): Promise<ServerInstance> {
               .onMessage(ws as ServerWebSocket<PtyWSData>, message);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchMessage(message);
-          } else {
-            await app.wsAdapter.onMessage(ws, message);
           }
         } catch (error) {
           logger.error(
@@ -256,9 +225,6 @@ export async function startServer(): Promise<ServerInstance> {
 
   return {
     port: SERVER_PORT,
-    // Cleanup handles application-level resources (processes, ports).
-    // WebSocket connections are closed automatically when the process exits -
-    // Bun's serve() handles transport cleanup on shutdown.
     cleanup: async () => {
       if (!app.container.isInitialized()) return;
 
@@ -292,10 +258,6 @@ export async function startServer(): Promise<ServerInstance> {
 
 let shutdownRegistered = false;
 
-/**
- * Register graceful shutdown handlers for SIGTERM and SIGINT.
- * Safe to call multiple times - handlers are only registered once.
- */
 export function registerShutdownHandlers(cleanup: () => Promise<void>): void {
   if (shutdownRegistered) return;
   shutdownRegistered = true;

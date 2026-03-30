@@ -8,7 +8,35 @@ import {
   ResultImpl,
   type RunCodeOptions
 } from '@repo/shared';
-import type { InterpreterClient } from './clients/interpreter-client.js';
+
+// InterpreterClient type extracted from RPCSandboxClient
+interface InterpreterClient {
+  createCodeContext(
+    options?: import('@repo/shared').CreateContextOptions
+  ): Promise<import('@repo/shared').CodeContext>;
+  runCodeStream(
+    contextId: string | undefined,
+    code: string,
+    language: string | undefined,
+    callbacks: {
+      onStdout?: (output: import('@repo/shared').OutputMessage) => void;
+      onStderr?: (output: import('@repo/shared').OutputMessage) => void;
+      onResult?: (
+        result: import('@repo/shared').Result
+      ) => void | Promise<void>;
+      onError?: (error: import('@repo/shared').ExecutionError) => void;
+    },
+    timeoutMs?: number
+  ): Promise<void>;
+  streamCode(
+    contextId: string,
+    code: string,
+    language?: string
+  ): Promise<ReadableStream>;
+  listCodeContexts(): Promise<import('@repo/shared').CodeContext[]>;
+  deleteCodeContext(contextId: string): Promise<void>;
+}
+
 import type { Sandbox } from './sandbox.js';
 import { validateLanguage } from './security.js';
 

@@ -43,7 +43,7 @@ import {
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import type { Desktop, ExecuteResponse } from './clients';
 import { RPCSandboxClient } from './clients/rpc-sandbox-client';
 import { ContainerConnection } from './container-connection';
 import type { ErrorResponse } from './errors';
@@ -410,8 +410,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: SandboxClient | RPCSandboxClient;
-  containerRPC: ContainerConnection | null = null;
+  client: RPCSandboxClient;
+  containerRPC: ContainerConnection;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
@@ -421,7 +421,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
-  private transport: 'http' | 'websocket' | 'capnweb' = 'http';
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -539,25 +538,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return Math.max(120_000, startupBudgetMs + 30_000);
   }
 
-  /**
-   * Create a SandboxClient with current transport settings
-   */
-  private createSandboxClient(): SandboxClient {
-    return new SandboxClient({
-      logger: this.logger,
-      port: 3000,
-      stub: this,
-      retryTimeoutMs: this.computeRetryTimeoutMs(),
-      defaultHeaders: {
-        'X-Sandbox-Id': this.ctx.id.toString()
-      },
-      ...(this.transport === 'websocket' && {
-        transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
-      })
-    });
-  }
-
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -576,16 +556,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       component: 'sandbox-do',
       sandboxId: this.ctx.id.toString()
     });
-
-    // Read transport setting from env var
-    const transportEnv = envObj?.SANDBOX_TRANSPORT;
-    if (transportEnv === 'websocket' || transportEnv === 'capnweb') {
-      this.transport = transportEnv;
-    } else if (transportEnv != null && transportEnv !== 'http') {
-      this.logger.warn(
-        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http", "websocket", or "capnweb". Defaulting to "http".`
-      );
-    }
 
     // Read R2 backup bucket binding if configured
     const backupBucket = envObj?.BACKUP_BUCKET;
@@ -607,17 +577,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Direct capnweb RPC connection (created before client so RPCSandboxClient can use it)
-    if (this.transport === 'capnweb') {
-      this.containerRPC = new ContainerConnection({
-        stub: this,
-        port: 3000,
-        logger: this.logger
-      });
-      this.client = new RPCSandboxClient(this.containerRPC);
-    } else {
-      this.client = this.createSandboxClient();
-    }
+    // capnweb RPC connection to the container
+    this.containerRPC = new ContainerConnection({
+      stub: this,
+      port: 3000,
+      logger: this.logger
+    });
+    this.client = new RPCSandboxClient(this.containerRPC);
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -1309,9 +1275,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // Disconnect WebSocket transport if active
+      // Disconnect capnweb RPC connection
       this.client.disconnect();
-      this.containerRPC?.disconnect();
 
       // Unmount all mounted buckets and cleanup
       for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
@@ -3979,8 +3944,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        gitignore,
-        excludes
+        { gitignore, excludes }
       );
 
       if (!createResult.success) {

@@ -1,113 +1,86 @@
-// =============================================================================
-// Main client exports
-// =============================================================================
+// RPC-backed client (sole client implementation)
+export { RPCSandboxClient } from './rpc-sandbox-client';
 
-// Main aggregated client
-export { SandboxClient } from './sandbox-client';
+// Types needed by sandbox.ts (formerly in deleted client files)
 
-// =============================================================================
-// Domain-specific clients
-// =============================================================================
+export interface ExecuteResponse {
+  success: boolean;
+  timestamp: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string;
+}
 
-export { BackupClient } from './backup-client';
-export { CommandClient } from './command-client';
-export { DesktopClient } from './desktop-client';
-export { FileClient } from './file-client';
-export { GitClient } from './git-client';
-export { InterpreterClient } from './interpreter-client';
-export { PortClient } from './port-client';
-export { ProcessClient } from './process-client';
-export { UtilityClient } from './utility-client';
-export { WatchClient } from './watch-client';
+// Desktop types re-exported from @repo/shared
+export type {
+  DesktopCursorPosition as CursorPositionResponse,
+  DesktopMouseButton,
+  DesktopScreenSize as ScreenSizeResponse,
+  DesktopScreenshotRegionRequest as ScreenshotRegion,
+  DesktopScreenshotRequest as ScreenshotOptions,
+  DesktopScreenshotResult as ScreenshotResponse,
+  DesktopScrollDirection,
+  DesktopStartRequest as DesktopStartOptions,
+  DesktopStartResult as DesktopStartResponse,
+  DesktopStatusResult as DesktopStatusResponse,
+  DesktopStopResult as DesktopStopResponse
+} from '@repo/shared';
 
-// =============================================================================
-// Transport layer
-// =============================================================================
-
-export type {
-  ITransport,
-  TransportConfig,
-  TransportMode,
-  TransportOptions
-} from './transport';
-export {
-  BaseTransport,
-  createTransport,
-  HttpTransport,
-  WebSocketTransport
-} from './transport';
-
-// =============================================================================
-// Client types and interfaces
-// =============================================================================
-
-export type { WatchRequest } from '@repo/shared';
-// Command client types
-export type { ExecuteRequest, ExecuteResponse } from './command-client';
-// Desktop client types
-export type {
-  ClickOptions,
-  CursorPositionResponse,
-  Desktop,
-  DesktopStartOptions,
-  DesktopStartResponse,
-  DesktopStatusResponse,
-  DesktopStopResponse,
-  KeyInput,
-  ScreenSizeResponse,
-  ScreenshotBytesResponse,
-  ScreenshotOptions,
-  ScreenshotRegion,
-  ScreenshotResponse,
-  ScrollDirection,
-  TypeOptions
-} from './desktop-client';
-// File client types
-export type {
-  FileOperationRequest,
-  MkdirRequest,
-  ReadFileRequest,
-  WriteFileRequest
-} from './file-client';
-// Git client types
-export type { GitCheckoutRequest, GitCheckoutResult } from './git-client';
-// Interpreter client types
-export type { ExecutionCallbacks } from './interpreter-client';
-// Port client types
-export type {
-  ExposePortRequest,
-  PortCloseResult,
-  PortExposeResult,
-  PortListResult,
-  UnexposePortRequest
-} from './port-client';
-// Process client types
-export type {
-  ProcessCleanupResult,
-  ProcessInfoResult,
-  ProcessKillResult,
-  ProcessListResult,
-  ProcessLogsResult,
-  ProcessStartResult,
-  StartProcessRequest
-} from './process-client';
-// Core types
-export type {
-  BaseApiResponse,
-  ContainerStub,
-  ErrorResponse,
-  HttpClientOptions,
-  RequestConfig,
-  ResponseHandler,
-  SessionRequest
-} from './types';
-// Utility client types
-export type {
-  CommandsResponse,
-  CreateSessionRequest,
-  CreateSessionResponse,
-  DeleteSessionRequest,
-  DeleteSessionResponse,
-  PingResponse,
-  VersionResponse
-} from './utility-client';
+// Desktop interface (public API)
+export interface Desktop {
+  start(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  stop(): Promise<Record<string, unknown>>;
+  status(): Promise<Record<string, unknown>>;
+  screenshot(
+    options?: Record<string, unknown>
+  ): Promise<Record<string, unknown>>;
+  screenshotRegion(
+    region: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<Record<string, unknown>>;
+  click(x: number, y: number, options?: Record<string, unknown>): Promise<void>;
+  doubleClick(
+    x: number,
+    y: number,
+    options?: Record<string, unknown>
+  ): Promise<void>;
+  tripleClick(
+    x: number,
+    y: number,
+    options?: Record<string, unknown>
+  ): Promise<void>;
+  rightClick(x: number, y: number): Promise<void>;
+  middleClick(x: number, y: number): Promise<void>;
+  mouseDown(
+    x?: number,
+    y?: number,
+    options?: Record<string, unknown>
+  ): Promise<void>;
+  mouseUp(
+    x?: number,
+    y?: number,
+    options?: Record<string, unknown>
+  ): Promise<void>;
+  moveMouse(x: number, y: number): Promise<void>;
+  drag(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    options?: Record<string, unknown>
+  ): Promise<void>;
+  scroll(
+    x: number,
+    y: number,
+    direction: string,
+    amount?: number
+  ): Promise<void>;
+  getCursorPosition(): Promise<{ x: number; y: number }>;
+  type(text: string, options?: Record<string, unknown>): Promise<void>;
+  press(key: string): Promise<void>;
+  keyDown(key: string): Promise<void>;
+  keyUp(key: string): Promise<void>;
+  getScreenSize(): Promise<{ width: number; height: number }>;
+  getProcessStatus(name: string): Promise<Record<string, unknown>>;
+}
