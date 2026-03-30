@@ -16,14 +16,13 @@ import { UtilityClient } from './utility-client';
 import { WatchClient } from './watch-client';
 
 /**
- * Main sandbox client that composes all domain-specific clients
- * Provides organized access to all sandbox functionality
+ * Main sandbox client that composes all domain-specific clients.
+ * Provides organized access to all sandbox functionality.
  *
  * Supports two transport modes:
  * - HTTP (default): Each request is a separate HTTP call
- * - WebSocket: All requests multiplexed over a single connection
- *
- * WebSocket mode reduces sub-request count when running inside Workers/Durable Objects.
+ * - WebSocket: All requests multiplexed over a single connection,
+ *   reducing sub-request count inside Workers/Durable Objects
  */
 export class SandboxClient {
   public readonly backup: BackupClient;
@@ -40,12 +39,8 @@ export class SandboxClient {
   private transport: ITransport | null = null;
 
   constructor(options: HttpClientOptions) {
-    // Create shared transport if WebSocket or capnweb mode is enabled
-    if (
-      (options.transportMode === 'websocket' ||
-        options.transportMode === 'capnweb') &&
-      options.wsUrl
-    ) {
+    // Create shared transport if WebSocket mode is enabled
+    if (options.transportMode === 'websocket' && options.wsUrl) {
       this.transport = createTransport({
         mode: options.transportMode,
         wsUrl: options.wsUrl,
@@ -137,33 +132,5 @@ export class SandboxClient {
     if (this.transport) {
       this.transport.disconnect();
     }
-  }
-
-  /**
-   * Write a file from a ReadableStream via capnweb's native pipe mechanism.
-   * Only available when using the capnweb transport.
-   *
-   * @throws Error if the transport is not capnweb
-   */
-  async writeFileStream(
-    path: string,
-    stream: ReadableStream<Uint8Array>,
-    sessionId: string
-  ): Promise<{
-    success: boolean;
-    path: string;
-    bytesWritten: number;
-    timestamp: string;
-  }> {
-    if (!this.transport || this.transport.getMode() !== 'capnweb') {
-      throw new Error(
-        'Streaming file writes require the capnweb transport. ' +
-          'Set SANDBOX_TRANSPORT=capnweb to enable.'
-      );
-    }
-
-    const capnwebTransport = this
-      .transport as import('./transport').CapnwebTransport;
-    return capnwebTransport.writeFileStream(path, stream, sessionId);
   }
 }

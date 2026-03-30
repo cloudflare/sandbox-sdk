@@ -554,10 +554,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
-      }),
-      ...(this.transport === 'capnweb' && {
-        transportMode: 'capnweb' as const,
-        wsUrl: 'ws://localhost:3000/capnweb'
       })
     });
   }

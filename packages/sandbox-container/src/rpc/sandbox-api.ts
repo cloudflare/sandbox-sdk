@@ -21,7 +21,6 @@ import type {
   Logger
 } from '@repo/shared';
 import { RpcTarget } from 'capnweb';
-import type { Router } from '../core/router';
 import type { CommandResult, ProcessRecord } from '../core/types';
 import type { BackupService } from '../services/backup-service';
 import type { DesktopService } from '../services/desktop-service';
@@ -37,7 +36,6 @@ import type { SessionManager } from '../services/session-manager';
 import type { WatchService } from '../services/watch-service';
 
 export interface SandboxRPCAPIDeps {
-  router: Router; // TODO(stage-6): Remove once HTTP bridge methods are deleted
   processService: ProcessService;
   fileService: FileService;
   portService: PortService;
@@ -82,63 +80,6 @@ export class SandboxRPCAPI extends RpcTarget {
   constructor(deps: SandboxRPCAPIDeps) {
     super();
     this.#deps = deps;
-  }
-
-  // =========================================================================
-  // HTTP Bridge (used by CapnwebTransport's fetch-oriented ITransport)
-  // TODO(stage-6): Remove once all SDK methods call native RPC directly
-  // =========================================================================
-
-  async httpFetch(
-    method: string,
-    path: string,
-    body?: string
-  ): Promise<{
-    status: number;
-    body?: string;
-    headers?: Record<string, string>;
-  }> {
-    const url = `http://localhost:3000${path}`;
-    const request = new Request(url, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body || undefined
-    });
-
-    const response = await this.#deps.router.route(request);
-    const responseBody = await response.text();
-
-    return {
-      status: response.status,
-      body: responseBody || undefined,
-      headers: Object.fromEntries(response.headers.entries())
-    };
-  }
-
-  async httpFetchStream(
-    method: string,
-    path: string,
-    body?: string
-  ): Promise<ReadableStream<Uint8Array>> {
-    const url = `http://localhost:3000${path}`;
-    const request = new Request(url, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body || undefined
-    });
-
-    const response = await this.#deps.router.route(request);
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`HTTP error ${response.status}: ${errorBody}`);
-    }
-
-    if (!response.body) {
-      throw new Error('No response body for streaming');
-    }
-
-    return response.body;
   }
 
   // =========================================================================

@@ -40,23 +40,6 @@ import { newWebSocketRpcSession, type RpcStub } from 'capnweb';
 // ---------------------------------------------------------------------------
 
 export interface ContainerRPCAPI {
-  // HTTP Bridge (used by CapnwebTransport fetch-oriented ITransport)
-  // TODO(stage-6): Remove once all SDK methods call native RPC directly
-  httpFetch(
-    method: string,
-    path: string,
-    body?: string
-  ): Promise<{
-    status: number;
-    body?: string;
-    headers?: Record<string, string>;
-  }>;
-  httpFetchStream(
-    method: string,
-    path: string,
-    body?: string
-  ): Promise<ReadableStream<Uint8Array>>;
-
   // Utility
   ping(): Promise<{ status: string; timestamp: string }>;
   getVersion(): Promise<{ version: string; timestamp: string }>;

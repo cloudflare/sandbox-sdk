@@ -10,7 +10,6 @@ export type { ITransport, TransportConfig, TransportMode } from './types';
 // =============================================================================
 
 export { BaseTransport } from './base-transport';
-export { CapnwebTransport } from './capnweb-transport';
 export { HttpTransport } from './http-transport';
 export { WebSocketTransport } from './ws-transport';
 
