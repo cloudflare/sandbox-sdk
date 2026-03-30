@@ -27,7 +27,7 @@ describe('ProcessClient', () => {
 
     client = new ProcessClient({
       baseUrl: 'http://test.com',
-      port: 3000
+      port: 8671
     });
   });
 

@@ -9,6 +9,7 @@
 variable "TAG" { default = "dev" }
 variable "SANDBOX_VERSION" { default = "dev" }
 variable "BUN_VERSION" { default = "1.3" }
+variable "BUILD_INTERNAL_SERVER_PORT" { default = "8671" }
 variable "CACHE_REPO" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)
@@ -25,7 +26,7 @@ target "_common" {
   context    = "."
   dockerfile = "packages/sandbox/Dockerfile"
   platforms  = ["linux/amd64"]
-  args       = { SANDBOX_VERSION = SANDBOX_VERSION, BUN_VERSION = BUN_VERSION }
+  args       = { SANDBOX_VERSION = SANDBOX_VERSION, BUN_VERSION = BUN_VERSION, BUILD_INTERNAL_SERVER_PORT = BUILD_INTERNAL_SERVER_PORT }
 }
 
 target "default" {

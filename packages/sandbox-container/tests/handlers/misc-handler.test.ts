@@ -41,7 +41,7 @@ describe('MiscHandler', () => {
 
   describe('handleRoot - GET /', () => {
     it('should return welcome message with text/plain content type', async () => {
-      const request = new Request('http://localhost:3000/', {
+      const request = new Request('http://localhost:8671/', {
         method: 'GET'
       });
 
@@ -55,7 +55,7 @@ describe('MiscHandler', () => {
     });
 
     it('should include CORS headers in root response', async () => {
-      const request = new Request('http://localhost:3000/', {
+      const request = new Request('http://localhost:8671/', {
         method: 'GET'
       });
 
@@ -74,7 +74,7 @@ describe('MiscHandler', () => {
       const methods = ['GET', 'POST', 'PUT', 'DELETE'];
 
       for (const method of methods) {
-        const request = new Request('http://localhost:3000/', {
+        const request = new Request('http://localhost:8671/', {
           method
         });
 
@@ -88,7 +88,7 @@ describe('MiscHandler', () => {
 
   describe('handleHealth - GET /api/health', () => {
     it('should return health check response with JSON content type', async () => {
-      const request = new Request('http://localhost:3000/api/health', {
+      const request = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
 
@@ -110,7 +110,7 @@ describe('MiscHandler', () => {
     });
 
     it('should include CORS headers in health response', async () => {
-      const request = new Request('http://localhost:3000/api/health', {
+      const request = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
 
@@ -131,7 +131,7 @@ describe('MiscHandler', () => {
       for (const method of methods) {
         vi.clearAllMocks(); // Clear mocks between iterations
 
-        const request = new Request('http://localhost:3000/api/health', {
+        const request = new Request('http://localhost:8671/api/health', {
           method
         });
 
@@ -145,10 +145,10 @@ describe('MiscHandler', () => {
     });
 
     it('should return unique timestamps for multiple health requests', async () => {
-      const request1 = new Request('http://localhost:3000/api/health', {
+      const request1 = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
-      const request2 = new Request('http://localhost:3000/api/health', {
+      const request2 = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
 
@@ -172,7 +172,7 @@ describe('MiscHandler', () => {
       // Set environment variable for test
       process.env.SANDBOX_VERSION = '1.2.3';
 
-      const request = new Request('http://localhost:3000/api/version', {
+      const request = new Request('http://localhost:8671/api/version', {
         method: 'GET'
       });
 
@@ -194,7 +194,7 @@ describe('MiscHandler', () => {
       // Clear environment variable
       delete process.env.SANDBOX_VERSION;
 
-      const request = new Request('http://localhost:3000/api/version', {
+      const request = new Request('http://localhost:8671/api/version', {
         method: 'GET'
       });
 
@@ -208,7 +208,7 @@ describe('MiscHandler', () => {
     it('should include CORS headers in version response', async () => {
       process.env.SANDBOX_VERSION = '1.0.0';
 
-      const request = new Request('http://localhost:3000/api/version', {
+      const request = new Request('http://localhost:8671/api/version', {
         method: 'GET'
       });
 
@@ -226,7 +226,7 @@ describe('MiscHandler', () => {
 
   describe('handleShutdown - POST /api/shutdown', () => {
     it('should return shutdown response with JSON content type', async () => {
-      const request = new Request('http://localhost:3000/api/shutdown', {
+      const request = new Request('http://localhost:8671/api/shutdown', {
         method: 'POST'
       });
 
@@ -248,7 +248,7 @@ describe('MiscHandler', () => {
     });
 
     it('should include CORS headers in shutdown response', async () => {
-      const request = new Request('http://localhost:3000/api/shutdown', {
+      const request = new Request('http://localhost:8671/api/shutdown', {
         method: 'POST'
       });
 
@@ -264,7 +264,7 @@ describe('MiscHandler', () => {
     });
 
     it('should handle shutdown requests with GET method', async () => {
-      const request = new Request('http://localhost:3000/api/shutdown', {
+      const request = new Request('http://localhost:8671/api/shutdown', {
         method: 'GET'
       });
 
@@ -277,10 +277,10 @@ describe('MiscHandler', () => {
     });
 
     it('should return unique timestamps for multiple shutdown requests', async () => {
-      const request1 = new Request('http://localhost:3000/api/shutdown', {
+      const request1 = new Request('http://localhost:8671/api/shutdown', {
         method: 'POST'
       });
-      const request2 = new Request('http://localhost:3000/api/shutdown', {
+      const request2 = new Request('http://localhost:8671/api/shutdown', {
         method: 'POST'
       });
 
@@ -301,7 +301,7 @@ describe('MiscHandler', () => {
 
   describe('route handling', () => {
     it('should return 500 for invalid endpoints', async () => {
-      const request = new Request('http://localhost:3000/invalid-endpoint', {
+      const request = new Request('http://localhost:8671/invalid-endpoint', {
         method: 'GET'
       });
 
@@ -317,7 +317,7 @@ describe('MiscHandler', () => {
     });
 
     it('should return 500 for non-existent API endpoints', async () => {
-      const request = new Request('http://localhost:3000/api/nonexistent', {
+      const request = new Request('http://localhost:8671/api/nonexistent', {
         method: 'GET'
       });
 
@@ -333,7 +333,7 @@ describe('MiscHandler', () => {
     });
 
     it('should include CORS headers in error responses', async () => {
-      const request = new Request('http://localhost:3000/invalid', {
+      const request = new Request('http://localhost:8671/invalid', {
         method: 'GET'
       });
 
@@ -358,7 +358,7 @@ describe('MiscHandler', () => {
       ];
 
       for (const endpoint of apiEndpoints) {
-        const request = new Request(`http://localhost:3000${endpoint.path}`, {
+        const request = new Request(`http://localhost:8671${endpoint.path}`, {
           method: 'GET'
         });
 
@@ -389,7 +389,7 @@ describe('MiscHandler', () => {
       ];
 
       for (const endpoint of endpoints) {
-        const request = new Request(`http://localhost:3000${endpoint.path}`, {
+        const request = new Request(`http://localhost:8671${endpoint.path}`, {
           method: 'GET'
         });
 
@@ -412,7 +412,7 @@ describe('MiscHandler', () => {
         sessionId: 'session-alternative'
       };
 
-      const request = new Request('http://localhost:3000/api/health', {
+      const request = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
 
@@ -447,7 +447,7 @@ describe('MiscHandler', () => {
 
       const independentHandler = new MiscHandler(simpleLogger);
 
-      const request = new Request('http://localhost:3000/api/health', {
+      const request = new Request('http://localhost:8671/api/health', {
         method: 'GET'
       });
 

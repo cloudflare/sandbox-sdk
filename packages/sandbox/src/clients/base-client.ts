@@ -1,5 +1,5 @@
 import type { Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import { createNoOpLogger, DEFAULT_CONTROL_PORT } from '@repo/shared';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import { createTransport, type ITransport } from './transport';
@@ -32,7 +32,9 @@ export abstract class BaseHttpClient {
       const mode = options.transportMode ?? 'http';
       this.transport = createTransport({
         mode,
-        baseUrl: options.baseUrl ?? 'http://localhost:3000',
+        baseUrl:
+          options.baseUrl ??
+          `http://localhost:${options.port ?? DEFAULT_CONTROL_PORT}`,
         wsUrl: options.wsUrl,
         logger: this.logger,
         stub: options.stub,

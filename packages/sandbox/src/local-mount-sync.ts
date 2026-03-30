@@ -18,7 +18,9 @@ interface LocalMountSyncOptions {
   mountPath: string;
   prefix: string | undefined;
   readOnly: boolean;
-  client: SandboxClient;
+  // Called for each sync operation so LocalMountSyncManager always uses
+  // the current sandbox client.
+  getClient: () => SandboxClient;
   sessionId: string;
   logger: Logger;
   pollIntervalMs?: number;
@@ -36,7 +38,7 @@ export class LocalMountSyncManager {
   private readonly mountPath: string;
   private readonly prefix: string | undefined;
   private readonly readOnly: boolean;
-  private readonly client: SandboxClient;
+  private readonly getClient: () => SandboxClient;
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;
@@ -57,7 +59,7 @@ export class LocalMountSyncManager {
     this.mountPath = options.mountPath;
     this.prefix = options.prefix;
     this.readOnly = options.readOnly;
-    this.client = options.client;
+    this.getClient = options.getClient;
     this.sessionId = options.sessionId;
     this.logger = options.logger.child({ operation: 'local-mount-sync' });
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -72,7 +74,7 @@ export class LocalMountSyncManager {
   async start(): Promise<void> {
     this.running = true;
 
-    await this.client.files.mkdir(this.mountPath, this.sessionId, {
+    await this.getClient().files.mkdir(this.mountPath, this.sessionId, {
       recursive: true
     });
 
@@ -216,7 +218,10 @@ export class LocalMountSyncManager {
         this.suppressEcho(containerPath);
 
         try {
-          await this.client.files.deleteFile(containerPath, this.sessionId);
+          await this.getClient().files.deleteFile(
+            containerPath,
+            this.sessionId
+          );
           this.logger.debug('R2 -> Container: deleted file', { key });
         } catch (error) {
           this.logger.error(
@@ -262,9 +267,14 @@ export class LocalMountSyncManager {
     const arrayBuffer = await obj.arrayBuffer();
     const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
 
-    await this.client.files.writeFile(containerPath, base64, this.sessionId, {
-      encoding: 'base64'
-    });
+    await this.getClient().files.writeFile(
+      containerPath,
+      base64,
+      this.sessionId,
+      {
+        encoding: 'base64'
+      }
+    );
   }
 
   private async ensureParentDir(containerPath: string): Promise<void> {
@@ -273,7 +283,7 @@ export class LocalMountSyncManager {
       containerPath.lastIndexOf('/')
     );
     if (parentDir && parentDir !== this.mountPath) {
-      await this.client.files.mkdir(parentDir, this.sessionId, {
+      await this.getClient().files.mkdir(parentDir, this.sessionId, {
         recursive: true
       });
     }
@@ -329,7 +339,7 @@ export class LocalMountSyncManager {
   }
 
   private async runContainerWatchLoop(): Promise<void> {
-    const stream = await this.client.watch.watch({
+    const stream = await this.getClient().watch.watch({
       path: this.mountPath,
       recursive: true,
       sessionId: this.sessionId
@@ -397,7 +407,7 @@ export class LocalMountSyncManager {
     containerPath: string,
     r2Key: string
   ): Promise<void> {
-    const result = await this.client.files.readFile(
+    const result = await this.getClient().files.readFile(
       containerPath,
       this.sessionId,
       { encoding: 'base64' }

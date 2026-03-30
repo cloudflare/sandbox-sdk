@@ -13,13 +13,17 @@ import type { Sandbox } from './sandbox.js';
 import { validateLanguage } from './security.js';
 
 export class CodeInterpreter {
-  private interpreterClient: InterpreterClient;
+  private readonly sandbox: Sandbox;
   private contexts = new Map<string, CodeContext>();
 
   constructor(sandbox: Sandbox) {
-    // In init-testing architecture, client is a SandboxClient with an interpreter property
-    this.interpreterClient = (sandbox.client as any)
-      .interpreter as InterpreterClient;
+    this.sandbox = sandbox;
+  }
+
+  // Resolved from the sandbox on each access so CodeInterpreter always
+  // uses the current interpreter client.
+  private get interpreterClient(): InterpreterClient {
+    return this.sandbox.client.interpreter;
   }
 
   /**

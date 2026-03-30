@@ -197,18 +197,14 @@ describe('proxyToSandbox - WebSocket Support', () => {
       });
     });
 
-    it('should reject reserved port 3000', async () => {
-      // Port 3000 is reserved as control plane port and rejected by validatePort()
+    it('should reject the default control port', async () => {
       const request = new Request(
-        'https://3000-sandbox-anytoken12345678.example.com/status',
-        {
-          method: 'GET'
-        }
+        'https://8671-sandbox-anytoken12345678.example.com/status',
+        { method: 'GET' }
       );
 
       const response = await proxyToSandbox(request, mockEnv);
 
-      // Port 3000 is reserved and should be rejected (extractSandboxRoute returns null)
       expect(response).toBeNull();
       expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
       expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
@@ -287,6 +283,44 @@ describe('proxyToSandbox - WebSocket Support', () => {
       const response = await proxyToSandbox(request, mockEnv);
 
       expect(response?.status).toBe(500);
+    });
+  });
+
+  describe('Custom control port via SANDBOX_CONTROL_PORT', () => {
+    it('should reject the custom control port in preview URLs', async () => {
+      const customEnv = {
+        ...mockEnv,
+        SANDBOX_CONTROL_PORT: '9500'
+      };
+
+      const request = new Request(
+        'https://9500-sandbox-anytoken12345678.example.com/status',
+        { method: 'GET' }
+      );
+
+      const response = await proxyToSandbox(request, customEnv);
+
+      expect(response).toBeNull();
+      expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
+    });
+
+    it('should allow port 3000 when custom control port is set', async () => {
+      const customEnv = {
+        ...mockEnv,
+        SANDBOX_CONTROL_PORT: '9500'
+      };
+
+      const request = new Request(
+        'https://3000-sandbox-token12345678901.example.com/api',
+        { method: 'GET' }
+      );
+
+      await proxyToSandbox(request, customEnv);
+
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
+        3000,
+        'token12345678901'
+      );
     });
   });
 });
