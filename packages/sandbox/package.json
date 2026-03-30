@@ -10,7 +10,7 @@
   "dependencies": {
     "@cloudflare/containers": "^0.2.0",
     "aws4fetch": "^1.0.20",
-    "capnweb": "^0.6.1"
+    "capnweb": "https://pkg.pr.new/cloudflare/capnweb@159"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",

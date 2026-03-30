@@ -15,7 +15,7 @@
     "@repo/shared": "*",
     "acorn": "^8.14.0",
     "async-mutex": "^0.5.0",
-    "capnweb": "^0.6.1"
+    "capnweb": "https://pkg.pr.new/cloudflare/capnweb@159"
   },
   "devDependencies": {
     "@repo/typescript-config": "*",
