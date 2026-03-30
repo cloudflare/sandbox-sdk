@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.1
+
+### Patch Changes
+
+- [#487](https://github.com/cloudflare/sandbox-sdk/pull/487) [`19076fb`](https://github.com/cloudflare/sandbox-sdk/commit/19076fb6c80d2981c2f2e40dcda0911247e81543) Thanks [@scuffi](https://github.com/scuffi)! - Process termination now walks the command's process tree so killing a process also terminates child processes started by that command
+
 ## 0.8.0
 
 ### Minor Changes
