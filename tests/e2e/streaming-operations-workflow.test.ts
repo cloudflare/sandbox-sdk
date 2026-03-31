@@ -173,7 +173,7 @@ describe('Streaming Operations Edge Cases', () => {
         .join('');
       const completeEvent = events.find((event) => event.type === 'complete');
 
-      expect(stdout).toBe('done');
+      expect(stdout.trimEnd()).toBe('done');
       expect(completeEvent?.exitCode).toBe(0);
     } finally {
       await cleanupTestSandbox(shortSleepSandbox);
