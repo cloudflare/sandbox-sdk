@@ -18,6 +18,7 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
+const DEFAULT_IDLE_DISCONNECT_MS = 1_000; // Close idle control socket promptly
 const MIN_TIME_FOR_CONNECT_RETRY_MS = 15_000; // Need 15s remaining to retry
 
 /**
@@ -50,6 +51,7 @@ export class WebSocketTransport extends BaseTransport {
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
+  private idleDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -85,6 +87,8 @@ export class WebSocketTransport extends BaseTransport {
    * callers share the same connection attempt.
    */
   async connect(): Promise<void> {
+    this.clearIdleDisconnectTimer();
+
     // Already connected
     if (this.isConnected()) {
       return;
@@ -376,6 +380,7 @@ export class WebSocketTransport extends BaseTransport {
     headers?: Record<string, string>
   ): Promise<{ status: number; body: T }> {
     await this.connect();
+    this.clearIdleDisconnectTimer();
 
     const id = generateRequestId();
     const request: WSRequest = {
@@ -392,6 +397,7 @@ export class WebSocketTransport extends BaseTransport {
         this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         reject(
           new Error(`Request timeout after ${timeoutMs}ms: ${method} ${path}`)
         );
@@ -401,11 +407,13 @@ export class WebSocketTransport extends BaseTransport {
         resolve: (response: WSResponse) => {
           clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           resolve({ status: response.status, body: response.body as T });
         },
         reject: (error: Error) => {
           clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           reject(error);
         },
         isStreaming: false,
@@ -417,6 +425,7 @@ export class WebSocketTransport extends BaseTransport {
       } catch (error) {
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -443,6 +452,7 @@ export class WebSocketTransport extends BaseTransport {
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     await this.connect();
+    this.clearIdleDisconnectTimer();
 
     const id = generateRequestId();
     const request: WSRequest = {
@@ -467,6 +477,7 @@ export class WebSocketTransport extends BaseTransport {
       const createIdleTimeout = (): ReturnType<typeof setTimeout> => {
         return setTimeout(() => {
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           const error = new Error(
             `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
           );
@@ -506,6 +517,7 @@ export class WebSocketTransport extends BaseTransport {
           }
 
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
         }
       });
 
@@ -516,6 +528,7 @@ export class WebSocketTransport extends BaseTransport {
             clearTimeout(pending.timeoutId);
           }
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
 
           if (!firstMessageReceived) {
             // First message is a final response (not streaming) - this is an error case
@@ -554,6 +567,7 @@ export class WebSocketTransport extends BaseTransport {
             clearTimeout(pending.timeoutId);
           }
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           if (firstMessageReceived) {
             try {
               streamController?.error(error);
@@ -594,6 +608,7 @@ export class WebSocketTransport extends BaseTransport {
                     clearTimeout(pending.timeoutId);
                   }
                   this.pendingRequests.delete(id);
+                  this.scheduleIdleDisconnect();
                 }
                 pending.bufferedChunks = undefined;
               }
@@ -608,6 +623,7 @@ export class WebSocketTransport extends BaseTransport {
       } catch (error) {
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         rejectStream(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -742,6 +758,7 @@ export class WebSocketTransport extends BaseTransport {
         clearTimeout(pending.timeoutId);
       }
       this.pendingRequests.delete(chunk.id);
+      this.scheduleIdleDisconnect();
     }
   }
 
@@ -758,6 +775,7 @@ export class WebSocketTransport extends BaseTransport {
       this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     pending.timeoutId = setTimeout(() => {
       this.pendingRequests.delete(id);
+      this.scheduleIdleDisconnect();
       if (pending.streamController) {
         try {
           pending.streamController.error(
@@ -829,6 +847,8 @@ export class WebSocketTransport extends BaseTransport {
    * Cleanup resources
    */
   private cleanup(): void {
+    this.clearIdleDisconnectTimer();
+
     if (this.ws) {
       this.ws.removeEventListener('close', this.boundHandleClose);
       this.ws.removeEventListener('message', this.boundHandleMessage);
@@ -844,5 +864,28 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
+  }
+
+  private scheduleIdleDisconnect(): void {
+    if (!this.isConnected() || this.pendingRequests.size > 0) {
+      return;
+    }
+
+    this.clearIdleDisconnectTimer();
+    this.idleDisconnectTimer = setTimeout(() => {
+      this.idleDisconnectTimer = null;
+
+      if (this.pendingRequests.size === 0 && this.isConnected()) {
+        this.logger.debug('Disconnecting idle WebSocket transport');
+        this.cleanup();
+      }
+    }, DEFAULT_IDLE_DISCONNECT_MS);
+  }
+
+  private clearIdleDisconnectTimer(): void {
+    if (this.idleDisconnectTimer) {
+      clearTimeout(this.idleDisconnectTimer);
+      this.idleDisconnectTimer = null;
+    }
   }
 }
