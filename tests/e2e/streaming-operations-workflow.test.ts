@@ -8,6 +8,12 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 
+interface SandboxStateResponse {
+  status: 'healthy' | 'stopped' | 'stopped_with_code' | 'stopping';
+  lastChange: number;
+  exitCode?: number;
+}
+
 /**
  * Streaming Operations Edge Case Tests
  *
@@ -179,6 +185,40 @@ describe('Streaming Operations Edge Cases', () => {
       await cleanupTestSandbox(shortSleepSandbox);
     }
   }, 20000);
+
+  test('should still stop idle sandboxes after sleepAfter', async () => {
+    const shortSleepSandbox = await createTestSandbox({ sleepAfter: '3s' });
+
+    try {
+      const execResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/execute`,
+        {
+          method: 'POST',
+          headers: shortSleepSandbox.headers(createUniqueSession()),
+          body: JSON.stringify({ command: 'printf idle-check' })
+        }
+      );
+
+      expect(execResponse.status).toBe(200);
+
+      await new Promise((resolve) => setTimeout(resolve, 4500));
+
+      const stateResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/state`,
+        {
+          method: 'GET',
+          headers: shortSleepSandbox.headers()
+        }
+      );
+
+      expect(stateResponse.status).toBe(200);
+
+      const state = (await stateResponse.json()) as SandboxStateResponse;
+      expect(['stopped', 'stopped_with_code']).toContain(state.status);
+    } finally {
+      await cleanupTestSandbox(shortSleepSandbox);
+    }
+  }, 15000);
 
   test('should stream file contents', async () => {
     // Create a test file first

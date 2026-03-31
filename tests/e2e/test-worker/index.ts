@@ -487,6 +487,13 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      if (url.pathname === '/api/state' && request.method === 'GET') {
+        const state = await sandbox.getState();
+        return new Response(JSON.stringify(state), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
         const result = await executor.exec(body.command, {
