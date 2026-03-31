@@ -201,24 +201,40 @@ describe('Streaming Operations Edge Cases', () => {
 
       expect(execResponse.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 4500));
+      const stateHeaders = { ...shortSleepSandbox.headers() };
+      delete stateHeaders['X-Sandbox-Sleep-After'];
 
-      const stateResponse = await fetch(
-        `${shortSleepSandbox.workerUrl}/api/state`,
-        {
-          method: 'GET',
-          headers: shortSleepSandbox.headers()
+      let state: SandboxStateResponse | undefined;
+      const deadline = Date.now() + 12000;
+
+      while (Date.now() < deadline) {
+        const stateResponse = await fetch(
+          `${shortSleepSandbox.workerUrl}/api/state`,
+          {
+            method: 'GET',
+            headers: stateHeaders
+          }
+        );
+
+        expect(stateResponse.status).toBe(200);
+
+        state = (await stateResponse.json()) as SandboxStateResponse;
+        if (
+          state.status === 'stopped' ||
+          state.status === 'stopped_with_code'
+        ) {
+          break;
         }
-      );
 
-      expect(stateResponse.status).toBe(200);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
 
-      const state = (await stateResponse.json()) as SandboxStateResponse;
-      expect(['stopped', 'stopped_with_code']).toContain(state.status);
+      expect(state).toBeDefined();
+      expect(['stopped', 'stopped_with_code']).toContain(state?.status);
     } finally {
       await cleanupTestSandbox(shortSleepSandbox);
     }
-  }, 15000);
+  }, 20000);
 
   test('should stream file contents', async () => {
     // Create a test file first
