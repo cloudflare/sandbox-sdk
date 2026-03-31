@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.2
+
+### Patch Changes
+
+- [#544](https://github.com/cloudflare/sandbox-sdk/pull/544) [`9a2f553`](https://github.com/cloudflare/sandbox-sdk/commit/9a2f553b06cf15a38e629de49d0d7b1d0bec10b7) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Require `@cloudflare/containers` 0.2.2 or newer so long-running streamed commands stay alive past `sleepAfter` while work is still in progress.
+
 ## 0.8.1
 
 ### Patch Changes
