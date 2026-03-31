@@ -204,37 +204,26 @@ describe('Streaming Operations Edge Cases', () => {
       const stateHeaders = { ...shortSleepSandbox.headers() };
       delete stateHeaders['X-Sandbox-Sleep-After'];
 
-      let state: SandboxStateResponse | undefined;
-      const deadline = Date.now() + 12000;
+      // Give the alarm loop time to observe idleness and persist the stopped state
+      // before checking it, without issuing repeated requests that can delay delivery.
+      await new Promise((resolve) => setTimeout(resolve, 8000));
 
-      while (Date.now() < deadline) {
-        const stateResponse = await fetch(
-          `${shortSleepSandbox.workerUrl}/api/state`,
-          {
-            method: 'GET',
-            headers: stateHeaders
-          }
-        );
-
-        expect(stateResponse.status).toBe(200);
-
-        state = (await stateResponse.json()) as SandboxStateResponse;
-        if (
-          state.status === 'stopped' ||
-          state.status === 'stopped_with_code'
-        ) {
-          break;
+      const stateResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/state`,
+        {
+          method: 'GET',
+          headers: stateHeaders
         }
+      );
 
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      expect(stateResponse.status).toBe(200);
 
-      expect(state).toBeDefined();
-      expect(['stopped', 'stopped_with_code']).toContain(state?.status);
+      const state = (await stateResponse.json()) as SandboxStateResponse;
+      expect(['stopped', 'stopped_with_code']).toContain(state.status);
     } finally {
       await cleanupTestSandbox(shortSleepSandbox);
     }
-  }, 20000);
+  }, 30000);
 
   test('should stream file contents', async () => {
     // Create a test file first
