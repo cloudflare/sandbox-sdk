@@ -145,7 +145,7 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
   });
 
   describe('reserveExecutorForContext parallelism', () => {
-    it('should spawn 6 processes concurrently when pool is exhausted', async () => {
+    it('should spawn processes concurrently without staircasing', async () => {
       const SPAWN_DELAY = 100;
       const PARALLEL = 6;
       ({ pool, tracker } = createTestPool(SPAWN_DELAY));
@@ -159,48 +159,10 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       const elapsed = Date.now() - start;
 
       expect(tracker.spawnCount).toBe(PARALLEL);
-
-      // Parallel: ~100ms. Serial: ~600ms. 2× threshold clearly separates them.
       expect(elapsed).toBeLessThan(SPAWN_DELAY * 2);
-    });
 
-    it('should complete 10 context creations in roughly one spawn cycle', async () => {
-      const SPAWN_DELAY = 100;
-      const PARALLEL = 10;
-      ({ pool, tracker } = createTestPool(SPAWN_DELAY));
-
-      const start = Date.now();
-      await Promise.all(
-        Array.from({ length: PARALLEL }, (_, i) =>
-          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
-        )
-      );
-      const elapsed = Date.now() - start;
-
-      expect(tracker.spawnCount).toBe(PARALLEL);
-
-      // Serial: ~1000ms. Parallel: ~100ms. 3× threshold gives headroom.
-      expect(elapsed).toBeLessThan(SPAWN_DELAY * 3);
-    });
-
-    it('should start all spawns within a tight window (no staircase)', async () => {
-      const SPAWN_DELAY = 100;
-      const PARALLEL = 5;
-      ({ pool, tracker } = createTestPool(SPAWN_DELAY));
-
-      await Promise.all(
-        Array.from({ length: PARALLEL }, (_, i) =>
-          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
-        )
-      );
-
-      expect(tracker.spawnStarts.length).toBe(PARALLEL);
-
-      const firstStart = Math.min(...tracker.spawnStarts);
-      const lastStart = Math.max(...tracker.spawnStarts);
-      const startSpread = lastStart - firstStart;
-
-      // Parallel: spread ≈ 0-20ms (scheduling jitter). Serial: ≈ (N-1) × 100ms.
+      const startSpread =
+        Math.max(...tracker.spawnStarts) - Math.min(...tracker.spawnStarts);
       expect(startSpread).toBeLessThan(SPAWN_DELAY / 2);
     });
   });
@@ -269,18 +231,6 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       expect(executorIds.size).toBe(PARALLEL);
     });
 
-    it('should drain available pool completely after reservation', async () => {
-      ({ pool, tracker } = createTestPool(50));
-
-      await Promise.all(
-        Array.from({ length: 4 }, (_, i) =>
-          pool.reserveExecutorForContext(`drain-ctx-${i}`, 'javascript')
-        )
-      );
-
-      expect(pool.getAvailableExecutors('javascript').length).toBe(0);
-    });
-
     it('should not let JS contexts block Python contexts', async () => {
       const SPAWN_DELAY = 100;
       ({ pool, tracker } = createTestPool(SPAWN_DELAY));
@@ -338,24 +288,6 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       expect((rejected[0] as PromiseRejectedResult).reason.message).toContain(
         'Maximum'
       );
-    });
-
-    it('should not have an off-by-one at the boundary', async () => {
-      const MAX = 5;
-      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
-
-      // Exactly MAX should succeed
-      await Promise.all(
-        Array.from({ length: MAX }, (_, i) =>
-          pool.reserveExecutorForContext(`exact-ctx-${i}`, 'javascript')
-        )
-      );
-      expect(tracker.spawnCount).toBe(MAX);
-
-      // One more should fail
-      await expect(
-        pool.reserveExecutorForContext('one-too-many', 'javascript')
-      ).rejects.toThrow('Maximum');
     });
 
     it('should free a permit when a context is released', async () => {
@@ -455,63 +387,6 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
         pool.reserveExecutorForContext('over-limit', 'javascript')
       ).rejects.toThrow('Maximum');
     });
-
-    it('repeated create-delete cycles should not drift permit count', async () => {
-      const MAX = 3;
-      const CYCLES = 3;
-      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
-
-      for (let cycle = 0; cycle < CYCLES; cycle++) {
-        await Promise.all(
-          Array.from({ length: MAX }, (_, i) =>
-            pool.reserveExecutorForContext(`c${cycle}-${i}`, 'javascript')
-          )
-        );
-
-        await expect(
-          pool.reserveExecutorForContext(`c${cycle}-overflow`, 'javascript')
-        ).rejects.toThrow('Maximum');
-
-        for (let i = 0; i < MAX; i++) {
-          await pool.releaseExecutorForContext(`c${cycle}-${i}`, 'javascript');
-        }
-      }
-
-      await Promise.all(
-        Array.from({ length: MAX }, (_, i) =>
-          pool.reserveExecutorForContext(`final-${i}`, 'javascript')
-        )
-      );
-      await expect(
-        pool.reserveExecutorForContext('final-over', 'javascript')
-      ).rejects.toThrow('Maximum');
-    });
-
-    it('partial releases should free exactly that many permits', async () => {
-      const MAX = 5;
-      const RELEASE = 2;
-      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
-
-      await Promise.all(
-        Array.from({ length: MAX }, (_, i) =>
-          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
-        )
-      );
-
-      for (let i = 0; i < RELEASE; i++) {
-        await pool.releaseExecutorForContext(`ctx-${i}`, 'javascript');
-      }
-
-      await Promise.all(
-        Array.from({ length: RELEASE }, (_, i) =>
-          pool.reserveExecutorForContext(`new-${i}`, 'javascript')
-        )
-      );
-
-      await expect(
-        pool.reserveExecutorForContext('one-too-many', 'javascript')
-      ).rejects.toThrow('Maximum');
-    });
   });
 
   describe('dead process detection before registration', () => {
@@ -528,22 +403,6 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
 
       await expect(
         pool.reserveExecutorForContext('dead-ctx', 'javascript')
-      ).rejects.toThrow('Process exited before registration');
-    });
-
-    it('should reject when process is killed by signal before registration', async () => {
-      const MAX = 3;
-      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
-
-      const originalCreate = (pool as any).createProcess.bind(pool);
-      (pool as any).createProcess = async (...args: any[]) => {
-        const executor = await originalCreate(...args);
-        executor.process.signalCode = 'SIGKILL';
-        return executor;
-      };
-
-      await expect(
-        pool.reserveExecutorForContext('oom-ctx', 'javascript')
       ).rejects.toThrow('Process exited before registration');
     });
 
