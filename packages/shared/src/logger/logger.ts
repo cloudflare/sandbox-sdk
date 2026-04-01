@@ -6,6 +6,14 @@ import type { LogContext, Logger, LogLevel } from './types.js';
 import { LogLevel as LogLevelEnum } from './types.js';
 
 /**
+ * Output mode for log entries:
+ * - 'pretty'     — ANSI-colored single-line string (local dev)
+ * - 'structured' — raw object passed to console (Workers/DOs — auto-indexed by Workers Logs)
+ * - 'json-line'  — JSON.stringify string (container stdout — parsed by Containers pipeline)
+ */
+export type OutputMode = 'pretty' | 'structured' | 'json-line';
+
+/**
  * ANSI color codes for terminal output
  */
 const COLORS = {
@@ -27,12 +35,12 @@ export class CloudflareLogger implements Logger {
    *
    * @param baseContext Base context included in all log entries
    * @param minLevel Minimum log level to output (default: INFO)
-   * @param pretty Enable pretty printing for human-readable output (default: false)
+   * @param outputMode How log entries are formatted and emitted (default: 'structured')
    */
   constructor(
     private readonly baseContext: LogContext,
     private readonly minLevel: LogLevel = LogLevelEnum.INFO,
-    private readonly pretty: boolean = false
+    private readonly outputMode: OutputMode = 'structured'
   ) {}
 
   /**
@@ -82,7 +90,7 @@ export class CloudflareLogger implements Logger {
     return new CloudflareLogger(
       { ...this.baseContext, ...context } as LogContext,
       this.minLevel,
-      this.pretty
+      this.outputMode
     );
   }
 
@@ -104,7 +112,7 @@ export class CloudflareLogger implements Logger {
   ): Record<string, unknown> {
     const logData: Record<string, unknown> = {
       level,
-      msg: message,
+      message,
       ...this.baseContext,
       ...context,
       timestamp: new Date().toISOString()
@@ -123,23 +131,29 @@ export class CloudflareLogger implements Logger {
   }
 
   /**
-   * Output log data to console (pretty or JSON)
+   * Output log data using the configured output mode
    */
   private output(
     consoleFn: typeof console.log | typeof console.warn | typeof console.error,
     data: Record<string, unknown>
   ): void {
-    if (this.pretty) {
-      this.outputPretty(consoleFn, data);
-    } else {
-      this.outputJson(consoleFn, data);
+    switch (this.outputMode) {
+      case 'pretty':
+        this.outputPretty(consoleFn, data);
+        break;
+      case 'json-line':
+        this.outputJsonLine(consoleFn, data);
+        break;
+      case 'structured':
+        this.outputStructured(consoleFn, data);
+        break;
     }
   }
 
   /**
-   * Output as JSON (production)
+   * Output as JSON string (container stdout — parsed by Containers pipeline)
    */
-  private outputJson(
+  private outputJsonLine(
     consoleFn: typeof console.log | typeof console.warn | typeof console.error,
     data: Record<string, unknown>
   ): void {
@@ -147,10 +161,22 @@ export class CloudflareLogger implements Logger {
   }
 
   /**
+   * Output as raw object (Workers/DOs — Workers Logs auto-indexes fields)
+   */
+  private outputStructured(
+    consoleFn: typeof console.log | typeof console.warn | typeof console.error,
+    data: Record<string, unknown>
+  ): void {
+    consoleFn(data);
+  }
+
+  /**
    * Output as pretty-printed, colored text (development)
    *
-   * Format: LEVEL [component] message (trace: tr_...) {context}
-   * Example: INFO [sandbox-do] Command started (trace: tr_7f3a9b2c) {commandId: "cmd-123"}
+   * Each log event is a single consoleFn() call so it appears as one entry
+   * in the Cloudflare dashboard. Context is rendered inline as compact key=value pairs.
+   *
+   * Format: LEVEL [component] message trace=tr_... key=value key=value
    */
   private outputPretty(
     consoleFn: typeof console.log | typeof console.warn | typeof console.error,
@@ -158,7 +184,7 @@ export class CloudflareLogger implements Logger {
   ): void {
     const {
       level,
-      msg,
+      message: msg,
       timestamp,
       traceId,
       component,
@@ -166,68 +192,72 @@ export class CloudflareLogger implements Logger {
       sessionId,
       processId,
       commandId,
-      operation,
-      duration,
+      durationMs,
+      serviceVersion,
+      instanceId,
       error,
       ...rest
     } = data;
 
-    // Build the main log line
     const levelStr = String(level || 'INFO').toUpperCase();
     const levelColor = this.getLevelColor(levelStr);
     const componentBadge = component ? `[${component}]` : '';
-    const traceIdShort = traceId ? String(traceId).substring(0, 12) : '';
 
-    // Start with level and component
-    let logLine = `${levelColor}${levelStr.padEnd(5)}${
-      COLORS.reset
-    } ${componentBadge} ${msg}`;
+    const timeStr = timestamp
+      ? `${COLORS.dim}${new Date(timestamp as string).toISOString().substring(11, 23)}${COLORS.reset} `
+      : '';
 
-    // Add trace ID if present
-    if (traceIdShort) {
-      logLine += ` ${COLORS.dim}(trace: ${traceIdShort})${COLORS.reset}`;
+    let logLine = `${timeStr}${levelColor}${levelStr.padEnd(5)}${COLORS.reset} ${componentBadge} ${msg}`;
+
+    // Append all context as compact key=value pairs on the same line
+    const pairs: string[] = [];
+    if (traceId) pairs.push(`trace=${String(traceId).substring(0, 12)}`);
+    if (commandId) pairs.push(`cmd=${String(commandId).substring(0, 12)}`);
+    if (sandboxId) pairs.push(`sandbox=${sandboxId}`);
+    if (sessionId) pairs.push(`session=${String(sessionId).substring(0, 12)}`);
+    if (processId) pairs.push(`proc=${processId}`);
+    if (durationMs !== undefined) pairs.push(`dur=${durationMs}ms`);
+
+    // Append remaining context fields inline
+    for (const [key, value] of Object.entries(rest)) {
+      if (value === undefined || value === null) continue;
+      const v =
+        typeof value === 'object'
+          ? JSON.stringify(value)
+          : this.sanitizePrettyValue(String(value));
+      pairs.push(`${key}=${v}`);
     }
 
-    // Collect important context fields
-    const contextFields: string[] = [];
-    if (operation) contextFields.push(`operation: ${operation}`);
-    if (commandId)
-      contextFields.push(`commandId: ${String(commandId).substring(0, 12)}`);
-    if (sandboxId) contextFields.push(`sandboxId: ${sandboxId}`);
-    if (sessionId)
-      contextFields.push(`sessionId: ${String(sessionId).substring(0, 12)}`);
-    if (processId) contextFields.push(`processId: ${processId}`);
-    if (duration !== undefined) contextFields.push(`duration: ${duration}ms`);
-
-    // Add important context inline
-    if (contextFields.length > 0) {
-      logLine += ` ${COLORS.dim}{${contextFields.join(', ')}}${COLORS.reset}`;
-    }
-
-    // Output main log line
-    consoleFn(logLine);
-
-    // Output error details on separate lines if present
+    // Append error info inline
     if (error && typeof error === 'object') {
       const errorObj = error as {
         message?: string;
         stack?: string;
         name?: string;
       };
-      if (errorObj.message) {
-        consoleFn(`  ${COLORS.error}Error: ${errorObj.message}${COLORS.reset}`);
-      }
-      if (errorObj.stack) {
-        consoleFn(`  ${COLORS.dim}${errorObj.stack}${COLORS.reset}`);
-      }
+      if (errorObj.name)
+        pairs.push(`err.name=${this.sanitizePrettyValue(errorObj.name)}`);
+      if (errorObj.message)
+        pairs.push(`err.msg=${this.sanitizePrettyValue(errorObj.message)}`);
+      if (errorObj.stack)
+        pairs.push(`err.stack=${this.sanitizePrettyValue(errorObj.stack)}`);
     }
 
-    // Output additional context if present
-    if (Object.keys(rest).length > 0) {
-      consoleFn(
-        `  ${COLORS.dim}${JSON.stringify(rest, null, 2)}${COLORS.reset}`
-      );
+    if (pairs.length > 0) {
+      logLine += ` ${COLORS.dim}${pairs.join(' ')}${COLORS.reset}`;
     }
+
+    // Single consoleFn call = single log entry in the dashboard
+    consoleFn(logLine);
+  }
+
+  /**
+   * Collapse newlines so a single consoleFn() call stays on one line.
+   * Cloudflare's log pipeline splits on literal newlines, which fragments
+   * stack traces and multi-line error messages into separate entries.
+   */
+  private sanitizePrettyValue(value: string): string {
+    return value.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
   }
 
   /**

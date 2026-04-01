@@ -52,14 +52,19 @@ export interface LogContext {
   commandId?: string;
 
   /**
-   * Operation name (e.g., 'exec', 'startProcess', 'writeFile')
-   */
-  operation?: string;
-
-  /**
    * Duration in milliseconds
    */
-  duration?: number;
+  durationMs?: number;
+
+  /**
+   * Service version (from SANDBOX_VERSION env var)
+   */
+  serviceVersion?: string;
+
+  /**
+   * Instance identifier (hostname or container ID)
+   */
+  instanceId?: string;
 
   /**
    * Extensible for additional metadata
@@ -110,15 +115,15 @@ export interface Logger {
    * Create a child logger with additional context
    *
    * The child logger inherits all context from the parent and adds new context.
-   * This is useful for adding operation-specific context without passing through parameters.
+   * This is useful for adding request-specific context without passing through parameters.
    *
    * @param context Additional context to merge
    * @returns New logger instance with merged context
    *
    * @example
    * const logger = createLogger({ component: 'sandbox-do', traceId: 'tr_abc123' });
-   * const execLogger = logger.child({ operation: 'exec', commandId: 'cmd-456' });
-   * execLogger.info('Command started'); // Includes all context: component, traceId, operation, commandId
+   * const execLogger = logger.child({ commandId: 'cmd-456' });
+   * execLogger.info('Command started'); // Includes all context: component, traceId, commandId
    */
   child(context: Partial<LogContext>): Logger;
 }

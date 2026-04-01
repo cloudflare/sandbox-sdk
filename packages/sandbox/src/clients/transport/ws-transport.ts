@@ -18,6 +18,8 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
+const DEFAULT_IDLE_DISCONNECT_MS = 1_000; // Close idle control socket promptly
+const MIN_TIME_FOR_CONNECT_RETRY_MS = 15_000; // Need 15s remaining to retry
 
 /**
  * Pending request tracker for response matching
@@ -49,6 +51,7 @@ export class WebSocketTransport extends BaseTransport {
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
+  private idleDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -84,6 +87,8 @@ export class WebSocketTransport extends BaseTransport {
    * callers share the same connection attempt.
    */
   async connect(): Promise<void> {
+    this.clearIdleDisconnectTimer();
+
     // Already connected
     if (this.isConnected()) {
       return;
@@ -99,10 +104,10 @@ export class WebSocketTransport extends BaseTransport {
 
     try {
       await this.connectPromise;
-    } catch (error) {
-      // Clear promise AFTER await so concurrent callers see the same rejection
+    } finally {
+      // Clear promise AFTER await so concurrent callers share the same
+      // connection attempt, but future reconnects can start a new one.
       this.connectPromise = null;
-      throw error;
     }
   }
 
@@ -125,8 +130,9 @@ export class WebSocketTransport extends BaseTransport {
 
     const method = (options?.method || 'GET') as WSMethod;
     const body = this.parseBody(options?.body);
+    const headers = this.normalizeHeaders(options?.headers);
 
-    const result = await this.request(method, path, body);
+    const result = await this.request(method, path, body, headers);
 
     return new Response(JSON.stringify(result.body), {
       status: result.status,
@@ -140,9 +146,10 @@ export class WebSocketTransport extends BaseTransport {
   async fetchStream(
     path: string,
     body?: unknown,
-    method: 'GET' | 'POST' = 'POST'
+    method: 'GET' | 'POST' = 'POST',
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.requestStream(method, path, body);
+    return this.requestStream(method, path, body, headers);
   }
 
   /**
@@ -169,6 +176,24 @@ export class WebSocketTransport extends BaseTransport {
   }
 
   /**
+   * Normalize RequestInit headers into a plain object for WSRequest.
+   */
+  private normalizeHeaders(
+    headers?: HeadersInit
+  ): Record<string, string> | undefined {
+    if (!headers) {
+      return undefined;
+    }
+
+    const normalized: Record<string, string> = {};
+    new Headers(headers).forEach((value, key) => {
+      normalized[key] = value;
+    });
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  /**
    * Internal connection logic
    */
   private async doConnect(): Promise<void> {
@@ -179,6 +204,41 @@ export class WebSocketTransport extends BaseTransport {
     } else {
       // Use standard WebSocket for browser/Node
       await this.connectViaWebSocket();
+    }
+  }
+
+  private async fetchUpgradeWithRetry(
+    attemptUpgrade: () => Promise<Response>
+  ): Promise<Response> {
+    const retryTimeoutMs = this.getRetryTimeoutMs();
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (true) {
+      const response = await attemptUpgrade();
+
+      if (response.status !== 503) {
+        return response;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const remaining = retryTimeoutMs - elapsed;
+
+      if (remaining <= MIN_TIME_FOR_CONNECT_RETRY_MS) {
+        return response;
+      }
+
+      const delay = Math.min(3000 * 2 ** attempt, 30000);
+
+      this.logger.info('WebSocket container not ready, retrying', {
+        status: response.status,
+        attempt: attempt + 1,
+        delayMs: delay,
+        remainingSec: Math.floor(remaining / 1000)
+      });
+
+      await this.sleep(delay);
+      attempt++;
     }
   }
 
@@ -193,27 +253,14 @@ export class WebSocketTransport extends BaseTransport {
     const timeoutMs =
       this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 
-    // Create abort controller for timeout
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
       // Build the WebSocket URL for the container
       const wsPath = new URL(this.config.wsUrl!).pathname;
       const httpUrl = `http://localhost:${this.config.port || 3000}${wsPath}`;
 
-      // Create a Request with WebSocket upgrade headers
-      const request = new Request(httpUrl, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-
-      const response = await this.config.stub!.fetch(request);
-
-      clearTimeout(timeout);
+      const response = await this.fetchUpgradeWithRetry(() =>
+        this.fetchUpgradeAttempt(httpUrl, timeoutMs)
+      );
 
       // Check if upgrade was successful
       if (response.status !== 101) {
@@ -242,13 +289,34 @@ export class WebSocketTransport extends BaseTransport {
         url: this.config.wsUrl
       });
     } catch (error) {
-      clearTimeout(timeout);
       this.state = 'error';
       this.logger.error(
         'WebSocket fetch connection failed',
         error instanceof Error ? error : new Error(String(error))
       );
       throw error;
+    }
+  }
+
+  private async fetchUpgradeAttempt(
+    httpUrl: string,
+    timeoutMs: number
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const request = new Request(httpUrl, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        },
+        signal: controller.signal
+      });
+
+      return await this.config.stub!.fetch(request);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -308,9 +376,11 @@ export class WebSocketTransport extends BaseTransport {
   private async request<T>(
     method: WSMethod,
     path: string,
-    body?: unknown
+    body?: unknown,
+    headers?: Record<string, string>
   ): Promise<{ status: number; body: T }> {
     await this.connect();
+    this.clearIdleDisconnectTimer();
 
     const id = generateRequestId();
     const request: WSRequest = {
@@ -318,7 +388,8 @@ export class WebSocketTransport extends BaseTransport {
       id,
       method,
       path,
-      body
+      body,
+      headers
     };
 
     return new Promise((resolve, reject) => {
@@ -326,6 +397,7 @@ export class WebSocketTransport extends BaseTransport {
         this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         reject(
           new Error(`Request timeout after ${timeoutMs}ms: ${method} ${path}`)
         );
@@ -335,11 +407,13 @@ export class WebSocketTransport extends BaseTransport {
         resolve: (response: WSResponse) => {
           clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           resolve({ status: response.status, body: response.body as T });
         },
         reject: (error: Error) => {
           clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           reject(error);
         },
         isStreaming: false,
@@ -351,6 +425,7 @@ export class WebSocketTransport extends BaseTransport {
       } catch (error) {
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -373,9 +448,11 @@ export class WebSocketTransport extends BaseTransport {
   private async requestStream(
     method: WSMethod,
     path: string,
-    body?: unknown
+    body?: unknown,
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     await this.connect();
+    this.clearIdleDisconnectTimer();
 
     const id = generateRequestId();
     const request: WSRequest = {
@@ -383,7 +460,8 @@ export class WebSocketTransport extends BaseTransport {
       id,
       method,
       path,
-      body
+      body,
+      headers
     };
 
     const idleTimeoutMs =
@@ -399,6 +477,7 @@ export class WebSocketTransport extends BaseTransport {
       const createIdleTimeout = (): ReturnType<typeof setTimeout> => {
         return setTimeout(() => {
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           const error = new Error(
             `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
           );
@@ -438,6 +517,7 @@ export class WebSocketTransport extends BaseTransport {
           }
 
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
         }
       });
 
@@ -448,6 +528,7 @@ export class WebSocketTransport extends BaseTransport {
             clearTimeout(pending.timeoutId);
           }
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
 
           if (!firstMessageReceived) {
             // First message is a final response (not streaming) - this is an error case
@@ -486,6 +567,7 @@ export class WebSocketTransport extends BaseTransport {
             clearTimeout(pending.timeoutId);
           }
           this.pendingRequests.delete(id);
+          this.scheduleIdleDisconnect();
           if (firstMessageReceived) {
             try {
               streamController?.error(error);
@@ -526,6 +608,7 @@ export class WebSocketTransport extends BaseTransport {
                     clearTimeout(pending.timeoutId);
                   }
                   this.pendingRequests.delete(id);
+                  this.scheduleIdleDisconnect();
                 }
                 pending.bufferedChunks = undefined;
               }
@@ -540,6 +623,7 @@ export class WebSocketTransport extends BaseTransport {
       } catch (error) {
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
+        this.scheduleIdleDisconnect();
         rejectStream(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -674,6 +758,7 @@ export class WebSocketTransport extends BaseTransport {
         clearTimeout(pending.timeoutId);
       }
       this.pendingRequests.delete(chunk.id);
+      this.scheduleIdleDisconnect();
     }
   }
 
@@ -690,6 +775,7 @@ export class WebSocketTransport extends BaseTransport {
       this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     pending.timeoutId = setTimeout(() => {
       this.pendingRequests.delete(id);
+      this.scheduleIdleDisconnect();
       if (pending.streamController) {
         try {
           pending.streamController.error(
@@ -732,6 +818,7 @@ export class WebSocketTransport extends BaseTransport {
   private handleClose(event: CloseEvent): void {
     this.state = 'disconnected';
     this.ws = null;
+    this.connectPromise = null;
 
     const closeError = new Error(
       `WebSocket closed: ${event.code} ${event.reason || 'No reason'}`
@@ -760,6 +847,8 @@ export class WebSocketTransport extends BaseTransport {
    * Cleanup resources
    */
   private cleanup(): void {
+    this.clearIdleDisconnectTimer();
+
     if (this.ws) {
       this.ws.removeEventListener('close', this.boundHandleClose);
       this.ws.removeEventListener('message', this.boundHandleMessage);
@@ -775,5 +864,28 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
+  }
+
+  private scheduleIdleDisconnect(): void {
+    if (!this.isConnected() || this.pendingRequests.size > 0) {
+      return;
+    }
+
+    this.clearIdleDisconnectTimer();
+    this.idleDisconnectTimer = setTimeout(() => {
+      this.idleDisconnectTimer = null;
+
+      if (this.pendingRequests.size === 0 && this.isConnected()) {
+        this.logger.debug('Disconnecting idle WebSocket transport');
+        this.cleanup();
+      }
+    }, DEFAULT_IDLE_DISCONNECT_MS);
+  }
+
+  private clearIdleDisconnectTimer(): void {
+    if (this.idleDisconnectTimer) {
+      clearTimeout(this.idleDisconnectTimer);
+      this.idleDisconnectTimer = null;
+    }
   }
 }

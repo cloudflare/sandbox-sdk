@@ -1,16 +1,16 @@
 shared:
-  - 'packages/shared/src/**'
-  - 'packages/shared/package.json'
+  - 'packages/shared/**'
 sdk:
   - 'packages/sandbox/src/**'
   - 'packages/sandbox/package.json'
 container:
-  - 'packages/sandbox-container/src/**'
-  - 'packages/sandbox-container/package.json'
+  - 'packages/sandbox-container/**'
 docker-config:
   - 'packages/sandbox/Dockerfile'
   - 'docker-bake.hcl'
+  - 'docker-images.txt'
   - '.dockerignore'
+  - '.bun-version'
 build-config:
   - 'tooling/**'
   - 'turbo.json'

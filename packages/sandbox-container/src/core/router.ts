@@ -67,6 +67,7 @@ export class Router {
     // Create request context
     const context: RequestContext = {
       sessionId: this.extractSessionId(request),
+      sandboxId: request.headers.get('X-Sandbox-Id') ?? undefined,
       corsHeaders: this.getCorsHeaders(),
       requestId: this.generateRequestId(),
       timestamp: new Date()
@@ -204,7 +205,7 @@ export class Router {
   private getCorsHeaders(): Record<string, string> {
     return {
       'Access-Control-Allow-Headers':
-        'Content-Type, Authorization, X-Session-Id',
+        'Content-Type, Authorization, X-Session-Id, X-Sandbox-Id, X-Trace-Id',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Origin': '*'
     };

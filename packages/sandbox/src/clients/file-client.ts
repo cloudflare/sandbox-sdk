@@ -69,13 +69,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<MkdirResult>('/api/mkdir', data);
 
-      this.logSuccess(
-        'Directory created',
-        `${path} (recursive: ${data.recursive})`
-      );
       return response;
     } catch (error) {
-      this.logError('mkdir', error);
       throw error;
     }
   }
@@ -103,10 +98,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<WriteFileResult>('/api/write', data);
 
-      this.logSuccess('File written', `${path} (${content.length} chars)`);
       return response;
     } catch (error) {
-      this.logError('writeFile', error);
       throw error;
     }
   }
@@ -131,13 +124,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<ReadFileResult>('/api/read', data);
 
-      this.logSuccess(
-        'File read',
-        `${path} (${response.content.length} chars)`
-      );
       return response;
     } catch (error) {
-      this.logError('readFile', error);
       throw error;
     }
   }
@@ -160,10 +148,8 @@ export class FileClient extends BaseHttpClient {
 
       // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/read/stream', data);
-      this.logSuccess('File stream started', path);
       return stream;
     } catch (error) {
-      this.logError('readFileStream', error);
       throw error;
     }
   }
@@ -179,10 +165,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<DeleteFileResult>('/api/delete', data);
 
-      this.logSuccess('File deleted', path);
       return response;
     } catch (error) {
-      this.logError('deleteFile', error);
       throw error;
     }
   }
@@ -203,10 +187,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<RenameFileResult>('/api/rename', data);
 
-      this.logSuccess('File renamed', `${path} -> ${newPath}`);
       return response;
     } catch (error) {
-      this.logError('renameFile', error);
       throw error;
     }
   }
@@ -227,10 +209,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<MoveFileResult>('/api/move', data);
 
-      this.logSuccess('File moved', `${path} -> ${newPath}`);
       return response;
     } catch (error) {
-      this.logError('moveFile', error);
       throw error;
     }
   }
@@ -258,10 +238,8 @@ export class FileClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess('Files listed', `${path} (${response.count} files)`);
       return response;
     } catch (error) {
-      this.logError('listFiles', error);
       throw error;
     }
   }
@@ -280,13 +258,8 @@ export class FileClient extends BaseHttpClient {
 
       const response = await this.post<FileExistsResult>('/api/exists', data);
 
-      this.logSuccess(
-        'Path existence checked',
-        `${path} (exists: ${response.exists})`
-      );
       return response;
     } catch (error) {
-      this.logError('exists', error);
       throw error;
     }
   }

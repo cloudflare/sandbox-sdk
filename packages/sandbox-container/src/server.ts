@@ -17,6 +17,20 @@ import { setupRoutes } from './routes/setup';
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
 
+// Global error handlers to prevent fragmented stack traces in logs
+// Bun's default handler writes stack traces line-by-line to stderr,
+// which Cloudflare captures as separate log entries
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error('Unhandled rejection', error);
+  process.exit(1);
+});
+
 export interface ServerInstance {
   port: number;
   cleanup: () => Promise<void>;
@@ -109,6 +123,13 @@ export async function startServer(): Promise<ServerInstance> {
   serve<WSData>({
     idleTimeout: 255,
     fetch: (req, server) => app.fetch(req, server),
+    error(error) {
+      logger.error(
+        'Unhandled server error',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return new Response('Internal Server Error', { status: 500 });
+    },
     hostname: '0.0.0.0',
     port: SERVER_PORT,
     websocket: {

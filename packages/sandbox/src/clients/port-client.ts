@@ -45,14 +45,8 @@ export class PortClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Port exposed',
-        `${port} exposed at ${response.url}${name ? ` (${name})` : ''}`
-      );
-
       return response;
     } catch (error) {
-      this.logError('exposePort', error);
       throw error;
     }
   }
@@ -72,10 +66,8 @@ export class PortClient extends BaseHttpClient {
       )}`;
       const response = await this.delete<PortCloseResult>(url);
 
-      this.logSuccess('Port unexposed', `${port}`);
       return response;
     } catch (error) {
-      this.logError('unexposePort', error);
       throw error;
     }
   }
@@ -89,14 +81,8 @@ export class PortClient extends BaseHttpClient {
       const url = `/api/exposed-ports?session=${encodeURIComponent(sessionId)}`;
       const response = await this.get<PortListResult>(url);
 
-      this.logSuccess(
-        'Exposed ports retrieved',
-        `${response.ports.length} ports exposed`
-      );
-
       return response;
     } catch (error) {
-      this.logError('getExposedPorts', error);
       throw error;
     }
   }
@@ -111,10 +97,8 @@ export class PortClient extends BaseHttpClient {
   ): Promise<ReadableStream<Uint8Array>> {
     try {
       const stream = await this.doStreamFetch('/api/port-watch', request);
-      this.logSuccess('Port watch started', `port ${request.port}`);
       return stream;
     } catch (error) {
-      this.logError('watchPort', error);
       throw error;
     }
   }

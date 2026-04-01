@@ -13,6 +13,7 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  origin?: 'user' | 'internal';
 }
 
 /**
@@ -28,6 +29,7 @@ export interface StartProcessRequest {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  origin?: 'user' | 'internal';
 }
 
 /**

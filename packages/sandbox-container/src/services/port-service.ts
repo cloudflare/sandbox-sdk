@@ -1,6 +1,7 @@
 // Port Management Service
 
 import type { Logger, PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -89,16 +90,20 @@ export class PortService {
     port: number,
     name?: string
   ): Promise<ServiceResult<PortInfo>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+
     try {
       // Validate port number
       const validation = this.security.validatePort(port);
       if (!validation.isValid) {
+        errorMessage = `Invalid port number ${port}: ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid port number ${port}: ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.INVALID_PORT_NUMBER,
             details: {
               port,
@@ -111,12 +116,11 @@ export class PortService {
       // Check if port is already exposed
       const existing = await this.store.get(port);
       if (existing) {
+        errorMessage = `Port ${port}${existing.name ? ` (${existing.name})` : ''} is already exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port}${
-              existing.name ? ` (${existing.name})` : ''
-            } is already exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_ALREADY_EXPOSED,
             details: {
               port,
@@ -130,19 +134,14 @@ export class PortService {
 
       await this.store.expose(port, portInfo);
 
+      outcome = 'success';
       return {
         success: true,
         data: portInfo
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to expose port',
-        error instanceof Error ? error : undefined,
-        { port, name }
-      );
-
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -157,18 +156,34 @@ export class PortService {
           } satisfies PortErrorContext
         }
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.expose',
+        outcome,
+        durationMs: Date.now() - startTime,
+        port,
+        name,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
   async unexposePort(port: number): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+
     try {
       // Check if port is exposed
       const existing = await this.store.get(port);
       if (!existing) {
+        errorMessage = `Port ${port} is not exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port} is not exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
@@ -179,18 +194,13 @@ export class PortService {
 
       await this.store.unexpose(port);
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to unexpose port',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -202,6 +212,15 @@ export class PortService {
           } satisfies PortErrorContext
         }
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.unexpose',
+        outcome,
+        durationMs: Date.now() - startTime,
+        port,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -217,11 +236,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list exposed ports',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {
@@ -260,12 +274,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get port info',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       return {
         success: false,
         error: {
@@ -319,12 +327,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Proxy request failed',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       const errorResponse: ProxyErrorResponse = {
         error: 'Proxy error',
         message: `Failed to proxy request to port ${port}: ${errorMessage}`,
@@ -363,12 +365,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to mark port as inactive',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       return {
         success: false,
         error: {
@@ -395,11 +391,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to cleanup ports',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
-import { shellEscape } from '@repo/shared';
+import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
@@ -80,10 +80,17 @@ export class FileService implements FileSystemOperations {
     options: ReadOptions = {},
     sessionId = 'default'
   ): Promise<ServiceResult<string, FileMetadata>> {
+    const startTime = Date.now();
+    let sizeBytes: number | undefined;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -102,7 +109,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      return this.sessionManager
+      const result = await this.sessionManager
         .withSession(sessionId, async (exec) => {
           const absolutePath = await this.resolvePathInSession(path, exec);
 
@@ -141,7 +148,10 @@ export class FileService implements FileSystemOperations {
           let mimeType = bunFile.type.split(';')[0].trim();
           if (mimeType === 'application/octet-stream') {
             const escapedPath = shellEscape(path);
-            const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+            const mimeResult = await exec(
+              `file --mime-type -b ${escapedPath}`,
+              { origin: 'internal' }
+            );
             if (mimeResult.exitCode === 0) {
               mimeType = mimeResult.stdout.trim();
             }
@@ -172,8 +182,10 @@ export class FileService implements FileSystemOperations {
             content = await bunFile.text();
           }
 
+          sizeBytes = fileSize;
+
           return {
-            success: true,
+            success: true as const,
             content,
             metadata: {
               encoding: actualEncoding,
@@ -183,26 +195,26 @@ export class FileService implements FileSystemOperations {
             }
           };
         })
-        .then((result) => {
-          if (!result.success) {
-            return result as ServiceResult<string, FileMetadata>;
+        .then((r) => {
+          if (!r.success) {
+            return r as ServiceResult<string, FileMetadata>;
           }
 
           return {
-            success: true,
-            data: result.data.content,
-            metadata: result.data.metadata
+            success: true as const,
+            data: r.data.content,
+            metadata: r.data.metadata
           };
         });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to read file',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
 
+      outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error.message;
+      }
+      return result;
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -215,6 +227,17 @@ export class FileService implements FileSystemOperations {
           } satisfies FileSystemContext
         }
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'file.read',
+        outcome,
+        durationMs: Date.now() - startTime,
+        path,
+        sessionId,
+        sizeBytes,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -224,16 +247,22 @@ export class FileService implements FileSystemOperations {
     options: WriteOptions = {},
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+    const normalizedEncoding =
+      options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
+
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -247,12 +276,10 @@ export class FileService implements FileSystemOperations {
       }
 
       // 2. Write file using Bun native file operations
-      const normalizedEncoding =
-        options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
-
       if (normalizedEncoding === 'base64') {
         // Validate that content only contains valid base64 characters
         if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
+          errorMessage = `Invalid base64 content for '${path}'`;
           return {
             success: false,
             error: {
@@ -278,7 +305,7 @@ export class FileService implements FileSystemOperations {
           let targetPath = path;
 
           if (!path.startsWith('/')) {
-            const pwdResult = await exec('pwd');
+            const pwdResult = await exec('pwd', { origin: 'internal' });
             if (pwdResult.exitCode !== 0) {
               throw {
                 code: ErrorCode.FILESYSTEM_ERROR,
@@ -319,21 +346,18 @@ export class FileService implements FileSystemOperations {
       );
 
       if (!writeResult.success) {
+        outcome = 'error';
+        errorMessage = writeResult.error.message;
         return writeResult as ServiceResult<void>;
       }
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to write file',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -346,6 +370,24 @@ export class FileService implements FileSystemOperations {
           } satisfies FileSystemContext
         }
       };
+    } finally {
+      const sizeBytes =
+        outcome === 'success'
+          ? Buffer.byteLength(
+              content,
+              normalizedEncoding === 'base64' ? 'base64' : 'utf-8'
+            )
+          : undefined;
+      logCanonicalEvent(this.logger, {
+        event: 'file.write',
+        outcome,
+        durationMs: Date.now() - startTime,
+        path,
+        sessionId,
+        sizeBytes,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -353,10 +395,16 @@ export class FileService implements FileSystemOperations {
     path: string,
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -378,61 +426,68 @@ export class FileService implements FileSystemOperations {
       // 2. Execute exists→isdir→rm sequence atomically within session
       const escapedPath = shellEscape(path);
 
-      return this.sessionManager.withSession(sessionId, async (exec) => {
-        // Check if file exists
-        const existsResult = await exec(`test -e ${escapedPath}`);
-        if (existsResult.exitCode !== 0) {
-          throw {
-            code: ErrorCode.FILE_NOT_FOUND,
-            message: `File not found: ${path}`,
-            details: {
-              path,
-              operation: Operation.FILE_DELETE
-            } satisfies FileNotFoundContext
-          };
-        }
+      const result = await this.sessionManager.withSession(
+        sessionId,
+        async (exec) => {
+          // Check if file exists
+          const existsResult = await exec(`test -e ${escapedPath}`, {
+            origin: 'internal'
+          });
+          if (existsResult.exitCode !== 0) {
+            throw {
+              code: ErrorCode.FILE_NOT_FOUND,
+              message: `File not found: ${path}`,
+              details: {
+                path,
+                operation: Operation.FILE_DELETE
+              } satisfies FileNotFoundContext
+            };
+          }
 
-        // Check if path is a directory (deleteFile only works on files)
-        const isDirResult = await exec(`test -d ${escapedPath}`);
-        if (isDirResult.exitCode === 0) {
-          throw {
-            code: ErrorCode.IS_DIRECTORY,
-            message: `Cannot delete directory with deleteFile() at '${path}'. Use exec('rm -rf <path>') instead.`,
-            details: {
-              path,
-              operation: Operation.FILE_DELETE
-            } satisfies FileSystemContext
-          };
-        }
+          // Check if path is a directory (deleteFile only works on files)
+          const isDirResult = await exec(`test -d ${escapedPath}`, {
+            origin: 'internal'
+          });
+          if (isDirResult.exitCode === 0) {
+            throw {
+              code: ErrorCode.IS_DIRECTORY,
+              message: `Cannot delete directory with deleteFile() at '${path}'. Use exec('rm -rf <path>') instead.`,
+              details: {
+                path,
+                operation: Operation.FILE_DELETE
+              } satisfies FileSystemContext
+            };
+          }
 
-        // Delete file using rm command
-        const command = `rm ${escapedPath}`;
-        const result = await exec(command);
+          // Delete file using rm command
+          const command = `rm ${escapedPath}`;
+          const rmResult = await exec(command, { origin: 'internal' });
 
-        if (result.exitCode !== 0) {
-          throw {
-            code: ErrorCode.FILESYSTEM_ERROR,
-            message: `Failed to delete file '${path}': ${
-              result.stderr || `exit code ${result.exitCode}`
-            }`,
-            details: {
-              path,
-              operation: Operation.FILE_DELETE,
-              exitCode: result.exitCode,
-              stderr: result.stderr
-            } satisfies FileSystemContext
-          };
+          if (rmResult.exitCode !== 0) {
+            throw {
+              code: ErrorCode.FILESYSTEM_ERROR,
+              message: `Failed to delete file '${path}': ${
+                rmResult.stderr || `exit code ${rmResult.exitCode}`
+              }`,
+              details: {
+                path,
+                operation: Operation.FILE_DELETE,
+                exitCode: rmResult.exitCode,
+                stderr: rmResult.stderr
+              } satisfies FileSystemContext
+            };
+          }
         }
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to delete file',
-        error instanceof Error ? error : undefined,
-        { path }
       );
 
+      outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error?.message;
+      }
+      return result;
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -445,6 +500,16 @@ export class FileService implements FileSystemOperations {
           } satisfies FileSystemContext
         }
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'file.delete',
+        outcome,
+        durationMs: Date.now() - startTime,
+        path,
+        sessionId,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -497,7 +562,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -528,12 +594,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to rename file',
-        error instanceof Error ? error : undefined,
-        { oldPath, newPath }
-      );
-
       return {
         success: false,
         error: {
@@ -599,7 +659,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -630,12 +691,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to move file',
-        error instanceof Error ? error : undefined,
-        { sourcePath, destinationPath }
-      );
-
       return {
         success: false,
         error: {
@@ -656,10 +711,16 @@ export class FileService implements FileSystemOperations {
     options: MkdirOptions = {},
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -692,20 +753,25 @@ export class FileService implements FileSystemOperations {
       // 4. Create directory using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
+        outcome = 'error';
+        errorMessage = execResult.error.message;
         return execResult as ServiceResult<void>;
       }
 
       const result = execResult.data;
 
       if (result.exitCode !== 0) {
+        outcome = 'error';
+        errorMessage = `mkdir operation failed with exit code ${result.exitCode}`;
         return {
           success: false,
           error: {
-            message: `mkdir operation failed with exit code ${result.exitCode}`,
+            message: errorMessage,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
@@ -717,18 +783,13 @@ export class FileService implements FileSystemOperations {
         };
       }
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to create directory',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -741,6 +802,17 @@ export class FileService implements FileSystemOperations {
           } satisfies FileSystemContext
         }
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'file.mkdir',
+        outcome,
+        durationMs: Date.now() - startTime,
+        path,
+        sessionId,
+        recursive: options.recursive ?? false,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -776,7 +848,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -873,7 +946,8 @@ export class FileService implements FileSystemOperations {
       // 5. Get file stats using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -912,12 +986,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get file stats',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -940,7 +1008,11 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<ServiceResult<FileMetadata>> {
     try {
@@ -989,7 +1061,9 @@ export class FileService implements FileSystemOperations {
       let mimeType = bunFile.type.split(';')[0].trim();
       if (mimeType === 'application/octet-stream') {
         const escapedPath = shellEscape(path);
-        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`, {
+          origin: 'internal'
+        });
         if (mimeResult.exitCode === 0) {
           mimeType = mimeResult.stdout.trim();
         }
@@ -1012,12 +1086,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get file metadata',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -1191,7 +1259,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        findCommand
+        findCommand,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -1289,12 +1358,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list files',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -1502,14 +1565,18 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<string> {
     if (path.startsWith('/')) {
       return path;
     }
 
-    const pwdResult = await exec('pwd');
+    const pwdResult = await exec('pwd', { origin: 'internal' });
     if (pwdResult.exitCode !== 0) {
       throw {
         code: ErrorCode.FILESYSTEM_ERROR,

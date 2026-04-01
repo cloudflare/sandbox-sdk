@@ -188,6 +188,7 @@ export default {
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
+    const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
 
     // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
@@ -207,7 +208,8 @@ export default {
     }
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
-      keepAlive
+      keepAlive,
+      ...(sleepAfter !== null && { sleepAfter })
     });
 
     // Get session ID from header (optional)
@@ -481,6 +483,13 @@ console.log('Terminal server on port ' + port);
       if (url.pathname === '/api/session/delete' && request.method === 'POST') {
         const result = await sandbox.deleteSession(body.sessionId);
         return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/state' && request.method === 'GET') {
+        const state = await sandbox.getState();
+        return new Response(JSON.stringify(state), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

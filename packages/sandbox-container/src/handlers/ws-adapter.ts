@@ -68,21 +68,20 @@ export class WebSocketAdapter {
   /**
    * Handle WebSocket connection open
    */
-  onOpen(ws: ServerWebSocket<WSData>): void {
-    this.logger.debug('WebSocket connection opened', {
-      connectionId: ws.data.connectionId
-    });
+  onOpen(_ws: ServerWebSocket<WSData>): void {
+    // Lifecycle captured in onClose canonical log line
   }
 
   /**
-   * Handle WebSocket connection close
+   * Handle WebSocket connection close — canonical log line for connection lifecycle
    */
   onClose(ws: ServerWebSocket<WSData>, code: number, reason: string): void {
     const connectionId = ws.data.connectionId;
-    this.logger.debug('WebSocket connection closed', {
+    this.logger.debug('ws.connection', {
       connectionId,
       code,
-      reason
+      reason,
+      outcome: 'closed'
     });
 
     for (const [requestId, stream] of this.activeStreams) {
@@ -136,20 +135,18 @@ export class WebSocketAdapter {
 
     const request = parsed as WSRequest;
 
-    this.logger.debug('WebSocket request received', {
-      connectionId: ws.data.connectionId,
-      id: request.id,
-      method: request.method,
-      path: request.path
-    });
-
     try {
       await this.handleRequest(ws, request);
     } catch (error) {
       this.logger.error(
-        'Error handling WebSocket request',
+        'ws.request',
         error instanceof Error ? error : new Error(String(error)),
-        { requestId: request.id }
+        {
+          connectionId: ws.data.connectionId,
+          requestId: request.id,
+          method: request.method,
+          path: request.path
+        }
       );
       this.sendError(
         ws,
@@ -375,9 +372,9 @@ export class WebSocketAdapter {
       }
 
       this.logger.error(
-        'Error reading stream',
+        'ws.stream',
         error instanceof Error ? error : new Error(String(error)),
-        { requestId }
+        { connectionId: ws.data.connectionId, requestId }
       );
       this.sendError(
         ws,
@@ -404,8 +401,9 @@ export class WebSocketAdapter {
       return true;
     } catch (error) {
       this.logger.error(
-        'Failed to send WebSocket message, closing connection',
-        error instanceof Error ? error : new Error(String(error))
+        'ws.send',
+        error instanceof Error ? error : new Error(String(error)),
+        { connectionId: ws.data.connectionId }
       );
       try {
         ws.close(1011, 'Send failed'); // 1011 = unexpected condition

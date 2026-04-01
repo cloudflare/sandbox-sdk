@@ -75,6 +75,9 @@ describe('Git Clone Error Handling', () => {
  *
  * Tests the depth option for shallow clones.
  * Uses octocat/Spoon-Knife for real-remote coverage with faster clone times.
+ *
+ * These tests depend on GitHub availability and are retried to handle
+ * transient network degradation (see #484).
  */
 describe('Git Shallow Clone', () => {
   let sandbox: TestSandbox | null = null;
@@ -92,112 +95,120 @@ describe('Git Shallow Clone', () => {
     sandbox = null;
   }, 120000);
 
-  test('should clone repository with depth: 1 (shallow clone)', async () => {
-    const testDir = sandbox!.uniquePath('shallow-clone-1');
+  test(
+    'should clone repository with depth: 1 (shallow clone)',
+    { retry: 2, timeout: 150000 },
+    async () => {
+      const testDir = sandbox!.uniquePath('shallow-clone-1');
 
-    // Clone with depth: 1 against a real remote repository
-    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        repoUrl: 'https://github.com/octocat/Spoon-Knife',
-        targetDir: testDir,
-        depth: 1
-      })
-    });
+      // Clone with depth: 1 against a real remote repository
+      const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/octocat/Spoon-Knife',
+          targetDir: testDir,
+          depth: 1
+        })
+      });
 
-    expect(cloneResponse.status).toBe(200);
-    const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-    expect(cloneData.success).toBe(true);
+      expect(cloneResponse.status).toBe(200);
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
+      expect(cloneData.success).toBe(true);
 
-    // Verify shallow clone by counting commits
-    // A shallow clone with depth: 1 should have exactly 1 commit
-    const countResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-list --count HEAD`
-      })
-    });
+      // Verify shallow clone by counting commits
+      // A shallow clone with depth: 1 should have exactly 1 commit
+      const countResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cd ${testDir} && git rev-list --count HEAD`
+        })
+      });
 
-    expect(countResponse.status).toBe(200);
-    const countData = (await countResponse.json()) as ExecResult;
-    expect(countData.exitCode).toBe(0);
+      expect(countResponse.status).toBe(200);
+      const countData = (await countResponse.json()) as ExecResult;
+      expect(countData.exitCode).toBe(0);
 
-    const commitCount = parseInt(countData.stdout.trim(), 10);
-    expect(commitCount).toBe(1);
+      const commitCount = parseInt(countData.stdout.trim(), 10);
+      expect(commitCount).toBe(1);
 
-    // Also verify the repo is marked as shallow
-    const shallowResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-parse --is-shallow-repository`
-      })
-    });
+      // Also verify the repo is marked as shallow
+      const shallowResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cd ${testDir} && git rev-parse --is-shallow-repository`
+        })
+      });
 
-    expect(shallowResponse.status).toBe(200);
-    const shallowData = (await shallowResponse.json()) as ExecResult;
-    expect(shallowData.exitCode).toBe(0);
-    expect(shallowData.stdout.trim()).toBe('true');
-  }, 120000);
+      expect(shallowResponse.status).toBe(200);
+      const shallowData = (await shallowResponse.json()) as ExecResult;
+      expect(shallowData.exitCode).toBe(0);
+      expect(shallowData.stdout.trim()).toBe('true');
+    }
+  );
 
-  test('should clone repository with branch and depth combined', async () => {
-    const testDir = sandbox!.uniquePath('shallow-branch');
+  test(
+    'should clone repository with branch and depth combined',
+    { retry: 2, timeout: 150000 },
+    async () => {
+      const testDir = sandbox!.uniquePath('shallow-branch');
 
-    // Clone specific branch with depth: 1
-    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        repoUrl: 'https://github.com/octocat/Spoon-Knife',
-        branch: 'main',
-        targetDir: testDir,
-        depth: 1
-      })
-    });
+      // Clone specific branch with depth: 1
+      const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/octocat/Spoon-Knife',
+          branch: 'main',
+          targetDir: testDir,
+          depth: 1
+        })
+      });
 
-    expect(cloneResponse.status).toBe(200);
-    const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-    expect(cloneData.success).toBe(true);
+      expect(cloneResponse.status).toBe(200);
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
+      expect(cloneData.success).toBe(true);
 
-    // Verify shallow clone
-    const shallowResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-parse --is-shallow-repository`
-      })
-    });
+      // Verify shallow clone
+      const shallowResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cd ${testDir} && git rev-parse --is-shallow-repository`
+        })
+      });
 
-    expect(shallowResponse.status).toBe(200);
-    const shallowData = (await shallowResponse.json()) as ExecResult;
-    expect(shallowData.stdout.trim()).toBe('true');
+      expect(shallowResponse.status).toBe(200);
+      const shallowData = (await shallowResponse.json()) as ExecResult;
+      expect(shallowData.stdout.trim()).toBe('true');
 
-    // Verify we're on the correct branch
-    const branchResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git branch --show-current`
-      })
-    });
+      // Verify we're on the correct branch
+      const branchResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cd ${testDir} && git branch --show-current`
+        })
+      });
 
-    expect(branchResponse.status).toBe(200);
-    const branchData = (await branchResponse.json()) as ExecResult;
-    expect(branchData.stdout.trim()).toBe('main');
+      expect(branchResponse.status).toBe(200);
+      const branchData = (await branchResponse.json()) as ExecResult;
+      expect(branchData.stdout.trim()).toBe('main');
 
-    // Verify commit count is 1
-    const countResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-list --count HEAD`
-      })
-    });
+      // Verify commit count is 1
+      const countResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cd ${testDir} && git rev-list --count HEAD`
+        })
+      });
 
-    expect(countResponse.status).toBe(200);
-    const countData = (await countResponse.json()) as ExecResult;
-    expect(parseInt(countData.stdout.trim(), 10)).toBe(1);
-  }, 120000);
+      expect(countResponse.status).toBe(200);
+      const countData = (await countResponse.json()) as ExecResult;
+      expect(parseInt(countData.stdout.trim(), 10)).toBe(1);
+    }
+  );
 });

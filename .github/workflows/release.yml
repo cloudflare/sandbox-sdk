@@ -11,26 +11,88 @@ permissions:
   pull-requests: write
   packages: write
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
 
 jobs:
+  # --- Compute content hashes for skip optimizations ---
+  hashes:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: release-hashes-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 1
+    outputs:
+      docker: ${{ steps.compute.outputs.docker }}
+      deploy: ${{ steps.compute.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Compute content hashes
+        id: compute
+        run: |
+          echo "docker=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            'docker-images.txt',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.*'
+          ) }}" >> $GITHUB_OUTPUT
+          echo "deploy=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            'docker-images.txt',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.*',
+            'packages/sandbox/src/**',
+            'tests/e2e/test-worker/**',
+            'vitest.e2e.config.ts'
+          ) }}" >> $GITHUB_OUTPUT
+
   # --- Build (always runs everything on release) ---
   build:
+    needs: hashes
     if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: release-build-${{ github.ref }}
+      cancel-in-progress: true
     uses: ./.github/workflows/reusable-build.yml
     with:
       skip_docker: false
       image_tag: main
+      docker_hash: ${{ needs.hashes.outputs.docker }}
     secrets: inherit
 
   # --- Quality gates (all checks on release) ---
   quality:
     needs: build
+    concurrency:
+      group: release-quality-${{ github.ref }}
+      cancel-in-progress: true
     uses: ./.github/workflows/reusable-quality.yml
     with:
       run_sdk_tests: true
@@ -40,18 +102,28 @@ jobs:
 
   # --- E2E tests ---
   e2e:
-    needs: build
+    needs: [hashes, build]
+    concurrency:
+      group: release-e2e-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-main
       image_tag: main
-      images_changed: 'true'
+      images_changed: ${{ needs.build.outputs.images_changed }}
+      deploy_hash: ${{ needs.hashes.outputs.deploy }}
     secrets: inherit
 
   # --- Publish release (after all gates pass) ---
   publish-release:
     needs: [build, quality, e2e]
     if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: release-publish-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -135,10 +207,13 @@ jobs:
       - name: Publish Docker images to Docker Hub
         if: steps.changesets.outputs.published == 'true'
         run: |
+          source .github/load-docker-images.sh
           VERSION=${{ needs.build.outputs.version }}
-          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+          for image in "${DOCKER_IMAGES[@]}"; do
+            [[ "$image" == "sandbox-standalone" ]] && continue  # CF registry only
+            suffix="${image#sandbox}"
             crane copy \
-              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:main \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/${image}:main \
               docker.io/cloudflare/sandbox:${VERSION}${suffix}
           done
 

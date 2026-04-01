@@ -81,7 +81,8 @@ async function ensureOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
   directory?: string,
-  config?: Config
+  config?: Config,
+  customEnv?: Record<string, string>
 ): Promise<Process> {
   // Check if OpenCode is already running on this port
   const existingProcess = await findExistingOpencodeProcess(sandbox, port);
@@ -117,7 +118,13 @@ async function ensureOpencodeServer(
 
   // Try to start a new OpenCode server
   try {
-    return await startOpencodeServer(sandbox, port, directory, config);
+    return await startOpencodeServer(
+      sandbox,
+      port,
+      directory,
+      config,
+      customEnv
+    );
   } catch (startupError) {
     // Startup failed - check if another concurrent request started the server
     // This handles the race condition where multiple requests try to start simultaneously
@@ -163,7 +170,8 @@ async function startOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
   directory?: string,
-  config?: Config
+  config?: Config,
+  customEnv?: Record<string, string>
 ): Promise<Process> {
   getLogger().info('Starting OpenCode server', { port, directory });
 
@@ -218,6 +226,11 @@ async function startOpencodeServer(
         }
       }
     }
+  }
+
+  // Custom env vars override config-extracted ones
+  if (customEnv) {
+    Object.assign(env, customEnv);
   }
 
   const command = buildOpencodeCommand(port, directory);
@@ -309,7 +322,8 @@ export async function createOpencodeServer(
     sandbox,
     port,
     options?.directory,
-    options?.config
+    options?.config,
+    options?.env
   );
 
   return {
@@ -356,6 +370,11 @@ export async function createOpencodeServer(
  *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
  *       // }
  *     }
+ *   },
+ *   // Optional: Pass additional environment variables (e.g., for OTEL telemetry)
+ *   env: {
+ *     OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
+ *     TRACEPARENT: '00-abc123-def456-01'
  *   }
  * })
  *

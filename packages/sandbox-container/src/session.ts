@@ -91,12 +91,16 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { readFileSync, watch } from 'node:fs';
+import { link, mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import {
+  createNoOpLogger,
+  logCanonicalEvent,
+  redactCommand
+} from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -110,6 +114,29 @@ const STDERR_PREFIX = '\x02\x02\x02';
 // ============================================================================
 // Types
 // ============================================================================
+
+/** Accumulated state tracked during exec/execStream for canonical logging. */
+interface ExecState {
+  outcome?: 'success' | 'error';
+  durationMs?: number;
+  exitCode?: number;
+  stdoutLen?: number;
+  stderrLen?: number;
+  stderrPreview?: string;
+  errorMessage?: string;
+  /** exec-specific: timeout requested for this command */
+  timeout?: number;
+  /** execStream-specific: PID timed out */
+  pidTimeout?: boolean;
+  /** execStream-specific: PID obtained via fallback method */
+  pidFallback?: string;
+  /** execStream-specific: labeler output capture timed out */
+  labelerTimeout?: boolean;
+  /** execStream-specific: labeler timeout threshold in ms */
+  labelerTimeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
+}
 
 export interface SessionOptions {
   /** Session identifier (generated if not provided) */
@@ -165,6 +192,8 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
 }
 
 /** Command handle for tracking and killing running commands */
@@ -318,13 +347,11 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    this.logger.info('Command execution started', {
-      sessionId: this.id,
-      commandId,
-      operation: 'exec',
-      command: command.substring(0, 100),
-      ...(options?.timeoutMs && { timeout: options.timeoutMs })
-    });
+    const state: ExecState = {
+      ...(options?.timeoutMs && { timeout: options.timeoutMs }),
+      ...(options?.origin && { origin: options.origin })
+    };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -370,13 +397,13 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'exec',
-        exitCode,
-        duration
-      });
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.stdoutLen = stdout.length;
+      state.stderrLen = stderr.length;
+      state.stderrPreview =
+        stderr.length > 0 ? stderr.substring(0, 200) : undefined;
+      state.outcome = 'success';
 
       return {
         command,
@@ -387,19 +414,32 @@ export class Session {
         timestamp: new Date(startTime).toISOString()
       };
     } catch (error) {
-      this.logger.error(
-        'Command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'exec'
-        }
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
+    } finally {
+      const stderrPreview = state.stderrPreview
+        ? redactCommand(state.stderrPreview)
+        : undefined;
+      logCanonicalEvent(this.logger, {
+        event: 'command.exec',
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: state.exitCode,
+        stdoutLen: state.stdoutLen,
+        stderrLen: state.stderrLen,
+        stderrPreview,
+        origin: state.origin,
+        errorMessage: state.errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -430,12 +470,10 @@ export class Session {
     const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
-    this.logger.info('Streaming command execution started', {
-      sessionId: this.id,
-      commandId,
-      operation: 'execStream',
-      command: command.substring(0, 100)
-    });
+    const state: ExecState = {
+      ...(options?.origin && { origin: options.origin })
+    };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -466,14 +504,14 @@ export class Session {
       }
 
       // Wait for PID via FIFO (blocking read - guarantees synchronization)
-      const pid = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pidResult = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pid = pidResult.pid;
 
       if (pid === undefined) {
-        this.logger.warn('PID not received within timeout', {
-          sessionId: this.id,
-          commandId,
-          pidPipe
-        });
+        state.pidTimeout = true;
+      }
+      if (pidResult.pidFallback) {
+        state.pidFallback = pidResult.pidFallback;
       }
 
       yield {
@@ -488,8 +526,18 @@ export class Session {
       let position = 0;
       let exitCodeContent = '';
 
-      // Wait until exit code file exists, checking for shell death on each iteration
+      // Wait until exit code file exists, checking for shell death on each iteration.
+      // External kills via killCommand() can terminate the bash wrapper before it writes
+      // the exit code file, so killCommand() synthesizes one to unblock this loop.
+      // During destroy(), whichever happens first wins: reading the exit code yields
+      // complete, while shell teardown still surfaces SessionDestroyedError.
       while (true) {
+        const exitFile = Bun.file(exitCodeFile);
+        if (await exitFile.exists()) {
+          exitCodeContent = (await exitFile.text()).trim();
+          break;
+        }
+
         if (!this.isReady()) {
           if (this.shellExitedPromise) {
             await this.shellExitedPromise.catch((error) => {
@@ -497,12 +545,6 @@ export class Session {
             });
           }
           throw new SessionDestroyedError(this.id);
-        }
-
-        const exitFile = Bun.file(exitCodeFile);
-        if (await exitFile.exists()) {
-          exitCodeContent = (await exitFile.text()).trim();
-          break;
         }
 
         // Stream any new log content while waiting
@@ -558,11 +600,8 @@ export class Session {
       }
 
       if (!labelersDone) {
-        this.logger.warn('Output capture timeout - logs may be incomplete', {
-          commandId,
-          sessionId: this.id,
-          timeoutMs: maxWaitMs
-        });
+        state.labelerTimeout = true;
+        state.labelerTimeoutMs = maxWaitMs;
       }
 
       // Read final chunks from log file after labelers are done
@@ -609,13 +648,9 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Streaming command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'execStream',
-        exitCode,
-        duration
-      });
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.outcome = 'success';
 
       yield {
         type: 'complete',
@@ -638,15 +673,9 @@ export class Session {
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
-      this.logger.error(
-        'Streaming command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'execStream'
-        }
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -654,8 +683,21 @@ export class Session {
       yield {
         type: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: caughtError.message
       };
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'command.stream',
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: state.exitCode,
+        origin: state.origin,
+        errorMessage: state.errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -682,10 +724,18 @@ export class Session {
    * Foreground commands from exec() run synchronously and complete before returning,
    * so they cannot be killed mid-execution (use timeout instead).
    *
+   * Process tree teardown uses /proc to walk the child hierarchy from the root
+   * PID. This covers most real-world cases but has a known limitation: if the
+   * root process exits before a fresh tree walk, descendants spawned after the
+   * initial snapshot become invisible (reparented to PID 1). A process-group
+   * (PGID) or cgroup-based approach would eliminate this gap but requires
+   * changes to how commands are spawned.
+   *
    * @param commandId - The unique command identifier
+   * @param waitForExit - If true, wait for process exit and verify termination before returning. If false, attempt to kill return immediately.
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -701,10 +751,97 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          let syntheticExitCode: number;
+          const waitForPidsExit = async (
+            pids: number[],
+            timeoutMs: number
+          ): Promise<boolean> => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (pids.every((treePid) => !this.processExists(treePid))) {
+                return true;
+              }
+              await Bun.sleep(50);
+            }
+            return pids.every((treePid) => !this.processExists(treePid));
+          };
+
+          if (waitForExit) {
+            const treePids = this.getProcessTreePids(pid);
+
+            // Empty tree means every process already exited before we
+            // could observe it. Write a synthetic exit code so any
+            // in-flight execStream() poll is unblocked, then report
+            // the command as already completed.
+            if (treePids.length === 0) {
+              await this.writeExitCodeIfMissing(handle.exitCodeFile, 143);
+              this.runningCommands.delete(commandId);
+              return false;
+            }
+
+            this.terminateTree(pid, 'SIGTERM');
+
+            // Wait for the entire tree — not just the root — so every
+            // descendant gets the full 5-second SIGTERM grace period.
+            const treeExitedAfterTerm = await waitForPidsExit(treePids, 5000);
+
+            if (treeExitedAfterTerm) {
+              syntheticExitCode = 143;
+            } else {
+              // Re-walk the tree from the root to discover children
+              // spawned after the initial snapshot, then SIGKILL the
+              // union of fresh + original PIDs to cover both late
+              // descendants and orphans whose parent already exited.
+              this.terminateTree(pid, 'SIGKILL');
+
+              const freshPids = this.getProcessTreePids(pid);
+              const allPids = [...new Set([...treePids, ...freshPids])];
+
+              for (const treePid of allPids) {
+                if (this.processExists(treePid)) {
+                  try {
+                    process.kill(treePid, 'SIGKILL');
+                  } catch {
+                    // Process already exited
+                  }
+                }
+              }
+
+              await waitForPidsExit(allPids, 5000);
+              syntheticExitCode = 137;
+            }
+
+            // Final check for any stubborn survivors
+            const freshTreeCheck = this.getProcessTreePids(pid);
+            const allKnownPids = [...new Set([...treePids, ...freshTreeCheck])];
+            const pidsAlive = allKnownPids.filter((treePid) =>
+              this.processExists(treePid)
+            );
+            if (pidsAlive.length > 0) {
+              this.logger.warn(
+                'killCommand did not fully terminate process tree',
+                {
+                  commandId,
+                  pid,
+                  remainingPids: pidsAlive
+                }
+              );
+            }
+
+            await this.writeExitCodeIfMissing(
+              handle.exitCodeFile,
+              syntheticExitCode
+            );
+          } else {
+            // Fire-and-forget: SIGKILL is sent but process death is not awaited.
+            // destroy() uses this path because the session shell is torn down next.
+            this.terminateTree(pid, 'SIGKILL');
+            await this.writeExitCodeIfMissing(handle.exitCodeFile, 137);
+          }
 
           // Clean up
+          // execStream() also calls untrackCommand() after reading the exit file, so this
+          // eager delete keeps external kills idempotent across both cleanup paths.
           this.runningCommands.delete(commandId);
           return true;
         }
@@ -714,7 +851,11 @@ export class Session {
       this.runningCommands.delete(commandId);
       return false;
     } catch (error) {
-      // Process already dead or PID invalid
+      this.logger.error(
+        'killCommand encountered an unexpected error',
+        error instanceof Error ? error : new Error(String(error)),
+        { commandId }
+      );
       this.runningCommands.delete(commandId);
       return false;
     }
@@ -725,6 +866,109 @@ export class Session {
    */
   getRunningCommandIds(): string[] {
     return Array.from(this.runningCommands.keys());
+  }
+
+  /**
+   * Send a signal to a process and all its descendants, leaves first.
+   *
+   * The child list is read from /proc before signals are sent, so new children
+   * spawned between the read and signal delivery will not be signalled (TOCTOU).
+   * Callers should verify termination with getProcessTreePids() after signalling.
+   *
+   * @param targetPid - Root process ID
+   * @param signal - Signal to send
+   */
+  private terminateTree(targetPid: number, signal: NodeJS.Signals): void {
+    const killChildrenFirst = (pid: number): void => {
+      for (const childPid of this.getProcessChildren(pid)) {
+        killChildrenFirst(childPid);
+      }
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // Process already exited
+      }
+    };
+
+    killChildrenFirst(targetPid);
+  }
+
+  /**
+   * Get direct child PIDs of a process from /proc.
+   *
+   * @param pid - Process ID
+   * @returns Array of child PIDs
+   */
+  private getProcessChildren(pid: number): number[] {
+    try {
+      const childrenFile = `/proc/${pid}/task/${pid}/children`;
+      // Uses readFileSync intentionally so the tree walk does not yield between
+      // sibling reads while the process hierarchy is being traversed.
+      const children = readFileSync(childrenFile, 'utf8')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      return children
+        .map((child) => parseInt(child, 10))
+        .filter((value) => !Number.isNaN(value));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Return the full process-tree PIDs rooted at the target.
+   *
+   * @param pid - Process ID of root node
+   * @param visited - Internal recursion guard
+   * @returns Array of pids still known to exist
+   */
+  private getProcessTreePids(
+    pid: number,
+    visited: Set<number> = new Set()
+  ): number[] {
+    if (visited.has(pid)) {
+      return [];
+    }
+    visited.add(pid);
+
+    if (!this.processExists(pid)) {
+      return [];
+    }
+
+    const children = this.getProcessChildren(pid);
+
+    const descendants = children.flatMap((child) =>
+      this.getProcessTreePids(child, visited)
+    );
+
+    return [pid, ...descendants];
+  }
+
+  /**
+   * Check if a process is alive (not dead, not a zombie).
+   *
+   * @param pid - Process ID
+   * @returns true if the process is alive
+   */
+  private processExists(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return false;
+    }
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+      const match = status.match(/^State:\s+(\S)/m);
+      if (match && match[1] === 'Z') {
+        return false;
+      }
+    } catch {
+      // /proc entry vanished between the kill(0) check and the status read
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -748,7 +992,7 @@ export class Session {
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
@@ -1208,6 +1452,31 @@ export class Session {
     });
   }
 
+  private async writeExitCodeIfMissing(
+    exitCodeFile: string,
+    exitCode: number
+  ): Promise<void> {
+    const tmpFile = `${exitCodeFile}.synth.${process.pid}.${randomUUID()}`;
+
+    try {
+      await Bun.write(tmpFile, `${exitCode}\n`);
+      await link(tmpFile, exitCodeFile);
+    } catch (error) {
+      if (
+        !(
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'EEXIST'
+        )
+      ) {
+        throw error;
+      }
+    } finally {
+      await rm(tmpFile, { force: true });
+    }
+  }
+
   /**
    * Parse log file and separate stdout/stderr using binary prefixes
    */
@@ -1346,7 +1615,7 @@ export class Session {
     pidPipe: string,
     pidFile: string,
     timeoutMs: number = 5000
-  ): Promise<number | undefined> {
+  ): Promise<{ pid?: number; pidFallback?: string }> {
     const TIMEOUT_SENTINEL = Symbol('timeout');
 
     try {
@@ -1358,39 +1627,16 @@ export class Session {
       ]);
 
       if (typeof result === 'number') {
-        return result;
+        return { pid: result };
       }
 
       if (result === TIMEOUT_SENTINEL) {
         // The timed-out readPidFromPipe() is still blocked on open() - unblock it
         // to prevent leaking a file descriptor
         await this.unblockPidPipe(pidPipe);
-
-        this.logger.warn(
-          'PID pipe read timed out, falling back to file polling',
-          {
-            pidPipe,
-            pidFile,
-            timeoutMs
-          }
-        );
-      } else {
-        // readPidFromPipe returned undefined (empty or invalid content from shell)
-        this.logger.warn(
-          'PID pipe returned invalid content, falling back to file polling',
-          {
-            pidPipe,
-            pidFile
-          }
-        );
       }
-    } catch (error) {
+    } catch {
       // FIFO read failed, fall back to file polling
-      this.logger.warn('PID pipe read failed, falling back to file polling', {
-        pidPipe,
-        pidFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
     } finally {
       // Clean up the pipe
       try {
@@ -1401,7 +1647,8 @@ export class Session {
     }
 
     // Fallback: poll the PID file (less reliable but works)
-    return this.waitForPidFile(pidFile, 1000);
+    const pid = await this.waitForPidFile(pidFile, 1000);
+    return { pid, pidFallback: 'file_polling' };
   }
 
   /**

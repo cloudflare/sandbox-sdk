@@ -537,15 +537,30 @@ By killing children first, we ensure we get them while we still know they exist.
 // First try SIGTERM - give processes a chance to clean up gracefully
 killTree(pid, 'SIGTERM');
 
-// Wait up to 5 seconds for graceful exit
-await Promise.race([
-  this.waitForExitCode(exitCodeFile),
-  new Promise((_, reject) => setTimeout(() => reject(), 5000))
-]).catch(() => {
-  // Timeout - escalate to SIGKILL (force kill, no cleanup)
+// Wait up to 5 seconds for the entire tree to exit
+if (!(await waitForPidsExit(treePids, 5000))) {
+  // Re-walk the tree for late-spawned children, then SIGKILL everything
   killTree(pid, 'SIGKILL');
-});
+  // Also SIGKILL the original snapshot to cover orphans
+  for (const treePid of treePids) {
+    process.kill(treePid, 'SIGKILL');
+  }
+}
 ```
+
+**Known limitation: late-spawned descendants**
+
+The `/proc` tree walk covers the vast majority of real-world process trees, but has a TOCTOU (time-of-check-to-time-of-use) gap:
+
+1. We snapshot the tree via `/proc/<pid>/task/<pid>/children`
+2. We SIGTERM all known descendants and wait 5 seconds
+3. We re-walk the tree and SIGKILL any survivors
+
+The gap: if the root process dies before the re-walk, `/proc/<root>/...` no longer exists. Any descendants spawned after the initial snapshot get reparented to PID 1 and become invisible. For example, a Python script that spawns a subprocess in its SIGTERM handler, after its parent has already exited — that subprocess can survive the kill.
+
+**Why we accept it**: before the tree walk, only the root PID was signaled and every child was a potential orphan. The tree walk is a significant improvement that covers the common case.
+
+**How to fully close the gap**: start each background command in its own process group (`setsid`) and use `kill(-pgid, signal)` to signal the entire group. The kernel maintains group membership, so it survives parent death and reparenting. This would require changes to how `execStream()`/`startProcess()` spawn commands.
 
 ---
 

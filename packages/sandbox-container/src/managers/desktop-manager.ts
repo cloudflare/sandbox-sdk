@@ -204,8 +204,8 @@ export class DesktopManager {
     process.pid = proc.pid;
     process.startTime = new Date();
 
-    this.pipeOutput(proc.stdout, childLogger, 'info');
-    this.pipeOutput(proc.stderr, childLogger, 'warn');
+    this.pipeOutput(proc.stdout, childLogger, 'debug');
+    this.pipeOutput(proc.stderr, childLogger, 'debug');
 
     await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -219,7 +219,7 @@ export class DesktopManager {
   private async pipeOutput(
     stream: ReadableStream<Uint8Array> | null,
     logger: Logger,
-    level: 'info' | 'warn'
+    level: 'info' | 'warn' | 'debug'
   ): Promise<void> {
     if (!stream) return;
     try {

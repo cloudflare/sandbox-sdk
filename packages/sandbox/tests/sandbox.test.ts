@@ -929,7 +929,7 @@ describe('Sandbox - Automatic Session Management', () => {
         sandbox.setContainerTimeouts({
           instanceGetTimeoutMS: 30_000,
           portReadyTimeoutMS: 90_000,
-          waitIntervalMS: 1000
+          waitIntervalMS: 300
         })
       ).resolves.toBeUndefined();
     });
@@ -1031,6 +1031,42 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect((sandbox as any).sleepAfter).toBe(3600);
       expect(renewSpy).toHaveBeenCalled();
+    });
+
+    it('should persist sleepAfter to storage', async () => {
+      await sandbox.setSleepAfter('30m');
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('sleepAfter', '30m');
+    });
+
+    it('should restore sleepAfter from storage on restart', async () => {
+      const restartCtx = {
+        ...mockCtx,
+        storage: {
+          ...mockCtx.storage,
+          get: vi.fn().mockImplementation((key: string) => {
+            if (key === 'sleepAfter') return Promise.resolve('30m');
+            return Promise.resolve(null);
+          }),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          )
+      };
+
+      const restored = new Sandbox(
+        restartCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await vi.waitFor(() => {
+        expect((restored as any).sleepAfter).toBe('30m');
+      });
     });
   });
 

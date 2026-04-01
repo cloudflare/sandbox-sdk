@@ -36,6 +36,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -46,15 +47,11 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.origin !== undefined && { origin: options.origin })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
-
-      this.logSuccess(
-        'Command executed',
-        `${command}, Success: ${response.success}`
-      );
 
       // Call the callback if provided
       this.options.onCommandComplete?.(
@@ -67,8 +64,6 @@ export class CommandClient extends BaseHttpClient {
 
       return response;
     } catch (error) {
-      this.logError('execute', error);
-
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
@@ -92,6 +87,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
@@ -102,18 +98,15 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.origin !== undefined && { origin: options.origin })
       };
 
       // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/execute/stream', data);
 
-      this.logSuccess('Command stream started', command);
-
       return stream;
     } catch (error) {
-      this.logError('executeStream', error);
-
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
