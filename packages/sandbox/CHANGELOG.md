@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.4
+
+### Patch Changes
+
+- [#542](https://github.com/cloudflare/sandbox-sdk/pull/542) [`eb55c28`](https://github.com/cloudflare/sandbox-sdk/commit/eb55c286ac508a70e53f1f7acfaa4f8c1e84156a) Thanks [@dependabot](https://github.com/apps/dependabot)! - Upgrade Go toolchain to 1.25 and update dependencies in the desktop container variant, including a security fix for image processing (CVE-2026-33809).
+
 ## 0.8.3
 
 ### Patch Changes
