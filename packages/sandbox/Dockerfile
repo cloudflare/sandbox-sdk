@@ -222,7 +222,7 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 # Desktop variant — full Linux desktop with robotgo native control
 # ============================================================================
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 
 RUN mkdir -p /usr/local/share/ca-certificates
 RUN --mount=type=secret,id=wrangler_ca \
