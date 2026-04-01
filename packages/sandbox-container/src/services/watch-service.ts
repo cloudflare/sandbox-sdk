@@ -6,6 +6,7 @@ import type {
   Logger,
   WatchRequest
 } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { Subprocess } from 'bun';
 import type { ServiceResult } from '../core/types';
@@ -177,8 +178,7 @@ export class WatchService {
 
     const watchId = `watch-${++this.watchCounter}-${Date.now()}`;
     const args = this.buildInotifyArgs(path, options);
-    const watchLogger = this.logger.child({ watchId, path });
-    watchLogger.debug('Starting inotifywait', { args });
+    const startTime = Date.now();
 
     try {
       const proc = Bun.spawn(['inotifywait', ...args], {
@@ -207,12 +207,22 @@ export class WatchService {
 
       this.activeWatches.set(watchId, watch);
       this.watchIdsByKey.set(key, watchId);
-      this.runWatchLoop(watch, watchLogger);
+
+      const watchLogger = this.logger.child({ watchId, path });
+      this.runWatchLoop(watch, watchLogger, startTime);
 
       return serviceSuccess({ watch, created: true });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      watchLogger.error('Failed to start inotifywait', err);
+      logCanonicalEvent(this.logger, {
+        event: 'watch.start',
+        outcome: 'error',
+        durationMs: Date.now() - startTime,
+        path,
+        watchId,
+        errorMessage: err.message,
+        error: err
+      });
       return serviceError({
         message: `Failed to start file watcher: ${err.message}`,
         code: ErrorCode.WATCH_START_ERROR,
@@ -601,17 +611,17 @@ export class WatchService {
         type: 'stopped',
         reason: 'Watch process ended'
       };
+      const isError = resolvedTerminalEvent.type === 'error';
+      const reason = isError
+        ? resolvedTerminalEvent.error
+        : resolvedTerminalEvent.reason;
 
       this.activeWatches.delete(watchId);
       this.watchIdsByKey.delete(watch.key);
       this.clearRetainedWatchExpiry(watch);
 
       if (watch.readyState === 'pending') {
-        const terminalMessage =
-          resolvedTerminalEvent.type === 'error'
-            ? resolvedTerminalEvent.error
-            : resolvedTerminalEvent.reason;
-        this.rejectWatchReady(watch, new Error(terminalMessage));
+        this.rejectWatchReady(watch, new Error(reason));
       }
 
       this.broadcastTerminalEvent(watch, resolvedTerminalEvent);
@@ -641,13 +651,26 @@ export class WatchService {
           // Process may have already exited.
         }
       }
+
+      logCanonicalEvent(this.logger, {
+        event: 'watch.stop',
+        outcome: isError ? 'error' : 'success',
+        durationMs: Date.now() - watch.startedAt.getTime(),
+        path: watch.path,
+        watchId,
+        errorMessage: isError ? reason : undefined
+      });
     };
 
     watch.stopPromise = cleanup();
     return watch.stopPromise;
   }
 
-  private runWatchLoop(watch: ActiveWatch, logger: Logger): void {
+  private runWatchLoop(
+    watch: ActiveWatch,
+    logger: Logger,
+    startTime: number
+  ): void {
     const stdout = watch.process.stdout;
     const stderr = watch.process.stderr;
 
@@ -661,17 +684,25 @@ export class WatchService {
     void (async () => {
       try {
         if (stderr && typeof stderr !== 'number') {
-          const monitor = await this.waitForWatchesEstablished(stderr, logger);
+          const monitor = await this.waitForWatchesEstablished(stderr);
           this.continueStderrMonitoring(
             monitor.reader,
             monitor.decoder,
             monitor.buffer,
-            watch,
-            logger
+            watch
           );
         }
 
         this.resolveWatchReady(watch);
+
+        logCanonicalEvent(this.logger, {
+          event: 'watch.start',
+          outcome: 'success',
+          durationMs: Date.now() - startTime,
+          path: watch.path,
+          watchId: watch.id,
+          recursive: watch.recursive
+        });
 
         const reader = stdout.getReader();
         const decoder = new TextDecoder();
@@ -702,7 +733,10 @@ export class WatchService {
         });
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
-        logger.error('Error reading watch output', err);
+        logger.error('Error reading watch output', err, {
+          watchId: watch.id,
+          path: watch.path
+        });
         this.rejectWatchReady(watch, err);
         await this.stopWatchInternal(watch.id, errorEvent(err.message));
       }
@@ -878,8 +912,7 @@ export class WatchService {
   }
 
   private async waitForWatchesEstablished(
-    stderr: ReadableStream<Uint8Array>,
-    logger: Logger
+    stderr: ReadableStream<Uint8Array>
   ): Promise<{
     reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> };
     decoder: TextDecoder;
@@ -907,19 +940,12 @@ export class WatchService {
           }
 
           if (trimmed.includes('Watches established')) {
-            logger.debug('inotifywait watches established');
             return 'established';
           }
           if (trimmed.includes('Setting up watches')) {
-            logger.debug('inotifywait setting up watches', {
-              message: trimmed
-            });
             continue;
           }
 
-          logger.warn('inotifywait stderr during setup', {
-            message: trimmed
-          });
           throw new Error(trimmed);
         }
       }
@@ -939,10 +965,7 @@ export class WatchService {
       ]);
 
       if (result === 'timeout') {
-        const timeoutMessage =
-          'Timed out waiting for file watcher setup to complete';
-        logger.warn(timeoutMessage, { timeoutMs: WATCH_SETUP_TIMEOUT_MS });
-        throw new Error(timeoutMessage);
+        throw new Error('Timed out waiting for file watcher setup to complete');
       }
 
       return { reader, decoder, buffer };
@@ -960,8 +983,7 @@ export class WatchService {
     reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> },
     decoder: TextDecoder,
     initialBuffer: string,
-    watch: ActiveWatch,
-    logger: Logger
+    watch: ActiveWatch
   ): void {
     void (async () => {
       let buffer = initialBuffer;
@@ -986,19 +1008,15 @@ export class WatchService {
               trimmed.includes('Watches established') ||
               trimmed.includes('Setting up watches')
             ) {
-              logger.debug('inotifywait info', { message: trimmed });
               continue;
             }
 
-            logger.warn('inotifywait stderr', { message: trimmed });
             await this.stopWatchInternal(watch.id, errorEvent(trimmed));
             return;
           }
         }
-      } catch (error) {
-        logger.debug('stderr monitoring ended', {
-          error: error instanceof Error ? error.message : 'Unknown'
-        });
+      } catch {
+        // Stream closed or process terminated — expected during cleanup.
       }
     })();
   }

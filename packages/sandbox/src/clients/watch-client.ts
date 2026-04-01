@@ -22,18 +22,7 @@ export class WatchClient extends BaseHttpClient {
   async checkChanges(
     request: CheckChangesRequest
   ): Promise<CheckChangesResult> {
-    try {
-      const response = await this.post<CheckChangesResult>(
-        '/api/watch/check',
-        request
-      );
-
-      this.logSuccess('Checked retained file changes', request.path);
-      return response;
-    } catch (error) {
-      this.logError('checkChanges', error);
-      throw error;
-    }
+    return this.post<CheckChangesResult>('/api/watch/check', request);
   }
 
   /**
