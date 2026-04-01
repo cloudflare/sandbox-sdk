@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.8.3
+
+### Patch Changes
+
+- [#515](https://github.com/cloudflare/sandbox-sdk/pull/515) [`bf54f69`](https://github.com/cloudflare/sandbox-sdk/commit/bf54f696790ed9ef6b83ea4c6d3caef881940f4c) Thanks [@Muhammad-Bin-Ali](https://github.com/Muhammad-Bin-Ali)! - Fix slow parallel code context creation. Creating multiple contexts concurrently (e.g. 10 at once) no longer scales linearly with each request — wall time drops from ~5s to ~500ms.
+
+- [#493](https://github.com/cloudflare/sandbox-sdk/pull/493) [`fdd3efa`](https://github.com/cloudflare/sandbox-sdk/commit/fdd3efa45a97198c7b69c8578885ca29af803680) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `checkChanges()` for apps that disconnect and reconnect later but still need to know whether files changed in the meantime.
+
+  Use the returned `version` in a later call to learn whether a path is unchanged, changed, or needs a full resync. Retained change state lasts for the current container lifetime only.
+
 ## 0.8.2
 
 ### Patch Changes
