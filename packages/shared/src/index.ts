@@ -113,6 +113,9 @@ export type {
   // Bucket mounting types
   BucketCredentials,
   BucketProvider,
+  CheckChangesOptions,
+  CheckChangesRequest,
+  CheckChangesResult,
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,

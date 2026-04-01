@@ -195,38 +195,56 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Retag cached images for this PR
+      - name: Retag cached images
+        id: retag-cached
         if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit == 'true' }}
+        continue-on-error: true
         run: |
           source .github/load-docker-images.sh
+          source .github/crane-copy-retry.sh
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
-          pids=()
+          failed=0
           for image in "${DOCKER_IMAGES[@]}"; do
-            crane copy "${REGISTRY}/${image}:ci-${HASH}" "${REGISTRY}/${image}:${TAG}" &
-            pids+=($!)
+            crane_copy_retry "${REGISTRY}/${image}:ci-${HASH}" "${REGISTRY}/${image}:${TAG}" || failed=1
           done
-          for pid in "${pids[@]}"; do wait "$pid"; done
+          exit "$failed"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # --- Full Docker build (only when registry miss) ---
+      - name: Resolve Docker path
+        id: docker-path
+        if: ${{ !inputs.skip_docker }}
+        run: |
+          if [[ "${{ steps.registry-check.outputs.hit }}" != "true" ]]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "::notice::Docker path: full build (cache miss)"
+          elif [[ "${{ steps.retag-cached.outcome }}" == "failure" ]]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "::warning::Docker path: full build (retag failed, falling back)"
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+            echo "::notice::Docker path: cache retag"
+          fi
+
+      # --- Full Docker build (cache miss or retag fallback) ---
 
       - name: Set up Docker Buildx
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR (for build cache)
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Read Bun version
         id: bun-version
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         run: echo "version=$(cat .bun-version)" >> $GITHUB_OUTPUT
 
       - name: Build Docker images (bake)
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         uses: docker/bake-action@v6
         env:
           TAG: ${{ inputs.image_tag }}
@@ -240,14 +258,14 @@ jobs:
           load: true
 
       - name: Push base image to CF registry
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         run: npx wrangler containers push sandbox:${{ inputs.image_tag }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Build standalone image
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         run: |
           docker buildx build \
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ inputs.image_tag }} \
@@ -255,7 +273,7 @@ jobs:
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
       - name: Push remaining images to CF registry
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
         run: |
           source .github/load-docker-images.sh
           TAG="${{ inputs.image_tag }}"
@@ -271,24 +289,24 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Tag images with content hash
-        if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' && inputs.docker_hash != '' }}
+        if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' && inputs.docker_hash != '' }}
         run: |
           source .github/load-docker-images.sh
+          source .github/crane-copy-retry.sh
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
-          pids=()
+          failed=0
           for image in "${DOCKER_IMAGES[@]}"; do
-            crane copy "${REGISTRY}/${image}:${TAG}" "${REGISTRY}/${image}:ci-${HASH}" &
-            pids+=($!)
+            crane_copy_retry "${REGISTRY}/${image}:${TAG}" "${REGISTRY}/${image}:ci-${HASH}" || failed=1
           done
-          for pid in "${pids[@]}"; do wait "$pid"; done
+          exit "$failed"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Report image status
         id: image-status
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
           if [[ "${{ inputs.skip_docker }}" == "true" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT

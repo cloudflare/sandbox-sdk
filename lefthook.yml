@@ -5,7 +5,7 @@ pre-commit:
   commands:
     biome-fix:
       glob: '{packages,examples,sites}/**/*.{js,ts,tsx,astro}'
-      run: npx biome check --write {staged_files}
+      run: npx biome check --no-errors-on-unmatched --write {staged_files}
       stage_fixed: true
 
     format:

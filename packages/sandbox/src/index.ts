@@ -24,6 +24,8 @@ export type {
   BaseExecOptions,
   BucketCredentials,
   BucketProvider,
+  CheckChangesOptions,
+  CheckChangesResult,
   CodeContext,
   CreateContextOptions,
   DirectoryBackup,

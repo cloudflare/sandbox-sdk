@@ -54,6 +54,19 @@ describe('WatchService', () => {
     });
   });
 
+  describe('checkChanges', () => {
+    it('should return error for non-existent path', async () => {
+      const result = await watchService.checkChanges(
+        '/non/existent/path/12345'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.FILE_NOT_FOUND);
+      }
+    });
+  });
+
   describe('parseInotifyEvent', () => {
     // Access private method for testing via type assertion
     const testParseEvent = (service: WatchService, line: string) => {

@@ -3,6 +3,8 @@ import type {
   BackupOptions,
   BucketCredentials,
   BucketProvider,
+  CheckChangesOptions,
+  CheckChangesResult,
   CodeContext,
   CreateContextOptions,
   DirectoryBackup,
@@ -2959,6 +2961,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Check whether a path changed while this caller was disconnected.
+   *
+   * Pass the `version` returned from a prior call in `options.since` to learn
+   * whether the path is unchanged, changed, or needs a full resync because the
+   * retained change state was reset.
+   *
+   * @param path - Path to check (absolute or relative to /workspace)
+   * @param options - Change-check options
+   */
+  async checkChanges(
+    path: string,
+    options: CheckChangesOptions = {}
+  ): Promise<CheckChangesResult> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.checkChanges({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      since: options.since,
+      sessionId
+    });
+  }
+
+  /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
    * @param port - Port number to expose (1024-65535)
@@ -3396,6 +3423,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
       watch: (path, options) => this.watch(path, { ...options, sessionId }),
+      checkChanges: (path, options) =>
+        this.checkChanges(path, { ...options, sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>

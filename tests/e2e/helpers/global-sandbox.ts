@@ -32,6 +32,8 @@ export interface CreateTestSandboxOptions {
   type?: SandboxType;
   /** Command to run for initialization. Defaults to 'echo ready'. */
   initCommand?: string;
+  /** sleepAfter value applied to the sandbox for every request in this helper. */
+  sleepAfter?: string | number;
 }
 
 /**
@@ -41,7 +43,7 @@ export interface CreateTestSandboxOptions {
 export async function createTestSandbox(
   options: CreateTestSandboxOptions = {}
 ): Promise<TestSandbox> {
-  const { type = 'default', initCommand = 'echo ready' } = options;
+  const { type = 'default', initCommand = 'echo ready', sleepAfter } = options;
   const workerUrl = await getWorkerUrl();
   const sandboxId = createSandboxId();
 
@@ -51,6 +53,9 @@ export async function createTestSandbox(
     };
     if (type !== 'default') {
       h['X-Sandbox-Type'] = type;
+    }
+    if (sleepAfter !== undefined) {
+      h['X-Sandbox-Sleep-After'] = String(sleepAfter);
     }
     return h;
   };

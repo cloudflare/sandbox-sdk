@@ -8,6 +8,12 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 
+interface SandboxStateResponse {
+  status: 'healthy' | 'stopped' | 'stopped_with_code' | 'stopping';
+  lastChange: number;
+  exitCode?: number;
+}
+
 /**
  * Streaming Operations Edge Case Tests
  *
@@ -143,6 +149,81 @@ describe('Streaming Operations Edge Cases', () => {
     expect(completeEvent).toBeDefined();
     expect(completeEvent?.exitCode).toBe(0);
   }, 15000);
+
+  test('should keep a quiet execStream alive past sleepAfter', async () => {
+    const shortSleepSandbox = await createTestSandbox({ sleepAfter: '3s' });
+
+    try {
+      const streamResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/execStream`,
+        {
+          method: 'POST',
+          headers: shortSleepSandbox.headers(createUniqueSession()),
+          body: JSON.stringify({
+            command: "bash -c 'sleep 5; printf done'"
+          })
+        }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const startTime = Date.now();
+      const events = await collectSSEEvents(streamResponse, 20);
+      const duration = Date.now() - startTime;
+
+      expect(duration).toBeGreaterThan(4500);
+
+      const stdout = events
+        .filter((event) => event.type === 'stdout')
+        .map((event) => event.data)
+        .join('');
+      const completeEvent = events.find((event) => event.type === 'complete');
+
+      expect(stdout.trimEnd()).toBe('done');
+      expect(completeEvent?.exitCode).toBe(0);
+    } finally {
+      await cleanupTestSandbox(shortSleepSandbox);
+    }
+  }, 20000);
+
+  test('should still stop idle sandboxes after sleepAfter', async () => {
+    const shortSleepSandbox = await createTestSandbox({ sleepAfter: '3s' });
+
+    try {
+      const execResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/execute`,
+        {
+          method: 'POST',
+          headers: shortSleepSandbox.headers(createUniqueSession()),
+          body: JSON.stringify({ command: 'printf idle-check' })
+        }
+      );
+
+      expect(execResponse.status).toBe(200);
+
+      const stateHeaders = { ...shortSleepSandbox.headers() };
+      delete stateHeaders['X-Sandbox-Sleep-After'];
+
+      // Give the alarm loop time to observe idleness and persist the stopped state
+      // before checking it, without issuing repeated requests that can delay delivery.
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+
+      const stateResponse = await fetch(
+        `${shortSleepSandbox.workerUrl}/api/state`,
+        {
+          method: 'GET',
+          headers: stateHeaders
+        }
+      );
+
+      expect(stateResponse.status).toBe(200);
+
+      const state = (await stateResponse.json()) as SandboxStateResponse;
+      expect(['stopped', 'stopped_with_code']).toContain(state.status);
+    } finally {
+      await cleanupTestSandbox(shortSleepSandbox);
+    }
+  }, 30000);
 
   test('should stream file contents', async () => {
     // Create a test file first

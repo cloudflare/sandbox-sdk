@@ -732,6 +732,21 @@ export interface WatchOptions {
   sessionId?: string;
 }
 
+/**
+ * Options for checking whether a path changed while disconnected.
+ *
+ * Pass the `version` returned from a previous `checkChanges()` call to learn
+ * whether the path is unchanged, changed, or needs a full resync because the
+ * retained change state was reset. Change state lives only for the current
+ * container lifetime and may expire while idle.
+ */
+export interface CheckChangesOptions extends WatchOptions {
+  /**
+   * Version returned by a previous `checkChanges()` call.
+   */
+  since?: string;
+}
+
 // Internal types for SSE protocol (not user-facing)
 
 /**
@@ -758,6 +773,13 @@ export interface WatchRequest {
 }
 
 /**
+ * @internal Request body for checking retained change state.
+ */
+export interface CheckChangesRequest extends WatchRequest {
+  since?: string;
+}
+
+/**
  * SSE events emitted by `sandbox.watch()`.
  */
 export type FileWatchSSEEvent =
@@ -780,6 +802,24 @@ export type FileWatchSSEEvent =
   | {
       type: 'stopped';
       reason: string;
+    };
+
+/**
+ * Result returned by `checkChanges()`.
+ */
+export type CheckChangesResult =
+  | {
+      success: true;
+      status: 'unchanged' | 'changed';
+      version: string;
+      timestamp: string;
+    }
+  | {
+      success: true;
+      status: 'resync';
+      reason: 'expired' | 'restarted';
+      version: string;
+      timestamp: string;
     };
 
 // Process management result types
@@ -977,6 +1017,10 @@ export interface ExecutionSession {
     path: string,
     options?: Omit<WatchOptions, 'sessionId'>
   ): Promise<ReadableStream<Uint8Array>>;
+  checkChanges(
+    path: string,
+    options?: Omit<CheckChangesOptions, 'sessionId'>
+  ): Promise<CheckChangesResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1234,6 +1278,10 @@ export interface ISandbox {
     path: string,
     options?: WatchOptions
   ): Promise<ReadableStream<Uint8Array>>;
+  checkChanges(
+    path: string,
+    options?: CheckChangesOptions
+  ): Promise<CheckChangesResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
