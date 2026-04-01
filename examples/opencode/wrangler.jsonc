@@ -11,6 +11,14 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+     "ANTHROPIC_API_KEY": "",
+     "CLOUDFLARE_AI_GATEWAY_URL": "",
+     "CLOUDFLARE_GATEWAY_ID": "",
+     "CLOUDFLARE_AI_GATEWAY_TOKEN": "",
+     "CLOUDFLARE_API_TOKEN": "",
+     "CLOUDFLARE_ACCOUNT_ID": ""
+  },
   /**
    * Smart Placement
    * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
