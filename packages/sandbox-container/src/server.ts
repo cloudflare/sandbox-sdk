@@ -1,6 +1,7 @@
 import { createLogger } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
+import { trustRuntimeCert } from './cert';
 import { Container } from './core/container';
 import { Router } from './core/router';
 import type { PtyWSData } from './handlers/pty-ws-handler';
@@ -9,10 +10,9 @@ import {
   generateConnectionId,
   WebSocketAdapter
 } from './handlers/ws-adapter';
+import { setupRoutes } from './routes/setup';
 
 export type WSData = (ControlWSData & { type: 'control' }) | PtyWSData;
-
-import { setupRoutes } from './routes/setup';
 
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
@@ -202,6 +202,10 @@ export async function startServer(): Promise<ServerInstance> {
     port: SERVER_PORT,
     hostname: '0.0.0.0'
   });
+
+  // Server is now listening, the platform injects the cert after the container
+  // is ready, so wait for it to be available before proceeding.
+  await trustRuntimeCert();
 
   return {
     port: SERVER_PORT,
