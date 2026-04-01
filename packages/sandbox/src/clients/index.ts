@@ -41,7 +41,12 @@ export {
 // Client types and interfaces
 // =============================================================================
 
-export type { WatchRequest } from '@repo/shared';
+export type {
+  CheckChangesOptions,
+  CheckChangesRequest,
+  CheckChangesResult,
+  WatchRequest
+} from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
 // Desktop client types

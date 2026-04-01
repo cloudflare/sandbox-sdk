@@ -1,6 +1,5 @@
 # Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
 ARG BUN_VERSION=1
-ARG BUILD_INTERNAL_SERVER_PORT=8671
 FROM oven/bun:${BUN_VERSION} AS bun-binary
 
 # Sandbox container images (default and python variants)
@@ -148,9 +147,8 @@ COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
 RUN mkdir -p /workspace
 
-# Control plane port — only needed for local development with wrangler dev.
-ARG BUILD_INTERNAL_SERVER_PORT
-EXPOSE ${BUILD_INTERNAL_SERVER_PORT}
+# Expose the application port (3000 for control)
+EXPOSE 3000
 
 # ============================================================================
 # Stage 5a: Default image - lean, no Python
@@ -216,7 +214,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-# Expose OpenCode server port (in addition to control port from runtime-base)
+# Expose OpenCode server port (in addition to 3000 from runtime-base)
 EXPOSE 4096
 
 ENTRYPOINT ["/container-server/sandbox"]
@@ -281,7 +279,6 @@ ENTRYPOINT ["/container-server/sandbox"]
 FROM alpine:3.21 AS musl
 
 ARG SANDBOX_VERSION=unknown
-ARG BUILD_INTERNAL_SERVER_PORT
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
@@ -310,7 +307,7 @@ COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
 RUN mkdir -p /workspace
 
-EXPOSE ${BUILD_INTERNAL_SERVER_PORT}
+EXPOSE 3000
 
 ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=0

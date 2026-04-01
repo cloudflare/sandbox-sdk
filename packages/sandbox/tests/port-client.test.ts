@@ -27,7 +27,7 @@ describe('PortClient', () => {
 
     client = new PortClient({
       baseUrl: 'http://test.com',
-      port: 8671
+      port: 3000
     });
   });
 

@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.8.2
+
+### Patch Changes
+
+- [#544](https://github.com/cloudflare/sandbox-sdk/pull/544) [`9a2f553`](https://github.com/cloudflare/sandbox-sdk/commit/9a2f553b06cf15a38e629de49d0d7b1d0bec10b7) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Require `@cloudflare/containers` 0.2.2 or newer so long-running streamed commands stay alive past `sleepAfter` while work is still in progress.
+
+## 0.8.1
+
+### Patch Changes
+
+- [#487](https://github.com/cloudflare/sandbox-sdk/pull/487) [`19076fb`](https://github.com/cloudflare/sandbox-sdk/commit/19076fb6c80d2981c2f2e40dcda0911247e81543) Thanks [@scuffi](https://github.com/scuffi)! - Process termination now walks the command's process tree so killing a process also terminates child processes started by that command
+
 ## 0.8.0
 
 ### Minor Changes

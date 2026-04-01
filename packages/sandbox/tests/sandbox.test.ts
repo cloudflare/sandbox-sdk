@@ -143,6 +143,13 @@ describe('Sandbox - Automatic Session Management', () => {
       path: '/test.txt',
       timestamp: new Date().toISOString()
     } as any);
+
+    vi.spyOn(sandbox.client.watch, 'checkChanges').mockResolvedValue({
+      success: true,
+      status: 'unchanged',
+      version: 'watch-1:0',
+      timestamp: new Date().toISOString()
+    } as any);
   });
 
   afterEach(() => {
@@ -193,6 +200,22 @@ describe('Sandbox - Automatic Session Management', () => {
           cwd: '/workspace/project'
         }
       );
+    });
+
+    it('should forward checkChanges options to the watch client', async () => {
+      await sandbox.checkChanges('/workspace/test', {
+        since: 'watch-1:0',
+        recursive: false
+      });
+
+      expect(sandbox.client.watch.checkChanges).toHaveBeenCalledWith({
+        path: '/workspace/test',
+        recursive: false,
+        include: undefined,
+        exclude: undefined,
+        since: 'watch-1:0',
+        sessionId: expect.stringMatching(/^sandbox-/)
+      });
     });
 
     it('should reuse default session across multiple operations', async () => {
@@ -310,7 +333,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
         id: 'custom-session-123',
-        env: expect.objectContaining({ NODE_ENV: 'test' }),
+        env: { NODE_ENV: 'test' },
         cwd: '/test'
       });
 
@@ -530,10 +553,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
         id: expect.any(String),
-        env: expect.objectContaining({
-          NODE_ENV: 'production',
-          DEBUG: 'true'
-        }),
+        env: { NODE_ENV: 'production', DEBUG: 'true' },
         cwd: '/workspace'
       });
     });

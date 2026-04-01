@@ -79,7 +79,7 @@ describe('FileHandler', () => {
         data: fileContent
       });
 
-      const request = new Request('http://localhost:8671/api/read', {
+      const request = new Request('http://localhost:3000/api/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readFileData)
@@ -115,7 +115,7 @@ describe('FileHandler', () => {
         data: 'file content'
       });
 
-      const request = new Request('http://localhost:8671/api/read', {
+      const request = new Request('http://localhost:3000/api/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readFileData)
@@ -151,7 +151,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/read', {
+      const request = new Request('http://localhost:3000/api/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readFileData)
@@ -181,7 +181,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/write', {
+      const request = new Request('http://localhost:3000/api/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(writeFileData)
@@ -216,7 +216,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/write', {
+      const request = new Request('http://localhost:3000/api/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(writeFileData)
@@ -248,7 +248,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/write', {
+      const request = new Request('http://localhost:3000/api/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(writeFileData)
@@ -275,7 +275,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/delete', {
+      const request = new Request('http://localhost:3000/api/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(deleteFileData)
@@ -305,7 +305,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/delete', {
+      const request = new Request('http://localhost:3000/api/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(deleteFileData)
@@ -333,7 +333,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/rename', {
+      const request = new Request('http://localhost:3000/api/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(renameFileData)
@@ -368,7 +368,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/rename', {
+      const request = new Request('http://localhost:3000/api/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(renameFileData)
@@ -396,7 +396,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/move', {
+      const request = new Request('http://localhost:3000/api/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(moveFileData)
@@ -431,7 +431,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/move', {
+      const request = new Request('http://localhost:3000/api/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(moveFileData)
@@ -459,7 +459,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/mkdir', {
+      const request = new Request('http://localhost:3000/api/mkdir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mkdirData)
@@ -492,7 +492,7 @@ describe('FileHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:8671/api/mkdir', {
+      const request = new Request('http://localhost:3000/api/mkdir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mkdirData)
@@ -529,7 +529,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/mkdir', {
+      const request = new Request('http://localhost:3000/api/mkdir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mkdirData)
@@ -558,7 +558,7 @@ describe('FileHandler', () => {
         data: true
       });
 
-      const request = new Request('http://localhost:8671/api/exists', {
+      const request = new Request('http://localhost:3000/api/exists', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(existsData)
@@ -590,7 +590,7 @@ describe('FileHandler', () => {
         data: false
       });
 
-      const request = new Request('http://localhost:8671/api/exists', {
+      const request = new Request('http://localhost:3000/api/exists', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(existsData)
@@ -619,7 +619,7 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:8671/api/exists', {
+      const request = new Request('http://localhost:3000/api/exists', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(existsData)
@@ -636,7 +636,7 @@ describe('FileHandler', () => {
   describe('route handling', () => {
     it('should return 500 for invalid endpoints', async () => {
       const request = new Request(
-        'http://localhost:8671/api/invalid-operation',
+        'http://localhost:3000/api/invalid-operation',
         {
           method: 'POST'
         }
@@ -653,7 +653,7 @@ describe('FileHandler', () => {
     });
 
     it('should handle root path correctly', async () => {
-      const request = new Request('http://localhost:8671/', {
+      const request = new Request('http://localhost:3000/', {
         method: 'GET'
       });
 
@@ -677,7 +677,7 @@ describe('FileHandler', () => {
         data: 'file content'
       });
 
-      const request = new Request('http://localhost:8671/api/read', {
+      const request = new Request('http://localhost:3000/api/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readFileData)
@@ -695,7 +695,7 @@ describe('FileHandler', () => {
     });
 
     it('should include CORS headers in error responses', async () => {
-      const request = new Request('http://localhost:8671/api/invalid', {
+      const request = new Request('http://localhost:3000/api/invalid', {
         method: 'POST'
       });
 
@@ -750,7 +750,7 @@ describe('FileHandler', () => {
         }
 
         const request = new Request(
-          `http://localhost:8671${operation.endpoint}`,
+          `http://localhost:3000${operation.endpoint}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

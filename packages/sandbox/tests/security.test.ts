@@ -1,4 +1,3 @@
-import { DEFAULT_CONTROL_PORT } from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 import {
   SecurityError,
@@ -6,51 +5,33 @@ import {
   validatePort
 } from '../src/security';
 
-const CONTROL_PORT = DEFAULT_CONTROL_PORT;
-
 describe('validatePort', () => {
-  it('accepts valid user ports (1024-65535 except control port)', () => {
-    expect(validatePort(1024, CONTROL_PORT)).toBe(true);
-    expect(validatePort(3000, CONTROL_PORT)).toBe(true);
-    expect(validatePort(8080, CONTROL_PORT)).toBe(true);
-    expect(validatePort(8787, CONTROL_PORT)).toBe(true);
-    expect(validatePort(65535, CONTROL_PORT)).toBe(true);
+  it('accepts valid user ports (1024-65535 except 3000)', () => {
+    expect(validatePort(1024)).toBe(true); // first non-privileged
+    expect(validatePort(8080)).toBe(true); // common
+    expect(validatePort(8787)).toBe(true); // was incorrectly blocked - this is the bug fix
+    expect(validatePort(65535)).toBe(true); // max
   });
 
-  it('rejects the control port', () => {
-    expect(validatePort(CONTROL_PORT, CONTROL_PORT)).toBe(false);
+  it('rejects port 3000 (sandbox control plane)', () => {
+    expect(validatePort(3000)).toBe(false);
   });
 
   it('rejects privileged ports (< 1024)', () => {
-    expect(validatePort(0, CONTROL_PORT)).toBe(false);
-    expect(validatePort(80, CONTROL_PORT)).toBe(false);
-    expect(validatePort(1023, CONTROL_PORT)).toBe(false);
+    expect(validatePort(0)).toBe(false);
+    expect(validatePort(80)).toBe(false);
+    expect(validatePort(1023)).toBe(false); // boundary
   });
 
   it('rejects out-of-range ports', () => {
-    expect(validatePort(-1, CONTROL_PORT)).toBe(false);
-    expect(validatePort(65536, CONTROL_PORT)).toBe(false);
+    expect(validatePort(-1)).toBe(false);
+    expect(validatePort(65536)).toBe(false);
   });
 
   it('rejects non-integers', () => {
-    expect(validatePort(8080.5, CONTROL_PORT)).toBe(false);
-    expect(validatePort(NaN, CONTROL_PORT)).toBe(false);
-    expect(validatePort(Infinity, CONTROL_PORT)).toBe(false);
-  });
-
-  describe('with custom control port', () => {
-    it('rejects the custom control port', () => {
-      expect(validatePort(9500, 9500)).toBe(false);
-    });
-
-    it('accepts the default port when a different control port is specified', () => {
-      expect(validatePort(DEFAULT_CONTROL_PORT, 9500)).toBe(true);
-    });
-
-    it('still rejects privileged and out-of-range ports', () => {
-      expect(validatePort(80, 9500)).toBe(false);
-      expect(validatePort(65536, 9500)).toBe(false);
-    });
+    expect(validatePort(3000.5)).toBe(false);
+    expect(validatePort(NaN)).toBe(false);
+    expect(validatePort(Infinity)).toBe(false);
   });
 });
 

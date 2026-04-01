@@ -1,4 +1,6 @@
 import {
+  type CheckChangesRequest,
+  type CheckChangesResult,
   type FileWatchSSEEvent,
   parseSSEFrames,
   type SSEPartialEvent,
@@ -11,9 +13,18 @@ import { BaseHttpClient } from './base-client';
  * Uses inotify under the hood for native filesystem event notifications
  *
  * @internal This client is used internally by the SDK.
- * Users should use `sandbox.watch()` instead.
+ * Users should use `sandbox.watch()` or `sandbox.checkChanges()` instead.
  */
 export class WatchClient extends BaseHttpClient {
+  /**
+   * Check whether a path changed since a previously returned version.
+   */
+  async checkChanges(
+    request: CheckChangesRequest
+  ): Promise<CheckChangesResult> {
+    return this.post<CheckChangesResult>('/api/watch/check', request);
+  }
+
   /**
    * Start watching a directory for changes.
    * The returned promise resolves only after the watcher is established

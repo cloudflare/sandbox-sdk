@@ -202,7 +202,15 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         with:
           node-version: 24
-          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
+
+      - name: Restore npm package cache
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -330,7 +338,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
+
+      - name: Restore npm package cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -376,7 +391,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
+
+      - name: Restore npm package cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -422,7 +444,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
+
+      - name: Restore npm package cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
 
       - uses: actions/cache/restore@v5
         id: nm-cache

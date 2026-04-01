@@ -68,6 +68,14 @@ export class ProcessManager {
    * Interprets an exit code to determine process status
    */
   interpretExitCode(exitCode: number): ProcessStatus {
-    return exitCode === 0 ? 'completed' : 'failed';
+    if (exitCode === 0) {
+      return 'completed';
+    }
+
+    if (exitCode === 137 || exitCode === 143) {
+      return 'killed';
+    }
+
+    return 'failed';
   }
 }

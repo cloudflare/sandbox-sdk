@@ -9,7 +9,7 @@
  * - Recursive vs non-recursive watching
  */
 
-import type { FileWatchSSEEvent } from '@repo/shared';
+import type { CheckChangesResult, FileWatchSSEEvent } from '@repo/shared';
 import {
   afterAll,
   beforeAll,
@@ -184,6 +184,31 @@ describe('File Watch Workflow', () => {
     await expectOk(response, `deleteFile(${path})`);
   }
 
+  async function checkChanges(
+    path: string,
+    options: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+      since?: string;
+    } = {}
+  ): Promise<CheckChangesResult> {
+    const response = await fetch(`${workerUrl}/api/watch/check`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        since: options.since
+      })
+    });
+
+    await expectOk(response, `checkChanges(${path})`);
+    return (await response.json()) as CheckChangesResult;
+  }
+
   test('should establish watch and receive watching event', async () => {
     testDir = sandbox!.uniquePath('watch-establish');
     await createDir(testDir);
@@ -200,6 +225,46 @@ describe('File Watch Workflow', () => {
     if (events[0].type === 'watching') {
       expect(events[0].path).toBe(testDir);
     }
+  }, 30000);
+
+  test('should report unchanged when starting retained change tracking', async () => {
+    testDir = sandbox!.uniquePath('watch-check-baseline');
+    await createDir(testDir);
+
+    const result = await checkChanges(testDir);
+
+    expect(result.status).toBe('unchanged');
+    expect(result.version).toMatch(/^watch-\d+-\d+:0$/);
+  }, 30000);
+
+  test('should retain changed state across reconnect gaps', async () => {
+    testDir = sandbox!.uniquePath('watch-check-retain');
+    await createDir(testDir);
+
+    const first = await checkChanges(testDir);
+    expect(first.status).toBe('unchanged');
+
+    await createFile(`${testDir}/changed.txt`, 'hello');
+
+    const second = await checkChanges(testDir, {
+      since: first.version
+    });
+
+    expect(second.status).toBe('changed');
+    expect(second.version).not.toBe(first.version);
+  }, 30000);
+
+  test('should report unchanged when no files changed since the version', async () => {
+    testDir = sandbox!.uniquePath('watch-check-unchanged');
+    await createDir(testDir);
+
+    const first = await checkChanges(testDir);
+    const second = await checkChanges(testDir, {
+      since: first.version
+    });
+
+    expect(second.status).toBe('unchanged');
+    expect(second.version).toBe(first.version);
   }, 30000);
 
   test('should detect file creation', async () => {

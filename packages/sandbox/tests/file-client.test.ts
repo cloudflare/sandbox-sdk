@@ -30,7 +30,7 @@ describe('FileClient', () => {
 
     client = new FileClient({
       baseUrl: 'http://test.com',
-      port: 8671
+      port: 3000
     });
   });
 
