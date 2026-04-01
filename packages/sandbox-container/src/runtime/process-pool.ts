@@ -312,6 +312,7 @@ export class ProcessPoolManager {
         executor.process.removeListener('exit', executor.exitHandler);
       }
       executor.process.kill();
+      this.executorLocks.delete(executor.id);
       this.releaseProcessSlot(executor.id);
       throw err;
     }
