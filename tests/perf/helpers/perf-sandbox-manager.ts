@@ -28,6 +28,13 @@ export interface CommandResult {
   stderr: string;
 }
 
+export interface FileResult {
+  success: boolean;
+  duration: number;
+  content?: string;
+  error?: string;
+}
+
 export class PerfSandboxManager {
   private workerUrl: string;
   private sandboxType: string;
@@ -126,6 +133,61 @@ export class PerfSandboxManager {
         exitCode: -1,
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Write content to a file in a sandbox
+   */
+  async writeFile(
+    sandbox: SandboxInstance,
+    path: string,
+    content: string
+  ): Promise<FileResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ path, content })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Read content from a file in a sandbox
+   */
+  async readFile(sandbox: SandboxInstance, path: string): Promise<FileResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ path })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      const result = (await response.json()) as { content?: string };
+      return { success: true, duration, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
       };
     }
   }

@@ -14,10 +14,12 @@ on:
           - sustained-throughput
           - bursty-traffic
           - concurrent-creation
+          - burst-startup
+          - file-io
   release:
     types: [published]
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * *'
 
 permissions:
   contents: read
@@ -175,3 +177,12 @@ jobs:
           name: perf-baseline
           path: perf-results/latest.json
           retention-days: 7
+
+      - name: Ingest results into D1
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PERF_D1_DATABASE_ID: ${{ secrets.PERF_D1_DATABASE_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: npx tsx tests/perf/scripts/ingest-to-d1.ts perf-results/latest.json

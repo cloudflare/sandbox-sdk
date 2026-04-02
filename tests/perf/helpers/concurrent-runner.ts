@@ -96,10 +96,11 @@ export async function runBurst<T>(
   const maxDuration = options?.maxDuration || 120000;
 
   const start = performance.now();
-  const promises: Promise<
-    | { index: number; result: T; duration: number }
-    | { index: number; error: Error; duration: number }
-  >[] = [];
+  const results: ConcurrentResult<T>['results'] = [];
+  const promises: Promise<void>[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+  let timedOut = false;
 
   for (let i = 0; i < count; i++) {
     if (i > 0) {
@@ -111,65 +112,42 @@ export async function runBurst<T>(
 
     promises.push(
       operation()
-        .then((result) => ({
-          index,
-          result,
-          duration: performance.now() - opStart
-        }))
-        .catch((error) => ({
-          index,
-          error: error as Error,
-          duration: performance.now() - opStart
-        }))
+        .then((result) => {
+          if (timedOut) return;
+          results.push({
+            index,
+            result,
+            duration: performance.now() - opStart
+          });
+          successCount++;
+        })
+        .catch((error) => {
+          if (timedOut) return;
+          results.push({
+            index,
+            error: error as Error,
+            duration: performance.now() - opStart
+          });
+          failureCount++;
+        })
     );
   }
 
-  // Wait for all with timeout
   let timeoutId: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(
-      () => reject(new Error('Burst timeout')),
-      maxDuration
-    );
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve(true);
+    }, maxDuration);
   });
 
-  try {
-    const results = await Promise.race([Promise.all(promises), timeoutPromise]);
-    clearTimeout(timeoutId!);
+  await Promise.race([Promise.all(promises).then(() => false), timeoutPromise]);
+  clearTimeout(timeoutId!);
 
-    let successCount = 0;
-    let failureCount = 0;
-    for (const r of results) {
-      if ('result' in r) successCount++;
-      else failureCount++;
-    }
-
-    return {
-      results,
-      totalDuration: performance.now() - start,
-      successCount,
-      failureCount
-    };
-  } catch {
-    // Timeout - return partial results
-    const settled = await Promise.allSettled(promises);
-    let successCount = 0;
-    let failureCount = 0;
-    const results: ConcurrentResult<T>['results'] = [];
-
-    for (const s of settled) {
-      if (s.status === 'fulfilled') {
-        results.push(s.value);
-        if ('result' in s.value) successCount++;
-        else failureCount++;
-      }
-    }
-
-    return {
-      results,
-      totalDuration: performance.now() - start,
-      successCount,
-      failureCount
-    };
-  }
+  return {
+    results: [...results].sort((a, b) => a.index - b.index),
+    totalDuration: performance.now() - start,
+    successCount,
+    failureCount
+  };
 }

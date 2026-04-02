@@ -20,6 +20,11 @@
     "test:perf:concurrent": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/concurrent-creation.test.ts",
     "test:perf:sustained": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/sustained-throughput.test.ts",
     "test:perf:burst": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/bursty-traffic.test.ts",
+    "test:perf:burst-startup": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/burst-startup.test.ts",
+    "test:perf:file-io": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/file-io.test.ts",
+    "perf:ingest": "npx tsx tests/perf/scripts/ingest-to-d1.ts",
+    "perf:ingest:dry-run": "npx tsx tests/perf/scripts/ingest-to-d1.ts tests/perf/scripts/fixture-report.json --dry-run",
+    "perf:query": "wrangler d1 execute perf-results --remote --command",
     "docker:rebuild": "npm run build:clean && npm run docker:local -w @cloudflare/sandbox"
   },
   "keywords": [],
