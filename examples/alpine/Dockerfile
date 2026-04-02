@@ -1,4 +1,4 @@
 FROM docker.io/cloudflare/sandbox:0.8.4-musl
 
-# Required during local development to access exposed ports
+# Documents the ports this application uses (standard Docker convention)
 EXPOSE 8080

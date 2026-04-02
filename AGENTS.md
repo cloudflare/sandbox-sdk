@@ -109,7 +109,7 @@ From an example directory (e.g., `examples/minimal/`):
 npm run dev                # Start wrangler dev server (builds Docker on first run)
 ```
 
-**Local development gotcha**: When testing port exposure with `wrangler dev`, the Dockerfile must include `EXPOSE` directives for those ports. Without `EXPOSE`, you'll see "Connection refused: container port not found". This is only required for local dev - production automatically makes all ports accessible.
+**`EXPOSE` directives**: The underlying containers primitive does not require `EXPOSE` directives — all ports are accessible in both local dev and production without them. Including `EXPOSE` is still recommended as it documents which ports your application uses (standard Docker convention).
 
 ## Development Workflow
 

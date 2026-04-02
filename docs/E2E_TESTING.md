@@ -89,17 +89,14 @@ await fetch(`${workerUrl}/api/file/write`, {
 
 ### Port Usage
 
-Ports must be exposed in the Dockerfile. Currently exposed:
+Ports documented in the test Dockerfiles for reference:
 
 - `8080` - General testing
 - `9090`, `9091`, `9092` - Process readiness tests
 - `9998` - Process lifecycle tests
 - `9999` - WebSocket tests
 
-To use a new port:
-
-1. Add it to both `tests/e2e/test-worker/Dockerfile` and `Dockerfile.python`
-2. Document which test uses it
+`EXPOSE` directives are not required by the platform — all ports are accessible in both local dev and production. They are kept as documentation of which ports each test uses.
 
 ### Process Cleanup
 

@@ -5,5 +5,5 @@ COPY sandbox-app/package.json ./
 RUN npm install
 COPY sandbox-app/ ./
 
-# Required during local development to access exposed ports
+# Documents the ports this application uses (standard Docker convention)
 EXPOSE 5173

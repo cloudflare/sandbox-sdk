@@ -16,5 +16,5 @@ RUN node --version && npm --version && esbuild --version
 # Set default workspace
 WORKDIR /workspace
 
-# Required for local development (preview URLs)
+# Documents the ports this application uses (standard Docker convention)
 EXPOSE 8080
