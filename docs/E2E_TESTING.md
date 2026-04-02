@@ -163,5 +163,4 @@ npm run test:e2e:browser
 
 - **Don't create new sandboxes unless strictly necessary** - use `getSharedSandbox()`
 - **Don't skip cleanup** - leaked processes affect other tests
-- **Don't use hardcoded ports** without adding to Dockerfile
 - **Don't rely on filesystem state** from other tests - use unique paths
