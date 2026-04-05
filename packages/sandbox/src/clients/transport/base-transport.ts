@@ -104,6 +104,78 @@ export abstract class BaseTransport implements ITransport {
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>>;
 
+  // ---------------------------------------------------------------------------
+  // Shared HTTP primitives — used by HttpTransport as its primary path and by
+  // WebSocketTransport as a fallback during connection establishment.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a URL targeting the container's HTTP server.
+   */
+  protected buildContainerUrl(path: string): string {
+    if (this.config.stub) {
+      return `http://localhost:${this.config.port || 3000}${path}`;
+    }
+    const baseUrl =
+      this.config.baseUrl ?? `http://localhost:${this.config.port || 3000}`;
+    return `${baseUrl}${path}`;
+  }
+
+  /**
+   * Single HTTP request to the container — no WebSocket, no 503 retry.
+   */
+  protected httpFetch(path: string, options?: RequestInit): Promise<Response> {
+    const url = this.buildContainerUrl(path);
+    if (this.config.stub) {
+      return this.config.stub.containerFetch(
+        url,
+        options || {},
+        this.config.port
+      );
+    }
+    return globalThis.fetch(url, options);
+  }
+
+  /**
+   * Streaming HTTP request to the container — no WebSocket, no 503 retry.
+   */
+  protected async httpFetchStream(
+    path: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST',
+    headers?: Record<string, string>
+  ): Promise<ReadableStream<Uint8Array>> {
+    const url = this.buildContainerUrl(path);
+    const init: RequestInit = {
+      method,
+      headers:
+        body && method === 'POST'
+          ? { ...headers, 'Content-Type': 'application/json' }
+          : headers,
+      body: body && method === 'POST' ? JSON.stringify(body) : undefined
+    };
+
+    let response: Response;
+    if (this.config.stub) {
+      response = await this.config.stub.containerFetch(
+        url,
+        init,
+        this.config.port
+      );
+    } else {
+      response = await globalThis.fetch(url, init);
+    }
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
+    }
+    if (!response.body) {
+      throw new Error('No response body for streaming');
+    }
+    return response.body;
+  }
+
   /**
    * Sleep utility for retry delays
    */

@@ -135,7 +135,7 @@ export class WebSocketTransport extends BaseTransport {
     options?: RequestInit
   ): Promise<Response> {
     if (this.state === 'connecting') {
-      return this.directHttpFetch(path, options);
+      return this.httpFetch(path, options);
     }
 
     await this.connect();
@@ -164,7 +164,7 @@ export class WebSocketTransport extends BaseTransport {
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     if (this.state === 'connecting') {
-      return this.directHttpFetchStream(path, body, method, headers);
+      return this.httpFetchStream(path, body, method, headers);
     }
     return this.requestStream(method, path, body, headers);
   }
@@ -477,7 +477,7 @@ export class WebSocketTransport extends BaseTransport {
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     if (this.state === 'connecting') {
-      return this.directHttpFetchStream(
+      return this.httpFetchStream(
         path,
         body,
         method as 'GET' | 'POST',
@@ -875,79 +875,6 @@ export class WebSocketTransport extends BaseTransport {
     }
     this.pendingRequests.clear();
   }
-
-  // ---------------------------------------------------------------------------
-  // HTTP fallback for re-entrant calls during WebSocket connection setup
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Direct HTTP request that bypasses the WebSocket transport entirely.
-   *
-   * Called when `state === 'connecting'` to break a circular await that would
-   * otherwise deadlock. At that point the container is already running and
-   * healthy (state was set by `startAndWaitForPorts` before invoking
-   * `onStart`), so `stub.containerFetch` skips startup and routes the
-   * request straight to the container's TCP port.
-   */
-  private directHttpFetch(
-    path: string,
-    options?: RequestInit
-  ): Promise<Response> {
-    const url = `http://localhost:${this.config.port || 3000}${path}`;
-    if (this.config.stub) {
-      return this.config.stub.containerFetch(
-        url,
-        options || {},
-        this.config.port
-      );
-    }
-    return globalThis.fetch(url, options);
-  }
-
-  /**
-   * Direct HTTP streaming request that bypasses the WebSocket transport.
-   * Streaming counterpart of {@link directHttpFetch}.
-   */
-  private async directHttpFetchStream(
-    path: string,
-    body?: unknown,
-    method: 'GET' | 'POST' = 'POST',
-    headers?: Record<string, string>
-  ): Promise<ReadableStream<Uint8Array>> {
-    const url = `http://localhost:${this.config.port || 3000}${path}`;
-    const init: RequestInit = {
-      method,
-      headers:
-        body && method === 'POST'
-          ? { ...headers, 'Content-Type': 'application/json' }
-          : headers,
-      body: body && method === 'POST' ? JSON.stringify(body) : undefined
-    };
-
-    let response: Response;
-    if (this.config.stub) {
-      response = await this.config.stub.containerFetch(
-        url,
-        init,
-        this.config.port
-      );
-    } else {
-      response = await globalThis.fetch(url, init);
-    }
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
-    }
-    if (!response.body) {
-      throw new Error('No response body for streaming');
-    }
-    return response.body;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Connection lifecycle helpers
-  // ---------------------------------------------------------------------------
 
   /**
    * Cleanup resources

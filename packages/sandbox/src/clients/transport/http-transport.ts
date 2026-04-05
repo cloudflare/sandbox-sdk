@@ -1,20 +1,17 @@
 import { BaseTransport } from './base-transport';
-import type { TransportConfig, TransportMode } from './types';
+import type { TransportMode } from './types';
 
 /**
  * HTTP transport implementation
  *
  * Uses standard fetch API for communication with the container.
  * HTTP is stateless, so connect/disconnect are no-ops.
+ *
+ * All HTTP request logic lives in {@link BaseTransport.httpFetch} and
+ * {@link BaseTransport.httpFetchStream}; this subclass simply wires
+ * the abstract `doFetch` / `fetchStream` hooks to those shared helpers.
  */
 export class HttpTransport extends BaseTransport {
-  private baseUrl: string;
-
-  constructor(config: TransportConfig) {
-    super(config);
-    this.baseUrl = config.baseUrl ?? 'http://localhost:3000';
-  }
-
   getMode(): TransportMode {
     return 'http';
   }
@@ -35,16 +32,7 @@ export class HttpTransport extends BaseTransport {
     path: string,
     options?: RequestInit
   ): Promise<Response> {
-    const url = this.buildUrl(path);
-
-    if (this.config.stub) {
-      return this.config.stub.containerFetch(
-        url,
-        options || {},
-        this.config.port
-      );
-    }
-    return globalThis.fetch(url, options);
+    return this.httpFetch(path, options);
   }
 
   async fetchStream(
@@ -53,51 +41,6 @@ export class HttpTransport extends BaseTransport {
     method: 'GET' | 'POST' = 'POST',
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
-    const url = this.buildUrl(path);
-    const options = this.buildStreamOptions(body, method, headers);
-
-    let response: Response;
-    if (this.config.stub) {
-      response = await this.config.stub.containerFetch(
-        url,
-        options,
-        this.config.port
-      );
-    } else {
-      response = await globalThis.fetch(url, options);
-    }
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
-    }
-
-    if (!response.body) {
-      throw new Error('No response body for streaming');
-    }
-
-    return response.body;
-  }
-
-  private buildUrl(path: string): string {
-    if (this.config.stub) {
-      return `http://localhost:${this.config.port}${path}`;
-    }
-    return `${this.baseUrl}${path}`;
-  }
-
-  private buildStreamOptions(
-    body: unknown,
-    method: 'GET' | 'POST',
-    headers?: Record<string, string>
-  ): RequestInit {
-    return {
-      method,
-      headers:
-        body && method === 'POST'
-          ? { ...headers, 'Content-Type': 'application/json' }
-          : headers,
-      body: body && method === 'POST' ? JSON.stringify(body) : undefined
-    };
+    return this.httpFetchStream(path, body, method, headers);
   }
 }
