@@ -809,4 +809,115 @@ describe('WebSocketTransport', () => {
       await expect(transport.fetchStream('/test')).rejects.toThrow();
     });
   });
+
+  describe('re-entrancy guard (HTTP fallback while connecting)', () => {
+    /**
+     * Simulates the deadlock scenario: when the WebSocket connection is being
+     * established (state === 'connecting'), a nested call to fetch/fetchStream
+     * (e.g., from onStart → exec) must NOT await connectPromise. It should
+     * fall back to a direct HTTP request via stub.containerFetch.
+     */
+
+    it('fetch falls back to stub.containerFetch when state is connecting', async () => {
+      const stubResponse = new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const stub = {
+        containerFetch: vi
+          .fn<
+            (url: string, init: RequestInit, port?: number) => Promise<Response>
+          >()
+          .mockResolvedValue(stubResponse),
+        fetch: vi.fn<(request: Request) => Promise<Response>>()
+      };
+
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
+        port: 3000,
+        stub
+      });
+
+      // Simulate: connection is in progress (set by the outer connect())
+      const internals = transport as unknown as { state: string };
+      internals.state = 'connecting';
+
+      const response = await transport.fetch('/api/execute', {
+        method: 'POST',
+        body: JSON.stringify({ command: 'echo hi' }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      // Should have used the HTTP fallback, not the WebSocket path
+      expect(stub.containerFetch).toHaveBeenCalledTimes(1);
+      expect(stub.fetch).not.toHaveBeenCalled();
+
+      const [url, , port] = stub.containerFetch.mock.calls[0];
+      expect(url).toBe('http://localhost:3000/api/execute');
+      expect(port).toBe(3000);
+      expect(response.status).toBe(200);
+    });
+
+    it('fetchStream falls back to stub.containerFetch when state is connecting', async () => {
+      const bodyStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: hello\n\n'));
+          controller.close();
+        }
+      });
+
+      const stub = {
+        containerFetch: vi
+          .fn<
+            (url: string, init: RequestInit, port?: number) => Promise<Response>
+          >()
+          .mockResolvedValue(new Response(bodyStream, { status: 200 })),
+        fetch: vi.fn<(request: Request) => Promise<Response>>()
+      };
+
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
+        port: 3000,
+        stub
+      });
+
+      const internals = transport as unknown as { state: string };
+      internals.state = 'connecting';
+
+      const stream = await transport.fetchStream('/api/execute/stream', {
+        command: 'ls'
+      });
+
+      expect(stub.containerFetch).toHaveBeenCalledTimes(1);
+      expect(stub.fetch).not.toHaveBeenCalled();
+      expect(stream).toBeInstanceOf(ReadableStream);
+    });
+
+    it('uses globalThis.fetch as HTTP fallback when no stub is present', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
+        port: 3000
+        // no stub — simulates external (non-DO) context
+      });
+
+      const internals = transport as unknown as { state: string };
+      internals.state = 'connecting';
+
+      // globalThis.fetch will reject because localhost:3000 isn't listening,
+      // but the important thing is it doesn't deadlock on connectPromise
+      await expect(transport.fetch('/api/ping')).rejects.toThrow();
+    });
+
+    it('uses normal WebSocket path when state is not connecting', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://invalid-url:9999/ws',
+        connectTimeoutMs: 100
+      });
+
+      // State is 'disconnected' (default), so it should try to connect via WS
+      // and fail — NOT use the HTTP fallback
+      await expect(transport.fetch('/test')).rejects.toThrow();
+    });
+  });
 });
