@@ -392,7 +392,7 @@ export class WebSocketTransport extends BaseTransport {
    *
    * NOTE: This method also calls `connect()`, but it is only reachable from
    * `doFetch()` which already applies the re-entrancy guard. When the guard
-   * fires, `doFetch` returns early via `directHttpFetch` and `request` is
+   * fires, `doFetch` returns early via `httpFetch` and `request` is
    * never called.  The `connect()` call here is kept for correctness if the
    * WebSocket was closed between `doFetch` and `request` (idle disconnect).
    */
