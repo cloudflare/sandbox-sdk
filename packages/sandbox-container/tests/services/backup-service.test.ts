@@ -58,6 +58,67 @@ describe('BackupService', () => {
     service = new BackupService(mockLogger, mockSessionManager);
   });
 
+  it('allows creating an archive from /app', async () => {
+    const dir = '/app/project';
+    const archivePath = '/var/backups/app-dir.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs')) {
+          return execSuccess('exists\n');
+        }
+        if (command.startsWith('/usr/bin/mksquashfs ')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('42\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(dir, archivePath);
+
+    expect(result.success).toBe(true);
+  });
+
+  it('allows restoring an archive into /app', async () => {
+    const dir = '/app/project';
+    const archivePath = '/var/backups/app-dir.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('test -f ')) return execSuccess();
+        if (command.includes('/usr/bin/fusermount3 -u ')) return execSuccess();
+        if (command.startsWith('for d in ')) return execSuccess();
+        if (command.startsWith('rm -rf ')) return execSuccess();
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
+        if (command.startsWith('/usr/bin/fuse-overlayfs '))
+          return execSuccess();
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.restoreArchive(dir, archivePath);
+
+    expect(result.success).toBe(true);
+  });
+
   it('uses wildcard exclude mode for gitignore-derived excludes', async () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/test.sqsh';

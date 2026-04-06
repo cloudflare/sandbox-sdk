@@ -1076,7 +1076,7 @@ export interface ExecutionSession {
  * Options for creating a directory backup
  */
 export interface BackupOptions {
-  /** Directory to back up (absolute path). Required. */
+  /** Directory to back up. Must be absolute and under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`. */
   dir: string;
   /** Human-readable name for this backup. Optional. */
   name?: string;
@@ -1106,7 +1106,7 @@ export interface BackupOptions {
 export interface DirectoryBackup {
   /** Unique backup identifier */
   readonly id: string;
-  /** Directory that was backed up */
+  /** Directory that was backed up or will be restored into. Must be under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`. */
   readonly dir: string;
 }
 

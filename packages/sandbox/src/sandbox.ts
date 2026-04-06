@@ -407,6 +407,14 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
+  private static readonly BACKUP_ALLOWED_PREFIXES = [
+    '/workspace',
+    '/home',
+    '/tmp',
+    '/var/tmp',
+    '/app'
+  ] as const;
+
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
@@ -3551,7 +3559,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Validate that a directory path is safe for backup operations.
-   * Rejects empty, relative, traversal, and null-byte paths.
+   * Rejects empty, relative, traversal, null-byte, and unsupported-root paths.
    */
   private static validateBackupDir(dir: string, label: string): void {
     if (!dir || !dir.startsWith('/')) {
@@ -3578,6 +3586,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         code: ErrorCode.INVALID_BACKUP_CONFIG,
         httpStatus: 400,
         context: { reason: `${label} must not contain ".." path segments` },
+        timestamp: new Date().toISOString()
+      });
+    }
+    const isAllowed = Sandbox.BACKUP_ALLOWED_PREFIXES.some(
+      (prefix) => dir === prefix || dir.startsWith(`${prefix}/`)
+    );
+    if (!isAllowed) {
+      throw new InvalidBackupConfigError({
+        message: `${label} must be inside one of the supported backup roots (${Sandbox.BACKUP_ALLOWED_PREFIXES.join(', ')})`,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason: `${label} must be inside one of the supported backup roots`
+        },
         timestamp: new Date().toISOString()
       });
     }

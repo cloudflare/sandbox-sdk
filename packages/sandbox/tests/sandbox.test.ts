@@ -1087,4 +1087,145 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(renewSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('backup path allowlist', () => {
+    function createBackupBucket() {
+      return {
+        put: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn(),
+        head: vi.fn(),
+        delete: vi.fn().mockResolvedValue(undefined)
+      };
+    }
+
+    async function createBackupSandbox(bucket = createBackupBucket()) {
+      const backupSandbox = new Sandbox(
+        mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        {
+          BACKUP_BUCKET: bucket,
+          CLOUDFLARE_ACCOUNT_ID: 'test-account',
+          R2_ACCESS_KEY_ID: 'test-key',
+          R2_SECRET_ACCESS_KEY: 'test-secret',
+          BACKUP_BUCKET_NAME: 'test-backups'
+        }
+      );
+
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      return { backupSandbox, bucket };
+    }
+
+    it('should allow creating a backup from /app', async () => {
+      const { backupSandbox, bucket } = await createBackupSandbox();
+
+      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Created'
+      } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
+      const createArchiveSpy = vi
+        .spyOn(backupSandbox.client.backup, 'createArchive')
+        .mockResolvedValue({
+          success: true,
+          sizeBytes: 42,
+          archivePath: '/var/backups/mock.sqsh'
+        });
+      vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
+        undefined
+      );
+      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+        stdout: '',
+        stderr: '',
+        exitCode: 0
+      });
+
+      const backup = await backupSandbox.createBackup({ dir: '/app/project' });
+
+      expect(backup.dir).toBe('/app/project');
+      expect(createArchiveSpy).toHaveBeenCalledWith(
+        '/app/project',
+        expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
+        expect.stringMatching(/^__sandbox_backup_/),
+        false,
+        []
+      );
+      expect(bucket.put).toHaveBeenCalled();
+    });
+
+    it('should allow restoring a backup into /app', async () => {
+      const { backupSandbox, bucket } = await createBackupSandbox();
+      const backupId = crypto.randomUUID();
+
+      bucket.get.mockResolvedValue({
+        json: vi.fn().mockResolvedValue({
+          ttl: 259200,
+          createdAt: new Date().toISOString(),
+          dir: '/app/project'
+        })
+      });
+      bucket.head.mockResolvedValue({ size: 42 });
+
+      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Created'
+      } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
+      const restoreArchiveSpy = vi
+        .spyOn(backupSandbox.client.backup, 'restoreArchive')
+        .mockResolvedValue({ success: true, dir: '/app/project' });
+      vi.spyOn(
+        backupSandbox as any,
+        'downloadBackupPresigned'
+      ).mockResolvedValue(undefined);
+      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+        stdout: '0',
+        stderr: '',
+        exitCode: 0
+      });
+
+      const result = await backupSandbox.restoreBackup({
+        id: backupId,
+        dir: '/app/project'
+      });
+
+      expect(result).toEqual({
+        success: true,
+        dir: '/app/project',
+        id: backupId
+      });
+      expect(restoreArchiveSpy).toHaveBeenCalledWith(
+        '/app/project',
+        `/var/backups/${backupId}.sqsh`,
+        expect.stringMatching(/^__sandbox_backup_/)
+      );
+    });
+
+    it('should reject unsupported backup roots before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({ dir: '/opt/project' })
+      ).rejects.toThrow(
+        /BackupOptions\.dir must be inside one of the supported backup roots/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
+    });
+  });
 });
