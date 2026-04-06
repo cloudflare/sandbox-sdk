@@ -9,6 +9,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./backup": {
+      "types": "./dist/backup.d.ts",
+      "import": "./dist/backup.js"
+    },
     "./errors": {
       "types": "./dist/errors/index.d.ts",
       "import": "./dist/errors/index.js"

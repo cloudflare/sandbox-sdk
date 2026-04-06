@@ -1,5 +1,6 @@
 import type { Logger } from '@repo/shared';
 import { logCanonicalEvent, shellEscape } from '@repo/shared';
+import { BACKUP_ALLOWED_PREFIXES } from '@repo/shared/backup';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
@@ -20,19 +21,6 @@ const BIN = {
   fuseOverlayfs: '/usr/bin/fuse-overlayfs',
   fusermount: '/usr/bin/fusermount3'
 } as const;
-
-/**
- * Prefixes of directories that are safe for backup/restore operations.
- * Using an allowlist is more secure than a blocklist, and `/app` supports
- * images that keep application files outside the default `/workspace` root.
- */
-const BACKUP_ALLOWED_PREFIXES = [
-  '/workspace',
-  '/home',
-  '/tmp',
-  '/var/tmp',
-  '/app'
-];
 
 /**
  * Directories that must never be backed up or restored into, even if under allowed prefixes.

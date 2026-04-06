@@ -4,7 +4,10 @@
     "baseUrl": ".",
     "types": ["node", "@cloudflare/workers-types"],
     "lib": ["ES2022"],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@repo/shared/backup": ["../shared/src/backup.ts"]
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]

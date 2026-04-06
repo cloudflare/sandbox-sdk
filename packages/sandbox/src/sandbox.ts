@@ -44,6 +44,7 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
+import { BACKUP_ALLOWED_PREFIXES } from '@repo/shared/backup';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
@@ -407,14 +408,6 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
-  private static readonly BACKUP_ALLOWED_PREFIXES = [
-    '/workspace',
-    '/home',
-    '/tmp',
-    '/var/tmp',
-    '/app'
-  ] as const;
-
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
@@ -3589,12 +3582,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         timestamp: new Date().toISOString()
       });
     }
-    const isAllowed = Sandbox.BACKUP_ALLOWED_PREFIXES.some(
+    const isAllowed = BACKUP_ALLOWED_PREFIXES.some(
       (prefix) => dir === prefix || dir.startsWith(`${prefix}/`)
     );
     if (!isAllowed) {
       throw new InvalidBackupConfigError({
-        message: `${label} must be inside one of the supported backup roots (${Sandbox.BACKUP_ALLOWED_PREFIXES.join(', ')})`,
+        message: `${label} must be inside one of the supported backup roots (${BACKUP_ALLOWED_PREFIXES.join(', ')})`,
         code: ErrorCode.INVALID_BACKUP_CONFIG,
         httpStatus: 400,
         context: {
