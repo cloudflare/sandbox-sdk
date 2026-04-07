@@ -8,6 +8,8 @@ const CERT_WAIT_TIMEOUT_MS = 5000;
 const CERT_WAIT_POLL_MS = 100;
 
 async function waitForCertFile(certPath: string): Promise<boolean> {
+  if (existsSync(certPath)) return true;
+
   const deadline = Date.now() + CERT_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (existsSync(certPath)) return true;
