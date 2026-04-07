@@ -15,6 +15,7 @@ import {
   getTestWorkerUrl,
   type WranglerDevRunner
 } from '../e2e/helpers/wrangler-runner';
+import { teardown } from './global-teardown';
 import { GlobalMetricsStore } from './helpers/metrics-collector';
 
 export const PERF_STATE_FILE = join(tmpdir(), 'perf-test-state.json');
@@ -100,5 +101,7 @@ export async function setup() {
 
   console.log('[PerfSetup] Ready!\n');
 }
+
+export { teardown };
 
 export { runner };

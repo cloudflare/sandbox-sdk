@@ -16,7 +16,7 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile",
+      "image": "{{IMAGE_SANDBOX}}",
       "name": "{{CONTAINER_NAME}}"
     }
   ],

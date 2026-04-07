@@ -52,8 +52,35 @@ jobs:
           node-version: 24
           cache: 'npm'
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/cache/save@v5
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
       - name: Build packages
-        run: npx turbo run build
+        run: npm run build
 
       - name: Get package version
         id: version
@@ -99,7 +126,9 @@ jobs:
       - name: Generate wrangler config
         run: |
           cd tests/e2e/test-worker
-          sed "s/{{WORKER_NAME}}/${{ env.PERF_WORKER_NAME }}/g; s/{{CONTAINER_NAME}}/${{ env.PERF_WORKER_NAME }}/g" \
+          sed -e "s|{{WORKER_NAME}}|${{ env.PERF_WORKER_NAME }}|g" \
+            -e "s|{{CONTAINER_NAME}}|${{ env.PERF_WORKER_NAME }}|g" \
+            -e "s|{{IMAGE_SANDBOX}}|registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:perf|g" \
             wrangler.perf.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker

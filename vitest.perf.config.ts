@@ -22,7 +22,6 @@ export default defineConfig({
 
     // Global setup/teardown for report generation
     globalSetup: ['tests/perf/global-setup.ts'],
-    globalTeardown: ['tests/perf/global-teardown.ts'],
 
     // Run tests sequentially to avoid interference between scenarios
     pool: 'threads',
