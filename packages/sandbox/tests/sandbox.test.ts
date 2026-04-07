@@ -218,6 +218,20 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
+    it('should return runtime identity from the utility client', async () => {
+      vi.spyOn(sandbox.client.utils, 'getRuntimeIdentity').mockResolvedValue({
+        runtimeId: 'rt-1',
+        startedAt: '2026-04-07T00:00:00.000Z'
+      });
+
+      const result = await sandbox.getRuntimeIdentity();
+
+      expect(result).toEqual({
+        runtimeId: 'rt-1',
+        startedAt: '2026-04-07T00:00:00.000Z'
+      });
+    });
+
     it('should reuse default session across multiple operations', async () => {
       await sandbox.exec('echo test1');
       await sandbox.writeFile('/test.txt', 'content');

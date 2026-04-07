@@ -478,4 +478,11 @@ export function setupRoutes(router: Router, container: Container): void {
     handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
     middleware: [container.get('loggingMiddleware')]
   });
+
+  router.register({
+    method: 'GET',
+    path: '/api/runtime',
+    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
 }

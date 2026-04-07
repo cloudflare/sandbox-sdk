@@ -25,6 +25,7 @@ import type {
   RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
+  RuntimeIdentity,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -2984,6 +2985,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       since: options.since,
       sessionId
     });
+  }
+
+  async getRuntimeIdentity(): Promise<RuntimeIdentity> {
+    return await this.client.utils.getRuntimeIdentity();
   }
 
   /**

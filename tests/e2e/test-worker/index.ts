@@ -28,6 +28,7 @@ import type {
   ErrorResponse,
   HealthResponse,
   PortUnexposeResponse,
+  RuntimeIdentityResponse,
   SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
@@ -490,6 +491,18 @@ console.log('Terminal server on port ' + port);
       if (url.pathname === '/api/state' && request.method === 'GET') {
         const state = await sandbox.getState();
         return new Response(JSON.stringify(state), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/runtime/identity' &&
+        request.method === 'GET'
+      ) {
+        const runtimeIdentity = await sandbox.getRuntimeIdentity();
+        const response: RuntimeIdentityResponse = runtimeIdentity;
+
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

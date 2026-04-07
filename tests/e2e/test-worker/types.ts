@@ -31,6 +31,11 @@ export interface SuccessWithMessageResponse {
   message: string;
 }
 
+export interface RuntimeIdentityResponse {
+  runtimeId: string;
+  startedAt: string;
+}
+
 // R2 bucket operations
 export interface BucketPutResponse {
   success: boolean;

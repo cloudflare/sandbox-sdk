@@ -4,6 +4,7 @@ import type { ErrorResponse } from '@repo/shared/errors';
 import type { RequestContext } from '@sandbox-container/core/types';
 import {
   MiscHandler,
+  type RuntimeIdentityResult,
   type VersionResult
 } from '@sandbox-container/handlers/misc-handler';
 
@@ -221,6 +222,48 @@ describe('MiscHandler', () => {
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
         'Content-Type'
       );
+    });
+  });
+
+  describe('handleRuntime - GET /api/runtime', () => {
+    it('should return runtime identity', async () => {
+      const request = new Request('http://localhost:3000/api/runtime', {
+        method: 'GET'
+      });
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/json');
+
+      const responseData = (await response.json()) as RuntimeIdentityResult;
+      expect(responseData.success).toBe(true);
+      expect(responseData.runtimeId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+      expect(responseData.startedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
+      expect(responseData.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
+    });
+
+    it('should keep runtime identity stable across requests', async () => {
+      const request = new Request('http://localhost:3000/api/runtime', {
+        method: 'GET'
+      });
+
+      const response1 = await miscHandler.handle(request, mockContext);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const response2 = await miscHandler.handle(request, mockContext);
+
+      const responseData1 = (await response1.json()) as RuntimeIdentityResult;
+      const responseData2 = (await response2.json()) as RuntimeIdentityResult;
+
+      expect(responseData1.runtimeId).toBe(responseData2.runtimeId);
+      expect(responseData1.startedAt).toBe(responseData2.startedAt);
+      expect(responseData1.timestamp).not.toBe(responseData2.timestamp);
     });
   });
 

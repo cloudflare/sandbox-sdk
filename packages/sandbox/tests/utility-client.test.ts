@@ -39,6 +39,21 @@ const mockVersionResponse = (
   ...overrides
 });
 
+const mockRuntimeIdentityResponse = (
+  overrides: Partial<{
+    success: boolean;
+    runtimeId: string;
+    startedAt: string;
+    timestamp: string;
+  }> = {}
+) => ({
+  success: true,
+  runtimeId: 'rt-123',
+  startedAt: '2023-01-01T00:00:00Z',
+  timestamp: '2023-01-01T00:00:01Z',
+  ...overrides
+});
+
 describe('UtilityClient', () => {
   let client: UtilityClient;
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -321,6 +336,46 @@ describe('UtilityClient', () => {
       const result = await client.getVersion();
 
       expect(result).toBe('unknown');
+    });
+  });
+
+  describe('runtime identity', () => {
+    it('should get runtime identity successfully', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockRuntimeIdentityResponse()), {
+          status: 200
+        })
+      );
+
+      const result = await client.getRuntimeIdentity();
+
+      expect(result).toEqual({
+        runtimeId: 'rt-123',
+        startedAt: '2023-01-01T00:00:00Z'
+      });
+    });
+
+    it('should request the runtime endpoint', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockRuntimeIdentityResponse()), {
+          status: 200
+        })
+      );
+
+      await client.getRuntimeIdentity();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://test.com/api/runtime',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should surface runtime endpoint failures', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Not Found' }), { status: 404 })
+      );
+
+      await expect(client.getRuntimeIdentity()).rejects.toThrow();
     });
   });
 

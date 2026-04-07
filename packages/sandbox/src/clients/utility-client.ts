@@ -1,3 +1,4 @@
+import type { RuntimeIdentity } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse, HttpClientOptions } from './types';
 
@@ -23,6 +24,11 @@ export interface CommandsResponse extends BaseApiResponse {
 export interface VersionResponse extends BaseApiResponse {
   version: string;
 }
+
+/**
+ * Response interface for getting container runtime identity
+ */
+interface RuntimeIdentityResponse extends BaseApiResponse, RuntimeIdentity {}
 
 /**
  * Request interface for creating sessions
@@ -140,5 +146,18 @@ export class UtilityClient extends BaseHttpClient {
       );
       return 'unknown';
     }
+  }
+
+  /**
+   * Get the current container runtime identity.
+   * `runtimeId` changes when the underlying container boots again.
+   */
+  async getRuntimeIdentity(): Promise<RuntimeIdentity> {
+    const response = await this.get<RuntimeIdentityResponse>('/api/runtime');
+
+    return {
+      runtimeId: response.runtimeId,
+      startedAt: response.startedAt
+    };
   }
 }

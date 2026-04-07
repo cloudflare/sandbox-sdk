@@ -172,6 +172,7 @@ export type {
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
+  RuntimeIdentity,
   // Sandbox configuration options
   SandboxOptions,
   // Session management result types

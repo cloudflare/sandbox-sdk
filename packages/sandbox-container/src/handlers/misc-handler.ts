@@ -11,6 +11,16 @@ export interface VersionResult {
   timestamp: string;
 }
 
+export interface RuntimeIdentityResult {
+  success: boolean;
+  runtimeId: string;
+  startedAt: string;
+  timestamp: string;
+}
+
+const CONTAINER_RUNTIME_ID = crypto.randomUUID();
+const CONTAINER_STARTED_AT = new Date().toISOString();
+
 export class MiscHandler extends BaseHandler<Request, Response> {
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const url = new URL(request.url);
@@ -27,6 +37,8 @@ export class MiscHandler extends BaseHandler<Request, Response> {
         return await this.handleShutdown(request, context);
       case '/api/version':
         return await this.handleVersion(request, context);
+      case '/api/runtime':
+        return await this.handleRuntime(request, context);
       default:
         return this.createErrorResponse(
           {
@@ -85,6 +97,20 @@ export class MiscHandler extends BaseHandler<Request, Response> {
     const response: VersionResult = {
       success: true,
       version,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleRuntime(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const response: RuntimeIdentityResult = {
+      success: true,
+      runtimeId: CONTAINER_RUNTIME_ID,
+      startedAt: CONTAINER_STARTED_AT,
       timestamp: new Date().toISOString()
     };
 

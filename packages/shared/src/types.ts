@@ -1071,6 +1071,18 @@ export interface ExecutionSession {
   terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
+/**
+ * Identity for a single container runtime.
+ *
+ * `runtimeId` changes whenever the underlying container boots again.
+ */
+export interface RuntimeIdentity {
+  /** Unique identifier for the current container boot. */
+  runtimeId: string;
+  /** When the current container boot started. */
+  startedAt: string;
+}
+
 // Backup types
 /**
  * Options for creating a directory backup
@@ -1332,6 +1344,9 @@ export interface ISandbox {
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
   restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+
+  // Runtime lifecycle metadata
+  getRuntimeIdentity(): Promise<RuntimeIdentity>;
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;

@@ -52,6 +52,7 @@ export type {
   RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
+  RuntimeIdentity,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
