@@ -15,6 +15,12 @@ import { trustRuntimeCert } from '../src/cert';
 const SYSTEM_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt';
 const DEFAULT_CERT_PATH = '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
 
+const mockProcessExit = vi
+  .spyOn(process, 'exit')
+  .mockImplementation((): never => {
+    throw new Error('process.exit');
+  });
+
 describe('trustRuntimeCert', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -26,7 +32,7 @@ describe('trustRuntimeCert', () => {
     delete process.env.GIT_SSL_CAINFO;
   });
 
-  it('does nothing when the cert file does not exist', async () => {
+  it('exits with code 1 when the cert file is not found', async () => {
     mockExistsSync.mockReturnValue(false);
     const sleepSpy = vi.spyOn(Bun, 'sleep').mockResolvedValue();
     const dateSpy = vi
@@ -36,35 +42,16 @@ describe('trustRuntimeCert', () => {
 
     try {
       await trustRuntimeCert();
+    } catch {
+      // expected — process.exit mock throws to halt execution
     } finally {
       sleepSpy.mockRestore();
       dateSpy.mockRestore();
     }
 
+    expect(mockProcessExit).toHaveBeenCalledWith(1);
     expect(mockReadFileSync).not.toHaveBeenCalled();
     expect(mockAppendFileSync).not.toHaveBeenCalled();
-  });
-
-  it('does not set env vars when the cert file does not exist', async () => {
-    mockExistsSync.mockReturnValue(false);
-    const sleepSpy = vi.spyOn(Bun, 'sleep').mockResolvedValue();
-    const dateSpy = vi
-      .spyOn(Date, 'now')
-      .mockReturnValueOnce(0)
-      .mockReturnValue(10_000);
-
-    try {
-      await trustRuntimeCert();
-    } finally {
-      sleepSpy.mockRestore();
-      dateSpy.mockRestore();
-    }
-
-    expect(process.env.NODE_EXTRA_CA_CERTS).toBeUndefined();
-    expect(process.env.SSL_CERT_FILE).toBeUndefined();
-    expect(process.env.CURL_CA_BUNDLE).toBeUndefined();
-    expect(process.env.REQUESTS_CA_BUNDLE).toBeUndefined();
-    expect(process.env.GIT_SSL_CAINFO).toBeUndefined();
   });
 
   it('appends cert content to the system bundle when the cert file exists', async () => {

@@ -24,10 +24,10 @@ export async function trustRuntimeCert(): Promise<void> {
     process.env.SANDBOX_CA_CERT ||
     '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
   if (!(await waitForCertFile(certPath))) {
-    logger.warn(
-      'Certificate not found, could not enable HTTPS intercept support'
+    logger.error(
+      'Certificate not found, refusing to start with HTTPS interception enabled'
     );
-    return;
+    process.exit(1);
   }
 
   const certContent = readFileSync(certPath, 'utf8');
