@@ -119,22 +119,34 @@ export class WebSocketTransport extends BaseTransport {
   }
 
   /**
+   * Whether a WebSocket connection is currently being established.
+   *
+   * When true, awaiting `connectPromise` from a nested call would deadlock:
+   * the outer `connectViaFetch → stub.fetch → containerFetch →
+   * startAndWaitForPorts → blockConcurrencyWhile(onStart)` chain may call
+   * back into the SDK (e.g. `exec()`), which would await the same
+   * `connectPromise` that cannot resolve until `onStart` returns.
+   *
+   * Callers use this to fall back to a direct HTTP request, which is safe
+   * because `startAndWaitForPorts()` calls `setHealthy()` before invoking
+   * `onStart()`, so `containerFetch()` routes directly to the container.
+   */
+  private isWebSocketConnecting(): boolean {
+    return this.state === 'connecting';
+  }
+
+  /**
    * Transport-specific fetch implementation.
    * Converts WebSocket response to standard Response object.
    *
-   * When `state === 'connecting'`, a WebSocket connection is already being
-   * established via `connectViaFetch()`. Awaiting `connectPromise` here would
-   * deadlock: `connectViaFetch → stub.fetch → containerFetch →
-   * startAndWaitForPorts → blockConcurrencyWhile(onStart) → exec → doFetch →
-   * connect → await connectPromise` — a cycle. We break it by falling back to
-   * a direct HTTP request, which is safe because the container is already
-   * running and healthy by the time `onStart` is called.
+   * Falls back to HTTP while a WebSocket connection is being established
+   * to avoid the re-entrant deadlock described in `isWebSocketConnecting()`.
    */
   protected async doFetch(
     path: string,
     options?: RequestInit
   ): Promise<Response> {
-    if (this.state === 'connecting') {
+    if (this.isWebSocketConnecting()) {
       return this.httpFetch(path, options);
     }
 
@@ -155,7 +167,7 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Streaming fetch implementation.
    *
-   * Applies the same re-entrancy guard as `doFetch` — see its doc comment.
+   * Delegates to `requestStream()`, which applies the re-entrancy guard.
    */
   async fetchStream(
     path: string,
@@ -163,9 +175,6 @@ export class WebSocketTransport extends BaseTransport {
     method: 'GET' | 'POST' = 'POST',
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
-    if (this.state === 'connecting') {
-      return this.httpFetchStream(path, body, method, headers);
-    }
     return this.requestStream(method, path, body, headers);
   }
 
@@ -390,11 +399,10 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Send a request and wait for response.
    *
-   * NOTE: This method also calls `connect()`, but it is only reachable from
-   * `doFetch()` which already applies the re-entrancy guard. When the guard
-   * fires, `doFetch` returns early via `httpFetch` and `request` is
-   * never called.  The `connect()` call here is kept for correctness if the
-   * WebSocket was closed between `doFetch` and `request` (idle disconnect).
+   * Only reachable from `doFetch()`, which already applies the re-entrancy
+   * guard via `isWebSocketConnecting()`. The `connect()` call here handles
+   * the case where the WebSocket was closed between `doFetch` and `request`
+   * (idle disconnect).
    */
   private async request<T>(
     method: WSMethod,
@@ -468,7 +476,8 @@ export class WebSocketTransport extends BaseTransport {
    * long-running streams (e.g. execStream from an agent) stay alive as long
    * as data is flowing. The timer resets on every chunk or response message.
    *
-   * Applies the same re-entrancy guard as `doFetch` — see its doc comment.
+   * Falls back to HTTP while a WebSocket connection is being established
+   * to avoid the re-entrant deadlock described in `isWebSocketConnecting()`.
    */
   private async requestStream(
     method: WSMethod,
@@ -476,7 +485,7 @@ export class WebSocketTransport extends BaseTransport {
     body?: unknown,
     headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
-    if (this.state === 'connecting') {
+    if (this.isWebSocketConnecting()) {
       return this.httpFetchStream(
         path,
         body,
