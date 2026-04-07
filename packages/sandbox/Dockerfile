@@ -226,11 +226,12 @@ FROM golang:1.25-bookworm AS go-builder
 
 RUN mkdir -p /usr/local/share/ca-certificates
 RUN --mount=type=secret,id=wrangler_ca \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
     if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
-        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
-        apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
-        update-ca-certificates; \
-    fi
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt; \
+    fi && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libx11-dev libxtst-dev libxinerama-dev libpng-dev \
