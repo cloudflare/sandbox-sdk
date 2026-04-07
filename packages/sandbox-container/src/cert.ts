@@ -36,7 +36,7 @@ export async function trustRuntimeCert(): Promise<void> {
     '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
   if (!(await waitForCertFile(certPath))) {
     logger.error(
-      'Certificate not found, refusing to start with HTTPS interception enabled'
+      'Certificate not found, refusing to start without HTTPS interception enabled'
     );
     process.exit(1);
   }
@@ -46,7 +46,7 @@ export async function trustRuntimeCert(): Promise<void> {
     certContent = readFileSync(certPath, 'utf8');
   } catch (error) {
     logger.error(
-      `Failed to read runtime certificate from ${certPath}`,
+      `Failed to read runtime certificate, refusing to start without HTTPS interception enabled`,
       error instanceof Error ? error : new Error(String(error))
     );
     process.exit(1);
@@ -66,7 +66,7 @@ export async function trustRuntimeCert(): Promise<void> {
     appendFileSync(systemBundlePath, `\n${certContent}`);
   } catch (error) {
     logger.error(
-      `Failed to append runtime certificate to ${systemBundlePath}`,
+      `Failed to append runtime certificate, refusing to start without HTTPS interception enabled`,
       error instanceof Error ? error : new Error(String(error))
     );
     process.exit(1);
