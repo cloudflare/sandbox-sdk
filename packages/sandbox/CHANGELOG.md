@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.8.6
+
+### Patch Changes
+
+- [#557](https://github.com/cloudflare/sandbox-sdk/pull/557) [`f17045b`](https://github.com/cloudflare/sandbox-sdk/commit/f17045ba9202d2a1d0e59161b279fd75a31d458f) Thanks [@AshishKumar4](https://github.com/AshishKumar4)! - Fix startup deadlock when using WebSocket transport.
+
+  Sandboxes that call `exec()` or other SDK methods inside `onStart()` could
+  get stuck in an infinite timeout loop, requiring a restart. This is now
+  handled automatically.
+
 ## 0.8.5
 
 ### Patch Changes
