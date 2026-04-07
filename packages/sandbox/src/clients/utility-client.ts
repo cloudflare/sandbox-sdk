@@ -1,4 +1,5 @@
 import type { RuntimeIdentity } from '@repo/shared';
+import { createErrorFromResponse, ErrorCode, SandboxError } from '../errors';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse, HttpClientOptions } from './types';
 
@@ -153,11 +154,30 @@ export class UtilityClient extends BaseHttpClient {
    * `runtimeId` changes when the underlying container boots again.
    */
   async getRuntimeIdentity(): Promise<RuntimeIdentity> {
-    const response = await this.get<RuntimeIdentityResponse>('/api/runtime');
+    try {
+      const response = await this.get<RuntimeIdentityResponse>('/api/runtime');
 
-    return {
-      runtimeId: response.runtimeId,
-      startedAt: response.startedAt
-    };
+      return {
+        runtimeId: response.runtimeId,
+        startedAt: response.startedAt
+      };
+    } catch (error) {
+      if (error instanceof SandboxError && error.httpStatus === 404) {
+        throw createErrorFromResponse({
+          code: ErrorCode.UNKNOWN_ERROR,
+          message:
+            'Runtime identity is not supported by this sandbox container. Recreate the sandbox or upgrade to a newer container image.',
+          context: {
+            endpoint: '/api/runtime'
+          },
+          httpStatus: 404,
+          timestamp: new Date().toISOString(),
+          suggestion:
+            'Recreate the sandbox or upgrade to a newer container image before calling getRuntimeIdentity().'
+        });
+      }
+
+      throw error;
+    }
   }
 }

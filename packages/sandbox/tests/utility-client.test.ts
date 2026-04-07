@@ -377,6 +377,14 @@ describe('UtilityClient', () => {
 
       await expect(client.getRuntimeIdentity()).rejects.toThrow();
     });
+
+    it('should throw an explicit compatibility error for missing endpoint', async () => {
+      mockFetch.mockResolvedValue(new Response('Not Found', { status: 404 }));
+
+      await expect(client.getRuntimeIdentity()).rejects.toThrow(
+        'Runtime identity is not supported by this sandbox container. Recreate the sandbox or upgrade to a newer container image.'
+      );
+    });
   });
 
   describe('constructor options', () => {
