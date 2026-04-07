@@ -2,9 +2,8 @@
 '@cloudflare/sandbox': patch
 ---
 
-Fix deadlock in WebSocket transport when the container requires a cold start.
+Fix startup deadlock when using WebSocket transport.
 
-When a `Sandbox` subclass performs I/O inside its `onStart()` lifecycle hook
-(e.g., calling `exec()`), the container could get stuck in an infinite failure
-loop during cold starts. Requests made during WebSocket connection setup now
-complete normally via a direct HTTP fallback, keeping the sandbox responsive.
+Sandboxes that call `exec()` or other SDK methods inside `onStart()` could
+get stuck in an infinite timeout loop, requiring a restart. This is now
+handled automatically.
