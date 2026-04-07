@@ -8,7 +8,7 @@
   "description": "A sandboxed environment for running commands",
   "type": "module",
   "dependencies": {
-    "@cloudflare/containers": "^0.2.2",
+    "@cloudflare/containers": "^0.2.3",
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
