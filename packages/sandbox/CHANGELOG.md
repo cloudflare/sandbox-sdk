@@ -1,5 +1,12 @@
 # @cloudflare/sandbox
 
+## 0.8.5
+
+### Patch Changes
+
+- [#559](https://github.com/cloudflare/sandbox-sdk/pull/559) [`b42a57f`](https://github.com/cloudflare/sandbox-sdk/commit/b42a57f712a711d8892a07022ff589bbea4bafce) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Allow `createBackup()` and `restoreBackup()` to target directories under `/app`.
+  This makes backups work with custom images that keep application files in `/app` instead of `/workspace`.
+
 ## 0.8.4
 
 ### Patch Changes
