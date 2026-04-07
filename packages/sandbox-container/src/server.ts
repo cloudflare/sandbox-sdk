@@ -203,9 +203,9 @@ export async function startServer(): Promise<ServerInstance> {
     hostname: '0.0.0.0'
   });
 
-  // Server is now listening, the platform injects the cert after the container
-  // is ready, so wait for it to be available before proceeding.
-  await trustRuntimeCert();
+  if (process.env.SANDBOX_INTERCEPT_HTTPS === '1') {
+    await trustRuntimeCert();
+  }
 
   return {
     port: SERVER_PORT,

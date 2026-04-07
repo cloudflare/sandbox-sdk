@@ -410,6 +410,7 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
+  interceptHttps: boolean = false; // Default to not intercepting HTTPS requests, opt-in feature
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -645,6 +646,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (storedSleepAfter !== undefined) {
         this.sleepAfter = storedSleepAfter;
         this.renewActivityTimeout();
+      }
+
+      if (this.interceptHttps) {
+        this.envVars = { ...this.envVars, SANDBOX_INTERCEPT_HTTPS: '1' };
       }
     });
   }
