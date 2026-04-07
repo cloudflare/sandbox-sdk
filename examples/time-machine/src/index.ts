@@ -5,7 +5,7 @@
  * Create save points like in a video game, experiment freely, restore when needed.
  */
 
-import { getSandbox } from '@cloudflare/sandbox';
+import { type DirectoryBackup, getSandbox } from '@cloudflare/sandbox';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
@@ -101,9 +101,10 @@ async function handleRestore(request: Request, env: Env): Promise<Response> {
   }
 
   const meta = await metaObj.json<BackupMetadata>();
+  const backup: DirectoryBackup = { id: meta.id, dir: meta.dir };
 
   const sandbox = getSandbox(env.Sandbox, 'time-machine');
-  await sandbox.restoreBackup(id);
+  await sandbox.restoreBackup(backup);
 
   const checkpoint: Checkpoint = {
     id: meta.id,

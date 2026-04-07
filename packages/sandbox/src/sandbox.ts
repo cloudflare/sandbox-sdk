@@ -23,7 +23,6 @@ import type {
   ProcessStatus,
   PtyOptions,
   RemoteMountBucketOptions,
-  RestoreBackupOptions,
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
@@ -3506,10 +3505,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Backup operations - sandbox-level, uses R2 binding
       createBackup: (options) => this.createBackup(options),
-      restoreBackup: (
-        backupOrId: DirectoryBackup | string,
-        options?: RestoreBackupOptions
-      ) => this.restoreBackup(backupOrId, options)
+      restoreBackup: (backup: DirectoryBackup) => this.restoreBackup(backup)
     };
   }
 
@@ -3904,8 +3900,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *   4. Container cleans up the local archive
    *
    * The returned DirectoryBackup handle is serializable. Store it anywhere
-   * (KV, D1, DO storage) and later pass either the handle or just `backup.id`
-   * to restoreBackup().
+   * (KV, D1, DO storage) and pass it to restoreBackup() later.
    *
    * Concurrent backup/restore calls on the same sandbox are serialized.
    *
@@ -4110,9 +4105,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * backup handle to recover. This is an ephemeral restore, not a persistent
    * extraction.
    *
-   * restoreBackup(id) uses the original directory stored in backup metadata.
-   * Pass restoreBackup(id, { dir }) or restoreBackup({ id, dir }) to restore
-   * into a different directory.
+   * The backup is restored into `backup.dir`. This may differ from the
+   * directory that was originally backed up, allowing cross-directory restore.
    *
    * Overlapping backups are independent: restoring a parent directory
    * overwrites everything inside it, including subdirectories that were
@@ -4120,44 +4114,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *
    * Concurrent backup/restore calls on the same sandbox are serialized.
    */
-  async restoreBackup(
-    backupOrId: DirectoryBackup | string,
-    options?: RestoreBackupOptions
-  ): Promise<RestoreBackupResult> {
+  async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
     this.requireBackupBucket();
-    return this.enqueueBackupOp(() =>
-      this.doRestoreBackup(backupOrId, options)
-    );
+    return this.enqueueBackupOp(() => this.doRestoreBackup(backup));
   }
 
   private async doRestoreBackup(
-    backupOrId: DirectoryBackup | string,
-    options?: RestoreBackupOptions
+    backup: DirectoryBackup
   ): Promise<RestoreBackupResult> {
     const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
+    const { id, dir } = backup;
 
-    let id: string | undefined;
-    let dir: string | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let backupSession: string | undefined;
 
     try {
-      const dirLabel =
-        typeof backupOrId === 'string'
-          ? 'RestoreBackupOptions.dir'
-          : 'Invalid backup: dir';
-
-      if (typeof backupOrId === 'string') {
-        id = backupOrId;
-        dir = options?.dir;
-      } else if (backupOrId && typeof backupOrId === 'object') {
-        id = backupOrId.id;
-        dir = backupOrId.dir;
-      }
-
       // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
       if (!id || typeof id !== 'string') {
         throw new InvalidBackupConfigError({
@@ -4178,18 +4152,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp: new Date().toISOString()
         });
       }
-      if (dir !== undefined && typeof dir !== 'string') {
-        throw new InvalidBackupConfigError({
-          message: `${dirLabel} must be a string`,
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: `${dirLabel} must be a string` },
-          timestamp: new Date().toISOString()
-        });
-      }
-      if (dir !== undefined) {
-        Sandbox.validateBackupDir(dir, dirLabel);
-      }
+      Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
 
       // Step 1: Read metadata to check TTL
       const metaKey = `backups/${id}/meta.json`;
@@ -4211,8 +4174,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         createdAt: string;
         dir: string;
       }>();
-      dir ??= metadata.dir;
-      Sandbox.validateBackupDir(dir, 'Backup metadata dir');
 
       // Check TTL with 60-second buffer to prevent race between check and restore completion
       const TTL_BUFFER_MS = 60 * 1000;

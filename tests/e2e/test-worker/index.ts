@@ -1011,10 +1011,7 @@ console.log('Terminal server on port ' + port);
 
       // Backup - Restore backup
       if (url.pathname === '/api/backup/restore' && request.method === 'POST') {
-        const result = await sandbox.restoreBackup(
-          body.id,
-          typeof body.dir === 'string' ? { dir: body.dir } : undefined
-        );
+        const result = await sandbox.restoreBackup(body);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
