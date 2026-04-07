@@ -1065,7 +1065,10 @@ export interface ExecutionSession {
 
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
-  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+  restoreBackup(
+    backupOrId: DirectoryBackup | string,
+    options?: RestoreBackupOptions
+  ): Promise<RestoreBackupResult>;
 
   // Terminal access (browser WebSocket passthrough)
   terminal(request: Request, options?: PtyOptions): Promise<Response>;
@@ -1101,13 +1104,23 @@ export interface BackupOptions {
 
 /**
  * Handle representing a stored directory backup.
- * Serializable (two strings). The user stores this and passes it to restoreBackup().
+ * Serializable metadata returned by createBackup().
+ * Store it anywhere and later pass either this handle or just `id` to restoreBackup().
  */
 export interface DirectoryBackup {
   /** Unique backup identifier */
   readonly id: string;
-  /** Directory that was backed up or will be restored into. Must be under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`. */
+  /** Original directory captured by createBackup(). restoreBackup(id) uses this path unless overridden. */
   readonly dir: string;
+}
+
+/**
+ * Optional restore target override.
+ * When omitted, restoreBackup(id) uses the original directory stored in backup metadata.
+ */
+export interface RestoreBackupOptions {
+  /** Directory to restore into instead of the original backup directory. */
+  dir?: string;
 }
 
 /**
@@ -1330,7 +1343,10 @@ export interface ISandbox {
 
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
-  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+  restoreBackup(
+    backupOrId: DirectoryBackup | string,
+    options?: RestoreBackupOptions
+  ): Promise<RestoreBackupResult>;
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;

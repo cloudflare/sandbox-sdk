@@ -171,6 +171,7 @@ export type {
   ReadFileResult,
   RemoteMountBucketOptions,
   RenameFileResult,
+  RestoreBackupOptions,
   RestoreBackupResult,
   // Sandbox configuration options
   SandboxOptions,

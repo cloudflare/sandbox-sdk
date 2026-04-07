@@ -22,18 +22,12 @@ const BIN = {
   fusermount: '/usr/bin/fusermount3'
 } as const;
 
-/**
- * Directories that must never be backed up or restored into, even if under allowed prefixes.
- */
-const FORBIDDEN_DIRS = new Set(['/']);
-
 function isSafeAbsolutePath(path: string): boolean {
   return (
     typeof path === 'string' &&
     path.startsWith('/') &&
     !path.includes('..') &&
-    !path.includes('\0') &&
-    !FORBIDDEN_DIRS.has(path)
+    !path.includes('\0')
   );
 }
 

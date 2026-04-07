@@ -50,6 +50,7 @@ export type {
   ProcessStatus,
   PtyOptions,
   RemoteMountBucketOptions,
+  RestoreBackupOptions,
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,

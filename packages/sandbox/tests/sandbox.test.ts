@@ -1195,8 +1195,57 @@ describe('Sandbox - Automatic Session Management', () => {
         exitCode: 0
       });
 
-      const result = await backupSandbox.restoreBackup({
-        id: backupId,
+      const result = await backupSandbox.restoreBackup(backupId);
+
+      expect(result).toEqual({
+        success: true,
+        dir: '/app/project',
+        id: backupId
+      });
+      expect(restoreArchiveSpy).toHaveBeenCalledWith(
+        '/app/project',
+        `/var/backups/${backupId}.sqsh`,
+        expect.stringMatching(/^__sandbox_backup_/)
+      );
+    });
+
+    it('should allow overriding the restore directory', async () => {
+      const { backupSandbox, bucket } = await createBackupSandbox();
+      const backupId = crypto.randomUUID();
+
+      bucket.get.mockResolvedValue({
+        json: vi.fn().mockResolvedValue({
+          ttl: 259200,
+          createdAt: new Date().toISOString(),
+          dir: '/workspace/original'
+        })
+      });
+      bucket.head.mockResolvedValue({ size: 42 });
+
+      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Created'
+      } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
+      const restoreArchiveSpy = vi
+        .spyOn(backupSandbox.client.backup, 'restoreArchive')
+        .mockResolvedValue({ success: true, dir: '/app/project' });
+      vi.spyOn(
+        backupSandbox as any,
+        'downloadBackupPresigned'
+      ).mockResolvedValue(undefined);
+      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+        stdout: '0',
+        stderr: '',
+        exitCode: 0
+      });
+
+      const result = await backupSandbox.restoreBackup(backupId, {
         dir: '/app/project'
       });
 
@@ -1205,6 +1254,51 @@ describe('Sandbox - Automatic Session Management', () => {
         dir: '/app/project',
         id: backupId
       });
+      expect(restoreArchiveSpy).toHaveBeenCalledWith(
+        '/app/project',
+        `/var/backups/${backupId}.sqsh`,
+        expect.stringMatching(/^__sandbox_backup_/)
+      );
+    });
+
+    it('should continue accepting the serialized backup handle', async () => {
+      const { backupSandbox, bucket } = await createBackupSandbox();
+      const backupId = crypto.randomUUID();
+
+      bucket.get.mockResolvedValue({
+        json: vi.fn().mockResolvedValue({
+          ttl: 259200,
+          createdAt: new Date().toISOString(),
+          dir: '/workspace/original'
+        })
+      });
+      bucket.head.mockResolvedValue({ size: 42 });
+
+      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Created'
+      } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
+      const restoreArchiveSpy = vi
+        .spyOn(backupSandbox.client.backup, 'restoreArchive')
+        .mockResolvedValue({ success: true, dir: '/app/project' });
+      vi.spyOn(
+        backupSandbox as any,
+        'downloadBackupPresigned'
+      ).mockResolvedValue(undefined);
+      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+        stdout: '0',
+        stderr: '',
+        exitCode: 0
+      });
+
+      await backupSandbox.restoreBackup({ id: backupId, dir: '/app/project' });
+
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
         `/var/backups/${backupId}.sqsh`,
