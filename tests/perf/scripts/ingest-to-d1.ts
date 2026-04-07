@@ -119,8 +119,8 @@ function buildStatements(report: PerfTestResult): D1Statement[] {
   return statements;
 }
 
-async function postBatch(statements: D1Statement[]): Promise<void> {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${PERF_D1_DATABASE_ID}/batch`;
+async function postStatement(statement: D1Statement): Promise<void> {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${PERF_D1_DATABASE_ID}/query`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -128,7 +128,7 @@ async function postBatch(statements: D1Statement[]): Promise<void> {
       Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ statements })
+    body: JSON.stringify({ sql: statement.sql, params: statement.params })
   });
 
   if (!response.ok) {
@@ -144,13 +144,18 @@ async function postBatch(statements: D1Statement[]): Promise<void> {
 
   if (!body.success) {
     throw new Error(
-      `D1 batch failed: ${body.errors.map((e) => e.message).join(', ')}`
+      `D1 query failed: ${body.errors.map((e) => e.message).join(', ')}`
     );
   }
 
-  const failed = body.result.filter((r) => !r.success);
-  if (failed.length > 0) {
-    throw new Error(`${failed.length} statement(s) failed in the batch`);
+  if (body.result.some((result) => !result.success)) {
+    throw new Error('Statement failed in D1 query response');
+  }
+}
+
+async function postStatements(statements: D1Statement[]): Promise<void> {
+  for (const statement of statements) {
+    await postStatement(statement);
   }
 }
 
@@ -172,6 +177,6 @@ if (DRY_RUN) {
     `[D1 Ingest] ${statements.length} statement(s) — not sent (dry run)`
   );
 } else {
-  await postBatch(statements);
+  await postStatements(statements);
   console.log(`[D1 Ingest] Done`);
 }

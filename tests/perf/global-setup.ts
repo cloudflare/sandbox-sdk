@@ -19,6 +19,7 @@ import { teardown } from './global-teardown';
 import { GlobalMetricsStore } from './helpers/metrics-collector';
 
 export const PERF_STATE_FILE = join(tmpdir(), 'perf-test-state.json');
+export const PERF_SCENARIOS_FILE = join(tmpdir(), 'perf-test-scenarios.json');
 const TEST_WORKER_DIR = 'tests/e2e/test-worker';
 
 let runner: WranglerDevRunner | null = null;
@@ -43,6 +44,9 @@ export async function setup() {
   // Clean up stale state from crashed runs
   if (existsSync(PERF_STATE_FILE)) {
     unlinkSync(PERF_STATE_FILE);
+  }
+  if (existsSync(PERF_SCENARIOS_FILE)) {
+    unlinkSync(PERF_SCENARIOS_FILE);
   }
 
   // Ensure wrangler config exists for local mode

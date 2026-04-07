@@ -6,9 +6,12 @@
  */
 
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { PERF_STATE_FILE, runner } from './global-setup';
+import { PERF_SCENARIOS_FILE, PERF_STATE_FILE, runner } from './global-setup';
 import { GlobalMetricsStore } from './helpers/metrics-collector';
-import { ReportGenerator } from './helpers/report-generator';
+import {
+  ReportGenerator,
+  type ScenarioResult
+} from './helpers/report-generator';
 
 export async function teardown() {
   console.log('\n[PerfTeardown] Generating final reports...');
@@ -24,8 +27,19 @@ export async function teardown() {
     // Generate reports
     const store = GlobalMetricsStore.getInstance();
     const reporter = new ReportGenerator('./perf-results');
-
-    const report = reporter.generateJsonReport(store, workerUrl);
+    const runInfo = store.getRunInfo();
+    const scenarios: ScenarioResult[] = existsSync(PERF_SCENARIOS_FILE)
+      ? (JSON.parse(
+          readFileSync(PERF_SCENARIOS_FILE, 'utf-8')
+        ) as ScenarioResult[])
+      : Array.from(store.getAllScenarios().values()).map((collector) =>
+          reporter.generateScenarioResult(collector)
+        );
+    const report = reporter.generateJsonReportFromScenarios(
+      scenarios,
+      workerUrl,
+      runInfo.duration
+    );
     const filepath = reporter.writeJsonReport(report);
 
     console.log(`[PerfTeardown] JSON report written to: ${filepath}`);
@@ -43,6 +57,9 @@ export async function teardown() {
     // Cleanup state file
     if (existsSync(PERF_STATE_FILE)) {
       unlinkSync(PERF_STATE_FILE);
+    }
+    if (existsSync(PERF_SCENARIOS_FILE)) {
+      unlinkSync(PERF_SCENARIOS_FILE);
     }
   } catch (error) {
     console.error('[PerfTeardown] Error generating reports:', error);

@@ -115,51 +115,61 @@ export class ReportGenerator {
     workerUrl: string
   ): PerfTestResult {
     const runInfo = store.getRunInfo();
-    const scenarios: ScenarioResult[] = [];
-    let passedCount = 0;
-    let failedCount = 0;
+    const scenarios = Array.from(store.getAllScenarios().values()).map(
+      (collector) => this.generateScenarioResult(collector)
+    );
+    return this.generateJsonReportFromScenarios(
+      scenarios,
+      workerUrl,
+      runInfo.duration
+    );
+  }
 
-    for (const [, collector] of store.getAllScenarios()) {
-      const info = collector.getScenarioInfo();
-      const metrics = collector.getAllStats();
-      const successRates: Record<
-        string,
-        { total: number; success: number; failure: number; rate: number }
-      > = {};
+  generateScenarioResult(collector: MetricsCollector): ScenarioResult {
+    const info = collector.getScenarioInfo();
+    const metrics = collector.getAllStats();
+    const successRates: Record<
+      string,
+      { total: number; success: number; failure: number; rate: number }
+    > = {};
 
-      for (const stat of metrics) {
-        successRates[stat.name] = collector.getSuccessRate(stat.name);
-      }
-
-      // Determine pass/fail based on overall success rate
-      const totalSuccess = Object.values(successRates).reduce(
-        (sum, sr) => sum + sr.success,
-        0
-      );
-      const totalCount = Object.values(successRates).reduce(
-        (sum, sr) => sum + sr.total,
-        0
-      );
-      const overallRate =
-        totalCount > 0 ? (totalSuccess / totalCount) * 100 : 100;
-      const status =
-        overallRate >= PASS_THRESHOLD
-          ? ('passed' as const)
-          : ('failed' as const);
-
-      if (status === 'passed') passedCount++;
-      else failedCount++;
-
-      scenarios.push({
-        name: info.name,
-        duration: info.duration,
-        metrics,
-        successRates,
-        status
-      });
+    for (const stat of metrics) {
+      successRates[stat.name] = collector.getSuccessRate(stat.name);
     }
 
-    const result: PerfTestResult = {
+    const totalSuccess = Object.values(successRates).reduce(
+      (sum, sr) => sum + sr.success,
+      0
+    );
+    const totalCount = Object.values(successRates).reduce(
+      (sum, sr) => sum + sr.total,
+      0
+    );
+    const overallRate =
+      totalCount > 0 ? (totalSuccess / totalCount) * 100 : 100;
+    const status =
+      overallRate >= PASS_THRESHOLD ? ('passed' as const) : ('failed' as const);
+
+    return {
+      name: info.name,
+      duration: info.duration,
+      metrics,
+      successRates,
+      status
+    };
+  }
+
+  generateJsonReportFromScenarios(
+    scenarios: ScenarioResult[],
+    workerUrl: string,
+    duration: number
+  ): PerfTestResult {
+    const passedCount = scenarios.filter(
+      (scenario) => scenario.status === 'passed'
+    ).length;
+    const failedCount = scenarios.length - passedCount;
+
+    return {
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       runId: `perf-${Date.now()}`,
@@ -169,7 +179,7 @@ export class ReportGenerator {
         branch: process.env.GITHUB_REF_NAME,
         ci: process.env.CI === 'true'
       },
-      duration: runInfo.duration,
+      duration,
       scenarios,
       summary: {
         totalScenarios: scenarios.length,
@@ -178,8 +188,6 @@ export class ReportGenerator {
         keyMetrics: this.extractKeyMetrics(scenarios)
       }
     };
-
-    return result;
   }
 
   /**
