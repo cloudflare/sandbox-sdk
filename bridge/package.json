@@ -1,0 +1,29 @@
+{
+  "name": "@cloudflare/sandbox-bridge",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Cloudflare Worker that exposes the sandbox HTTP API via the @cloudflare/sandbox SDK",
+  "scripts": {
+    "deploy": "./script/deploy",
+    "dev": "wrangler dev",
+    "format": "biome check --write",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "bun script/integration",
+    "token": "./script/token"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
+    "@cloudflare/sandbox": "*",
+    "@cloudflare/vitest-pool-workers": "^0.14.1",
+    "@cloudflare/workers-types": "^4.20250620.0",
+    "@types/node": "^24.10.1",
+    "hono": "^4.7.11",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.70.0"
+  }
+}

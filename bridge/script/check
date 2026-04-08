@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+export WRANGLER_SKIP_UPDATE_CHECK=1
+
+npx biome check
+npx wrangler types --check
+npx tsc --noEmit
