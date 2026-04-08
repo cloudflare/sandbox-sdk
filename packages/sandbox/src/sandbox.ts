@@ -61,6 +61,7 @@ import {
   ProcessReadyTimeoutError,
   SessionAlreadyExistsError
 } from './errors';
+import { collectFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { proxyTerminal } from './pty';
@@ -4054,6 +4055,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * under the `backups/` prefix after the desired retention period.
    */
   async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
+    if (options.localBucket) {
+      return this.enqueueBackupOp(() => this.doCreateBackupLocal(options));
+    }
     this.requireBackupBucket();
     return this.enqueueBackupOp(() => this.doCreateBackup(options));
   }
@@ -4230,9 +4234,210 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Local-dev implementation of createBackup.
+   * Uses the R2 binding directly instead of presigned URLs.
+   * Archive format is identical to production (squashfs + meta.json).
+   */
+  private async doCreateBackupLocal(
+    options: BackupOptions
+  ): Promise<DirectoryBackup> {
+    const DEFAULT_TTL_SECONDS = 259200; // 3 days
+    const MAX_NAME_LENGTH = 256;
+    const {
+      dir,
+      name,
+      ttl = DEFAULT_TTL_SECONDS,
+      gitignore = false,
+      excludes = []
+    } = options;
+
+    const backupStartTime = Date.now();
+    let backupId: string | undefined;
+    let sizeBytes: number | undefined;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let backupSession: string | undefined;
+
+    // Resolve backup bucket from env as an R2 binding
+    const envObj = this.env as Record<string, unknown>;
+    const bucket = envObj['BACKUP_BUCKET'];
+    if (!bucket || !isR2Bucket(bucket)) {
+      throw new InvalidBackupConfigError({
+        message:
+          'BACKUP_BUCKET R2 binding not found in env. ' +
+          'Add a BACKUP_BUCKET R2 binding to your wrangler.jsonc for local backup support.',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'Missing BACKUP_BUCKET R2 binding' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    try {
+      Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
+          throw new InvalidBackupConfigError({
+            message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: {
+              reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+        if (/[\u0000-\u001f\u007f]/.test(name)) {
+          throw new InvalidBackupConfigError({
+            message: 'BackupOptions.name must not contain control characters',
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: { reason: 'name must not contain control characters' },
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      if (ttl <= 0) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.ttl must be a positive number of seconds',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'ttl must be a positive number of seconds' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (typeof gitignore !== 'boolean') {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.gitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'gitignore must be a boolean' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (
+        !Array.isArray(excludes) ||
+        !excludes.every((e: unknown) => typeof e === 'string')
+      ) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.excludes must be an array of strings',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'excludes must be an array of strings' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      backupSession = await this.ensureBackupSession();
+      backupId = crypto.randomUUID();
+      const archivePath = `/var/backups/${backupId}.sqsh`;
+
+      // Step 1: Create squashfs archive in the container (same as production)
+      const createResult = await this.client.backup.createArchive(
+        dir,
+        archivePath,
+        backupSession,
+        gitignore,
+        excludes
+      );
+
+      if (!createResult.success) {
+        throw new BackupCreateError({
+          message: 'Container failed to create backup archive',
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      sizeBytes = createResult.sizeBytes;
+      const r2Key = `backups/${backupId}/data.sqsh`;
+      const metaKey = `backups/${backupId}/meta.json`;
+
+      // Step 2: Read archive from container via file streaming, upload to R2 via binding
+      const archiveStream = await this.client.files.readFileStream(
+        archivePath,
+        backupSession
+      );
+      const { content } = await collectFile(archiveStream);
+      const archiveData =
+        content instanceof Uint8Array
+          ? content
+          : new TextEncoder().encode(content);
+      await bucket.put(r2Key, archiveData);
+
+      // Verify upload
+      const head = await bucket.head(r2Key);
+      if (!head || head.size !== createResult.sizeBytes) {
+        throw new BackupCreateError({
+          message: `Upload verification failed: expected ${createResult.sizeBytes} bytes, got ${head?.size ?? 0}`,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Step 3: Write metadata
+      const metadata = {
+        id: backupId,
+        dir,
+        name: name || null,
+        sizeBytes: createResult.sizeBytes,
+        ttl,
+        createdAt: new Date().toISOString()
+      };
+      await bucket.put(metaKey, JSON.stringify(metadata));
+
+      outcome = 'success';
+
+      // Clean up local archive
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession,
+        { origin: 'internal' }
+      ).catch(() => {});
+
+      return { id: backupId, dir, localBucket: true };
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      if (backupId && backupSession) {
+        const archivePath = `/var/backups/${backupId}.sqsh`;
+        const r2Key = `backups/${backupId}/data.sqsh`;
+        const metaKey = `backups/${backupId}/meta.json`;
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+        await bucket.delete(r2Key).catch(() => {});
+        await bucket.delete(metaKey).catch(() => {});
+      }
+      throw error;
+    } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.create',
+        outcome,
+        durationMs: Date.now() - backupStartTime,
+        backupId,
+        dir,
+        name,
+        sizeBytes,
+        provider: 'local-binding',
+        error: caughtError
+      });
+    }
+  }
+
+  /**
    * Restore a backup from R2 into a directory.
    *
-   * Flow:
+   * **Production flow** (`localBucket` not set):
    *   1. DO reads metadata from R2 and checks TTL
    *   2. Container mounts the backup archive from R2 via s3fs
    *   3. Container mounts the squashfs archive with FUSE overlayfs
@@ -4247,6 +4452,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * backup handle to recover. This is an ephemeral restore, not a persistent
    * extraction.
    *
+   * **Local-dev flow** (`localBucket: true` on the originating `createBackup` call):
+   *   1. DO reads metadata and checks TTL via R2 binding
+   *   2. DO downloads the archive from R2 and writes it to the container
+   *   3. Container extracts the archive with `unsquashfs` (no FUSE needed)
+   *
    * The backup is restored into `backup.dir`. This may differ from the
    * directory that was originally backed up, allowing cross-directory restore.
    *
@@ -4257,6 +4467,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Concurrent backup/restore calls on the same sandbox are serialized.
    */
   async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
+    if (backup.localBucket) {
+      return this.enqueueBackupOp(() => this.doRestoreBackupLocal(backup));
+    }
     this.requireBackupBucket();
     return this.enqueueBackupOp(() => this.doRestoreBackup(backup));
   }
@@ -4431,6 +4644,200 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         durationMs: Date.now() - restoreStartTime,
         backupId: id,
         dir,
+        error: caughtError
+      });
+    }
+  }
+
+  /**
+   * Local-dev implementation of restoreBackup.
+   * Uses the R2 binding directly instead of presigned URLs, and
+   * unsquashfs for extraction instead of squashfuse + fuse-overlayfs.
+   */
+  private async doRestoreBackupLocal(
+    backup: DirectoryBackup
+  ): Promise<RestoreBackupResult> {
+    const restoreStartTime = Date.now();
+    const { id, dir } = backup;
+
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let backupSession: string | undefined;
+
+    // Resolve backup bucket from env as an R2 binding
+    const envObj = this.env as Record<string, unknown>;
+    const bucket = envObj['BACKUP_BUCKET'];
+    if (!bucket || !isR2Bucket(bucket)) {
+      throw new InvalidBackupConfigError({
+        message:
+          'BACKUP_BUCKET R2 binding not found in env. ' +
+          'Add a BACKUP_BUCKET R2 binding to your wrangler.jsonc for local backup support.',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'Missing BACKUP_BUCKET R2 binding' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    try {
+      // Validate user-provided inputs
+      if (!id || typeof id !== 'string') {
+        throw new InvalidBackupConfigError({
+          message: 'Invalid backup: missing or invalid id',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'missing or invalid id' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (!Sandbox.UUID_REGEX.test(id)) {
+        throw new InvalidBackupConfigError({
+          message:
+            'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'id must be a valid UUID' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
+
+      // Step 1: Read metadata to check TTL
+      const metaKey = `backups/${id}/meta.json`;
+      const metaObject = await bucket.get(metaKey);
+      if (!metaObject) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup not found: ${id}. ` +
+            'Verify the backup ID is correct and the backup has not been deleted.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId: id },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const metadata = await metaObject.json<{
+        ttl: number;
+        createdAt: string;
+        dir: string;
+      }>();
+
+      // Check TTL with 60-second buffer
+      const TTL_BUFFER_MS = 60 * 1000;
+      const createdAt = new Date(metadata.createdAt).getTime();
+      if (Number.isNaN(createdAt)) {
+        throw new BackupRestoreError({
+          message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId: id },
+          timestamp: new Date().toISOString()
+        });
+      }
+      const expiresAt = createdAt + metadata.ttl * 1000;
+      if (Date.now() + TTL_BUFFER_MS > expiresAt) {
+        throw new BackupExpiredError({
+          message:
+            `Backup ${id} has expired ` +
+            `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
+            'Create a new backup.',
+          code: ErrorCode.BACKUP_EXPIRED,
+          httpStatus: 400,
+          context: {
+            backupId: id,
+            expiredAt: new Date(expiresAt).toISOString()
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Step 2: Download archive from R2 via binding and write to container
+      const r2Key = `backups/${id}/data.sqsh`;
+      const archiveObject = await bucket.get(r2Key);
+      if (!archiveObject) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup archive not found in R2: ${id}. ` +
+            'The archive may have been deleted by R2 lifecycle rules.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId: id },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      backupSession = await this.ensureBackupSession();
+      const archivePath = `/var/backups/${id}.sqsh`;
+
+      const archiveBuffer = await archiveObject.arrayBuffer();
+      const base64Content = Buffer.from(archiveBuffer).toString('base64');
+
+      // Ensure /var/backups exists
+      await this.execWithSession('mkdir -p /var/backups', backupSession, {
+        origin: 'internal'
+      });
+
+      await this.client.files.writeFile(
+        archivePath,
+        base64Content,
+        backupSession,
+        { encoding: 'base64' }
+      );
+
+      // Step 3: Extract archive using unsquashfs (no FUSE needed)
+      const extractResult = await this.execWithSession(
+        `/usr/bin/unsquashfs -f -d ${shellEscape(dir)} ${shellEscape(archivePath)}`,
+        backupSession,
+        { origin: 'internal' }
+      );
+
+      if (extractResult.exitCode !== 0) {
+        throw new BackupRestoreError({
+          message: `unsquashfs extraction failed (exit code ${extractResult.exitCode}): ${extractResult.stderr}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId: id },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Clean up archive after extraction (no FUSE mount holds it open)
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession,
+        { origin: 'internal' }
+      ).catch(() => {});
+
+      outcome = 'success';
+
+      return {
+        success: true,
+        dir,
+        id
+      };
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      if (id && backupSession) {
+        const archivePath = `/var/backups/${id}.sqsh`;
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+      }
+      throw error;
+    } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.restore',
+        outcome,
+        durationMs: Date.now() - restoreStartTime,
+        backupId: id,
+        dir,
+        provider: 'local-binding',
         error: caughtError
       });
     }
