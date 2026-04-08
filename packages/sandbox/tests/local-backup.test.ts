@@ -545,6 +545,48 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('unsquashfs extraction failed');
     });
+
+    it('should surface archive write failures before running unsquashfs', async () => {
+      const archiveData = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
+      const metadata = {
+        id: '12345678-1234-1234-1234-123456789012',
+        dir: '/workspace/myapp',
+        name: null,
+        sizeBytes: archiveData.length,
+        ttl: 3600,
+        createdAt: new Date().toISOString()
+      };
+
+      await mockBucket.put(
+        'backups/12345678-1234-1234-1234-123456789012/meta.json',
+        JSON.stringify(metadata)
+      );
+      await mockBucket.put(
+        'backups/12345678-1234-1234-1234-123456789012/data.sqsh',
+        archiveData
+      );
+
+      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+        success: false,
+        error: {
+          message: "Failed to write file '/var/backups/test.sqsh': disk full"
+        }
+      } as any);
+
+      await expect(
+        sandbox.restoreBackup({
+          id: '12345678-1234-1234-1234-123456789012',
+          dir: '/workspace/myapp',
+          localBucket: true
+        })
+      ).rejects.toThrow('Failed to write backup archive');
+
+      const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
+      const unsquashfsCall = execCalls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('unsquashfs')
+      );
+      expect(unsquashfsCall).toBeUndefined();
+    });
   });
 
   describe('localBucket round-trip', () => {

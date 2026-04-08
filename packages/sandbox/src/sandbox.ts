@@ -4778,12 +4778,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         origin: 'internal'
       });
 
-      await this.client.files.writeFile(
+      const writeResult = await this.client.files.writeFile(
         archivePath,
         base64Content,
         backupSession,
         { encoding: 'base64' }
       );
+
+      if (!writeResult.success) {
+        const writeErrorMessage =
+          'error' in writeResult &&
+          typeof writeResult.error === 'object' &&
+          writeResult.error !== null &&
+          'message' in writeResult.error &&
+          typeof writeResult.error.message === 'string'
+            ? writeResult.error.message
+            : `File write returned success: false for '${archivePath}'`;
+
+        throw new BackupRestoreError({
+          message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId: id },
+          timestamp: new Date().toISOString()
+        });
+      }
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
       const extractResult = await this.execWithSession(
