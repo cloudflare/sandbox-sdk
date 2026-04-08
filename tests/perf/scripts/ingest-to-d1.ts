@@ -27,6 +27,15 @@ const DRY_RUN = args.includes('--dry-run');
 const REPORT_PATH = resolve(
   args.find((a) => !a.startsWith('--')) ?? 'perf-results/latest.json'
 );
+const DEFAULT_RETENTION_DAYS = 90;
+const parsedRetentionDays = Number.parseInt(
+  process.env.PERF_D1_RETENTION_DAYS ?? `${DEFAULT_RETENTION_DAYS}`,
+  10
+);
+const RETENTION_DAYS =
+  Number.isFinite(parsedRetentionDays) && parsedRetentionDays > 0
+    ? parsedRetentionDays
+    : DEFAULT_RETENTION_DAYS;
 
 const { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, PERF_D1_DATABASE_ID } =
   process.env;
@@ -61,6 +70,9 @@ function buildStatements(report: PerfTestResult): D1Statement[] {
   const trigger =
     process.env.GITHUB_EVENT_NAME ??
     (process.env.CI ? 'workflow_dispatch' : 'local');
+  const retentionCutoff = new Date(
+    Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
 
   // Upsert the run row
   statements.push({
@@ -116,6 +128,19 @@ function buildStatements(report: PerfTestResult): D1Statement[] {
     }
   }
 
+  statements.push({
+    sql: `DELETE FROM perf_metrics
+          WHERE run_id IN (
+            SELECT run_id FROM perf_runs WHERE timestamp < ?
+          )`,
+    params: [retentionCutoff]
+  });
+
+  statements.push({
+    sql: 'DELETE FROM perf_runs WHERE timestamp < ?',
+    params: [retentionCutoff]
+  });
+
   return statements;
 }
 
@@ -160,10 +185,13 @@ async function postStatements(statements: D1Statement[]): Promise<void> {
 }
 
 const statements = buildStatements(report);
-const metricCount = statements.length - 2; // subtract run upsert + delete
+const metricCount = report.scenarios.reduce(
+  (count, scenario) => count + scenario.metrics.length,
+  0
+);
 
 console.log(
-  `[D1 Ingest] run=${report.runId}  scenarios=${report.scenarios.length}  metrics=${metricCount}`
+  `[D1 Ingest] run=${report.runId}  scenarios=${report.scenarios.length}  metrics=${metricCount}  retention=${RETENTION_DAYS}d`
 );
 
 if (DRY_RUN) {
