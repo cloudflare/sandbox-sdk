@@ -1,0 +1,8 @@
+# Environment
+backend/.env
+backend/.venv/
+frontend/node_modules/
+
+# Local state
+backend/.sandbox-session.json
+backend/.chat-history.json

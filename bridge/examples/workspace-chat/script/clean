@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SESSION_FILE="$ROOT/backend/.sandbox-session.json"
+HISTORY_FILE="$ROOT/backend/.chat-history.json"
+
+BOLD='\033[1m'
+RESET='\033[0m'
+
+log() { printf "${BOLD}[clean]${RESET} %s\n" "$*"; }
+
+CLEANED=0
+for f in "$SESSION_FILE" "$HISTORY_FILE"; do
+  if [ -f "$f" ]; then
+    rm "$f"
+    log "Removed $f"
+    CLEANED=1
+  fi
+done
+
+if [ "$CLEANED" -eq 1 ]; then
+  log "Next startup will create a fresh sandbox and empty chat."
+else
+  log "No saved state found — already clean."
+fi
