@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.8
+
+### Patch Changes
+
+- [#571](https://github.com/cloudflare/sandbox-sdk/pull/571) [`c5db840`](https://github.com/cloudflare/sandbox-sdk/commit/c5db84092ad8d3ea1c0e98b54e1b58d7a953b32b) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Require `@cloudflare/containers` 0.3.0 so sandbox apps pick up the latest Containers platform updates.
+
 ## 0.8.7
 
 ### Patch Changes
