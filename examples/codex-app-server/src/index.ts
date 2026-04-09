@@ -1,9 +1,9 @@
 import { switchPort } from '@cloudflare/containers';
 import {
+  Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
-  proxyToSandbox,
-  Sandbox
+  proxyToSandbox
 } from '@cloudflare/sandbox';
 import {
   autoApprove,
@@ -18,7 +18,12 @@ import {
   tryParse
 } from './rpc';
 
-export { Sandbox, ContainerProxy };
+export { ContainerProxy };
+
+export class Sandbox extends BaseSandbox<Env> {
+  enableInternet = false;
+  interceptHttps = true;
+}
 
 declare global {
   interface Env {
@@ -31,12 +36,13 @@ declare global {
 const CODEX_WS_PORT = 4500;
 
 // --- Egress control ---
-// Only HTTP is intercepted via ContainerProxy. The container uses
-// OPENAI_BASE_URL=http://... so requests hit the outbound handler,
-// which injects the real API key. The key never enters the container.
+// The container uses OPENAI_BASE_URL=http://api.openai.com/v1 so requests
+// hit the outbound handler, which injects the real API key and upgrades to
+// HTTPS. The key never enters the container. With interceptHttps = true,
+// HTTPS requests are also intercepted via the Cloudflare CA cert.
 
-Sandbox.outboundHandlers = {
-  proxyOpenAI: async (request: Request, env: Env) => {
+Sandbox.outboundByHost = {
+  'api.openai.com': async (request: Request, env: Env) => {
     const url = new URL(request.url);
     const headers = new Headers(request.headers);
     headers.set('Authorization', `Bearer ${env.OPENAI_API_KEY}`);
@@ -47,24 +53,16 @@ Sandbox.outboundHandlers = {
       body: request.body
     });
   },
-
-  denyWithLog: async (request: Request) => {
-    console.log(`[egress] Blocked: ${request.method} ${request.url}`);
-    return new Response('Forbidden by egress policy', { status: 403 });
-  },
-
-  allowWithLog: async (request: Request) => {
+  'github.com': async (request: Request) => {
     console.log(`[egress] Allowed: ${request.method} ${request.url}`);
     return fetch(request);
   }
 };
 
-Sandbox.outboundByHost = {
-  'api.openai.com': Sandbox.outboundHandlers!.proxyOpenAI!,
-  'github.com': Sandbox.outboundHandlers!.allowWithLog!
+Sandbox.outbound = async (request: Request) => {
+  console.log(`[egress] Blocked: ${request.method} ${request.url}`);
+  return new Response('Forbidden by egress policy', { status: 403 });
 };
-
-Sandbox.outbound = Sandbox.outboundHandlers!.denyWithLog!;
 
 // --- Custom command: sandbox/setup ---
 // Wipes /workspace and clones a fresh copy of the repo.

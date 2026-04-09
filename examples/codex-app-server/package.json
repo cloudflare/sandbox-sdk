@@ -19,5 +19,8 @@
     "wrangler": "^4.76.0"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/containers": "https://pkg.pr.new/cloudflare/containers/@cloudflare/containers@171"
+  }
 }
