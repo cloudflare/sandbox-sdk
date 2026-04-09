@@ -50,6 +50,10 @@ export interface BucketDeleteResponse {
   key: string;
 }
 
+export interface BucketUnmountResponse {
+  success: boolean;
+}
+
 // Port unexpose response
 export interface PortUnexposeResponse {
   success: boolean;

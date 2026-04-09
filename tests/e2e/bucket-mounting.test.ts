@@ -6,7 +6,11 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-import type { BucketGetResponse, SuccessResponse } from './test-worker/types';
+import type {
+  BucketGetResponse,
+  BucketUnmountResponse,
+  SuccessResponse
+} from './test-worker/types';
 
 /**
  * E2E test for S3-compatible bucket mounting
@@ -133,7 +137,40 @@ describe('Bucket Mounting E2E', () => {
         expect(getResult.success).toBe(true);
         expect(getResult.content.trim()).toBe(TEST_CONTENT);
 
-        // 6. Cleanup: delete both test files from R2
+        // 6. Unmount the bucket
+        const unmountResponse = await fetch(`${workerUrl}/api/bucket/unmount`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ mountPath: MOUNT_PATH })
+        });
+        expect(unmountResponse.ok).toBe(true);
+        const unmountResult =
+          (await unmountResponse.json()) as BucketUnmountResponse;
+        expect(unmountResult.success).toBe(true);
+
+        // 7. Verify mount point is no longer active
+        const mountCheck = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `mountpoint -q ${MOUNT_PATH}`
+          })
+        });
+        const mountCheckResult = (await mountCheck.json()) as ExecResult;
+        expect(mountCheckResult.exitCode).not.toBe(0);
+
+        // 8. Verify mount directory was removed
+        const dirCheck = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `test -d ${MOUNT_PATH}`
+          })
+        });
+        const dirCheckResult = (await dirCheck.json()) as ExecResult;
+        expect(dirCheckResult.exitCode).not.toBe(0);
+
+        // 9. Cleanup: delete both test files from R2
         await fetch(`${workerUrl}/api/bucket/delete`, {
           method: 'POST',
           headers,

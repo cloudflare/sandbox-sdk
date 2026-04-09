@@ -24,6 +24,7 @@ import type {
   BucketDeleteResponse,
   BucketGetResponse,
   BucketPutResponse,
+  BucketUnmountResponse,
   CodeContextDeleteResponse,
   ErrorResponse,
   HealthResponse,
@@ -566,6 +567,15 @@ console.log('Terminal server on port ' + port);
 
         await sandbox.mountBucket(body.bucket, body.mountPath, body.options);
         const response: SuccessResponse = { success: true };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Bucket unmount
+      if (url.pathname === '/api/bucket/unmount' && request.method === 'POST') {
+        await sandbox.unmountBucket(body.mountPath);
+        const response: BucketUnmountResponse = { success: true };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
