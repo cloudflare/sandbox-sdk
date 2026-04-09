@@ -75,6 +75,7 @@ import {
   validatePrefix
 } from './storage-mount';
 import {
+  BucketUnmountError,
   InvalidMountConfigError,
   S3FSMountError
 } from './storage-mount/errors';
@@ -1135,11 +1136,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } else {
         // FUSE unmount
         try {
-          await this.execInternal(`fusermount -u ${shellEscape(mountPath)}`);
+          const result = await this.execInternal(
+            `fusermount -u ${shellEscape(mountPath)}`
+          );
+          if (result.exitCode !== 0) {
+            const stderr = result.stderr || 'unknown error';
+            throw new BucketUnmountError(
+              `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
+            );
+          }
           mountInfo.mounted = false;
 
           // Only remove from tracking if unmount succeeded
           this.activeMounts.delete(mountPath);
+
+          // Remove the now-empty mount directory
+          try {
+            const cleanup = await this.execInternal(
+              `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)}`
+            );
+            if (cleanup.exitCode !== 0) {
+              this.logger.warn('mount directory removal failed', {
+                mountPath,
+                exitCode: cleanup.exitCode,
+                stderr: cleanup.stderr
+              });
+            }
+          } catch (err) {
+            this.logger.warn('mount directory removal failed', {
+              mountPath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          }
         } finally {
           // Always cleanup password file, even if unmount fails
           await this.deletePasswordFile(mountInfo.passwordFilePath);

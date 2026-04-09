@@ -159,7 +159,13 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   DesktopStartError: { status: 500, code: 'DESKTOP_START_FAILED' },
   DesktopInputError: { status: 400, code: 'DESKTOP_INPUT_FAILED' },
   DesktopScreenshotError: { status: 500, code: 'DESKTOP_SCREENSHOT_FAILED' },
-  DesktopProcessError: { status: 500, code: 'DESKTOP_PROCESS_ERROR' }
+  DesktopProcessError: { status: 500, code: 'DESKTOP_PROCESS_ERROR' },
+  // Bucket errors
+  BucketMountError: { status: 500, code: 'BUCKET_MOUNT_ERROR' },
+  BucketUnmountError: { status: 500, code: 'BUCKET_UNMOUNT_ERROR' },
+  S3FSMountError: { status: 500, code: 'S3FS_MOUNT_ERROR' },
+  InvalidMountConfigError: { status: 400, code: 'INVALID_MOUNT_CONFIG' },
+  MissingCredentialsError: { status: 400, code: 'MISSING_CREDENTIALS' }
 };
 
 async function parseBody(request: Request): Promise<any> {

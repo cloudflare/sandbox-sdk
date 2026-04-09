@@ -166,6 +166,7 @@ export {
 // Export bucket mounting errors
 export {
   BucketMountError,
+  BucketUnmountError,
   InvalidMountConfigError,
   MissingCredentialsError,
   S3FSMountError

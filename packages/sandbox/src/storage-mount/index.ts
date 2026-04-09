@@ -5,6 +5,7 @@
 export { detectCredentials } from './credential-detection';
 export {
   BucketMountError,
+  BucketUnmountError,
   InvalidMountConfigError,
   MissingCredentialsError,
   S3FSMountError

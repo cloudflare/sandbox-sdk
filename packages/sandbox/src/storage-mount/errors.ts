@@ -1,8 +1,9 @@
 /**
- * Bucket mounting error classes
+ * Bucket mount and unmount error classes
  *
- * These are SDK-side validation errors that follow the same pattern as SecurityError.
- * They are thrown before any container interaction occurs.
+ * Validation errors (InvalidMountConfigError, MissingCredentialsError) are thrown
+ * before any container interaction. BucketUnmountError is thrown after a failed
+ * fusermount call inside the container.
  */
 
 import { ErrorCode } from '@repo/shared/errors';
@@ -27,6 +28,16 @@ export class S3FSMountError extends BucketMountError {
   constructor(message: string) {
     super(message, ErrorCode.S3FS_MOUNT_ERROR);
     this.name = 'S3FSMountError';
+  }
+}
+
+/**
+ * Thrown when fusermount -u fails to unmount a FUSE filesystem
+ */
+export class BucketUnmountError extends BucketMountError {
+  constructor(message: string) {
+    super(message, ErrorCode.BUCKET_UNMOUNT_ERROR);
+    this.name = 'BucketUnmountError';
   }
 }
 

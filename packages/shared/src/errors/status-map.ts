@@ -96,6 +96,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_OPERATION_FAILED]: 500,
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
   [ErrorCode.BUCKET_MOUNT_ERROR]: 500,
+  [ErrorCode.BUCKET_UNMOUNT_ERROR]: 500,
   [ErrorCode.S3FS_MOUNT_ERROR]: 500,
   [ErrorCode.WATCH_START_ERROR]: 500,
   [ErrorCode.WATCH_STOP_ERROR]: 500,

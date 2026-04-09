@@ -123,6 +123,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Enable FUSE in container - allow non-root users to use FUSE
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
+# fusermount requires /etc/mtab to locate active mounts
+RUN ln -sf /proc/mounts /etc/mtab
+
 # Install Node.js 20 LTS from official Node image
 COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
