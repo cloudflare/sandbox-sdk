@@ -13,7 +13,8 @@
   //   wrangler secret put R2_SECRET_ACCESS_KEY
   "vars": {
     "BACKUP_BUCKET_NAME": "time-machine-snapshots",
-    "CLOUDFLARE_ACCOUNT_ID": "<your-account-id>"
+    "CLOUDFLARE_ACCOUNT_ID": "<your-account-id>",
+    "USE_LOCAL_BUCKET_BACKUPS": "false"
   },
 
   // R2 bucket for storing snapshots (also stores checkpoint metadata in meta.json files)

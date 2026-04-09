@@ -31,6 +31,15 @@ interface BackupMetadata {
   createdAt: string;
 }
 
+// ─── Helper Functions ──────────────────────────────────────────────
+
+function shouldUseLocalBucket(value: string): boolean {
+  return (
+    typeof value === 'string' &&
+    ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+  );
+}
+
 // ─── API Handlers ──────────────────────────────────────────────────
 
 async function handleExec(request: Request, env: Env): Promise<Response> {
@@ -67,13 +76,17 @@ async function handleSaveCheckpoint(
   const checkpointName = name || `checkpoint-${Date.now()}`;
 
   const sandbox = getSandbox(env.Sandbox, 'time-machine');
+  const useLocalBucket = shouldUseLocalBucket(
+    env.USE_LOCAL_BUCKET_BACKUPS || ''
+  );
 
   // createBackup stores archive + meta.json in R2
   // The meta.json includes { id, dir, name, sizeBytes, ttl, createdAt }
   const backup = await sandbox.createBackup({
     dir: '/workspace',
     name: checkpointName,
-    ttl: 24 * 60 * 60
+    ttl: 24 * 60 * 60,
+    ...(useLocalBucket ? { localBucket: true } : {})
   });
 
   // Return checkpoint info from the backup response
@@ -101,7 +114,12 @@ async function handleRestore(request: Request, env: Env): Promise<Response> {
   }
 
   const meta = await metaObj.json<BackupMetadata>();
-  const backup: DirectoryBackup = { id: meta.id, dir: meta.dir };
+  const useLocalBucket = shouldUseLocalBucket(
+    env.USE_LOCAL_BUCKET_BACKUPS || ''
+  );
+  const backup: DirectoryBackup = useLocalBucket
+    ? { id: meta.id, dir: meta.dir, localBucket: true }
+    : { id: meta.id, dir: meta.dir };
 
   const sandbox = getSandbox(env.Sandbox, 'time-machine');
   await sandbox.restoreBackup(backup);
@@ -118,7 +136,9 @@ async function handleRestore(request: Request, env: Env): Promise<Response> {
 
 async function handleListCheckpoints(env: Env): Promise<Response> {
   // List all meta.json files in the backups/ prefix
-  const listed = await env.BACKUP_BUCKET.list({ prefix: 'backups/' });
+  const listed = await env.BACKUP_BUCKET.list({
+    prefix: 'backups/'
+  });
 
   // Filter to only meta.json files and fetch each
   const metaKeys = listed.objects
