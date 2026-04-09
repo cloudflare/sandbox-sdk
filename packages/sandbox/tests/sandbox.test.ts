@@ -1070,6 +1070,81 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('constructor - interceptHttps env injection', () => {
+    it('injects SANDBOX_INTERCEPT_HTTPS into envVars when interceptHttps is true', async () => {
+      class SandboxWithHttps extends Sandbox<Record<string, unknown>> {
+        // @ts-expect-error - interceptHttps will be declared by the upstream primitives base type
+        override interceptHttps = true;
+      }
+
+      const customCtx = {
+        ...mockCtx,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        storage: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any
+      };
+
+      const instance = new SandboxWithHttps(
+        customCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await vi.waitFor(() => {
+        expect((instance as any).envVars.SANDBOX_INTERCEPT_HTTPS).toBe('1');
+      });
+    });
+
+    it('does not inject SANDBOX_INTERCEPT_HTTPS when interceptHttps is false', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      expect(sandbox.envVars.SANDBOX_INTERCEPT_HTTPS).toBeUndefined();
+    });
+
+    it('preserves existing envVars entries when injecting', async () => {
+      class SandboxWithHttps extends Sandbox<Record<string, unknown>> {
+        // @ts-expect-error - interceptHttps will be declared by the upstream primitives base type
+        override interceptHttps = true;
+        override envVars: Record<string, string> = { MY_KEY: 'my-value' };
+      }
+
+      const customCtx = {
+        ...mockCtx,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        storage: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any
+      };
+
+      const instance = new SandboxWithHttps(
+        customCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await vi.waitFor(() => {
+        expect((instance as any).envVars.SANDBOX_INTERCEPT_HTTPS).toBe('1');
+      });
+
+      expect((instance as any).envVars.MY_KEY).toBe('my-value');
+    });
+  });
+
   describe('keepAlive configuration', () => {
     it('should reschedule activity timeout when keepAlive is disabled', async () => {
       const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');

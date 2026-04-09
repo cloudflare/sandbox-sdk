@@ -6,6 +6,7 @@ cd "$(dirname "$0")/../../.."
 
 VERSION="$npm_package_version"
 IMAGE="cloudflare/sandbox-test"
+WRANGLER_CA_CERT="${NODE_EXTRA_CA_CERTS:-${SSL_CERT_FILE:-/dev/null}}"
 
 docker build \
   -f packages/sandbox/Dockerfile \
@@ -29,7 +30,7 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION-opencode" \
-  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
+  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .
 
 docker build \
@@ -38,7 +39,7 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION-desktop" \
-  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
+  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .
 
 STANDALONE_DIR="tests/e2e/test-worker"
@@ -57,5 +58,5 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION-musl" \
-  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
+  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .

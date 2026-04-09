@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.8.7
+
+### Patch Changes
+
+- [#565](https://github.com/cloudflare/sandbox-sdk/pull/565) [`ffcbd3a`](https://github.com/cloudflare/sandbox-sdk/commit/ffcbd3ab9584c7e717f6d4d19538bb57cbd88d69) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Require `@cloudflare/containers` 0.2.3 or newer.
+
+- [#550](https://github.com/cloudflare/sandbox-sdk/pull/550) [`1db32ea`](https://github.com/cloudflare/sandbox-sdk/commit/1db32ea02f1374b4c79d9bf05f50424b4166402b) Thanks [@scuffi](https://github.com/scuffi)! - Setting `interceptHttps = true` on your Sandbox will now automatically trust the Cloudflare-injected CA certificate at container startup, enabling outbound HTTPS traffic interception.
+
 ## 0.8.6
 
 ### Patch Changes

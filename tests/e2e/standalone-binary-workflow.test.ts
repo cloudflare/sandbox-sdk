@@ -25,7 +25,10 @@ describe('Standalone Binary Workflow', () => {
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    sandbox = await createTestSandbox({ type: 'standalone' });
+    sandbox = await createTestSandbox({
+      type: 'standalone',
+      initCommand: 'until [ -f /tmp/startup-marker.txt ]; do sleep 0.1; done'
+    });
     workerUrl = sandbox.workerUrl;
     headers = sandbox.headers(createUniqueSession());
   }, 120000);

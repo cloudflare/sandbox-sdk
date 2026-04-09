@@ -16,8 +16,6 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
-  release:
-    types: [published]
   schedule:
     - cron: '0 0 * * *'
 
@@ -213,5 +211,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PERF_D1_DATABASE_ID: ${{ secrets.PERF_D1_DATABASE_ID }}
+          PERF_D1_RETENTION_DAYS: 90
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: npx tsx tests/perf/scripts/ingest-to-d1.ts perf-results/latest.json
