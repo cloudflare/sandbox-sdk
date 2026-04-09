@@ -54,8 +54,14 @@ Sandbox.outboundByHost = {
     });
   },
   'github.com': async (request: Request) => {
-    console.log(`[egress] Allowed: ${request.method} ${request.url}`);
-    return fetch(request);
+    const url = new URL(request.url);
+    const target = `https://github.com${url.pathname}${url.search}`;
+    console.log(`[egress] Allowed: ${request.method} ${target}`);
+    return fetch(target, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body
+    });
   }
 };
 
