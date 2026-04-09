@@ -647,7 +647,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.renewActivityTimeout();
       }
 
-      // @ts-expect-error - interceptHttps is supplied by the container primitive subclass shape
       if (this.interceptHttps) {
         this.envVars = { ...this.envVars, SANDBOX_INTERCEPT_HTTPS: '1' };
       }

@@ -1073,7 +1073,6 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('constructor - interceptHttps env injection', () => {
     it('injects SANDBOX_INTERCEPT_HTTPS into envVars when interceptHttps is true', async () => {
       class SandboxWithHttps extends Sandbox<Record<string, unknown>> {
-        // @ts-expect-error - interceptHttps will be declared by the upstream primitives base type
         override interceptHttps = true;
       }
 
@@ -1112,7 +1111,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('preserves existing envVars entries when injecting', async () => {
       class SandboxWithHttps extends Sandbox<Record<string, unknown>> {
-        // @ts-expect-error - interceptHttps will be declared by the upstream primitives base type
         override interceptHttps = true;
         override envVars: Record<string, string> = { MY_KEY: 'my-value' };
       }
