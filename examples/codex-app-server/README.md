@@ -1,6 +1,6 @@
 # Codex App Server
 
-Runs [OpenAI Codex](https://openai.com/index/introducing-codex/) inside a [Cloudflare Sandbox](https://developers.cloudflare.com/sandbox/). A Cloudflare Worker acts as a WebSocket middleman between the browser and the container, running every JSON-RPC message through a composable handler pipeline. An egress proxy intercepts all outbound HTTP from the container to inject the OpenAI API key, while blocking everything else.
+Runs [OpenAI Codex](https://openai.com/index/introducing-codex/) inside a [Cloudflare Sandbox](https://developers.cloudflare.com/sandbox/). A Cloudflare Worker acts as a WebSocket middleman between the browser and the container, running every JSON-RPC message through a composable handler pipeline. An egress proxy intercepts all outbound HTTP and HTTPS from the container to inject the OpenAI API key, while blocking everything else.
 
 ```
 Browser                     Worker (middleman)              Sandbox Container
@@ -11,9 +11,12 @@ Browser                     Worker (middleman)              Sandbox Container
 │             │           │  egress handlers   │          │ OPENAI_BASE_URL=  │
 │             │           │  ┌───────────────┐ │          │ http://api.openai │
 │             │           │  │api.openai.com │──► inject API key ──► OpenAI
-│             │           │  │github.com     │──► passthrough
+│             │           │  │github.com     │──► upgrade to HTTPS ──► GitHub
 │             │           │  │* (catch-all)  │──► 403 Forbidden
 │             │           │  └───────────────┘ │
+│             │           │                     │
+│             │           │  enableInternet=false│
+│             │           │  interceptHttps=true │
 ```
 
 ## Quick start
@@ -28,6 +31,8 @@ Open `http://localhost:8787`. Enter a session name, optionally a repo URL, and c
 
 The first run builds the Docker container (2-3 minutes). Subsequent runs reuse the cached image.
 
+> **Note:** HTTPS interception and `enableInternet = false` require the Cloudflare runtime environment. Local development via `wrangler dev` uses `enableInternet = true` with HTTP-only interception.
+
 ## Deploy
 
 ```bash
@@ -39,13 +44,27 @@ npm run deploy
 
 Environment variables (set in `.dev.vars` locally, `wrangler secret` in production):
 
-| Variable              | Required | Description                                                                            |
-| --------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`      | yes      | Injected into sandbox HTTP requests via the egress proxy. Never reaches the container. |
-| `AUTH_TOKEN`          | no       | If set, clients must provide `Authorization: Bearer <token>` or `?token=<token>`.      |
-| `SANDBOX_SLEEP_AFTER` | no       | How long the container stays alive after the last request. Default: `1m`.              |
+| Variable              | Required | Description                                                                                  |
+| --------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`      | yes      | Injected into sandbox HTTP/HTTPS requests via the egress proxy. Never reaches the container. |
+| `AUTH_TOKEN`          | no       | If set, clients must provide `Authorization: Bearer <token>` or `?token=<token>`.            |
+| `SANDBOX_SLEEP_AFTER` | no       | How long the container stays alive after the last request. Default: `1m`.                    |
 
 ## How it works
+
+### Sandbox subclass
+
+The Worker exports a `Sandbox` subclass with two security settings:
+
+```typescript
+export class Sandbox extends BaseSandbox<Env> {
+  enableInternet = false; // block direct internet at the network level
+  interceptHttps = true; // intercept HTTPS via Cloudflare CA cert injection
+}
+```
+
+- **`enableInternet = false`** — disables direct outbound network access from the container. Only traffic handled by `outboundByHost` or `outbound` handlers can leave.
+- **`interceptHttps = true`** — injects a Cloudflare CA certificate into the container so HTTPS traffic flows through the same egress handlers as HTTP. Without this, HTTPS would bypass the proxy.
 
 ### Session lifecycle
 
@@ -99,17 +118,22 @@ Custom handlers (defined in `src/index.ts`):
 
 ### Egress control
 
-All outbound HTTP from the sandbox is routed through the Worker's egress proxy:
+The Sandbox subclass combines three layers of network control to minimize data exfiltration risk:
 
-| Host             | Action                                                                 |
-| ---------------- | ---------------------------------------------------------------------- |
-| `api.openai.com` | Allowed — Worker injects `OPENAI_API_KEY` header and upgrades to HTTPS |
-| `github.com`     | Allowed — passthrough (needed for `sandbox/setup` git clone)           |
-| Everything else  | Blocked with `403 Forbidden`                                           |
+1. **`enableInternet = false`** — blocks all direct outbound connections at the network level. Raw TCP to hosts not in `outboundByHost` is refused.
+2. **`interceptHttps = true`** — HTTPS traffic is intercepted via a Cloudflare-injected CA certificate, so it flows through the same handlers as HTTP.
+3. **`outboundByHost` + `outbound`** — application-level allowlist with a deny-by-default catch-all.
 
-The container never sees the real API key. It uses `OPENAI_BASE_URL=http://api.openai.com/v1` so requests flow through the HTTP egress proxy, and receives a dummy key (`proxy-injected`). The Worker's `proxyOpenAI` handler swaps in the real key and upgrades to HTTPS before forwarding to OpenAI.
+| Host             | Protocol     | Action                                                             |
+| ---------------- | ------------ | ------------------------------------------------------------------ |
+| `api.openai.com` | HTTP + HTTPS | Allowed — Worker injects `OPENAI_API_KEY` and upgrades to HTTPS    |
+| `github.com`     | HTTP + HTTPS | Allowed — upgrades to HTTPS (needed for `sandbox/setup` git clone) |
+| Everything else  | HTTP + HTTPS | Blocked with `403 Forbidden`                                       |
+| Non-HTTP traffic | Raw TCP      | Blocked by `enableInternet = false` for non-allowed hosts          |
 
-> **Note:** Only HTTP traffic is intercepted via the Container egress proxy. HTTPS interception requires CA injection (see `interceptHttps` in the Sandbox SDK). Raw TCP to non-standard ports bypasses the proxy entirely.
+The container never sees the real API key. It uses `OPENAI_BASE_URL=http://api.openai.com/v1` so requests flow through the egress proxy, and receives a dummy key (`proxy-injected`). The Worker swaps in the real key and upgrades to HTTPS before forwarding to OpenAI.
+
+> **Note:** DNS resolution is unrestricted, but without network access to blocked hosts, DNS alone does not enable data exfiltration. HTTPS interception requires a preview `@cloudflare/containers` package — this dependency will be removed once the feature ships in the stable release.
 
 ### Browser client
 
@@ -139,12 +163,14 @@ node test-egress.mjs                    # against localhost:8787
 WS_URL=wss://your-app.workers.dev/ws/test node test-egress.mjs  # against production
 ```
 
-Validates all egress constraints from inside the container:
+Validates egress constraints from inside the container:
 
 - `api.openai.com` returns 200 with API key injected (container only has dummy key)
-- `github.com` returns 301 (allowed, redirects to HTTPS)
+- `github.com` returns 301 (allowed)
 - `example.com` and `httpbin.org` return 403 (blocked)
 - Response body contains "Forbidden by egress policy"
+
+When deployed with `interceptHttps = true`, HTTPS requests to blocked hosts also return 403. With `enableInternet = false`, raw TCP connections to non-allowed hosts time out.
 
 ## Code structure
 
@@ -154,7 +180,7 @@ codex-app-server/
 ├── wrangler.jsonc            Worker + Sandbox Durable Object + container config
 ├── .dev.vars.example         Environment variable template
 ├── src/
-│   ├── index.ts              Worker: egress proxy, WebSocket bridge, sandbox lifecycle
+│   ├── index.ts              Worker: Sandbox subclass, egress proxy, WebSocket bridge
 │   └── rpc.ts                JSON-RPC types + composable handler pipeline
 ├── public/
 │   └── index.html            Browser client (session gate, streaming chat, tool grid)
