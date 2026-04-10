@@ -8,7 +8,8 @@ export const SCENARIOS = {
   SUSTAINED: 'sustained-throughput',
   BURST: 'bursty-traffic',
   BURST_STARTUP: 'burst-startup',
-  FILE_IO: 'file-io'
+  FILE_IO: 'file-io',
+  BUCKET_MOUNTING: 'bucket-mounting'
 } as const;
 
 export const METRICS = {
@@ -41,7 +42,14 @@ export const METRICS = {
   FILE_READ_LATENCY: 'file-read-latency',
   FILE_ROUNDTRIP_LATENCY: 'file-roundtrip-latency',
   FILE_CONCURRENT_WRITE: 'file-concurrent-write',
-  FILE_CONCURRENT_READ: 'file-concurrent-read'
+  FILE_CONCURRENT_READ: 'file-concurrent-read',
+  // Bucket mounting — used as prefixes, appended with '-<path>' (e.g. 'bucket-mount-latency-fuse')
+  BUCKET_MOUNT_LATENCY: 'bucket-mount-latency',
+  BUCKET_UNMOUNT_LATENCY: 'bucket-unmount-latency',
+  BUCKET_WRITE_LATENCY: 'bucket-write-latency',
+  BUCKET_READ_LATENCY: 'bucket-read-latency',
+  BUCKET_ROUNDTRIP_LATENCY: 'bucket-roundtrip-latency',
+  BUCKET_TOTAL_LATENCY: 'bucket-total-latency'
 } as const;
 
 /** Minimum success rate to pass a scenario (percentage) */

@@ -93,6 +93,13 @@
         "tests/perf/**/*.ts",
         "vitest.perf.config.ts",
         "packages/sandbox/Dockerfile"
+      ],
+      "env": [
+        "TEST_WORKER_URL",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "PERF_BUCKET_NAME"
       ]
     },
     "test:e2e:browser": {

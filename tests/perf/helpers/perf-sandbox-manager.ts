@@ -193,6 +193,151 @@ export class PerfSandboxManager {
   }
 
   /**
+   * Mount a bucket in a sandbox
+   */
+  async mountBucket(
+    sandbox: SandboxInstance,
+    bucket: string,
+    mountPath: string,
+    options: Record<string, unknown>
+  ): Promise<{ success: boolean; duration: number; error?: string }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/mount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ bucket, mountPath, options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const body = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${body}`
+        };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Unmount a bucket from a sandbox
+   */
+  async unmountBucket(
+    sandbox: SandboxInstance,
+    mountPath: string
+  ): Promise<{ success: boolean; duration: number; error?: string }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/unmount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ mountPath })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const body = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${body}`
+        };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Put an object into the R2 test bucket via the worker
+   */
+  async bucketPut(
+    sandbox: SandboxInstance,
+    key: string,
+    content: string
+  ): Promise<{ success: boolean; duration: number; error?: string }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/put`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key, content, contentType: 'text/plain' })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Get an object from the R2 test bucket via the worker
+   */
+  async bucketGet(
+    sandbox: SandboxInstance,
+    key: string
+  ): Promise<{
+    success: boolean;
+    duration: number;
+    content?: string;
+    error?: string;
+  }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(
+        `${this.workerUrl}/api/bucket/get?key=${encodeURIComponent(key)}`,
+        { method: 'GET', headers: sandbox.headers }
+      );
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      const result = (await response.json()) as { content?: string };
+      return { success: true, duration, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Delete an object from the R2 test bucket via the worker
+   */
+  async bucketDelete(sandbox: SandboxInstance, key: string): Promise<void> {
+    try {
+      await fetch(`${this.workerUrl}/api/bucket/delete`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key })
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
+  /**
    * Cleanup a specific sandbox
    */
   async destroySandbox(sandbox: SandboxInstance): Promise<void> {

@@ -16,6 +16,7 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
+          - bucket-mounting
   schedule:
     - cron: '0 0 * * *'
 
@@ -182,6 +183,10 @@ jobs:
         env:
           TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          PERF_BUCKET_NAME: sandbox-perf-test
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
             npm run test:perf

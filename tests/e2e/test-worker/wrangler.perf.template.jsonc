@@ -6,7 +6,8 @@
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
   "vars": {
-    "SANDBOX_LOG_LEVEL": "debug"
+    "SANDBOX_LOG_LEVEL": "debug",
+    "BACKUP_BUCKET_NAME": "sandbox-perf-test"
   },
   "observability": {
     "enabled": true
@@ -34,6 +35,14 @@
     {
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "TEST_BUCKET",
+      "bucket_name": "sandbox-perf-test",
+      "preview_bucket_name": "sandbox-perf-test"
     }
   ]
 }
