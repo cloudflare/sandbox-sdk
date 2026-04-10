@@ -2777,13 +2777,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sessionId?: string;
       /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
       depth?: number;
+      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
+      cloneTimeoutMs?: number;
     }
   ) {
     const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
       targetDir: options?.targetDir,
-      depth: options?.depth
+      depth: options?.depth,
+      timeoutMs: options?.cloneTimeoutMs
     });
   }
 

@@ -188,6 +188,57 @@ describe('WebSocket Protocol Types', () => {
   });
 
   describe('request headers', () => {
+    it('should honor per-request timeout overrides for websocket requests', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          requestTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        const wsSend = vi.fn();
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: wsSend,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const requestPromise = (transport as any).request(
+          'GET',
+          '/api/health',
+          undefined,
+          undefined,
+          3000
+        ) as Promise<{ status: number; body: { ok: boolean } }>;
+
+        await Promise.resolve();
+        expect(wsSend).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1500);
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        expect(pendingIds).toHaveLength(1);
+
+        (transport as any).handleResponse({
+          type: 'response',
+          id: pendingIds[0],
+          status: 200,
+          body: { ok: true },
+          done: true
+        });
+
+        const response = await requestPromise;
+        expect(response.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should include headers in websocket requests', async () => {
       const transport = new WebSocketTransport({
         wsUrl: 'ws://localhost:3000/ws',

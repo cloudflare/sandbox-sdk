@@ -1,4 +1,7 @@
-import type { GitCheckoutResult } from '@repo/shared';
+import {
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
+  type GitCheckoutResult
+} from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitClient } from '../src/clients/git-client';
 import {
@@ -55,6 +58,10 @@ describe('GitClient', () => {
       expect(result.success).toBe(true);
       expect(result.repoUrl).toBe('https://github.com/facebook/react.git');
       expect(result.branch).toBe('main');
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+      expect(requestBody.timeoutMs).toBe(DEFAULT_GIT_CLONE_TIMEOUT_MS);
     });
 
     it('should clone repositories to specific branches', async () => {
@@ -180,6 +187,32 @@ describe('GitClient', () => {
       expect(requestBody.depth).toBe(10);
     });
 
+    it('should clone repositories with custom timeout', async () => {
+      const mockResponse: GitCheckoutResult = {
+        success: true,
+        repoUrl: 'https://github.com/company/project.git',
+        branch: 'main',
+        targetDir: '/workspace/project',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const result = await client.checkout(
+        'https://github.com/company/project.git',
+        'test-session',
+        { timeoutMs: 90_000 }
+      );
+
+      expect(result.success).toBe(true);
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+      expect(requestBody.timeoutMs).toBe(90_000);
+    });
+
     it('should reject depth of zero', async () => {
       await expect(
         client.checkout('https://github.com/user/repo.git', 'test-session', {
@@ -206,6 +239,16 @@ describe('GitClient', () => {
           depth: 1.5
         })
       ).rejects.toThrow('Invalid depth value: 1.5');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid timeout values', async () => {
+      await expect(
+        client.checkout('https://github.com/user/repo.git', 'test-session', {
+          timeoutMs: 0
+        })
+      ).rejects.toThrow('Invalid timeout value: 0');
 
       expect(mockFetch).not.toHaveBeenCalled();
     });

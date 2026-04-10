@@ -10,7 +10,11 @@ import {
   type WSStreamChunk
 } from '@repo/shared';
 import { BaseTransport } from './base-transport';
-import type { TransportConfig, TransportMode } from './types';
+import type {
+  TransportConfig,
+  TransportMode,
+  TransportRequestInit
+} from './types';
 
 /**
  * Default timeout values (all in milliseconds)
@@ -144,7 +148,7 @@ export class WebSocketTransport extends BaseTransport {
    */
   protected async doFetch(
     path: string,
-    options?: RequestInit
+    options?: TransportRequestInit
   ): Promise<Response> {
     if (this.isWebSocketConnecting()) {
       return this.httpFetch(path, options);
@@ -156,7 +160,13 @@ export class WebSocketTransport extends BaseTransport {
     const body = this.parseBody(options?.body);
     const headers = this.normalizeHeaders(options?.headers);
 
-    const result = await this.request(method, path, body, headers);
+    const result = await this.request(
+      method,
+      path,
+      body,
+      headers,
+      options?.requestTimeoutMs
+    );
 
     return new Response(JSON.stringify(result.body), {
       status: result.status,
@@ -408,7 +418,8 @@ export class WebSocketTransport extends BaseTransport {
     method: WSMethod,
     path: string,
     body?: unknown,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    requestTimeoutMs?: number
   ): Promise<{ status: number; body: T }> {
     await this.connect();
     this.clearIdleDisconnectTimer();
@@ -425,7 +436,9 @@ export class WebSocketTransport extends BaseTransport {
 
     return new Promise((resolve, reject) => {
       const timeoutMs =
-        this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        requestTimeoutMs ??
+        this.config.requestTimeoutMs ??
+        DEFAULT_REQUEST_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         this.scheduleIdleDisconnect();

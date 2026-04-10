@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { ErrorCode } from '@repo/shared/errors';
-import { GitManager } from '@sandbox-container/managers/git-manager';
+import {
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
+  GitManager
+} from '@sandbox-container/managers/git-manager';
 
 describe('GitManager', () => {
   let manager: GitManager;
@@ -37,7 +40,12 @@ describe('GitManager', () => {
   });
 
   describe('buildCloneArgs', () => {
-    const timeoutPrefix = ['timeout', '-k', '5', '120'];
+    const timeoutPrefix = [
+      'timeout',
+      '-k',
+      '5',
+      String(DEFAULT_GIT_CLONE_TIMEOUT_MS / 1000)
+    ];
     const gitConfig = [
       'git',
       '-c',
@@ -131,6 +139,45 @@ describe('GitManager', () => {
         '--filter=blob:none',
         '--depth',
         '5',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should build clone args with custom timeout', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { timeoutMs: 90_000 }
+      );
+      expect(args).toEqual([
+        'timeout',
+        '-k',
+        '5',
+        '90',
+        ...gitConfig,
+        'clone',
+        '--filter=blob:none',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should preserve millisecond precision for sub-second clone timeouts', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { timeoutMs: 1_500 }
+      );
+
+      expect(args).toEqual([
+        'timeout',
+        '-k',
+        '5',
+        '1.5',
+        ...gitConfig,
+        'clone',
+        '--filter=blob:none',
         'https://github.com/user/repo.git',
         '/tmp/target'
       ]);

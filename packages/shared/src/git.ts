@@ -6,6 +6,9 @@ import { redactCommand } from './logger/sanitize.js';
  */
 export const FALLBACK_REPO_NAME = 'repository';
 
+/** Default wall-clock timeout in milliseconds for git clone operations. */
+export const DEFAULT_GIT_CLONE_TIMEOUT_MS = 600_000;
+
 /**
  * Extract repository name from a Git URL
  *

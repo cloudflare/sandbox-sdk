@@ -46,6 +46,11 @@ export interface TransportConfig {
   retryTimeoutMs?: number;
 }
 
+export interface TransportRequestInit extends RequestInit {
+  /** Override the non-streaming request timeout for this single request. */
+  requestTimeoutMs?: number;
+}
+
 /**
  * Transport interface - all transports must implement this
  *
@@ -57,7 +62,7 @@ export interface ITransport {
    * Make a fetch-compatible request
    * @returns Standard Response object
    */
-  fetch(path: string, options?: RequestInit): Promise<Response>;
+  fetch(path: string, options?: TransportRequestInit): Promise<Response>;
 
   /**
    * Make a streaming request

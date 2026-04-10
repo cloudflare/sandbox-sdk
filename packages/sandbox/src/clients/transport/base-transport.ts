@@ -1,6 +1,11 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import type { ITransport, TransportConfig, TransportMode } from './types';
+import type {
+  ITransport,
+  TransportConfig,
+  TransportMode,
+  TransportRequestInit
+} from './types';
 
 /**
  * Container startup retry configuration
@@ -44,7 +49,7 @@ export abstract class BaseTransport implements ITransport {
    * This is the primary entry point for making requests. It wraps the
    * transport-specific doFetch() with retry logic for container startup.
    */
-  async fetch(path: string, options?: RequestInit): Promise<Response> {
+  async fetch(path: string, options?: TransportRequestInit): Promise<Response> {
     const startTime = Date.now();
     let attempt = 0;
 
@@ -90,7 +95,7 @@ export abstract class BaseTransport implements ITransport {
    */
   protected abstract doFetch(
     path: string,
-    options?: RequestInit
+    options?: TransportRequestInit
   ): Promise<Response>;
 
   /**

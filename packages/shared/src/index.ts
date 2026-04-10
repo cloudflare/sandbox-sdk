@@ -33,6 +33,7 @@ export type {
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities
 export {
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
   extractRepoName,
   FALLBACK_REPO_NAME,
   GitLogger,

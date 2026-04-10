@@ -341,6 +341,8 @@ export interface CloneOptions {
   sessionId?: string;
   /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
   depth?: number;
+  /** Maximum wall-clock time for the git clone subprocess in milliseconds */
+  timeoutMs?: number;
 }
 
 export interface ExecuteResponse {

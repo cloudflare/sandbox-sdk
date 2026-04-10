@@ -1,5 +1,5 @@
 import { BaseTransport } from './base-transport';
-import type { TransportMode } from './types';
+import type { TransportMode, TransportRequestInit } from './types';
 
 /**
  * HTTP transport implementation
@@ -30,7 +30,7 @@ export class HttpTransport extends BaseTransport {
 
   protected async doFetch(
     path: string,
-    options?: RequestInit
+    options?: TransportRequestInit
   ): Promise<Response> {
     return this.httpFetch(path, options);
   }

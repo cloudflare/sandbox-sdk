@@ -1,6 +1,7 @@
 // Git Operations Service
 
 import {
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
   type Logger,
   logCanonicalEvent,
   redactCommand,
@@ -13,7 +14,7 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
-import { GIT_CLONE_TIMEOUT_SECONDS, GitManager } from '../managers/git-manager';
+import { GitManager, gitCloneTimeoutSeconds } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
 export interface SecurityService {
@@ -91,6 +92,25 @@ export class GitService {
       // Generate target directory if not provided
       const targetDirectory =
         options.targetDir || this.manager.generateTargetDirectory(repoUrl);
+      const cloneTimeoutMs = options.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
+
+      if (!Number.isInteger(cloneTimeoutMs) || cloneTimeoutMs <= 0) {
+        errorMessage = `Invalid clone timeout '${options.timeoutMs}'. Must be a positive integer number of milliseconds.`;
+        return this.returnError({
+          message: errorMessage,
+          code: ErrorCode.VALIDATION_FAILED,
+          details: {
+            validationErrors: [
+              {
+                field: 'timeoutMs',
+                message:
+                  'Clone timeout must be a positive integer number of milliseconds',
+                code: 'INVALID_TIMEOUT'
+              }
+            ]
+          } satisfies ValidationFailedContext
+        });
+      }
 
       // Validate target directory path
       const pathValidation = this.security.validatePath(targetDirectory);
@@ -125,7 +145,9 @@ export class GitService {
           if (cloneResult.exitCode !== 0) {
             if (cloneResult.exitCode === 124) {
               throw {
-                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${redactCommand(repoUrl)}'`,
+                message: `Git clone timed out after ${gitCloneTimeoutSeconds(
+                  cloneTimeoutMs
+                )} seconds for '${redactCommand(repoUrl)}'`,
                 code: ErrorCode.GIT_NETWORK_ERROR,
                 details: {
                   repository: redactCommand(repoUrl),
@@ -213,6 +235,7 @@ export class GitService {
         repoUrl: redactCommand(repoUrl),
         targetDir: options.targetDir,
         branch: options.branch,
+        timeoutMs: options.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS,
         sessionId,
         errorMessage,
         error: caughtError

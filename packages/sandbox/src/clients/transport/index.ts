@@ -3,7 +3,12 @@
 // =============================================================================
 
 export type { TransportOptions } from './factory';
-export type { ITransport, TransportConfig, TransportMode } from './types';
+export type {
+  ITransport,
+  TransportConfig,
+  TransportMode,
+  TransportRequestInit
+} from './types';
 
 // =============================================================================
 // Implementations (for advanced use cases)

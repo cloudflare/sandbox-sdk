@@ -47,7 +47,8 @@ export class GitHandler extends BaseHandler<Request, Response> {
       branch: body.branch,
       targetDir: body.targetDir,
       sessionId,
-      depth: body.depth
+      depth: body.depth,
+      timeoutMs: body.timeoutMs
     });
 
     if (result.success) {

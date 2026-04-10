@@ -292,14 +292,20 @@ describe('Sandbox - Automatic Session Management', () => {
       } as any);
 
       await sandbox.gitCheckout('https://github.com/test/repo.git', {
-        branch: 'main'
+        branch: 'main',
+        cloneTimeoutMs: 90_000
       });
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
       expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
         'https://github.com/test/repo.git',
         expect.stringMatching(/^sandbox-/),
-        { branch: 'main', targetDir: undefined }
+        {
+          branch: 'main',
+          targetDir: undefined,
+          depth: undefined,
+          timeoutMs: 90_000
+        }
       );
     });
 
@@ -514,12 +520,20 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await session.gitCheckout('https://github.com/test/repo.git');
+      await session.gitCheckout('https://github.com/test/repo.git', {
+        depth: 1,
+        cloneTimeoutMs: 90_000
+      });
 
       expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
         'https://github.com/test/repo.git',
         'test-session',
-        { branch: undefined, targetDir: undefined }
+        {
+          branch: undefined,
+          targetDir: undefined,
+          depth: 1,
+          timeoutMs: 90_000
+        }
       );
     });
   });

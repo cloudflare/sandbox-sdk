@@ -5,6 +5,7 @@ import type {
   CloneOptions,
   ServiceResult
 } from '@sandbox-container/core/types';
+import { DEFAULT_GIT_CLONE_TIMEOUT_MS } from '@sandbox-container/managers/git-manager';
 import {
   GitService,
   type SecurityService
@@ -151,7 +152,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        "'timeout' '-k' '5' '120' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
+        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
       );
 
       // Verify SessionManager was called for getting current branch
@@ -203,7 +204,39 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'session-123',
-        "'timeout' '-k' '5' '120' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
+        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
+      );
+    });
+
+    it('should clone repository with custom timeout', async () => {
+      mocked(mockSessionManager.executeInSession)
+        .mockResolvedValueOnce({
+          success: true,
+          data: {
+            exitCode: 0,
+            stdout: 'Cloning...',
+            stderr: ''
+          }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: {
+            exitCode: 0,
+            stdout: 'main\n',
+            stderr: ''
+          }
+        } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/repo.git',
+        { timeoutMs: 90_000 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        1,
+        'default',
+        "'timeout' '-k' '5' '90' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
       );
     });
 
@@ -297,9 +330,26 @@ describe('GitService', () => {
       if (!result.success) {
         expect(result.error.code).toBe(ErrorCode.GIT_NETWORK_ERROR);
         expect(result.error.message).toContain('timed out');
-        expect(result.error.message).toContain('120 seconds');
+        expect(result.error.message).toContain(
+          `${DEFAULT_GIT_CLONE_TIMEOUT_MS / 1000} seconds`
+        );
         expect(result.error.details?.exitCode).toBe(124);
       }
+    });
+
+    it('should return validation error when timeout is invalid', async () => {
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/repo.git',
+        { timeoutMs: 0 }
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.VALIDATION_FAILED);
+        expect(result.error.message).toContain('Invalid clone timeout');
+      }
+
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
 
     it('should sanitize credentials in timeout error messages', async () => {

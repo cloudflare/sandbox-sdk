@@ -68,6 +68,21 @@ describe('Git Clone Error Handling', () => {
       /authentication|permission|access|denied|fatal|not found/i
     );
   }, 90000);
+
+  test('should reject invalid git clone timeout values before cloning', async () => {
+    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        repoUrl: 'https://github.com/octocat/Spoon-Knife',
+        cloneTimeoutMs: 0
+      })
+    });
+
+    expect(cloneResponse.status).toBe(500);
+    const errorData = (await cloneResponse.json()) as ErrorResponse;
+    expect(errorData.error).toMatch(/Invalid timeout value: 0/i);
+  });
 });
 
 /**

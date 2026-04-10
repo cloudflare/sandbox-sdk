@@ -2,7 +2,11 @@ import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
-import { createTransport, type ITransport } from './transport';
+import {
+  createTransport,
+  type ITransport,
+  type TransportRequestInit
+} from './transport';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
 /**
@@ -61,7 +65,7 @@ export abstract class BaseHttpClient {
    */
   protected async doFetch(
     path: string,
-    options?: RequestInit
+    options?: TransportRequestInit
   ): Promise<Response> {
     const { defaultHeaders } = this.options;
     if (defaultHeaders) {
@@ -82,14 +86,16 @@ export abstract class BaseHttpClient {
   protected async post<T>(
     endpoint: string,
     data: unknown,
-    responseHandler?: ResponseHandler<T>
+    responseHandler?: ResponseHandler<T>,
+    requestOptions?: Pick<TransportRequestInit, 'requestTimeoutMs'>
   ): Promise<T> {
     const response = await this.doFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      ...requestOptions
     });
 
     return this.handleResponse(response, responseHandler);

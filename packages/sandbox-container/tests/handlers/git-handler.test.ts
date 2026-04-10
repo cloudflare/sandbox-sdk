@@ -50,7 +50,8 @@ describe('GitHandler', () => {
         repoUrl: 'https://github.com/user/awesome-repo.git',
         branch: 'develop',
         targetDir: '/tmp/my-project',
-        sessionId: 'session-456'
+        sessionId: 'session-456',
+        timeoutMs: 90_000
       };
 
       const mockGitResult = {
@@ -87,7 +88,8 @@ describe('GitHandler', () => {
         {
           branch: 'develop',
           targetDir: '/tmp/my-project',
-          sessionId: 'session-456'
+          sessionId: 'session-456',
+          timeoutMs: 90_000
         }
       );
     });
@@ -134,7 +136,9 @@ describe('GitHandler', () => {
         {
           branch: undefined,
           targetDir: undefined,
-          sessionId: 'session-456' // From mockContext
+          sessionId: 'session-456', // From mockContext
+          depth: undefined,
+          timeoutMs: undefined
         }
       );
     });

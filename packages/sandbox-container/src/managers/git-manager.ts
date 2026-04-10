@@ -14,12 +14,23 @@
  * NO I/O operations - all infrastructure delegated to SessionManager via GitService
  */
 
-import { extractRepoName } from '@repo/shared';
+import { DEFAULT_GIT_CLONE_TIMEOUT_MS, extractRepoName } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
 
-/** Wall-clock timeout in seconds for git clone operations. */
-export const GIT_CLONE_TIMEOUT_SECONDS = 120;
+export { DEFAULT_GIT_CLONE_TIMEOUT_MS } from '@repo/shared';
+
+const GIT_CLONE_KILL_GRACE_SECONDS = 5;
+
+export function gitCloneTimeoutSeconds(timeoutMs: number): string {
+  const timeoutSeconds = timeoutMs / 1000;
+  return Number.isInteger(timeoutSeconds)
+    ? String(timeoutSeconds)
+    : timeoutSeconds
+        .toFixed(3)
+        .replace(/\.0+$/, '')
+        .replace(/(\.\d*?)0+$/, '$1');
+}
 
 /**
  * GitManager contains pure business logic for git operations.
@@ -40,7 +51,7 @@ export class GitManager {
   /**
    * Build git clone command arguments
    *
-   * Wraps the command with `timeout -k 5 120` to enforce a 2-minute wall-clock
+   * Wraps the command with `timeout -k 5 <seconds>` to enforce a wall-clock
    * limit, and configures git's own stalled-transfer detection via
    * http.lowSpeedLimit and http.lowSpeedTime.
    */
@@ -49,11 +60,13 @@ export class GitManager {
     targetDir: string,
     options: CloneOptions = {}
   ): string[] {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
+    const timeoutSeconds = gitCloneTimeoutSeconds(timeoutMs);
     const args = [
       'timeout',
       '-k',
-      '5',
-      String(GIT_CLONE_TIMEOUT_SECONDS),
+      String(GIT_CLONE_KILL_GRACE_SECONDS),
+      String(timeoutSeconds),
       'git',
       '-c',
       'http.lowSpeedLimit=1024',

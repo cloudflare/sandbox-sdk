@@ -1039,6 +1039,8 @@ export interface ExecutionSession {
       targetDir?: string;
       /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
       depth?: number;
+      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
+      cloneTimeoutMs?: number;
     }
   ): Promise<GitCheckoutResult>;
 
@@ -1299,8 +1301,11 @@ export interface ISandbox {
     options?: {
       branch?: string;
       targetDir?: string;
+      sessionId?: string;
       /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
       depth?: number;
+      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
+      cloneTimeoutMs?: number;
     }
   ): Promise<GitCheckoutResult>;
 
