@@ -16,6 +16,8 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
+          - backup-restore
+          - bucket-mounting
   schedule:
     - cron: '0 0 * * *'
 
@@ -137,6 +139,20 @@ jobs:
           command: deploy --name ${{ env.PERF_WORKER_NAME }}
           workingDirectory: tests/e2e/test-worker
 
+      - name: Inject worker secrets
+        run: |
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c}' \
+          | npx wrangler secret bulk --name "${{ env.PERF_WORKER_NAME }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
       - name: Set worker URL
         id: deploy
         run: |
@@ -182,6 +198,9 @@ jobs:
         env:
           TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
             npm run test:perf
