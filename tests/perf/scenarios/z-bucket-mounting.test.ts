@@ -109,6 +109,12 @@ describe('Bucket Mounting', () => {
       const totalStart = performance.now();
       const iterLabel = `iter=${iter}`;
 
+      // --- Ensure clean mount directory ---
+      await ctx.manager.executeCommand(
+        sandbox,
+        `rm -rf ${mountPath} && mkdir -p ${mountPath}`
+      );
+
       // --- Mount ---
       console.log(`    [${label}] ${iterLabel} mounting...`);
       const mountResult = await ctx.manager.mountBucket(

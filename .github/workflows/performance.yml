@@ -16,7 +16,7 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
-          - bucket-mounting
+          - z-bucket-mounting
   schedule:
     - cron: '0 0 * * *'
 
