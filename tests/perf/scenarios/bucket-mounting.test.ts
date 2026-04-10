@@ -66,9 +66,9 @@ describe('Bucket Mounting Performance', () => {
         // Measure mount
         const mountResult = await ctx.manager.mountBucket(
           sandbox,
-          TEST_BUCKET,
+          'TEST_BUCKET',
           mountPath,
-          { localBucket: true, bindingName: 'TEST_BUCKET' }
+          { localBucket: true }
         );
 
         if (!mountResult.success) {
