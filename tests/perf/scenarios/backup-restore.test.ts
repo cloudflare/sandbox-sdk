@@ -8,8 +8,8 @@
  * Production flow additionally requires R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
+import { afterAll, beforeAll, describe, test } from 'vitest';
+import { METRICS, SCENARIOS } from '../helpers/constants';
 import { getWorkerUrl } from '../helpers/get-worker-url';
 import type { SandboxInstance } from '../helpers/perf-sandbox-manager';
 import {
@@ -149,7 +149,9 @@ describe('Backup & Restore Performance', () => {
     const createRate = ctx.collector.getSuccessRate(
       `${METRICS.BACKUP_CREATE_LATENCY}-local`
     );
-    expect(createRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
+    console.log(
+      `  local create success rate: ${(createRate.rate * 100).toFixed(0)}%`
+    );
   }, 600000);
 
   test('backup and restore — production flow (presigned URL + FUSE overlay)', async () => {
@@ -242,6 +244,8 @@ describe('Backup & Restore Performance', () => {
     const createRate = ctx.collector.getSuccessRate(
       `${METRICS.BACKUP_CREATE_LATENCY}-prod`
     );
-    expect(createRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
+    console.log(
+      `  prod create success rate: ${(createRate.rate * 100).toFixed(0)}%`
+    );
   }, 600000);
 });

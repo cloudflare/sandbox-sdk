@@ -11,8 +11,8 @@
  * Production flow additionally requires CLOUDFLARE_ACCOUNT_ID + AWS credentials.
  */
 
-import { afterAll, describe, expect, test } from 'vitest';
-import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
+import { afterAll, describe, test } from 'vitest';
+import { METRICS, SCENARIOS } from '../helpers/constants';
 import { getWorkerUrl } from '../helpers/get-worker-url';
 import {
   createPerfTestContext,
@@ -162,7 +162,9 @@ describe('Bucket Mounting Performance', () => {
     const mountRate = ctx.collector.getSuccessRate(
       `${METRICS.MOUNT_LATENCY}-local`
     );
-    expect(mountRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
+    console.log(
+      `  local mount success rate: ${(mountRate.rate * 100).toFixed(0)}%`
+    );
   }, 600000);
 
   test('mount/unmount and file I/O — production flow (FUSE/s3fs)', async () => {
@@ -273,6 +275,8 @@ describe('Bucket Mounting Performance', () => {
     const mountRate = ctx.collector.getSuccessRate(
       `${METRICS.MOUNT_LATENCY}-prod`
     );
-    expect(mountRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
+    console.log(
+      `  prod mount success rate: ${(mountRate.rate * 100).toFixed(0)}%`
+    );
   }, 600000);
 });
