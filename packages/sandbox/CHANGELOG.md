@@ -1,5 +1,14 @@
 # @cloudflare/sandbox
 
+## 0.8.9
+
+### Patch Changes
+
+- [#570](https://github.com/cloudflare/sandbox-sdk/pull/570) [`8363119`](https://github.com/cloudflare/sandbox-sdk/commit/8363119c5cf70a48a81a7a515fb14a9c0ae890be) Thanks [@aron-cf](https://github.com/aron-cf)! - Fix `unmountBucket()` silently succeeding when the FUSE filesystem fails to unmount. The method now checks the `fusermount` exit code and throws `BucketUnmountError` on failure, cleans up the mount directory after a successful unmount, and the container image includes the `/etc/mtab` symlink that `fusermount` requires.
+
+- [#573](https://github.com/cloudflare/sandbox-sdk/pull/573) [`cc14fc7`](https://github.com/cloudflare/sandbox-sdk/commit/cc14fc7e931f7b92cee05010eeb5aa74cc44209b) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Increase the default `gitCheckout()` clone timeout to 10 minutes so larger repositories and slower Git remotes do not fail after 2 minutes by default.
+  You can now override the git clone subprocess timeout per call with the `cloneTimeoutMs` option when a checkout needs more time.
+
 ## 0.8.8
 
 ### Patch Changes
