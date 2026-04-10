@@ -571,6 +571,15 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Bucket unmount
+      if (url.pathname === '/api/bucket/unmount' && request.method === 'POST') {
+        await sandbox.unmountBucket(body.mountPath);
+        const response: SuccessResponse = { success: true };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // R2 bucket put
       if (url.pathname === '/api/bucket/put' && request.method === 'POST') {
         await env.TEST_BUCKET.put(body.key, body.content, {

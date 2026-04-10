@@ -35,6 +35,26 @@ export interface FileResult {
   error?: string;
 }
 
+export interface BackupResult {
+  success: boolean;
+  duration: number;
+  id?: string;
+  dir?: string;
+  error?: string;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
+export interface MountResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
 export class PerfSandboxManager {
   private workerUrl: string;
   private sandboxType: string;
@@ -183,6 +203,121 @@ export class PerfSandboxManager {
       }
       const result = (await response.json()) as { content?: string };
       return { success: true, duration, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Create a backup of a directory in a sandbox
+   */
+  async createBackup(
+    sandbox: SandboxInstance,
+    options: { dir: string; name?: string; ttl?: number; localBucket?: boolean }
+  ): Promise<BackupResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify(options)
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      const result = (await response.json()) as { id?: string; dir?: string };
+      return { success: true, duration, id: result.id, dir: result.dir };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Restore a backup to a directory in a sandbox
+   */
+  async restoreBackup(
+    sandbox: SandboxInstance,
+    options: { id: string; dir: string; localBucket?: boolean }
+  ): Promise<RestoreResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify(options)
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Mount a bucket at a path in a sandbox
+   */
+  async mountBucket(
+    sandbox: SandboxInstance,
+    bucket: string,
+    mountPath: string,
+    options: Record<string, unknown>
+  ): Promise<MountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/mount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ bucket, mountPath, options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Unmount a bucket from a path in a sandbox
+   */
+  async unmountBucket(
+    sandbox: SandboxInstance,
+    mountPath: string
+  ): Promise<MountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/unmount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ mountPath })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
     } catch (error) {
       return {
         success: false,
