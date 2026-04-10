@@ -10,7 +10,7 @@
 
 import { afterAll, beforeAll, describe, test } from 'vitest';
 import { METRICS, SCENARIOS } from '../helpers/constants';
-import { getWorkerUrl } from '../helpers/get-worker-url';
+import { getPerfEnv, getWorkerUrl } from '../helpers/get-worker-url';
 import type { SandboxInstance } from '../helpers/perf-sandbox-manager';
 import {
   createPerfTestContext,
@@ -156,7 +156,8 @@ describe('Backup & Restore Performance', () => {
 
   test('backup and restore — production flow (presigned URL + FUSE overlay)', async () => {
     if (!backupBucketAvailable) return;
-    if (!process.env.R2_ACCESS_KEY_ID) {
+    const { r2AccessKeyId } = getPerfEnv();
+    if (!r2AccessKeyId) {
       console.log(
         '  Skipping — R2_ACCESS_KEY_ID not set (production backup requires presigned URL credentials)'
       );

@@ -94,12 +94,15 @@ export async function setup() {
   }
 
   // Write state file for inter-process communication
+  // Include env vars that Vitest worker threads cannot read from process.env
   writeFileSync(
     PERF_STATE_FILE,
     JSON.stringify({
       workerUrl,
       startTime: Date.now(),
-      hasRunner: !!runner
+      hasRunner: !!runner,
+      cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
+      r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || ''
     })
   );
 

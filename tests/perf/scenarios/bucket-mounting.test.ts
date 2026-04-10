@@ -13,7 +13,7 @@
 
 import { afterAll, describe, test } from 'vitest';
 import { METRICS, SCENARIOS } from '../helpers/constants';
-import { getWorkerUrl } from '../helpers/get-worker-url';
+import { getPerfEnv, getWorkerUrl } from '../helpers/get-worker-url';
 import {
   createPerfTestContext,
   registerPerfScenario
@@ -168,7 +168,8 @@ describe('Bucket Mounting Performance', () => {
   }, 600000);
 
   test('mount/unmount and file I/O — production flow (FUSE/s3fs)', async () => {
-    if (!process.env.CLOUDFLARE_ACCOUNT_ID) {
+    const { cloudflareAccountId } = getPerfEnv();
+    if (!cloudflareAccountId) {
       console.log(
         '  Skipping — CLOUDFLARE_ACCOUNT_ID not set (production mount requires R2 endpoint)'
       );
@@ -176,7 +177,7 @@ describe('Bucket Mounting Performance', () => {
     }
 
     const sandbox = await ctx.manager.createSandbox({ initialize: true });
-    const endpoint = `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+    const endpoint = `https://${cloudflareAccountId}.r2.cloudflarestorage.com`;
 
     console.log(
       `\nBucket mount production: ${ITERATIONS} iterations × ${FILE_SIZES.length} sizes`
@@ -197,19 +198,19 @@ describe('Bucket Mounting Performance', () => {
           { endpoint }
         );
 
+        ctx.collector.record(
+          `${METRICS.MOUNT_LATENCY}-prod`,
+          mountResult.duration,
+          'ms',
+          { success: mountResult.success, size: label, iteration: i }
+        );
+
         if (!mountResult.success) {
           console.warn(
             `  [prod ${label} iter ${i}] Mount failed: ${mountResult.error}`
           );
           continue;
         }
-
-        ctx.collector.record(
-          `${METRICS.MOUNT_LATENCY}-prod`,
-          mountResult.duration,
-          'ms',
-          { success: true, size: label, iteration: i }
-        );
 
         // Measure write through FUSE mount
         const writeStart = performance.now();
