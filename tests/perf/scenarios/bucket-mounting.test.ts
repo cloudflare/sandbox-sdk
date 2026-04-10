@@ -57,7 +57,7 @@ describe('Bucket Mounting Performance', () => {
       if (!localAvailable) break;
 
       for (let i = 0; i < ITERATIONS; i++) {
-        const mountPath = `/mnt/perf-local-${label}-${i}`;
+        const mountPath = `/workspace/mnt/perf-local-${label}-${i}`;
         const testKey = `perf-local-${Date.now()}-${i}.txt`;
         const fullFilePath = `${mountPath}/${testKey}`;
 
@@ -184,7 +184,7 @@ describe('Bucket Mounting Performance', () => {
 
     for (const { label, ddCount } of FILE_SIZES) {
       for (let i = 0; i < ITERATIONS; i++) {
-        const mountPath = `/mnt/perf-prod-${label}-${i}`;
+        const mountPath = `/workspace/mnt/perf-prod-${label}-${i}`;
         const testKey = `perf-prod-${Date.now()}-${i}.txt`;
         const fullFilePath = `${mountPath}/${testKey}`;
 
