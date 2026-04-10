@@ -46,6 +46,7 @@ describe('Bucket Mounting Performance', () => {
 
   test('mount/unmount and file I/O — local flow (R2 binding sync)', async () => {
     const sandbox = await ctx.manager.createSandbox({ initialize: true });
+    const localPrefix = `perf-local-${Date.now()}/`;
 
     console.log(
       `\nBucket mount local: ${ITERATIONS} iterations × ${FILE_SIZES.length} sizes`
@@ -63,12 +64,12 @@ describe('Bucket Mounting Performance', () => {
 
         await ctx.manager.executeCommand(sandbox, `mkdir -p ${mountPath}`);
 
-        // Measure mount
+        // Measure mount (use a unique prefix to avoid syncing the entire shared bucket)
         const mountResult = await ctx.manager.mountBucket(
           sandbox,
           'TEST_BUCKET',
           mountPath,
-          { localBucket: true }
+          { localBucket: true, prefix: localPrefix }
         );
 
         if (!mountResult.success) {
