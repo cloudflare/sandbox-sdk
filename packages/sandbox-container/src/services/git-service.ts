@@ -104,7 +104,7 @@ export class GitService {
               {
                 field: 'timeoutMs',
                 message:
-                  'Clone timeout must be a positive integer number of milliseconds',
+                  'Clone timeout must be a positive integer representing milliseconds',
                 code: 'INVALID_TIMEOUT'
               }
             ]
