@@ -10,6 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
+import { getWorkerUrl } from '../helpers/get-worker-url';
 import type { SandboxInstance } from '../helpers/perf-sandbox-manager';
 import {
   createPerfTestContext,
@@ -17,10 +18,13 @@ import {
 } from '../helpers/perf-test-fixture';
 
 describe('Backup & Restore Performance', () => {
-  const isCI = !!process.env.TEST_WORKER_URL;
+  let _workerUrl: string | null = null;
+  try {
+    _workerUrl = getWorkerUrl();
+  } catch {}
 
-  if (!isCI) {
-    test.skip('Skipping — requires CI environment with BACKUP_BUCKET binding', () => {});
+  if (!_workerUrl) {
+    test.skip('Skipping — requires a running perf environment (global-setup must have run)', () => {});
     return;
   }
 
@@ -36,17 +40,15 @@ describe('Backup & Restore Performance', () => {
 
     await ctx.manager.executeCommand(sandbox, `mkdir -p ${TEST_BASE_DIR}`);
 
-    // Probe for BACKUP_BUCKET availability (same pattern as E2E backup tests)
+    // Probe for BACKUP_BUCKET availability using localBucket: true so we only
+    // fail on a missing R2 binding, not on absent presigned-URL credentials.
     const probeResponse = await fetch(`${ctx.workerUrl}/api/backup/create`, {
       method: 'POST',
       headers: sandbox.headers,
-      body: JSON.stringify({ dir: '/nonexistent-probe-dir' })
+      body: JSON.stringify({ dir: '/nonexistent-probe-dir', localBucket: true })
     });
     const probeText = await probeResponse.text();
-    if (
-      probeText.includes('BACKUP_BUCKET') ||
-      probeText.includes('not configured')
-    ) {
+    if (probeText.includes('BACKUP_BUCKET')) {
       console.warn(
         '[PerfBackup] BACKUP_BUCKET not configured — backup tests will be skipped'
       );

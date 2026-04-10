@@ -13,16 +13,20 @@
 
 import { afterAll, describe, expect, test } from 'vitest';
 import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
+import { getWorkerUrl } from '../helpers/get-worker-url';
 import {
   createPerfTestContext,
   registerPerfScenario
 } from '../helpers/perf-test-fixture';
 
 describe('Bucket Mounting Performance', () => {
-  const isCI = !!process.env.TEST_WORKER_URL;
+  let _workerUrl: string | null = null;
+  try {
+    _workerUrl = getWorkerUrl();
+  } catch {}
 
-  if (!isCI) {
-    test.skip('Skipping — requires CI environment with bucket bindings', () => {});
+  if (!_workerUrl) {
+    test.skip('Skipping — requires a running perf environment (global-setup must have run)', () => {});
     return;
   }
 
