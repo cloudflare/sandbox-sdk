@@ -15,6 +15,13 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/perf/scenarios/**/*.test.ts'],
 
+    // Propagate env vars to worker threads (they don't inherit process.env reliably)
+    env: {
+      CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID ?? '',
+      R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID ?? '',
+      TEST_WORKER_URL: process.env.TEST_WORKER_URL ?? ''
+    },
+
     // Longer timeouts for performance tests
     testTimeout: 600000, // 10 minutes per test
     hookTimeout: 120000, // 2 minutes for setup/teardown

@@ -30,32 +30,13 @@ describe('Backup & Restore Performance', () => {
 
   const ctx = createPerfTestContext(SCENARIOS.BACKUP_RESTORE);
   let sandbox: SandboxInstance;
-  let backupBucketAvailable = false;
 
   const ITERATIONS = 5;
   const TEST_BASE_DIR = `/workspace/perf-backup-${Date.now()}`;
 
   beforeAll(async () => {
     sandbox = await ctx.manager.createSandbox({ initialize: true });
-
     await ctx.manager.executeCommand(sandbox, `mkdir -p ${TEST_BASE_DIR}`);
-
-    // Probe for BACKUP_BUCKET binding availability.
-    // A missing binding returns an error containing "BACKUP_BUCKET";
-    // missing credentials return a different error — binding is present.
-    const probeResponse = await fetch(`${ctx.workerUrl}/api/backup/create`, {
-      method: 'POST',
-      headers: sandbox.headers,
-      body: JSON.stringify({ dir: '/nonexistent-probe-dir' })
-    });
-    const probeText = await probeResponse.text();
-    if (probeText.includes('BACKUP_BUCKET')) {
-      console.warn(
-        '[PerfBackup] BACKUP_BUCKET not configured — backup tests will be skipped'
-      );
-    } else {
-      backupBucketAvailable = true;
-    }
   }, 120000);
 
   afterAll(async () => {
@@ -67,7 +48,6 @@ describe('Backup & Restore Performance', () => {
   });
 
   test('backup and restore — production flow (presigned URL + FUSE overlay)', async () => {
-    if (!backupBucketAvailable) return;
     const { r2AccessKeyId } = getPerfEnv();
     if (!r2AccessKeyId) {
       console.log(

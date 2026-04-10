@@ -95,17 +95,25 @@ export async function setup() {
 
   // Write state file for inter-process communication
   // Include env vars that Vitest worker threads cannot read from process.env
+  const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+  const r2AccessKeyId = process.env.R2_ACCESS_KEY_ID || '';
+
+  console.log(
+    `[PerfSetup] Env capture: CLOUDFLARE_ACCOUNT_ID=${cloudflareAccountId ? 'set' : 'MISSING'}, R2_ACCESS_KEY_ID=${r2AccessKeyId ? 'set' : 'MISSING'}`
+  );
+
   writeFileSync(
     PERF_STATE_FILE,
     JSON.stringify({
       workerUrl,
       startTime: Date.now(),
       hasRunner: !!runner,
-      cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
-      r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || ''
+      cloudflareAccountId,
+      r2AccessKeyId
     })
   );
 
+  console.log(`[PerfSetup] State file written to: ${PERF_STATE_FILE}`);
   console.log('[PerfSetup] Ready!\n');
 }
 

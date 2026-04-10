@@ -93,6 +93,12 @@
         "tests/perf/**/*.ts",
         "vitest.perf.config.ts",
         "packages/sandbox/Dockerfile"
+      ],
+      "passThroughEnv": [
+        "TEST_WORKER_URL",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "R2_ACCESS_KEY_ID",
+        "CI"
       ]
     },
     "test:e2e:browser": {
