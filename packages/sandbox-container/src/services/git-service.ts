@@ -95,7 +95,7 @@ export class GitService {
       const cloneTimeoutMs = options.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
 
       if (!Number.isInteger(cloneTimeoutMs) || cloneTimeoutMs <= 0) {
-        errorMessage = `Invalid clone timeout '${options.timeoutMs}'. Must be a positive integer number of milliseconds.`;
+        errorMessage = `Invalid clone timeout '${options.timeoutMs}'. Must be a positive integer representing milliseconds.`;
         return this.returnError({
           message: errorMessage,
           code: ErrorCode.VALIDATION_FAILED,
