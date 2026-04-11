@@ -334,11 +334,12 @@ Enable with `useWebSocket: true` in sandbox options.
 - **Changesets**: Create a `.changeset/your-feature-name.md` file to document changes affecting published packages (see PR process above)
 - **Releases**: When changesets exist on main, the "Version Packages" PR is auto-created. Merging it triggers:
   1. Version bump in `package.json`
-  2. Docker images crane-copied from CF registry to Docker Hub (the exact images E2E tested)
+  2. Docker images crane-copied from CF registry to Docker Hub and CF Registry public library (the exact images E2E tested)
   3. npm package publish with updated version
   4. Standalone binaries extracted and uploaded to GitHub Release
 - **Version synchronization**: Docker image version always matches npm package version (enforced via `ARG SANDBOX_VERSION` in Dockerfile)
 - **Architecture**: Images are built for linux/amd64 only, matching Cloudflare's production container runtime. ARM Mac users will automatically use emulation (Rosetta/QEMU) for local development, ensuring perfect dev/prod parity.
+- **CF Registry Library**: Images are also published to `registry.cloudflare.com/library/sandbox:{version}` (+ `-python`, `-opencode`, `-musl`, `-desktop` variants). Any authenticated Cloudflare customer can pull from the `library/` namespace without needing the Sandbox team's account ID.
 
 **SDK version tracked in**: `packages/sandbox/src/version.ts`
 
