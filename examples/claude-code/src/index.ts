@@ -36,15 +36,17 @@ export default {
         // git clone repo
         await sandbox.gitCheckout(repo, { targetDir: name });
 
-        const { ANTHROPIC_API_KEY } = env;
+        // Supports either an Anthropic API key or a Claude.ai subscription OAuth token.
+        // Set exactly one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in your .dev.vars / worker secrets.
+        const { ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN } = env;
 
         // Set env vars for the session
-        await sandbox.setEnvVars({ ANTHROPIC_API_KEY });
+        await sandbox.setEnvVars({ ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN });
 
         // kick off CC with our query
         const cmd = `cd ${name} && claude --append-system-prompt "${EXTRA_SYSTEM}" -p "${task.replaceAll(
           '"',
-          '\\"'
+          '\"'
         )}" --permission-mode acceptEdits`;
 
         const logs = getOutput(await sandbox.exec(cmd));
