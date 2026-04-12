@@ -1,3 +1,6 @@
+# Used by POST / (API key route)
 ANTHROPIC_API_KEY=<YOUR-API-KEY-HERE>
-# OR use a Claude.ai subscription instead of an API key:
-# CLAUDE_CODE_OAUTH_TOKEN=<YOUR-OAUTH-TOKEN-HERE>
+
+# Used by POST /sub (subscription route)
+# Get your token by running: claude setup-token
+CLAUDE_CODE_OAUTH_TOKEN=<YOUR-OAUTH-TOKEN-HERE>
