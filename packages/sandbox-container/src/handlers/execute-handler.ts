@@ -160,24 +160,40 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
 
         // Set up output listeners for future output
         const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
-          const eventData = `data: ${JSON.stringify({
-            type: stream, // 'stdout' or 'stderr' directly
-            data,
-            timestamp: new Date().toISOString()
-          })}\n\n`;
-          controller.enqueue(new TextEncoder().encode(eventData));
+          try {
+            const eventData = `data: ${JSON.stringify({
+              type: stream, // 'stdout' or 'stderr' directly
+              data,
+              timestamp: new Date().toISOString()
+            })}\n\n`;
+            controller.enqueue(new TextEncoder().encode(eventData));
+          } catch (err) {
+            if (err instanceof TypeError) {
+              // Stream was closed or cancelled — just cleanup
+              process.outputListeners.delete(outputListener);
+              process.statusListeners.delete(statusListener);
+            }
+          }
         };
 
         const statusListener = (status: string) => {
           // Close stream when process completes
           if (['completed', 'failed', 'killed', 'error'].includes(status)) {
-            const finalData = `data: ${JSON.stringify({
-              type: 'complete',
-              exitCode: process.exitCode,
-              timestamp: new Date().toISOString()
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(finalData));
-            controller.close();
+            try {
+              const finalData = `data: ${JSON.stringify({
+                type: 'complete',
+                exitCode: process.exitCode,
+                timestamp: new Date().toISOString()
+              })}\n\n`;
+              controller.enqueue(new TextEncoder().encode(finalData));
+              controller.close();
+            } catch (err) {
+              if (err instanceof TypeError) {
+                // Stream already closed — just cleanup
+                process.outputListeners.delete(outputListener);
+                process.statusListeners.delete(statusListener);
+              }
+            }
           }
         };
 
@@ -189,13 +205,21 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         if (
           ['completed', 'failed', 'killed', 'error'].includes(process.status)
         ) {
-          const finalData = `data: ${JSON.stringify({
-            type: 'complete',
-            exitCode: process.exitCode,
-            timestamp: new Date().toISOString()
-          })}\n\n`;
-          controller.enqueue(new TextEncoder().encode(finalData));
-          controller.close();
+          try {
+            const finalData = `data: ${JSON.stringify({
+              type: 'complete',
+              exitCode: process.exitCode,
+              timestamp: new Date().toISOString()
+            })}\n\n`;
+            controller.enqueue(new TextEncoder().encode(finalData));
+            controller.close();
+          } catch (err) {
+            if (err instanceof TypeError) {
+              // Stream already closed — just cleanup
+              process.outputListeners.delete(outputListener);
+              process.statusListeners.delete(statusListener);
+            }
+          }
         }
 
         // Cleanup when stream is cancelled

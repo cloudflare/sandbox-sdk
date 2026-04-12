@@ -624,6 +624,172 @@ describe('ProcessHandler', () => {
     expect(statusListeners.size).toBe(0);
   });
 
+  /**
+   * Test for GitHub issue #13442: Stream controller race condition
+   *
+   * Reproduces the bug where output/status callbacks fire after stream
+   * cancellation, attempting to use an already-closed controller.
+   */
+  describe('stream controller race condition (issue #13442)', () => {
+    it('should not throw when output callback fires after stream cancellation', async () => {
+      const outputListeners = new Set<
+        (stream: 'stdout' | 'stderr', data: string) => void
+      >();
+      const statusListeners = new Set<(status: string) => void>();
+
+      // Store references to the listeners so we can trigger them manually
+      let capturedOutputListener:
+        | ((stream: 'stdout' | 'stderr', data: string) => void)
+        | undefined;
+
+      const mockProcessInfo: ProcessInfo = {
+        id: 'proc-race-output',
+        pid: 88888,
+        command: 'long-running-command',
+        status: 'running',
+        startTime: new Date('2023-01-01T00:00:00Z'),
+        sessionId: 'session-456',
+        stdout: 'initial output',
+        stderr: '',
+        outputListeners,
+        statusListeners
+      };
+
+      // Intercept listener registration to capture the callback
+      const originalAdd = outputListeners.add.bind(outputListeners);
+      outputListeners.add = (fn: any) => {
+        capturedOutputListener = fn;
+        return originalAdd(fn);
+      };
+
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: true,
+        data: mockProcessInfo
+      });
+
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-race-output/stream',
+        { method: 'GET' }
+      );
+
+      const response = await processHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+
+      const reader = response.body!.getReader();
+      await reader.read(); // Let listeners register
+
+      // Cancel the stream (removes listeners)
+      await reader.cancel();
+
+      // Simulate the race condition: output callback fires after cancel
+      // This happens when the process produces output just as client disconnects
+      expect(() => {
+        if (capturedOutputListener) {
+          capturedOutputListener('stdout', 'late data after cancel');
+        }
+      }).not.toThrow();
+    });
+
+    it('should not throw when status callback fires after stream cancellation', async () => {
+      const outputListeners = new Set<
+        (stream: 'stdout' | 'stderr', data: string) => void
+      >();
+      const statusListeners = new Set<(status: string) => void>();
+
+      let capturedStatusListener: ((status: string) => void) | undefined;
+
+      const mockProcessInfo: ProcessInfo = {
+        id: 'proc-race-status',
+        pid: 77777,
+        command: 'completing-command',
+        status: 'running',
+        startTime: new Date('2023-01-01T00:00:00Z'),
+        sessionId: 'session-456',
+        stdout: '',
+        stderr: '',
+        outputListeners,
+        statusListeners
+      };
+
+      // Intercept listener registration
+      const originalAdd = statusListeners.add.bind(statusListeners);
+      statusListeners.add = (fn: any) => {
+        capturedStatusListener = fn;
+        return originalAdd(fn);
+      };
+
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: true,
+        data: mockProcessInfo
+      });
+
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-race-status/stream',
+        { method: 'GET' }
+      );
+
+      const response = await processHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+
+      const reader = response.body!.getReader();
+      await reader.read();
+
+      // Cancel the stream
+      await reader.cancel();
+
+      // Simulate the race: process completes just as stream is cancelled
+      // This triggers status listener to call controller.close() on closed controller
+      expect(() => {
+        if (capturedStatusListener) {
+          capturedStatusListener('completed');
+        }
+      }).not.toThrow();
+    });
+
+    it('should handle rapid stream cancellations without errors', async () => {
+      const outputListeners = new Set<
+        (stream: 'stdout' | 'stderr', data: string) => void
+      >();
+      const statusListeners = new Set<(status: string) => void>();
+
+      const mockProcessInfo: ProcessInfo = {
+        id: 'proc-rapid',
+        pid: 66666,
+        command: 'rapid-test',
+        status: 'running',
+        startTime: new Date('2023-01-01T00:00:00Z'),
+        sessionId: 'session-456',
+        stdout: 'buffered',
+        stderr: 'buffered-err',
+        outputListeners,
+        statusListeners
+      };
+
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: true,
+        data: mockProcessInfo
+      });
+
+      // Create and cancel multiple streams rapidly
+      for (let i = 0; i < 5; i++) {
+        const request = new Request(
+          `http://localhost:3000/api/process/proc-rapid/stream`,
+          { method: 'GET' }
+        );
+
+        const response = await processHandler.handle(request, mockContext);
+        expect(response.status).toBe(200);
+
+        const reader = response.body!.getReader();
+        await reader.read();
+        await reader.cancel();
+      }
+
+      // Should reach here without throwing
+      expect(true).toBe(true);
+    });
+  });
+
   describe('route handling', () => {
     it('should return 404 for invalid endpoints', async () => {
       // Mock getProcess to return process not found for invalid process ID

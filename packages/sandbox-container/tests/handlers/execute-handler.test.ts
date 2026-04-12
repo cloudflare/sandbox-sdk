@@ -298,5 +298,81 @@ describe('ExecuteHandler', () => {
         expect.any(Object)
       );
     });
+
+    /**
+     * Test for GitHub issue #13442: Stream controller race condition
+     *
+     * The execute/stream endpoint uses the same streaming pattern as
+     * process/stream and has the same vulnerability to race conditions.
+     */
+    it('should handle stream cancellation without controller errors', async () => {
+      const outputListeners = new Set<
+        (stream: 'stdout' | 'stderr', data: string) => void
+      >();
+      const statusListeners = new Set<(status: string) => void>();
+
+      let capturedOutputListener:
+        | ((stream: 'stdout' | 'stderr', data: string) => void)
+        | undefined;
+      let capturedStatusListener: ((status: string) => void) | undefined;
+
+      const mockStreamProcessResult = {
+        success: true as const,
+        data: {
+          id: 'exec-stream-race',
+          command: 'echo "race test"',
+          status: 'running' as const,
+          startTime: new Date(),
+          pid: 55555,
+          stdout: 'initial',
+          stderr: '',
+          outputListeners,
+          statusListeners
+        }
+      };
+
+      // Intercept listener registration
+      const originalOutputAdd = outputListeners.add.bind(outputListeners);
+      outputListeners.add = (fn: any) => {
+        capturedOutputListener = fn;
+        return originalOutputAdd(fn);
+      };
+
+      const originalStatusAdd = statusListeners.add.bind(statusListeners);
+      statusListeners.add = (fn: any) => {
+        capturedStatusListener = fn;
+        return originalStatusAdd(fn);
+      };
+
+      mocked(mockProcessService.startProcess).mockResolvedValue(
+        mockStreamProcessResult
+      );
+
+      const request = new Request('http://localhost:3000/api/execute/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'echo "race test"' })
+      });
+
+      const response = await executeHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+      expect(response.body).toBeDefined();
+
+      const reader = response.body!.getReader();
+      await reader.read(); // Let listeners register
+
+      // Cancel the stream
+      await reader.cancel();
+
+      // Simulate race condition: callbacks fire after cancel
+      expect(() => {
+        if (capturedOutputListener) {
+          capturedOutputListener('stdout', 'late output');
+        }
+        if (capturedStatusListener) {
+          capturedStatusListener('completed');
+        }
+      }).not.toThrow();
+    });
   });
 });
