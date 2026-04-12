@@ -58,7 +58,11 @@ describe('Stream Controller Race Condition', () => {
 
     // Connect to the stream endpoint
     const streamResponse = await fetch(
-      `${workerUrl}/api/process/${processData.id}/stream`
+      `${workerUrl}/api/process/${processData.id}/stream`,
+      {
+        method: 'GET',
+        headers
+      }
     );
     expect(streamResponse.status).toBe(200);
     expect(streamResponse.body).toBeDefined();
@@ -117,7 +121,11 @@ describe('Stream Controller Race Condition', () => {
     // Perform multiple rapid connect/disconnect cycles
     for (let i = 0; i < 5; i++) {
       const streamResponse = await fetch(
-        `${workerUrl}/api/process/${processData.id}/stream`
+        `${workerUrl}/api/process/${processData.id}/stream`,
+        {
+          method: 'GET',
+          headers
+        }
       );
 
       if (streamResponse.status === 200 && streamResponse.body) {
@@ -175,7 +183,11 @@ describe('Stream Controller Race Condition', () => {
 
     // Connect to stream immediately
     const streamResponse = await fetch(
-      `${workerUrl}/api/process/${processData.id}/stream`
+      `${workerUrl}/api/process/${processData.id}/stream`,
+      {
+        method: 'GET',
+        headers
+      }
     );
 
     if (streamResponse.status === 200 && streamResponse.body) {
@@ -229,7 +241,11 @@ describe('Stream Controller Race Condition', () => {
       streams.push(
         (async () => {
           const streamResponse = await fetch(
-            `${workerUrl}/api/process/${processData.id}/stream`
+            `${workerUrl}/api/process/${processData.id}/stream`,
+            {
+              method: 'GET',
+              headers
+            }
           );
 
           if (streamResponse.status === 200 && streamResponse.body) {
@@ -279,7 +295,7 @@ describe('Stream Controller Race Condition', () => {
    */
   test('should handle execute/stream cancellation gracefully', async () => {
     // Start streaming execution
-    const streamResponse = await fetch(`${workerUrl}/api/execute/stream`, {
+    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
