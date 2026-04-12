@@ -7,36 +7,41 @@ Run Claude Code on Cloudflare Sandboxes! This example shows a basic setup that d
 - Claude Code will edit all necessary files and return when done
 - The Worker will return a response with the output logs from Claude and the diff left on the repo.
 
-## Authentication
+## Routes
 
-The worker supports two ways to authenticate Claude Code:
+| Route | Auth method |
+|-------|-------------|
+| `POST /` | Anthropic API key (`ANTHROPIC_API_KEY`) — pay per token |
+| `POST /sub` | Claude.ai subscription (`CLAUDE_CODE_OAUTH_TOKEN`) |
 
-**Option 1 — Anthropic API key** (pay-per-token):
+## Setup
+
+Copy `.dev.vars.example` to `.dev.vars` and fill in the var(s) you need:
+
 ```
-ANTHROPIC_API_KEY=<your-key>
+# For POST /
+ANTHROPIC_API_KEY=<your-api-key>
+
+# For POST /sub — get your token by running: claude setup-token
+CLAUDE_CODE_OAUTH_TOKEN=<your-oauth-token>
 ```
 
-**Option 2 — Claude.ai subscription** (uses your existing subscription):
-```
-CLAUDE_CODE_OAUTH_TOKEN=<your-token>
-```
-
-To get your OAuth token after logging in with Claude Code locally:
-```bash
-cat ~/.claude/.credentials.json
-```
-
-Set exactly one of these in `.dev.vars` for local development, or as a Worker secret for production:
+For production, set secrets with:
 ```bash
 wrangler secret put ANTHROPIC_API_KEY
-# or
 wrangler secret put CLAUDE_CODE_OAUTH_TOKEN
 ```
 
 ## Usage
 
 ```bash
+# Using an API key
 curl -X POST http://localhost:8787/ \
+  -H 'Content-Type: application/json' \
+  -d '{"repo": "https://github.com/owner/repo", "task": "fix the typo in README.md"}'
+
+# Using a Claude.ai subscription
+curl -X POST http://localhost:8787/sub \
   -H 'Content-Type: application/json' \
   -d '{"repo": "https://github.com/owner/repo", "task": "fix the typo in README.md"}'
 ```
