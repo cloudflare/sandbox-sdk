@@ -15,15 +15,15 @@
     "test:integration": "bun script/integration"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.8",
+    "@biomejs/biome": "2.3.7",
     "@cloudflare/sandbox": "*",
-    "@cloudflare/vitest-pool-workers": "^0.14.1",
-    "@cloudflare/workers-types": "^4.20250620.0",
+    "@cloudflare/vitest-pool-workers": "^0.12.5",
+    "@cloudflare/workers-types": "^4.20251126.0",
     "@types/node": "^24.10.1",
     "hono": "^4.7.11",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0",
-    "wrangler": "^4.70.0"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.76.0"
   },
   "cloudflare": {
     "bindings": {
