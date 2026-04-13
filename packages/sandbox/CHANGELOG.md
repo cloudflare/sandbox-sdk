@@ -1,5 +1,12 @@
 # @cloudflare/sandbox
 
+## 0.8.10
+
+### Patch Changes
+
+- [#577](https://github.com/cloudflare/sandbox-sdk/pull/577) [`a56898c`](https://github.com/cloudflare/sandbox-sdk/commit/a56898cc83944a5d43ce3ab75cdba8025d51e2fc) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Improve backup restores by mounting backup archives from R2 during restore
+  instead of downloading them into local container storage first.
+
 ## 0.8.9
 
 ### Patch Changes

@@ -1,5 +1,5 @@
 # Use Cloudflare sandbox as base
-FROM docker.io/cloudflare/sandbox:0.8.9
+FROM docker.io/cloudflare/sandbox:0.8.10
 
 # Install esbuild for TypeScript bundling
 RUN npm install -g esbuild
