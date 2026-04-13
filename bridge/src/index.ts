@@ -167,17 +167,26 @@ function errorJson(error: string, code: string, status: number): Response {
 
 /**
  * Shell-quote a single argv token so it is safe to embed in a sh command
- * string.  Uses single-quote wrapping with escaped interior single quotes.
- * Tokens that are already safe (no whitespace or shell metacharacters) are
- * returned unchanged to keep commands readable in logs.
+ * string.  Tokens that contain only safe characters are returned unchanged
+ * for readability.  All others are wrapped in ANSI-C $'...' quoting which
+ * can represent newlines, tabs, and other control characters as escape
+ * sequences — unlike plain single quotes which pass content literally and
+ * break when the value contains a real newline.
  */
 export function shellQuote(arg: string): string {
   // Fast path: arg contains only safe characters.
   if (/^[A-Za-z0-9@%+=:,./-]+$/.test(arg)) {
     return arg;
   }
-  // Wrap in single quotes; escape any interior single quotes as '\''
-  return "'" + arg.replace(/'/g, "'\\''") + "'";
+  // Use $'...' (ANSI-C quoting) which supports escape sequences.
+  // Escape backslashes first, then single quotes and control characters.
+  const escaped = arg
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+  return "$'" + escaped + "'";
 }
 
 /**

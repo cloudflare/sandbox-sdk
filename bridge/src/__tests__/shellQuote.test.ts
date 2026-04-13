@@ -23,36 +23,55 @@ describe('shellQuote', () => {
     expect(shellQuote('./some-dir/file.tar')).toBe('./some-dir/file.tar');
   });
 
-  it('wraps strings with spaces in single quotes', () => {
-    expect(shellQuote('hello world')).toBe("'hello world'");
+  it("wraps strings with spaces in $'...' quoting", () => {
+    expect(shellQuote('hello world')).toBe("$'hello world'");
   });
 
-  it("escapes interior single quotes as '\\''", () => {
-    expect(shellQuote("it's")).toBe("'it'\\''s'");
+  it('escapes interior single quotes', () => {
+    expect(shellQuote("it's")).toBe("$'it\\'s'");
   });
 
   it('wraps strings with semicolons (shell metachar)', () => {
-    expect(shellQuote('foo;rm -rf /')).toBe("'foo;rm -rf /'");
+    expect(shellQuote('foo;rm -rf /')).toBe("$'foo;rm -rf /'");
   });
 
   it('wraps strings with backticks', () => {
-    expect(shellQuote('foo`whoami`')).toBe("'foo`whoami`'");
+    expect(shellQuote('foo`whoami`')).toBe("$'foo`whoami`'");
   });
 
   it('wraps strings with $() command substitution', () => {
-    expect(shellQuote('$(evil)')).toBe("'$(evil)'");
+    expect(shellQuote('$(evil)')).toBe("$'$(evil)'");
   });
 
   it('wraps strings with pipe characters', () => {
-    expect(shellQuote('a|b')).toBe("'a|b'");
+    expect(shellQuote('a|b')).toBe("$'a|b'");
   });
 
   it('wraps strings with ampersand', () => {
-    expect(shellQuote('a&b')).toBe("'a&b'");
+    expect(shellQuote('a&b')).toBe("$'a&b'");
   });
 
   it('handles empty string', () => {
-    // Empty string doesn't match the safe-char regex, so gets quoted
-    expect(shellQuote('')).toBe("''");
+    expect(shellQuote('')).toBe("$''");
+  });
+
+  it('escapes newlines', () => {
+    expect(shellQuote('line1\nline2')).toBe("$'line1\\nline2'");
+  });
+
+  it('escapes carriage returns', () => {
+    expect(shellQuote('a\rb')).toBe("$'a\\rb'");
+  });
+
+  it('escapes tabs', () => {
+    expect(shellQuote('a\tb')).toBe("$'a\\tb'");
+  });
+
+  it('escapes backslashes', () => {
+    expect(shellQuote('a\\b')).toBe("$'a\\\\b'");
+  });
+
+  it('handles combined special characters', () => {
+    expect(shellQuote("it's a\nnew line")).toBe("$'it\\'s a\\nnew line'");
   });
 });

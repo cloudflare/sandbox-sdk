@@ -247,3 +247,102 @@ describe('POST /sandbox/:id/exec — cwd validation', () => {
     expect(opts.cwd).toBe('/workspace/src');
   });
 });
+
+describe('POST /sandbox/:id/exec — argv to command string quoting', () => {
+  /** Helper: capture the command string passed to sandbox.exec(). */
+  function capturedCommand(): string {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const call = mockSandbox.exec.mock.calls[0] as any[];
+    return call[0] as string;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
+      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
+      if (onComplete) onComplete({ exitCode: 0 });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+  });
+
+  it('passes safe tokens unquoted', async () => {
+    await execRequest({ argv: ['echo', 'hello'] });
+    expect(capturedCommand()).toBe('echo hello');
+  });
+
+  it("quotes tokens with spaces using $'...'", async () => {
+    await execRequest({ argv: ['echo', 'hello world'] });
+    expect(capturedCommand()).toBe("echo $'hello world'");
+  });
+
+  it('quotes tokens with single quotes', async () => {
+    await execRequest({ argv: ['echo', "it's"] });
+    expect(capturedCommand()).toBe("echo $'it\\'s'");
+  });
+
+  it('quotes tokens with double quotes', async () => {
+    await execRequest({ argv: ['echo', 'say "hi"'] });
+    expect(capturedCommand()).toBe('echo $\'say "hi"\'');
+  });
+
+  it('escapes newlines in argv values', async () => {
+    await execRequest({ argv: ['printf', 'line1\nline2'] });
+    expect(capturedCommand()).toBe("printf $'line1\\nline2'");
+    expect(capturedCommand()).not.toContain('\n');
+  });
+
+  it('escapes carriage returns in argv values', async () => {
+    await execRequest({ argv: ['printf', 'a\rb'] });
+    expect(capturedCommand()).toBe("printf $'a\\rb'");
+  });
+
+  it('escapes tabs in argv values', async () => {
+    await execRequest({ argv: ['printf', 'a\tb'] });
+    expect(capturedCommand()).toBe("printf $'a\\tb'");
+  });
+
+  it('escapes backslashes in argv values', async () => {
+    await execRequest({ argv: ['echo', 'a\\b'] });
+    expect(capturedCommand()).toBe("echo $'a\\\\b'");
+  });
+
+  it('quotes dollar signs to prevent variable expansion', async () => {
+    await execRequest({ argv: ['echo', '$dollar'] });
+    expect(capturedCommand()).toBe("echo $'$dollar'");
+  });
+
+  it('quotes shell metacharacters (semicolons, pipes, ampersands)', async () => {
+    await execRequest({ argv: ['echo', 'a;b', 'c|d', 'e&f'] });
+    expect(capturedCommand()).toBe("echo $'a;b' $'c|d' $'e&f'");
+  });
+
+  it('quotes backticks and command substitution', async () => {
+    await execRequest({ argv: ['echo', '`whoami`', '$(id)'] });
+    expect(capturedCommand()).toBe("echo $'`whoami`' $'$(id)'");
+  });
+
+  // Mirrors test_cloudflare_exec_applies_manifest_environment from the OpenAI SDK
+  it('handles env-prefixed argv (env KEY=VALUE command)', async () => {
+    await execRequest({ argv: ['env', 'A=1', 'B=two', 'printenv', 'A'] });
+    expect(capturedCommand()).toBe('env A=1 B=two printenv A');
+  });
+
+  // Mirrors test_cloudflare_exec_quotes_argv_for_worker from the OpenAI SDK
+  it('handles mixed special characters matching OpenAI SDK test vectors', async () => {
+    await execRequest({
+      argv: ['sh', '-c', 'printf argv-ok', 'argv-test', 'space value', '$dollar', 'quote\'"value', 'line\nbreak']
+    });
+    const cmd = capturedCommand();
+    // No literal newlines in the command string
+    expect(cmd).not.toContain('\n');
+    // Each token is properly represented
+    expect(cmd).toContain('sh');
+    expect(cmd).toContain('-c');
+    expect(cmd).toContain("$'printf argv-ok'");
+    expect(cmd).toContain('argv-test');
+    expect(cmd).toContain("$'space value'");
+    expect(cmd).toContain("$'$dollar'");
+    expect(cmd).toContain("$'quote\\'\"value'");
+    expect(cmd).toContain("$'line\\nbreak'");
+  });
+});
