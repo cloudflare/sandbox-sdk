@@ -529,22 +529,25 @@ async def workspace_info_endpoint(request: Request) -> JSONResponse:
 async def file_tree_endpoint(request: Request) -> JSONResponse:
     """GET /api/files-tree — recursive flat listing of all files in the workspace."""
     session = _get_session()
-    result = await session.exec(
-        "find", WORKSPACE_ROOT, "-type", "f", "-printf", "%s\t%p\n",
-        shell=False,
-    )
-    entries = []
-    if result.ok():
-        for line in result.stdout.decode("utf-8", errors="replace").strip().splitlines():
-            parts = line.split("\t", 1)
-            if len(parts) == 2:
-                size_str, full_path = parts
-                display_path = "/" + full_path.removeprefix(WORKSPACE_ROOT).lstrip("/")
-                try:
-                    entries.append({"path": display_path, "size": int(size_str)})
-                except ValueError:
-                    entries.append({"path": display_path, "size": 0})
-    entries.sort(key=lambda e: e["path"])
+    entries: list[dict[str, object]] = []
+    try:
+        result = await session.exec(
+            "find", WORKSPACE_ROOT, "-type", "f", "-printf", "%s\t%p\n",
+            shell=False,
+        )
+        if result.ok():
+            for line in result.stdout.decode("utf-8", errors="replace").strip().splitlines():
+                parts = line.split("\t", 1)
+                if len(parts) == 2:
+                    size_str, full_path = parts
+                    display_path = "/" + full_path.removeprefix(WORKSPACE_ROOT).lstrip("/")
+                    try:
+                        entries.append({"path": display_path, "size": int(size_str)})
+                    except ValueError:
+                        entries.append({"path": display_path, "size": 0})
+    except (ExecTimeoutError, TimeoutError, Exception):
+        pass
+    entries.sort(key=lambda e: str(e["path"]))
     return JSONResponse(entries)
 
 
