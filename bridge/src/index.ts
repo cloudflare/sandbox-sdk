@@ -32,18 +32,27 @@
  *   SANDBOX_API_KEY=dev-secret
  */
 
-import type { ExecutionSession, PtyOptions } from '@cloudflare/sandbox';
-import { getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
+import type { ExecutionSession, ISandbox, PtyOptions } from '@cloudflare/sandbox';
+import { getSandbox as _getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 import { Hono, type MiddlewareHandler } from 'hono';
 
-// The SDK's getSandbox() returns a Proxy that adds methods not present on the
-// ISandbox interface (terminal, getSession, etc.). Declare the enhanced shape
-// so we can call those methods with type safety.
-interface EnhancedSandbox {
+/**
+ * The SDK's getSandbox() proxy exposes methods not declared on ISandbox
+ * (terminal, destroy) or declared with a narrower return type (getSession
+ * without terminal). This type extends ISandbox with those extra methods
+ * so call sites get type safety without per-call casts.
+ */
+type BridgeSandbox = ISandbox & {
   terminal(request: Request, options?: PtyOptions): Promise<Response>;
   getSession(
     sessionId: string
   ): Promise<ExecutionSession & { terminal(request: Request, options?: PtyOptions): Promise<Response> }>;
+  destroy(): Promise<void>;
+};
+
+/** Typed wrapper around the SDK's getSandbox() that returns a BridgeSandbox. */
+function getSandbox(ns: DurableObjectNamespace, containerUUID: string): BridgeSandbox {
+  return _getSandbox(ns, containerUUID) as unknown as BridgeSandbox;
 }
 
 import { OPENAPI_SCHEMA } from './openapi';
@@ -597,7 +606,7 @@ app.get('/v1/sandbox/:id/pty', async (c) => {
     return errorJson('WebSocket upgrade required', 'invalid_request', 400);
   }
 
-  const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID')) as unknown as EnhancedSandbox;
+  const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
 
   // 2. Parse PtyOptions from query params
   const colsParam = c.req.query('cols');
