@@ -669,12 +669,22 @@ function Chat() {
     sendMessage({ text: fullText });
   }, [input, isStreaming, hasUploading, pendingFiles, sendMessage]);
 
-  const clearHistory = useCallback(() => {
-    setMessages([]);
-    fetch('/api/history', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '[]' }).catch(
-      () => {}
-    );
-  }, [setMessages]);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const clearAndReset = useCallback(async () => {
+    setIsResetting(true);
+    try {
+      setMessages([]);
+      setPendingFiles([]);
+      await fetch('/api/reset', { method: 'POST' });
+      fileBrowserRef.current?.refresh();
+      toasts.add({ title: 'Workspace reset', variant: 'info', timeout: 3000 });
+    } catch {
+      toasts.add({ title: 'Reset failed', variant: 'error', timeout: 4000 });
+    } finally {
+      setIsResetting(false);
+    }
+  }, [setMessages, toasts]);
 
   // ---------------------------------------------------------------------------
   // Drag-and-drop file upload (full window)
@@ -815,8 +825,8 @@ function Chat() {
             </div>
             <div className="flex items-center gap-3">
               <ModeToggle />
-              <Button variant="secondary" icon={<TrashIcon size={16} />} onClick={clearHistory}>
-                Clear
+              <Button variant="secondary" icon={<TrashIcon size={16} />} onClick={clearAndReset} disabled={isResetting || isStreaming}>
+                {isResetting ? 'Resetting…' : 'Reset'}
               </Button>
             </div>
           </div>

@@ -112,6 +112,22 @@ async def _stop_sandbox() -> None:
     _sandbox_client = None
 
 
+async def _reset_sandbox() -> None:
+    """Destroy the current sandbox, clear saved state, and start a fresh one."""
+    global _sandbox_client, _sandbox_session
+    # Shut down the existing session
+    if _sandbox_session is not None and _sandbox_client is not None:
+        try:
+            await _sandbox_client.delete(_sandbox_session)
+        except Exception:
+            logger.warning("Could not delete old sandbox", exc_info=True)
+    _sandbox_session = None
+    SESSION_FILE.unlink(missing_ok=True)
+    HISTORY_FILE.unlink(missing_ok=True)
+    # Start fresh
+    await _start_sandbox()
+
+
 def _get_session():
     if _sandbox_session is None:
         raise RuntimeError("Sandbox session not initialized")
@@ -544,6 +560,7 @@ async def root_endpoint(request: Request) -> Response:
             "  API base: http://localhost:8000/api/\n\n"
             "Available endpoints:\n"
             "  POST /api/chat\n"
+            "  POST /api/reset\n"
             "  GET  /api/list[/<path>]\n"
             "  GET  /api/files/<path>\n"
             "  GET  /api/workspace/info\n"
@@ -616,6 +633,16 @@ async def history_put_endpoint(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+async def reset_endpoint(request: Request) -> JSONResponse:
+    """POST /api/reset — destroy sandbox, clear history, start fresh."""
+    try:
+        await _reset_sandbox()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.exception("Reset failed")
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB — matches bridge PUT /file/* limit
 
 
@@ -652,6 +679,7 @@ async def upload_endpoint(request: Request) -> JSONResponse:
 routes = [
     Route("/", root_endpoint, methods=["GET"]),
     Route("/api/chat", chat_endpoint, methods=["POST"]),
+    Route("/api/reset", reset_endpoint, methods=["POST"]),
     Route("/api/upload", upload_endpoint, methods=["POST"]),
     Route("/api/list/{path:path}", list_endpoint, methods=["GET"]),
     Route("/api/list", list_endpoint, methods=["GET"], name="list_root"),
