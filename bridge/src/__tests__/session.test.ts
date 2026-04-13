@@ -1,0 +1,308 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMockEnv, createMockSandbox, createMockSession, parseSSE, sandboxUrl } from './helpers';
+
+const mockSandbox = createMockSandbox();
+vi.mock('@cloudflare/sandbox', () => ({
+  getSandbox: vi.fn(() => mockSandbox),
+  proxyToSandbox: vi.fn(async () => null),
+  Sandbox: class {}
+}));
+
+const { app } = await import('../index');
+
+const env = createMockEnv();
+
+describe('POST /v1/sandbox/:id/session — create session', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('creates a session with provided ID', async () => {
+    mockSandbox.createSession.mockResolvedValue({ id: 'my-sess' });
+
+    const res = await app.request(
+      sandboxUrl('test', 'session'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'my-sess' })
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string };
+    expect(body.id).toBe('my-sess');
+    expect(mockSandbox.createSession).toHaveBeenCalledWith({ id: 'my-sess' });
+  });
+
+  it('returns 502 when createSession throws', async () => {
+    mockSandbox.createSession.mockRejectedValue(new Error('container down'));
+
+    const res = await app.request(
+      sandboxUrl('test', 'session'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      },
+      env
+    );
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe('session_error');
+    expect(body.error).toContain('container down');
+  });
+});
+
+describe('DELETE /v1/sandbox/:id/session/:sid — delete session', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('deletes a session and returns result', async () => {
+    const deleteResult = { success: true, sessionId: 'sess-1', timestamp: '2025-01-01T00:00:00Z' };
+    mockSandbox.deleteSession.mockResolvedValue(deleteResult);
+
+    const res = await app.request(
+      `http://localhost/v1/sandbox/test/session/sess-1`,
+      {
+        method: 'DELETE'
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual(deleteResult);
+    expect(mockSandbox.deleteSession).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('returns 502 when deleteSession throws', async () => {
+    mockSandbox.deleteSession.mockRejectedValue(new Error('not found'));
+
+    const res = await app.request(
+      `http://localhost/v1/sandbox/test/session/bad-id`,
+      {
+        method: 'DELETE'
+      },
+      env
+    );
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe('session_error');
+    expect(body.error).toContain('not found');
+  });
+});
+
+describe('X-Session-Id header on exec', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses getSession when X-Session-Id header is present', async () => {
+    const session = createMockSession('my-session');
+    session.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
+      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
+      if (onComplete) onComplete({ exitCode: 0 });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    mockSandbox.getSession.mockResolvedValue(session);
+
+    const res = await app.request(
+      sandboxUrl('test', 'exec'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': 'my-session'
+        },
+        body: JSON.stringify({ argv: ['echo', 'hi'] })
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('my-session');
+    expect(session.exec).toHaveBeenCalled();
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
+  });
+
+  it('uses sandbox directly when no X-Session-Id header', async () => {
+    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
+      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
+      if (onComplete) onComplete({ exitCode: 0 });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const res = await app.request(
+      sandboxUrl('test', 'exec'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ argv: ['echo', 'hi'] })
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).not.toHaveBeenCalled();
+    expect(mockSandbox.exec).toHaveBeenCalled();
+  });
+});
+
+describe('X-Session-Id header on file read', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses getSession when X-Session-Id header is present', async () => {
+    const session = createMockSession('read-sess');
+    mockSandbox.getSession.mockResolvedValue(session);
+
+    const res = await app.request(
+      `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
+      {
+        method: 'GET',
+        headers: { 'X-Session-Id': 'read-sess' }
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('read-sess');
+    expect(session.readFileStream).toHaveBeenCalledWith('/workspace/test.txt');
+  });
+});
+
+describe('X-Session-Id header on file write', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses getSession when X-Session-Id header is present', async () => {
+    const session = createMockSession('write-sess');
+    mockSandbox.getSession.mockResolvedValue(session);
+
+    const res = await app.request(
+      `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
+      {
+        method: 'PUT',
+        headers: { 'X-Session-Id': 'write-sess' },
+        body: 'hello'
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('write-sess');
+    expect(session.writeFile).toHaveBeenCalled();
+  });
+});
+
+describe('PTY session precedence', () => {
+  const MOCK_TERMINAL_RESPONSE = new Response(null, { status: 200 });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
+  });
+
+  it('header takes priority over query param', async () => {
+    const headerSession = createMockSession('from-header');
+    headerSession.terminal.mockResolvedValue(MOCK_TERMINAL_RESPONSE);
+    mockSandbox.getSession.mockResolvedValue(headerSession);
+
+    const res = await app.request(
+      sandboxUrl('test', 'pty', 'session=from-query'),
+      {
+        method: 'GET',
+        headers: { Upgrade: 'websocket', 'X-Session-Id': 'from-header' }
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('from-header');
+  });
+
+  it('uses query param when no header is present', async () => {
+    const querySession = createMockSession('from-query');
+    querySession.terminal.mockResolvedValue(MOCK_TERMINAL_RESPONSE);
+    mockSandbox.getSession.mockResolvedValue(querySession);
+
+    const res = await app.request(
+      sandboxUrl('test', 'pty', 'session=from-query'),
+      {
+        method: 'GET',
+        headers: { Upgrade: 'websocket' }
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('from-query');
+  });
+});
+
+describe('Invalid session ID validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 400 for session ID with path traversal', async () => {
+    const res = await app.request(
+      sandboxUrl('test', 'exec'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': '../etc/passwd'
+        },
+        body: JSON.stringify({ argv: ['echo', 'hi'] })
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.error).toBe('Invalid session ID format');
+    expect(body.code).toBe('invalid_request');
+  });
+
+  it('returns 400 for session ID with spaces', async () => {
+    const res = await app.request(
+      sandboxUrl('test', 'exec'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': 'session id'
+        },
+        body: JSON.stringify({ argv: ['echo', 'hi'] })
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.error).toBe('Invalid session ID format');
+  });
+
+  it('returns 400 for PTY with invalid session ID in header', async () => {
+    const res = await app.request(
+      sandboxUrl('test', 'pty'),
+      {
+        method: 'GET',
+        headers: { Upgrade: 'websocket', 'X-Session-Id': 'bad/session' }
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.error).toBe('Invalid session ID format');
+  });
+});

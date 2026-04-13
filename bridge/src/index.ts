@@ -226,6 +226,16 @@ export function resolveWorkspacePath(userPath: string): string | null {
   return null;
 }
 
+/**
+ * Validate a session ID. Rejects path traversal, control chars, and excessive length.
+ * Returns the validated ID or null if invalid.
+ */
+function validateSessionId(id: string): string | null {
+  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(id)) return null;
+  if (id.includes('..')) return null;
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 // Hono application
 // ---------------------------------------------------------------------------
@@ -370,6 +380,13 @@ app.post('/v1/sandbox/:id/exec', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+  const rawSessionId = c.req.header('X-Session-Id');
+  let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
+  if (rawSessionId) {
+    const sessionId = validateSessionId(rawSessionId);
+    if (!sessionId) return errorJson('Invalid session ID format', 'invalid_request', 400);
+    executor = await sandbox.getSession(sessionId);
+  }
 
   // The Python layer sends argv as a proper array, e.g.:
   //   ["sh", "-lc", "mkdir -p /workspace"]
@@ -414,7 +431,7 @@ app.post('/v1/sandbox/:id/exec', async (c) => {
     lastWrite.then(() => writer.close()).catch(() => {});
   }
 
-  sandbox
+  executor
     .exec(command, {
       ...opts,
       stream: true,
@@ -481,9 +498,16 @@ app.get('/v1/sandbox/:id/file/*', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+  const rawSessionId = c.req.header('X-Session-Id');
+  let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
+  if (rawSessionId) {
+    const sessionId = validateSessionId(rawSessionId);
+    if (!sessionId) return errorJson('Invalid session ID format', 'invalid_request', 400);
+    executor = await sandbox.getSession(sessionId);
+  }
 
   try {
-    const stream = await sandbox.readFileStream(resolvedPath);
+    const stream = await executor.readFileStream(resolvedPath);
     return new Response(stream, {
       status: 200,
       headers: { 'Content-Type': 'application/octet-stream' }
@@ -532,6 +556,13 @@ app.put('/v1/sandbox/:id/file/*', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+  const rawSessionId = c.req.header('X-Session-Id');
+  let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
+  if (rawSessionId) {
+    const sessionId = validateSessionId(rawSessionId);
+    if (!sessionId) return errorJson('Invalid session ID format', 'invalid_request', 400);
+    executor = await sandbox.getSession(sessionId);
+  }
 
   try {
     const buffer = await c.req.arrayBuffer();
@@ -554,7 +585,7 @@ app.put('/v1/sandbox/:id/file/*', async (c) => {
     for (let i = 0; i < bytes.length; i += CHUNK) {
       b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
     }
-    await sandbox.writeFile(resolvedPath, b64, { encoding: 'base64' });
+    await executor.writeFile(resolvedPath, b64, { encoding: 'base64' });
     const response: WriteResponse = { ok: true };
     return c.json(response);
   } catch (err) {
@@ -611,7 +642,7 @@ app.get('/v1/sandbox/:id/pty', async (c) => {
   const colsParam = c.req.query('cols');
   const rowsParam = c.req.query('rows');
   const shell = c.req.query('shell');
-  const session = c.req.query('session');
+  const sessionId = c.req.header('X-Session-Id') || c.req.query('session');
 
   const cols = colsParam ? Number(colsParam) : 80;
   const rows = rowsParam ? Number(rowsParam) : 24;
@@ -628,8 +659,10 @@ app.get('/v1/sandbox/:id/pty', async (c) => {
   try {
     // 3. If a session is specified, get the session and call terminal() on it;
     //    otherwise call terminal() directly on the sandbox.
-    if (session) {
-      const sess = await sandbox.getSession(session);
+    if (sessionId) {
+      const validatedId = validateSessionId(sessionId);
+      if (!validatedId) return errorJson('Invalid session ID format', 'invalid_request', 400);
+      const sess = await sandbox.getSession(validatedId);
       return await sess.terminal(c.req.raw, opts);
     }
     return await sandbox.terminal(c.req.raw, opts);
@@ -902,6 +935,55 @@ app.post('/v1/sandbox/:id/unmount', async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return errorJson(`unmount failed: ${msg}`, 'unmount_error', 502);
+  }
+});
+
+// ------------------------------------------------------------------
+// POST /sandbox/:id/session
+//
+// Creates a new session in the sandbox. All fields are optional.
+//
+// Body (optional JSON): { id?: string, cwd?: string, env?: Record<string, string> }
+// Response: { id: "<session-id>" }
+// ------------------------------------------------------------------
+
+app.post('/v1/sandbox/:id/session', async (c) => {
+  const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+
+  let body: { id?: string; cwd?: string; env?: Record<string, string> } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // Empty body is fine — all fields are optional
+  }
+
+  try {
+    const session = await sandbox.createSession(body);
+    return c.json({ id: session.id });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return errorJson(`session create failed: ${msg}`, 'session_error', 502);
+  }
+});
+
+// ------------------------------------------------------------------
+// DELETE /sandbox/:id/session/:sid
+//
+// Deletes a session from the sandbox.
+//
+// Response: { success: boolean, sessionId: string, timestamp: string }
+// ------------------------------------------------------------------
+
+app.delete('/v1/sandbox/:id/session/:sid', async (c) => {
+  const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+  const sid = c.req.param('sid');
+
+  try {
+    const result = await sandbox.deleteSession(sid);
+    return c.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return errorJson(`session delete failed: ${msg}`, 'session_error', 502);
   }
 });
 

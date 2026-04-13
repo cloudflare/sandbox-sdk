@@ -1,6 +1,35 @@
 import { vi } from 'vitest';
 
 /**
+ * Creates a mock session object matching the shape returned by sandbox.getSession().
+ * Each method is a vi.fn() so tests can inspect calls and configure returns.
+ *
+ * The `exec` mock supports streaming: when called with `stream: true`, it
+ * invokes `onOutput` / `onComplete` / `onError` callbacks.
+ */
+export function createMockSession(id = 'mock-session') {
+  return {
+    id,
+    exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
+      const result = { stdout: '', stderr: '', exitCode: 0 };
+      if (opts?.stream) {
+        if (opts.onOutput && typeof opts.onOutput === 'function') {
+          if (result.stdout) (opts.onOutput as (s: string, d: string) => void)('stdout', result.stdout);
+          if (result.stderr) (opts.onOutput as (s: string, d: string) => void)('stderr', result.stderr);
+        }
+        if (opts.onComplete && typeof opts.onComplete === 'function') {
+          (opts.onComplete as (r: { exitCode: number }) => void)(result);
+        }
+      }
+      return result;
+    }),
+    readFileStream: vi.fn(async () => new ReadableStream()),
+    writeFile: vi.fn(async () => {}),
+    terminal: vi.fn(async () => new Response(null, { status: 200 }))
+  };
+}
+
+/**
  * Creates a mock sandbox object matching the shape returned by getSandbox().
  * Each method is a vi.fn() so tests can inspect calls and configure returns.
  *
@@ -32,11 +61,14 @@ export function createMockSandbox() {
       // doesn't allow constructing Response with status 101, so we use 200.
       return new Response(null, { status: 200 });
     }),
-    getSession: vi.fn(async (_sessionId: string) => ({
-      id: 'mock-session',
-      terminal: vi.fn(async (_request: Request, _opts?: Record<string, unknown>) => {
-        return new Response(null, { status: 200 });
-      })
+    getSession: vi.fn(async (sessionId: string) => createMockSession(sessionId)),
+    createSession: vi.fn(async (opts?: { id?: string }) => ({
+      id: opts?.id || 'auto-session-id'
+    })),
+    deleteSession: vi.fn(async (sessionId: string) => ({
+      success: true,
+      sessionId,
+      timestamp: new Date().toISOString()
     })),
     mountBucket: vi.fn(async () => {}),
     unmountBucket: vi.fn(async () => {}),
