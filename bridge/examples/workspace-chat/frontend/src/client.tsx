@@ -17,7 +17,10 @@ import {
   MoonIcon,
   SunIcon,
   CheckIcon,
-  CaretRightIcon
+  CaretRightIcon,
+  XCircleIcon,
+  ArrowSquareOutIcon,
+  BrowserIcon
 } from '@phosphor-icons/react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
@@ -110,6 +113,59 @@ function ToolDetail({
       </button>
       {controlledOpen && <div>{children}</div>}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HTML artifact preview
+// ---------------------------------------------------------------------------
+
+/** Extract /artifacts/workspace/...*.html paths from markdown text. */
+function extractHtmlArtifacts(text: string): string[] {
+  const re = /\/artifacts\/workspace\/[^\s)"']+\.html?/gi;
+  const matches = text.match(re);
+  if (!matches) return [];
+  // Deduplicate
+  return [...new Set(matches)];
+}
+
+function HtmlPreview({ src }: { src: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const filename = src.split('/').pop() ?? src;
+
+  return (
+    <Surface className="rounded-xl ring ring-kumo-line overflow-hidden my-2">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-kumo-line bg-kumo-elevated">
+        <div className="flex items-center gap-2 min-w-0">
+          <BrowserIcon size={14} className="text-kumo-accent shrink-0" />
+          <span className="text-xs font-mono text-kumo-default truncate">{filename}</span>
+        </div>
+        <a
+          href={src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-kumo-inactive hover:text-kumo-default transition-colors p-1 rounded hover:bg-kumo-base"
+          title="Open in new tab"
+        >
+          <ArrowSquareOutIcon size={14} />
+        </a>
+      </div>
+      <div className="relative bg-white" style={{ minHeight: 200 }}>
+        {!loaded && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Text size="xs" variant="secondary">Loading preview…</Text>
+          </div>
+        )}
+        <iframe
+          src={src}
+          sandbox="allow-scripts allow-same-origin"
+          className="w-full border-0"
+          style={{ height: 400 }}
+          title={`Preview of ${filename}`}
+          onLoad={() => setLoaded(true)}
+        />
+      </div>
+    </Surface>
   );
 }
 
@@ -418,13 +474,25 @@ function getMessageText(message: UIMessage): string {
 // Main Chat component
 // ---------------------------------------------------------------------------
 
+type PendingFile = {
+  id: string;
+  name: string;
+  size: number;
+  progress: number; // 0–1
+  status: 'uploading' | 'done' | 'error';
+  sandboxPath?: string;
+  abort: AbortController;
+};
+
 function Chat() {
   const [input, setInput] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const dragCounter = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
   const toasts = useKumoToastManager();
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
-
   const toggleTool = useCallback((toolCallId: string) => {
     setExpandedTools((prev) => {
       const next = new Set(prev);
@@ -576,12 +644,30 @@ function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const hasUploading = pendingFiles.some((f) => f.status === 'uploading');
+
+  const removeFile = useCallback((id: string) => {
+    setPendingFiles((prev) => {
+      const file = prev.find((f) => f.id === id);
+      if (file?.status === 'uploading') file.abort.abort();
+      return prev.filter((f) => f.id !== id);
+    });
+  }, []);
+
   const send = useCallback(() => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || hasUploading) return;
+    // Append uploaded file paths so the agent knows about them
+    const doneFiles = pendingFiles.filter((f) => f.status === 'done' && f.sandboxPath);
+    let fullText = text;
+    if (doneFiles.length > 0) {
+      const fileList = doneFiles.map((f) => f.sandboxPath).join(', ');
+      fullText = `${text}\n\n[Uploaded files: ${fileList}]`;
+    }
     setInput('');
-    sendMessage({ text });
-  }, [input, isStreaming, sendMessage]);
+    setPendingFiles([]);
+    sendMessage({ text: fullText });
+  }, [input, isStreaming, hasUploading, pendingFiles, sendMessage]);
 
   const clearHistory = useCallback(() => {
     setMessages([]);
@@ -590,8 +676,120 @@ function Chat() {
     );
   }, [setMessages]);
 
+  // ---------------------------------------------------------------------------
+  // Drag-and-drop file upload (full window)
+  // ---------------------------------------------------------------------------
+
+  const handleDrop = useCallback((e: DragEvent) => {
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+
+    const newPending: PendingFile[] = files.map((file) => {
+      const id = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const abort = new AbortController();
+      return { id, name: file.name, size: file.size, progress: 0, status: 'uploading' as const, abort };
+    });
+
+    setPendingFiles((prev) => [...prev, ...newPending]);
+
+    // Start uploads in background. We use XMLHttpRequest for progress tracking.
+    files.forEach((file, i) => {
+      const entry = newPending[i];
+      const xhr = new XMLHttpRequest();
+      const abort = entry.abort;
+
+      abort.signal.addEventListener('abort', () => xhr.abort());
+
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) {
+          const progress = ev.loaded / ev.total;
+          setPendingFiles((prev) =>
+            prev.map((f) => f.id === entry.id ? { ...f, progress } : f)
+          );
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const { uploaded } = JSON.parse(xhr.responseText) as { uploaded: { path: string; size: number }[] };
+            const sandboxPath = uploaded[0]?.path;
+            setPendingFiles((prev) =>
+              prev.map((f) => f.id === entry.id ? { ...f, status: 'done' as const, progress: 1, sandboxPath } : f)
+            );
+            fileBrowserRef.current?.refresh({ silent: true });
+          } catch {
+            setPendingFiles((prev) =>
+              prev.map((f) => f.id === entry.id ? { ...f, status: 'error' as const } : f)
+            );
+          }
+        } else {
+          toasts.add({ title: `Upload failed: ${file.name}`, variant: 'error', timeout: 4000 });
+          setPendingFiles((prev) =>
+            prev.map((f) => f.id === entry.id ? { ...f, status: 'error' as const } : f)
+          );
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        toasts.add({ title: `Upload failed: ${file.name}`, variant: 'error', timeout: 4000 });
+        setPendingFiles((prev) =>
+          prev.map((f) => f.id === entry.id ? { ...f, status: 'error' as const } : f)
+        );
+      });
+
+      xhr.addEventListener('abort', () => {
+        setPendingFiles((prev) => prev.filter((f) => f.id !== entry.id));
+      });
+
+      const formData = new FormData();
+      formData.append(file.name, file);
+      xhr.open('POST', '/api/upload');
+      xhr.send(formData);
+    });
+  }, [toasts]);
+
+  useEffect(() => {
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current++;
+      if (dragCounter.current === 1) setIsDragging(true);
+    };
+    const onDragOver = (e: DragEvent) => e.preventDefault();
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current--;
+      if (dragCounter.current === 0) setIsDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsDragging(false);
+      handleDrop(e);
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [handleDrop]);
+
   return (
-    <div className="flex h-screen bg-kumo-elevated">
+    <div className="flex h-screen bg-kumo-elevated relative">
+      {/* Full-window drag overlay */}
+      {isDragging && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-kumo-contrast/20 backdrop-blur-sm border-2 border-dashed border-kumo-accent pointer-events-none">
+          <div className="text-lg font-semibold text-kumo-default bg-kumo-base px-6 py-3 rounded-xl shadow-lg">
+            Drop files to upload to workspace
+          </div>
+        </div>
+      )}
+
       {/* Sidebar — File Browser */}
       <div className="w-64 border-r border-kumo-line bg-kumo-base flex flex-col shrink-0">
         <div className="px-3 h-[61px] min-h-[61px] border-b border-kumo-line flex items-center">
@@ -673,19 +871,27 @@ function Chat() {
                     if (part.type === 'text') {
                       if (!part.text) return null;
                       const isLastTextPart = message.parts.slice(partIndex + 1).every((p) => p.type !== 'text');
+                      const htmlArtifacts = extractHtmlArtifacts(part.text);
 
                       return (
-                        <div key={partIndex} className="flex justify-start">
-                          <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md bg-kumo-base text-kumo-default text-sm leading-relaxed">
-                            <Streamdown
-                              className="sd-theme"
-                              plugins={{ code }}
-                              controls={false}
-                              isAnimating={isLastAssistant && isLastTextPart && isStreaming}
-                            >
-                              {part.text}
-                            </Streamdown>
+                        <div key={partIndex} className="space-y-2">
+                          <div className="flex justify-start">
+                            <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md bg-kumo-base text-kumo-default text-sm leading-relaxed">
+                              <Streamdown
+                                className="sd-theme"
+                                plugins={{ code }}
+                                controls={false}
+                                isAnimating={isLastAssistant && isLastTextPart && isStreaming}
+                              >
+                                {part.text}
+                              </Streamdown>
+                            </div>
                           </div>
+                          {htmlArtifacts.map((artifactSrc) => (
+                            <div key={artifactSrc} className="max-w-[85%]">
+                              <HtmlPreview src={artifactSrc} />
+                            </div>
+                          ))}
                         </div>
                       );
                     }
@@ -797,41 +1003,81 @@ function Chat() {
             }}
             className="max-w-3xl mx-auto px-5 py-4"
           >
-            <div className="flex items-end gap-3 rounded-xl border border-kumo-line bg-kumo-base p-3 shadow-sm focus-within:ring-2 focus-within:ring-kumo-ring focus-within:border-transparent transition-shadow">
-              <InputArea
-                value={input}
-                onValueChange={setInput}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder='Try: "Create a Node.js project with package.json and src/index.ts"'
-                disabled={isStreaming}
-                rows={2}
-                className="flex-1 !ring-0 focus:!ring-0 !shadow-none !bg-transparent !outline-none"
-              />
-              {isStreaming ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  shape="square"
-                  aria-label="Stop streaming"
-                  onClick={stop}
-                  icon={<StopIcon size={18} weight="fill" />}
-                  className="mb-0.5"
+            <div className="rounded-xl border border-kumo-line bg-kumo-base shadow-sm focus-within:ring-2 focus-within:ring-kumo-ring focus-within:border-transparent transition-shadow">
+              <div className="flex items-end gap-3 p-3">
+                <InputArea
+                  value={input}
+                  onValueChange={setInput}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  placeholder='Try: "Create a Node.js project with package.json and src/index.ts"'
+                  disabled={isStreaming}
+                  rows={2}
+                  className="flex-1 !ring-0 focus:!ring-0 !shadow-none !bg-transparent !outline-none"
                 />
-              ) : (
-                <Button
-                  type="submit"
-                  variant="primary"
-                  shape="square"
-                  aria-label="Send message"
-                  disabled={!input.trim()}
-                  icon={<PaperPlaneRightIcon size={18} />}
-                  className="mb-0.5"
-                />
+                {isStreaming ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    shape="square"
+                    aria-label="Stop streaming"
+                    onClick={stop}
+                    icon={<StopIcon size={18} weight="fill" />}
+                    className="mb-0.5"
+                  />
+                ) : (
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    shape="square"
+                    aria-label="Send message"
+                    disabled={!input.trim() || hasUploading}
+                    icon={<PaperPlaneRightIcon size={18} />}
+                    className="mb-0.5"
+                  />
+                )}
+              </div>
+
+              {/* Pending file pills */}
+              {pendingFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-3 pb-3">
+                  {pendingFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="relative flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full text-xs overflow-hidden border border-kumo-line"
+                    >
+                      {/* Progress fill background */}
+                      <div
+                        className={`absolute inset-0 transition-all duration-300 ${{
+                          uploading: 'bg-kumo-accent/10',
+                          done: 'bg-kumo-accent/15',
+                          error: 'bg-kumo-danger/10',
+                        }[file.status]}`}
+                        style={{ width: file.status === 'error' ? '100%' : `${Math.round(file.progress * 100)}%` }}
+                      />
+                      <FileIcon size={12} className="text-kumo-subtle shrink-0 relative z-10" />
+                      <span className="text-kumo-default truncate max-w-[150px] relative z-10">{file.name}</span>
+                      {file.status === 'uploading' && (
+                        <span className="text-kumo-inactive relative z-10">{Math.round(file.progress * 100)}%</span>
+                      )}
+                      {file.status === 'error' && (
+                        <span className="text-kumo-danger relative z-10">failed</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeFile(file.id)}
+                        className="relative z-10 text-kumo-inactive hover:text-kumo-default p-0.5 rounded-full hover:bg-kumo-elevated transition-colors"
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <XCircleIcon size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </form>

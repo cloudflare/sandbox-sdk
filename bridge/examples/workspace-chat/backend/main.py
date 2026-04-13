@@ -126,11 +126,29 @@ def _get_session():
 def _safe_path(user_path: str) -> str:
     """Resolve a user-provided path to an absolute path under WORKSPACE_ROOT.
 
+    Accepts both workspace-relative paths (e.g. 'reports/file.html') and
+    absolute paths that already include /workspace (e.g. '/workspace/reports/file.html').
     Raises ValueError on traversal attempts.
     """
     cleaned = PurePosixPath("/" + user_path.lstrip("/")).as_posix()
-    resolved = PurePosixPath(WORKSPACE_ROOT + cleaned).as_posix()
-    if not resolved.startswith(WORKSPACE_ROOT):
+    # If the path already starts with /workspace, use it directly;
+    # otherwise prepend WORKSPACE_ROOT.
+    if cleaned.startswith(WORKSPACE_ROOT + "/") or cleaned == WORKSPACE_ROOT:
+        raw = cleaned
+    else:
+        raw = PurePosixPath(WORKSPACE_ROOT + cleaned).as_posix()
+    # Resolve .. and . segments
+    parts: list[str] = []
+    for seg in raw.split("/"):
+        if seg == "" or seg == ".":
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+        else:
+            parts.append(seg)
+    resolved = "/" + "/".join(parts)
+    if not (resolved.startswith(WORKSPACE_ROOT + "/") or resolved == WORKSPACE_ROOT):
         raise ValueError(f"Path escapes workspace root: {user_path}")
     return resolved
 
@@ -531,6 +549,7 @@ async def root_endpoint(request: Request) -> Response:
             "  GET  /api/workspace/info\n"
             "  GET  /api/files-tree\n"
             "  GET  /artifacts/<path>\n"
+            "  POST /api/upload\n"
         ),
         media_type="text/plain",
     )
@@ -597,9 +616,43 @@ async def history_put_endpoint(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB — matches bridge PUT /file/* limit
+
+
+async def upload_endpoint(request: Request) -> JSONResponse:
+    """POST /api/upload — upload files into the sandbox workspace."""
+    form = await request.form()
+    uploaded: list[dict[str, object]] = []
+    session = _get_session()
+
+    for key in form:
+        upload = form[key]
+        if not hasattr(upload, "read"):
+            continue
+        filename = getattr(upload, "filename", None) or key
+        # Reject path traversal and absolute paths
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return JSONResponse(
+                {"error": f"invalid filename: {filename}"}, status_code=400
+            )
+        content = await upload.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                {"error": f"{filename} exceeds the {MAX_UPLOAD_BYTES}-byte limit"},
+                status_code=413,
+            )
+        safe = f"/workspace/uploads/{filename}"
+        # Ensure the uploads directory exists
+        await session.exec("mkdir", "-p", "/workspace/uploads", shell=False)
+        await session.write(Path(safe), io.BytesIO(content))
+        uploaded.append({"path": f"/workspace/uploads/{filename}", "size": len(content)})
+
+    return JSONResponse({"uploaded": uploaded})
+
 routes = [
     Route("/", root_endpoint, methods=["GET"]),
     Route("/api/chat", chat_endpoint, methods=["POST"]),
+    Route("/api/upload", upload_endpoint, methods=["POST"]),
     Route("/api/list/{path:path}", list_endpoint, methods=["GET"]),
     Route("/api/list", list_endpoint, methods=["GET"], name="list_root"),
     Route("/api/files/{path:path}", read_file_endpoint, methods=["GET"]),
