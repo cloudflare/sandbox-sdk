@@ -42,7 +42,7 @@ confirm() {
 # ---------------------------------------------------------------------------
 
 step "Installing dependencies"
-npm install --no-fund --no-audit --silent
+npm install --no-fund --no-audit
 ok "Dependencies installed"
 
 # ---------------------------------------------------------------------------
@@ -57,8 +57,17 @@ if ! npx wrangler whoami --json >/dev/null 2>&1; then
 fi
 whoami_json=$(npx wrangler whoami --json 2>/dev/null || true)
 whoami_email=$(echo "$whoami_json" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).email || "unknown"' 2>/dev/null || echo "unknown")
-whoami_account=$(echo "$whoami_json" | node -p 'var a=JSON.parse(require("fs").readFileSync(0,"utf8")).accounts; a && a[0] && a[0].name || "unknown"' 2>/dev/null || echo "unknown")
-ok "Authenticated as ${whoami_email} (${whoami_account})"
+
+# Show the target account. If CLOUDFLARE_ACCOUNT_ID is set, find its name;
+# otherwise show all available accounts so the user knows what wrangler will prompt for.
+if [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  whoami_account=$(echo "$whoami_json" | node -p "var a=JSON.parse(require('fs').readFileSync(0,'utf8')).accounts||[]; var m=a.find(x=>x.id==='${CLOUDFLARE_ACCOUNT_ID}'); m?m.name:'unknown (${CLOUDFLARE_ACCOUNT_ID})';" 2>/dev/null || echo "unknown")
+  ok "Authenticated as ${whoami_email}, deploying to ${whoami_account}"
+else
+  whoami_accounts=$(echo "$whoami_json" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).accounts.map(a=>a.name).join(", ")' 2>/dev/null || echo "unknown")
+  ok "Authenticated as ${whoami_email} (accounts: ${whoami_accounts})"
+  warn "CLOUDFLARE_ACCOUNT_ID not set — wrangler will prompt for account selection."
+fi
 
 # ---------------------------------------------------------------------------
 # 3. SANDBOX_API_KEY secret
@@ -90,11 +99,10 @@ fi
 # ---------------------------------------------------------------------------
 
 step "Deploying ${WORKER_NAME}"
-deploy_output=$(npx wrangler deploy 2>&1) || {
-  echo "$deploy_output"
-  fail "wrangler deploy failed (see output above)."
-}
-echo "$deploy_output"
+deploy_log=$(mktemp)
+trap 'rm -f "$deploy_log"' EXIT
+npx wrangler deploy 2>&1 | tee "$deploy_log" || fail "wrangler deploy failed."
+deploy_output=$(cat "$deploy_log")
 
 # Extract the worker URL from deploy output.
 # Wrangler prints URLs on their own line, indented with spaces. Match any
