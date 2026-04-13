@@ -7,15 +7,15 @@
  *
  * API surface mirrors the abstract methods on `BaseSandboxSession`:
  *
- *   POST   /sandbox/:id/exec      _exec_internal  → run a command, return ExecResult
- *   GET    /sandbox/:id/file/*    read            → stream file bytes
- *   PUT    /sandbox/:id/file/*    write           → write file bytes
- *   GET    /sandbox/:id/running   running         → {"running": bool}
- *   POST   /sandbox/:id/persist   persist_workspace → raw tar stream
- *   POST   /sandbox/:id/hydrate   hydrate_workspace ← raw tar stream
- *   POST   /sandbox/:id/mount     mountBucket     → mount S3-compatible bucket
- *   POST   /sandbox/:id/unmount   unmountBucket   → unmount a mounted bucket
- *   DELETE /sandbox/:id           shutdown        → best-effort sandbox destroy
+ *   POST   /v1/sandbox/:id/exec      _exec_internal  → run a command, return ExecResult
+ *   GET    /v1/sandbox/:id/file/*    read            → stream file bytes
+ *   PUT    /v1/sandbox/:id/file/*    write           → write file bytes
+ *   GET    /v1/sandbox/:id/running   running         → {"running": bool}
+ *   POST   /v1/sandbox/:id/persist   persist_workspace → raw tar stream
+ *   POST   /v1/sandbox/:id/hydrate   hydrate_workspace ← raw tar stream
+ *   POST   /v1/sandbox/:id/mount     mountBucket     → mount S3-compatible bucket
+ *   POST   /v1/sandbox/:id/unmount   unmountBucket   → unmount a mounted bucket
+ *   DELETE /v1/sandbox/:id           shutdown        → best-effort sandbox destroy
  *
  * Authentication
  * --------------
@@ -227,12 +227,12 @@ export const app = new Hono<{ Bindings: Env; Variables: { containerUUID: string 
 // Auth middleware — applies to all /sandbox/* routes
 // ------------------------------------------------------------------
 
-app.use('/sandbox/*', async (c, next) => {
+app.use('/v1/sandbox/*', async (c, next) => {
   // Validate sandbox ID format
   const url = new URL(c.req.url);
   const pathParts = url.pathname.split('/');
-  // Path is /sandbox/:id/... so ID is at index 2
-  const sandboxId = pathParts[2];
+  // Path is /v1/sandbox/:id/... so ID is at index 3
+  const sandboxId = pathParts[3];
   if (sandboxId && !/^[a-z2-7]{1,128}$/.test(sandboxId)) {
     return errorJson('Invalid sandbox ID format', 'invalid_request', 400);
   }
@@ -262,7 +262,7 @@ app.use('/sandbox/*', async (c, next) => {
 // Response: {"id": "<sandbox-id>"}
 // ------------------------------------------------------------------
 
-app.post('/sandbox', async (c) => {
+app.post('/v1/sandbox', async (c) => {
   // Auth — same logic as the /sandbox/* middleware
   const token = c.env.SANDBOX_API_KEY;
   if (token) {
@@ -284,7 +284,7 @@ app.post('/sandbox', async (c) => {
 // Pool resolution middleware — maps sandbox ID to container UUID
 // ------------------------------------------------------------------
 
-app.use('/sandbox/:id/*', async (c, next) => {
+app.use('/v1/sandbox/:id/*', async (c, next) => {
   const sandboxId = c.req.param('id');
 
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
@@ -308,8 +308,8 @@ app.use('/sandbox/:id/*', async (c, next) => {
   return next();
 });
 
-// Also handle the bare DELETE /sandbox/:id route (no trailing path)
-app.use('/sandbox/:id', async (c, next) => {
+// Also handle the bare DELETE /v1/sandbox/:id route (no trailing path)
+app.use('/v1/sandbox/:id', async (c, next) => {
   // Only apply pool resolution for methods that need it
   if (c.req.method !== 'DELETE') return next();
 
@@ -349,7 +349,7 @@ app.use('/sandbox/:id', async (c, next) => {
 //   event: error    data: {"error":"…","code":"…"} (terminal)
 // ------------------------------------------------------------------
 
-app.post('/sandbox/:id/exec', async (c) => {
+app.post('/v1/sandbox/:id/exec', async (c) => {
   let body: ExecRequest;
   try {
     body = await c.req.json<ExecRequest>();
@@ -454,12 +454,12 @@ app.post('/sandbox/:id/exec', async (c) => {
 // Response: raw file bytes streamed via readFileStream()
 // ------------------------------------------------------------------
 
-app.get('/sandbox/:id/file/*', async (c) => {
+app.get('/v1/sandbox/:id/file/*', async (c) => {
   const sandboxId = c.req.param('id');
 
   // Extract everything after /file/ in the URL path
   const fullPath = c.req.path;
-  const marker = `/sandbox/${sandboxId}/file/`;
+  const marker = `/v1/sandbox/${sandboxId}/file/`;
   const relativePath = fullPath.slice(marker.length);
 
   if (!relativePath) {
@@ -505,12 +505,12 @@ app.get('/sandbox/:id/file/*', async (c) => {
 // Response: {"ok": true} on success
 // ------------------------------------------------------------------
 
-app.put('/sandbox/:id/file/*', async (c) => {
+app.put('/v1/sandbox/:id/file/*', async (c) => {
   const sandboxId = c.req.param('id');
 
   // Extract everything after /file/ in the URL path
   const fullPath = c.req.path;
-  const marker = `/sandbox/${sandboxId}/file/`;
+  const marker = `/v1/sandbox/${sandboxId}/file/`;
   const relativePath = fullPath.slice(marker.length);
 
   if (!relativePath) {
@@ -562,7 +562,7 @@ app.put('/sandbox/:id/file/*', async (c) => {
 // We treat a successful no-op exec as "running"; a failed one as "not running".
 // ------------------------------------------------------------------
 
-app.get('/sandbox/:id/running', async (c) => {
+app.get('/v1/sandbox/:id/running', async (c) => {
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
 
   try {
@@ -590,7 +590,7 @@ app.get('/sandbox/:id/running', async (c) => {
 //   session — SDK session ID for session-scoped PTY
 // ------------------------------------------------------------------
 
-app.get('/sandbox/:id/pty', async (c) => {
+app.get('/v1/sandbox/:id/pty', async (c) => {
   // 1. Require WebSocket upgrade
   const upgrade = c.req.header('Upgrade');
   if (!upgrade || upgrade.toLowerCase() !== 'websocket') {
@@ -643,7 +643,7 @@ app.get('/sandbox/:id/pty', async (c) => {
 // Response: raw tar bytes (application/octet-stream)
 // ------------------------------------------------------------------
 
-app.post('/sandbox/:id/persist', async (c) => {
+app.post('/v1/sandbox/:id/persist', async (c) => {
   const root = '/workspace';
 
   // Decode any exclude paths passed from the Python layer.
@@ -704,7 +704,7 @@ app.post('/sandbox/:id/persist', async (c) => {
 // Response: {"ok": true}
 // ------------------------------------------------------------------
 
-app.post('/sandbox/:id/hydrate', async (c) => {
+app.post('/v1/sandbox/:id/hydrate', async (c) => {
   const root = '/workspace';
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
@@ -785,7 +785,7 @@ app.post('/sandbox/:id/hydrate', async (c) => {
 // Response: {"ok": true}
 // ------------------------------------------------------------------
 
-app.post('/sandbox/:id/mount', async (c) => {
+app.post('/v1/sandbox/:id/mount', async (c) => {
   let body: MountBucketRequest;
   try {
     body = await c.req.json<MountBucketRequest>();
@@ -853,7 +853,7 @@ app.post('/sandbox/:id/mount', async (c) => {
 // Response: {"ok": true}
 // ------------------------------------------------------------------
 
-app.post('/sandbox/:id/unmount', async (c) => {
+app.post('/v1/sandbox/:id/unmount', async (c) => {
   let body: UnmountBucketRequest;
   try {
     body = await c.req.json<UnmountBucketRequest>();
@@ -907,7 +907,7 @@ app.post('/sandbox/:id/unmount', async (c) => {
 // Response: {"ok": true} always (errors are swallowed — best-effort)
 // ------------------------------------------------------------------
 
-app.delete('/sandbox/:id', async (c) => {
+app.delete('/v1/sandbox/:id', async (c) => {
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
 
   try {
@@ -932,7 +932,7 @@ app.get('/health', (c) => c.json({ ok: true }));
 // Pool management routes
 // ------------------------------------------------------------------
 
-app.use('/pool/*', async (c, next) => {
+app.use('/v1/pool/*', async (c, next) => {
   const token = c.env.SANDBOX_API_KEY;
   if (token) {
     const authHeader = c.req.header('Authorization') ?? '';
@@ -948,7 +948,7 @@ app.use('/pool/*', async (c, next) => {
   return next();
 });
 
-app.get('/pool/stats', async (c) => {
+app.get('/v1/pool/stats', async (c) => {
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
@@ -965,7 +965,7 @@ app.get('/pool/stats', async (c) => {
   return c.json(stats);
 });
 
-app.post('/pool/shutdown-prewarmed', async (c) => {
+app.post('/v1/pool/shutdown-prewarmed', async (c) => {
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
@@ -982,7 +982,7 @@ app.post('/pool/shutdown-prewarmed', async (c) => {
   return c.json({ ok: true });
 });
 
-app.post('/pool/prime', async (c) => {
+app.post('/v1/pool/prime', async (c) => {
   await primePool(c.env);
   return c.json({ ok: true });
 });
@@ -1023,9 +1023,9 @@ const openapiHtmlHandler = () =>
     headers: { 'Content-Type': 'text/html; charset=utf-8' }
   });
 
-app.get('/openapi.json', openapiAuth, (c) => c.json(OPENAPI_SCHEMA));
-app.get('/openapi.html', openapiAuth, openapiHtmlHandler);
-app.get('/openapi', openapiAuth, openapiHtmlHandler);
+app.get('/v1/openapi.json', openapiAuth, (c) => c.json(OPENAPI_SCHEMA));
+app.get('/v1/openapi.html', openapiAuth, openapiHtmlHandler);
+app.get('/v1/openapi', openapiAuth, openapiHtmlHandler);
 
 // ------------------------------------------------------------------
 // Worker entry point

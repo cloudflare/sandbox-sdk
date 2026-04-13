@@ -48,7 +48,7 @@ export const BASE = 'http://localhost';
 
 /** Convenience: build a full URL for a sandbox route. */
 export function sandboxUrl(id: string, action: string, query?: string): string {
-  const base = `${BASE}/sandbox/${id}/${action}`;
+  const base = `${BASE}/v1/sandbox/${id}/${action}`;
   return query ? `${base}?${query}` : base;
 }
 

@@ -17,7 +17,7 @@ function makeRequest(url: string, opts?: RequestInit, env?: Record<string, unkno
   return app.request(url, opts, env);
 }
 
-describe('Auth middleware — /sandbox/*', () => {
+describe('Auth middleware — /v1/sandbox/*', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Re-apply sandbox mock defaults
@@ -95,14 +95,14 @@ describe('Sandbox ID validation', () => {
   });
 
   it('rejects an ID with shell injection characters (semicolon)', async () => {
-    const res = await makeRequest(`${BASE}/sandbox/foo;rm%20-rf%20%2F/running`, {}, createMockEnv());
+    const res = await makeRequest(`${BASE}/v1/sandbox/foo;rm%20-rf%20%2F/running`, {}, createMockEnv());
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('Invalid sandbox ID format');
   });
 
   it('rejects an ID with path traversal characters', async () => {
-    const res = await makeRequest(`${BASE}/sandbox/..%2Fetc/running`, {}, createMockEnv());
+    const res = await makeRequest(`${BASE}/v1/sandbox/..%2Fetc/running`, {}, createMockEnv());
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('Invalid sandbox ID format');
@@ -123,14 +123,14 @@ describe('Sandbox ID validation', () => {
   });
 });
 
-describe('Auth middleware — /openapi.*', () => {
+describe('Auth middleware — /v1/openapi.*', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  // Hono matches the app.use('/openapi.*') pattern.
+  // Hono matches the app.use('/v1/openapi.*') pattern.
   // Use the full path that Hono's router resolves.
-  const openapiUrl = `${BASE}/openapi.json`;
+  const openapiUrl = `${BASE}/v1/openapi.json`;
 
   it('allows /openapi.json with a valid Bearer token', async () => {
     const res = await app.request(
@@ -162,5 +162,22 @@ describe('Auth middleware — /openapi.*', () => {
     // for the `/openapi.*` pattern under `app.request()`. The core auth-warning
     // logic is validated via the /sandbox/* tests above.
     warnSpy.mockRestore();
+  });
+});
+
+describe('Versioning — old routes return 404', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+  });
+
+  it('returns 404 for unversioned /sandbox/:id/running', async () => {
+    const res = await makeRequest(`${BASE}/sandbox/test/running`, {}, createMockEnv());
+    expect(res.status).toBe(404);
+  });
+
+  it('keeps /health unversioned', async () => {
+    const res = await makeRequest(`${BASE}/health`, {}, createMockEnv());
+    expect(res.status).toBe(200);
   });
 });

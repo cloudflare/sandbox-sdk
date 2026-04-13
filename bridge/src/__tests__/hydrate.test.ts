@@ -18,7 +18,7 @@ function makeTarBody(): Uint8Array {
   return new Uint8Array(1024).fill(0x41); // 1 KiB of 'A's
 }
 
-describe('POST /sandbox/:id/hydrate — hardcoded root, shell-quoted commands', () => {
+describe('POST /v1/sandbox/:id/hydrate — hardcoded root, shell-quoted commands', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });

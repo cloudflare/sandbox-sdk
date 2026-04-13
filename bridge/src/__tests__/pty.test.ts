@@ -29,7 +29,7 @@ function wsUpgradeRequest(url: string, headers?: Record<string, string>, envOver
   );
 }
 
-describe('GET /sandbox/:id/pty — WebSocket PTY proxy', () => {
+describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
@@ -127,7 +127,7 @@ describe('GET /sandbox/:id/pty — WebSocket PTY proxy', () => {
   });
 });
 
-describe('GET /sandbox/:id/pty — auth', () => {
+describe('GET /v1/sandbox/:id/pty — auth', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);

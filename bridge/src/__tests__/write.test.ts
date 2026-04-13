@@ -14,7 +14,7 @@ const env = createMockEnv();
 
 function writeRequest(path: string, content = 'hello') {
   return app.request(
-    `${BASE}/sandbox/test/file/${path}`,
+    `${BASE}/v1/sandbox/test/file/${path}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
@@ -24,7 +24,7 @@ function writeRequest(path: string, content = 'hello') {
   );
 }
 
-describe('PUT /sandbox/:id/file/* — path validation', () => {
+describe('PUT /v1/sandbox/:id/file/* — path validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.writeFile.mockResolvedValue(undefined);
@@ -62,7 +62,7 @@ describe('PUT /sandbox/:id/file/* — path validation', () => {
 
   it('rejects empty path', async () => {
     const res = await app.request(
-      `${BASE}/sandbox/test/file/`,
+      `${BASE}/v1/sandbox/test/file/`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -92,7 +92,7 @@ describe('PUT /sandbox/:id/file/* — binary payloads', () => {
     // Send raw bytes that are not valid UTF-8
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const res = await app.request(
-      `${BASE}/sandbox/test/file/workspace/image.png`,
+      `${BASE}/v1/sandbox/test/file/workspace/image.png`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -105,7 +105,7 @@ describe('PUT /sandbox/:id/file/* — binary payloads', () => {
     const call = mockSandbox.writeFile.mock.calls[0] as any[];
     expect(call[0]).toBe('/workspace/image.png');
     // Verify round-trip: decode the base64 and compare to original bytes
-    const decoded = Uint8Array.from(atob(call[1]), c => c.charCodeAt(0));
+    const decoded = Uint8Array.from(atob(call[1]), (c) => c.charCodeAt(0));
     expect(decoded).toEqual(bytes);
     expect(call[2]).toEqual({ encoding: 'base64' });
   });
@@ -116,7 +116,7 @@ describe('PUT /sandbox/:id/file/* — binary payloads', () => {
     // In practice we just verify the limit constant is enforced.
     const limit = 32 * 1024 * 1024;
     const res = await app.request(
-      `${BASE}/sandbox/test/file/workspace/huge.bin`,
+      `${BASE}/v1/sandbox/test/file/workspace/huge.bin`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -143,7 +143,7 @@ describe('PUT /sandbox/:id/file/* — chunked base64 encoding', () => {
     for (let i = 0; i < size; i++) input[i] = i % 256;
 
     const res = await app.request(
-      `${BASE}/sandbox/test/file/workspace/large.bin`,
+      `${BASE}/v1/sandbox/test/file/workspace/large.bin`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -163,7 +163,7 @@ describe('PUT /sandbox/:id/file/* — chunked base64 encoding', () => {
 
     // Decode and compare byte-for-byte against the original input.
     // This is the same decode path the container uses: Buffer.from(b64, 'base64').
-    const decoded = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const decoded = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     expect(decoded.length).toBe(size);
     expect(decoded).toEqual(input);
   });
@@ -177,7 +177,7 @@ describe('PUT /sandbox/:id/file/* — chunked base64 encoding', () => {
     for (let i = 0; i < size; i++) input[i] = i % 256;
 
     const res = await app.request(
-      `${BASE}/sandbox/test/file/workspace/chunked.bin`,
+      `${BASE}/v1/sandbox/test/file/workspace/chunked.bin`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -199,7 +199,7 @@ describe('PUT /sandbox/:id/file/* — chunked base64 encoding', () => {
     }
 
     // Full decode must recover every byte
-    const decoded = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const decoded = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     expect(decoded.length).toBe(size);
     expect(decoded).toEqual(input);
   });

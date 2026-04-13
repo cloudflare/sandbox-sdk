@@ -14,7 +14,7 @@ const env = createMockEnv();
 
 function mountRequest(body: unknown) {
   return app.request(
-    `${BASE}/sandbox/test/mount`,
+    `${BASE}/v1/sandbox/test/mount`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -24,7 +24,7 @@ function mountRequest(body: unknown) {
   );
 }
 
-describe('POST /sandbox/:id/mount', () => {
+describe('POST /v1/sandbox/:id/mount', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.mountBucket.mockResolvedValue(undefined);
@@ -163,7 +163,7 @@ describe('POST /sandbox/:id/mount', () => {
 
   it('rejects invalid JSON body', async () => {
     const res = await app.request(
-      `${BASE}/sandbox/test/mount`,
+      `${BASE}/v1/sandbox/test/mount`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

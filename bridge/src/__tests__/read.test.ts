@@ -14,7 +14,7 @@ const env = createMockEnv();
 
 function readRequest(path: string) {
   return app.request(
-    `${BASE}/sandbox/test/file/${path}`,
+    `${BASE}/v1/sandbox/test/file/${path}`,
     {
       method: 'GET'
     },
@@ -22,7 +22,7 @@ function readRequest(path: string) {
   );
 }
 
-describe('GET /sandbox/:id/file/* — path validation', () => {
+describe('GET /v1/sandbox/:id/file/* — path validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.readFileStream.mockResolvedValue(
@@ -64,7 +64,7 @@ describe('GET /sandbox/:id/file/* — path validation', () => {
 
   it('rejects empty path', async () => {
     const res = await app.request(
-      `${BASE}/sandbox/test/file/`,
+      `${BASE}/v1/sandbox/test/file/`,
       {
         method: 'GET'
       },

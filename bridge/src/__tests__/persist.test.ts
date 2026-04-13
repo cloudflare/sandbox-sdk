@@ -12,7 +12,7 @@ const { app } = await import('../index');
 
 const env = createMockEnv();
 
-describe('POST /sandbox/:id/persist — hardcoded root, exclude validation, quoting', () => {
+describe('POST /v1/sandbox/:id/persist — hardcoded root, exclude validation, quoting', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
