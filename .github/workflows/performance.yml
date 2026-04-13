@@ -16,7 +16,8 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
-          - z-bucket-mounting
+          - bucket-mounting
+          - backup-restore
   schedule:
     - cron: '0 0 * * *'
 
@@ -179,19 +180,46 @@ jobs:
       - name: Create output directory
         run: mkdir -p perf-results
 
-      - name: Run performance tests
+      - name: Run core performance tests
         env:
           TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           PERF_BUCKET_NAME: sandbox-perf-test
         run: |
-          if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
+          SCENARIO="${{ inputs.scenario }}"
+          HEAVY_SCENARIOS="bucket-mounting backup-restore"
+          if [ "$SCENARIO" = "all" ] || [ -z "$SCENARIO" ]; then
             npm run test:perf
+          elif echo "$HEAVY_SCENARIOS" | grep -qw "$SCENARIO"; then
+            echo "Skipping core step — heavy scenario selected"
           else
-            npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
+            npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${SCENARIO}.test.ts"
+          fi
+
+      - name: Run heavy performance tests
+        env:
+          TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          PERF_BUCKET_NAME: sandbox-perf-test
+        run: |
+          SCENARIO="${{ inputs.scenario }}"
+          HEAVY_SCENARIOS="bucket-mounting backup-restore"
+          if [ "$SCENARIO" = "all" ] || [ -z "$SCENARIO" ]; then
+            npm run test:perf:heavy
+          elif echo "$HEAVY_SCENARIOS" | grep -qw "$SCENARIO"; then
+            npx vitest run --config vitest.perf-heavy.config.ts "tests/perf/heavy/${SCENARIO}.test.ts"
+          else
+            echo "Skipping heavy step — core scenario selected"
           fi
 
       - name: Upload performance results

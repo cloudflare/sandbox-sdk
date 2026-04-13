@@ -43,6 +43,11 @@
       "binding": "TEST_BUCKET",
       "bucket_name": "sandbox-perf-test",
       "preview_bucket_name": "sandbox-perf-test"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "sandbox-perf-test",
+      "preview_bucket_name": "sandbox-perf-test"
     }
   ]
 }

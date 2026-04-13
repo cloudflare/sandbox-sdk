@@ -9,7 +9,8 @@ export const SCENARIOS = {
   BURST: 'bursty-traffic',
   BURST_STARTUP: 'burst-startup',
   FILE_IO: 'file-io',
-  BUCKET_MOUNTING: 'bucket-mounting'
+  BUCKET_MOUNTING: 'bucket-mounting',
+  BACKUP_RESTORE: 'backup-restore'
 } as const;
 
 export const METRICS = {
@@ -43,6 +44,10 @@ export const METRICS = {
   FILE_ROUNDTRIP_LATENCY: 'file-roundtrip-latency',
   FILE_CONCURRENT_WRITE: 'file-concurrent-write',
   FILE_CONCURRENT_READ: 'file-concurrent-read',
+  // Backup/restore — used as prefixes, appended with '-<size>' (e.g. 'backup-create-latency-3gb')
+  BACKUP_CREATE_LATENCY: 'backup-create-latency',
+  BACKUP_RESTORE_LATENCY: 'backup-restore-latency',
+  BACKUP_ROUNDTRIP_LATENCY: 'backup-roundtrip-latency',
   // Bucket mounting — used as prefixes, appended with '-<path>' (e.g. 'bucket-mount-latency-fuse')
   BUCKET_MOUNT_LATENCY: 'bucket-mount-latency',
   BUCKET_UNMOUNT_LATENCY: 'bucket-unmount-latency',

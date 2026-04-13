@@ -323,6 +323,78 @@ export class PerfSandboxManager {
   }
 
   /**
+   * Create a backup of a directory in a sandbox
+   */
+  async createBackup(
+    sandbox: SandboxInstance,
+    options: { dir: string; name?: string; ttl?: number; excludes?: string[] }
+  ): Promise<{
+    success: boolean;
+    duration: number;
+    backup?: { id: string; dir: string };
+    error?: string;
+  }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify(options)
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const body = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${body}`
+        };
+      }
+      const backup = (await response.json()) as { id: string; dir: string };
+      return { success: true, duration, backup };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Restore a backup in a sandbox
+   */
+  async restoreBackup(
+    sandbox: SandboxInstance,
+    backup: { id: string; dir: string }
+  ): Promise<{ success: boolean; duration: number; error?: string }> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify(backup)
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const body = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${body}`
+        };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
    * Delete an object from the R2 test bucket via the worker
    */
   async bucketDelete(sandbox: SandboxInstance, key: string): Promise<void> {
