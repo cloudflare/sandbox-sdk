@@ -908,16 +908,33 @@ function Chat() {
 
                     if (part.type === 'reasoning') {
                       if (!part.text) return null;
+                      const reasoningKey = `reasoning-${message.id}-${partIndex}`;
+                      const isExpanded = expandedTools.has(reasoningKey);
                       return (
                         <div key={partIndex} className="flex justify-start">
-                          <Surface className="max-w-[85%] px-4 py-2.5 rounded-xl ring ring-kumo-line opacity-70">
-                            <div className="flex items-center gap-2 mb-1">
-                              <GearIcon size={14} className="text-kumo-inactive" />
-                              <Text size="xs" variant="secondary" bold>
+                          <Surface className="max-w-[85%] rounded-xl ring ring-kumo-line overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => toggleTool(reasoningKey)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-kumo-elevated/50 transition-colors"
+                            >
+                              <CaretRightIcon
+                                size={12}
+                                weight="bold"
+                                className={`text-kumo-inactive shrink-0 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                              />
+                              <GearIcon size={12} className="text-kumo-inactive" />
+                              <Text size="xs" variant="secondary">
                                 Thinking
                               </Text>
-                            </div>
-                            <div className="whitespace-pre-wrap text-xs text-kumo-subtle italic">{part.text}</div>
+                            </button>
+                            {isExpanded && (
+                              <div className="px-4 pb-3 pt-1">
+                                <div className="whitespace-pre-wrap text-[11px] leading-relaxed text-kumo-subtle italic">
+                                  {part.text}
+                                </div>
+                              </div>
+                            )}
                           </Surface>
                         </div>
                       );
