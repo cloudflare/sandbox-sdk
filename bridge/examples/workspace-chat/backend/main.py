@@ -498,34 +498,31 @@ async def delete_file_endpoint(request: Request) -> JSONResponse:
 async def workspace_info_endpoint(request: Request) -> JSONResponse:
     """GET /api/workspace/info — workspace statistics."""
     session = _get_session()
-
-    # Count files
-    file_result = await session.exec("find", WORKSPACE_ROOT, "-type", "f", shell=False)
-    file_count = len(file_result.stdout.decode().strip().splitlines()) if file_result.ok() else 0
-
-    # Count directories (exclude root)
-    dir_result = await session.exec(
-        "find", WORKSPACE_ROOT, "-mindepth", "1", "-type", "d", shell=False
-    )
-    dir_count = len(dir_result.stdout.decode().strip().splitlines()) if dir_result.ok() else 0
-
-    # Total bytes
-    du_result = await session.exec("du", "-sb", WORKSPACE_ROOT, shell=False)
+    file_count = 0
+    dir_count = 0
     total_bytes = 0
-    if du_result.ok():
-        parts = du_result.stdout.decode().strip().split()
-        if parts:
-            try:
-                total_bytes = int(parts[0])
-            except ValueError:
-                pass
+    try:
+        file_result = await session.exec("find", WORKSPACE_ROOT, "-type", "f", shell=False)
+        file_count = len(file_result.stdout.decode().strip().splitlines()) if file_result.ok() else 0
+
+        dir_result = await session.exec(
+            "find", WORKSPACE_ROOT, "-mindepth", "1", "-type", "d", shell=False
+        )
+        dir_count = len(dir_result.stdout.decode().strip().splitlines()) if dir_result.ok() else 0
+
+        du_result = await session.exec("du", "-sb", WORKSPACE_ROOT, shell=False)
+        if du_result.ok():
+            parts = du_result.stdout.decode().strip().split()
+            if parts:
+                try:
+                    total_bytes = int(parts[0])
+                except ValueError:
+                    pass
+    except Exception:
+        pass
 
     return JSONResponse(
-        {
-            "fileCount": file_count,
-            "directoryCount": dir_count,
-            "totalBytes": total_bytes,
-        }
+        {"fileCount": file_count, "directoryCount": dir_count, "totalBytes": total_bytes}
     )
 
 
