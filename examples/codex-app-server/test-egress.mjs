@@ -141,12 +141,12 @@ async function run() {
   });
 
   await step('Egress: api.openai.com API key injection — container should NOT have real key', async () => {
-    // The codex process gets OPENAI_API_KEY=proxy-injected via /etc/profile.d/codex-env.sh
-    const result = await sandboxExec('cat /etc/profile.d/codex-env.sh');
+    // The container receives a dummy OPENAI_API_KEY via setEnvVars.
+    const result = await sandboxExec('echo $OPENAI_API_KEY');
     const stdout = (result.stdout || result.output || '').trim();
     assert(
-      stdout.includes('OPENAI_API_KEY=proxy-injected'),
-      `Profile sets dummy API key (got: "${stdout.slice(0, 120)}")`,
+      stdout === 'proxy-injected',
+      `OPENAI_API_KEY is dummy value (got: "${stdout.slice(0, 40)}")`,
     );
   });
 

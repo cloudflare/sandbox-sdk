@@ -1,4 +1,5 @@
-# OpenAI API key - injected into sandbox requests via the egress proxy
+# OpenAI API key - injected into sandbox requests via the egress proxy.
+# Never enters the container.
 OPENAI_API_KEY=sk-...
 
 # Optional: bearer token for WebSocket auth. If set, clients must provide

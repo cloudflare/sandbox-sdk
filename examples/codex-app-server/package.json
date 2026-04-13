@@ -13,7 +13,7 @@
     "test": "./run-integration-tests.sh"
   },
   "devDependencies": {
-    "@cloudflare/sandbox": "*",
+    "@cloudflare/sandbox": "^0.8.8",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "wrangler": "^4.76.0"
@@ -21,6 +21,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/containers": "https://pkg.pr.new/cloudflare/containers/@cloudflare/containers@171"
+    "@cloudflare/containers": "^0.3.0"
   }
 }

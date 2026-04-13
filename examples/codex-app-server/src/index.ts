@@ -161,9 +161,10 @@ async function ensureCodexRunning(
   )
     return;
 
-  await sandbox.exec(
-    "printf 'export OPENAI_BASE_URL=http://api.openai.com/v1\\nexport OPENAI_API_KEY=proxy-injected\\n' >> /etc/profile.d/codex-env.sh"
-  );
+  await sandbox.setEnvVars({
+    OPENAI_BASE_URL: 'http://api.openai.com/v1',
+    OPENAI_API_KEY: 'proxy-injected'
+  });
 
   const proc = await sandbox.startProcess(
     'bash -lc "codex app-server --listen ws://0.0.0.0:4500"',
