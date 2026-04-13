@@ -4248,7 +4248,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         { origin: 'internal' }
       ).catch(() => {});
       await this.execWithSession(
-        `/usr/bin/fusermount3 -u ${shellEscape(r2MountPath)} 2>/dev/null || true`,
+        `/usr/bin/fusermount3 -u ${shellEscape(r2MountPath)} 2>/dev/null; /usr/bin/fusermount3 -uz ${shellEscape(r2MountPath)} 2>/dev/null; true`,
         backupSession,
         { origin: 'internal' }
       ).catch(() => {});

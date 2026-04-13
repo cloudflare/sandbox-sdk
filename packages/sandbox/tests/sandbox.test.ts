@@ -1305,7 +1305,7 @@ describe('Sandbox - Automatic Session Management', () => {
         (backupSandbox as any).execWithSession.mock.calls.some(
           ([command]: [string]) =>
             command.includes(
-              `/usr/bin/fusermount3 -u '/var/backups/r2mount/${backupId}'`
+              `/usr/bin/fusermount3 -uz '/var/backups/r2mount/${backupId}'`
             )
         )
       ).toBe(true);
