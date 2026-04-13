@@ -32,6 +32,9 @@ uv run main.py "Create a hello world HTTP server using Bun.serve"
 
 # Specify an output directory
 uv run main.py --output ./results "Build a CLI tool that converts CSV to JSON"
+
+# Provide a mockup image as a visual reference
+uv run main.py --image mockup.png "Build an HTML page that matches this mockup"
 ```
 
 The agent streams tool calls and text to the console as it works. When
@@ -43,6 +46,13 @@ output directory.
 The agent is instructed to place all output under `/workspace/output/` inside
 the sandbox. If the task produces multiple files the agent zips them into
 `result.zip`; otherwise a single file is copied as-is.
+
+### Image input
+
+Pass `--image <path>` to upload a local image (PNG, JPEG, etc.) into the
+sandbox before the agent starts. The image is copied to `/workspace/` and the
+agent is prompted to inspect it with `view_image` before coding. This is useful
+for tasks like building an HTML page from a design mockup.
 
 ## Configuration
 

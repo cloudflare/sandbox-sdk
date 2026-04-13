@@ -6,19 +6,21 @@
 # ]
 #
 # [tool.uv.sources]
-# openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "feat/sandbox-agents" }
+# openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "cloudflare-sandbox-revert-99" }
 # ///
 """One-shot JavaScript coding agent backed by a Cloudflare Sandbox.
 
 Usage:
     uv run main.py "Create a hello world HTTP server using Bun.serve"
     uv run main.py --output ./results "Build a CLI tool that converts CSV to JSON"
+    uv run main.py --image mockup.png "Build an HTML page that matches this mockup"
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import os
 import sys
 from pathlib import Path
@@ -37,7 +39,7 @@ from agents.extensions.sandbox.cloudflare import (
 )
 from agents.run import RunConfig
 from agents.sandbox import SandboxAgent, SandboxRunConfig
-from agents.sandbox.capabilities import Shell
+from agents.sandbox.capabilities import Filesystem, Shell
 
 MODEL = "gpt-5.4"
 
@@ -50,13 +52,16 @@ When the user gives you a coding task:
 
 1. Implement the solution inside /workspace.
 2. Test that it works by running it (e.g. `bun run`, `node`, or `npm test`).
-3. Copy **only the deliverable files** into /workspace/output/.
+3. Use apply_patch to create or edit files. Use exec_command to run commands.
+4. If an image was provided as a visual reference, use view_image to inspect it
+   before you start coding. The image path will be mentioned in the task prompt.
+5. IMPORTANT: Copy **only the relevant generated files** into /workspace/output/.
    - If the deliverable is a single file, copy it directly.
    - If there are multiple files, bundle them into /workspace/output/result.zip
      using a command like `cd /workspace && zip -r output/result.zip <files>`.
-4. Confirm what you placed in /workspace/output/ and briefly explain how to use it.
+6. Confirm what you placed in /workspace/output/ and briefly explain how to use it.
 
-Always create the output directory first: `mkdir -p /workspace/output`.
+IMPORTANT: Always create the output directory first: `mkdir -p /workspace/output`.
 """.strip()
 
 
@@ -184,7 +189,7 @@ async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-async def run(prompt: str, output_dir: Path) -> None:
+async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
     worker_url = os.environ.get("CLOUDFLARE_SANDBOX_WORKER_URL", "")
     if not worker_url:
         print(
@@ -197,7 +202,7 @@ async def run(prompt: str, output_dir: Path) -> None:
         name="JavaScript Developer",
         model=MODEL,
         instructions=INSTRUCTIONS,
-        capabilities=[Shell()],
+        capabilities=[Shell(), Filesystem()],
     )
 
     client = CloudflareSandboxClient()
@@ -206,24 +211,37 @@ async def run(prompt: str, output_dir: Path) -> None:
 
     try:
         async with session:
+            # Copy the image into the sandbox so the agent can inspect it.
+            if image is not None:
+                sandbox_image_path = f"/workspace/{image.name}"
+                await session.write(
+                    Path(sandbox_image_path),
+                    io.BytesIO(image.read_bytes()),
+                )
+                prompt = (
+                    f"An image has been provided at `{sandbox_image_path}` as a visual "
+                    f"reference. Use view_image to inspect it before you start.\n\n"
+                    f"{prompt}"
+                )
+
             run_config = RunConfig(
                 sandbox=SandboxRunConfig(session=session),
                 workflow_name="basic-js-sandbox",
                 tracing_disabled=True,
             )
 
-            print(f"🚀 Sending task to sandbox agent ({MODEL})…")
+            print(f"\U0001f680 Sending task to sandbox agent ({MODEL})\u2026")
             result = Runner.run_streamed(agent, prompt, run_config=run_config)
             await _print_stream(result)
 
             # --- extract output files ---
             copied = await _copy_sandbox_output(session, output_dir)
             if copied:
-                print(f"\n✅ Copied {len(copied)} file(s) to {output_dir}:")
+                print(f"\n\u2705 Copied {len(copied)} file(s) to {output_dir}:")
                 for path in copied:
                     print(f"   {path}")
             else:
-                print("\n⚠  Agent did not produce any output files.")
+                print("\n\u26a0  Agent did not produce any output files.")
     finally:
         await client.delete(session)
 
@@ -240,9 +258,19 @@ def main() -> None:
         default=".",
         help="Directory to save output files (default: current directory).",
     )
+    parser.add_argument(
+        "--image",
+        default=None,
+        help="Path to a local image to upload as a visual reference (e.g. a mockup).",
+    )
     args = parser.parse_args()
 
-    asyncio.run(run(args.prompt, Path(args.output).resolve()))
+    image_path = Path(args.image).resolve() if args.image else None
+    if image_path is not None and not image_path.is_file():
+        print(f"Error: image not found: {image_path}", file=sys.stderr)
+        sys.exit(1)
+
+    asyncio.run(run(args.prompt, Path(args.output).resolve(), image=image_path))
 
 
 if __name__ == "__main__":

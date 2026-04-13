@@ -25,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from agents import Runner, function_tool
+from agents import Runner
 from agents.extensions.sandbox.cloudflare import (
     CloudflareSandboxClient,
     CloudflareSandboxClientOptions,
@@ -33,7 +33,7 @@ from agents.extensions.sandbox.cloudflare import (
 )
 from agents.run import RunConfig
 from agents.sandbox import SandboxAgent, SandboxRunConfig, WorkspaceReadNotFoundError
-from agents.sandbox.capabilities import Shell
+from agents.sandbox.capabilities import Filesystem, Shell
 
 load_dotenv()
 
@@ -136,122 +136,15 @@ def _safe_path(user_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Agent tools — operate on the sandbox filesystem
-# ---------------------------------------------------------------------------
-
-
-@function_tool
-async def read_file(path: str) -> str:
-    """Read the contents of a file at the given path. Returns the file content as a string."""
-    session = _get_session()
-    safe = _safe_path(path)
-    result = await session.exec("cat", "--", safe, shell=False)
-    if not result.ok():
-        return json.dumps({"error": f"File not found: {path}"})
-    return result.stdout.decode("utf-8", errors="replace")
-
-
-@function_tool
-async def write_file(path: str, content: str) -> str:
-    """Write content to a file. Creates the file and parent directories if they don't exist."""
-    session = _get_session()
-    safe = _safe_path(path)
-    parent = PurePosixPath(safe).parent.as_posix()
-    await session.exec("mkdir", "-p", "--", parent, shell=False)
-    await session.write(safe, io.BytesIO(content.encode("utf-8")))
-    return json.dumps({"path": path, "bytesWritten": len(content.encode("utf-8"))})
-
-
-@function_tool
-async def list_directory(path: str) -> str:
-    """List all files and directories at the given path.
-
-    Returns name, type, and size for each entry.
-    """
-    session = _get_session()
-    safe = _safe_path(path)
-    result = await session.exec(
-        "find",
-        safe,
-        "-maxdepth",
-        "1",
-        "-mindepth",
-        "1",
-        "-printf",
-        "%y %s %f\\n",
-        shell=False,
-    )
-    if not result.ok():
-        return json.dumps({"path": path, "entries": []})
-
-    entries = []
-    for line in result.stdout.decode().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(" ", 2)
-        if len(parts) < 3:
-            continue
-        ftype, size, name = parts
-        entry_type = "directory" if ftype == "d" else "file"
-        entry_path = PurePosixPath(safe) / name
-        # Strip WORKSPACE_ROOT prefix for user-facing paths
-        display_path = "/" + str(entry_path).removeprefix(WORKSPACE_ROOT).lstrip("/")
-        entries.append({"name": name, "type": entry_type, "size": int(size), "path": display_path})
-    return json.dumps({"path": path, "entries": entries})
-
-
-@function_tool
-async def delete_file(path: str) -> str:
-    """Delete a file or empty directory."""
-    session = _get_session()
-    safe = _safe_path(path)
-    result = await session.exec("rm", "-f", "--", safe, shell=False)
-    return json.dumps({"path": path, "deleted": result.ok()})
-
-
-@function_tool
-async def mkdir(path: str) -> str:
-    """Create a directory (and parent directories)."""
-    session = _get_session()
-    safe = _safe_path(path)
-    await session.exec("mkdir", "-p", "--", safe, shell=False)
-    return json.dumps({"path": path, "created": True})
-
-
-@function_tool
-async def glob(pattern: str) -> str:
-    """Find files matching a glob pattern, e.g. **/*.ts or src/**/*.css."""
-    session = _get_session()
-    # Use find with -name for simple patterns, or a shell glob
-    result = await session.exec(
-        f"cd {WORKSPACE_ROOT} && find . -path './{pattern}' -o -name '{pattern}' 2>/dev/null | head -200",
-    )
-    matches = []
-    if result.ok():
-        for line in result.stdout.decode().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Normalize to absolute display path
-            if line.startswith("./"):
-                line = line[1:]
-            if not line.startswith("/"):
-                line = "/" + line
-            matches.append({"path": line, "type": "file"})
-    return json.dumps({"pattern": pattern, "matches": matches})
-
-
-# ---------------------------------------------------------------------------
 # Agent definition
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
 You are a helpful coding assistant with access to a persistent virtual filesystem.
-You have direct tools for file operations (read_file, write_file, list_directory, \
-delete_file, mkdir, glob) as well as a shell capability for running commands.
-When the user asks you to create files or projects, use the tools to actually do it.
-When showing file contents, prefer reading them with the read_file tool rather than guessing.
+You have an apply_patch tool for creating and editing files, a view_image tool for
+inspecting images, and a shell capability for running commands via exec_command.
+When the user asks you to create files or projects, use apply_patch to write them.
+When showing file contents, prefer reading them with exec_command (e.g. `cat <path>`).
 After making changes, briefly summarize what you did.
 
 When the user asks to download or preview a file, provide a markdown link to \
@@ -267,8 +160,7 @@ def _build_agent() -> SandboxAgent:
         name="Workspace Assistant",
         model=MODEL,
         instructions=SYSTEM_PROMPT,
-        tools=[read_file, write_file, list_directory, delete_file, mkdir, glob],
-        capabilities=[Shell()],
+        capabilities=[Shell(), Filesystem()],
     )
 
 

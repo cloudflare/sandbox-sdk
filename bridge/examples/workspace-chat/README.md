@@ -6,8 +6,8 @@ using the OpenAI Python Agents SDK with a Cloudflare Sandbox backend.
 
 ## What it shows
 
-- **File operations as tools** — The AI can read, write, list, delete files,
-  create directories, and glob search
+- **Structured file editing** — The agent uses the built-in `apply_patch` tool
+  from the `Filesystem` capability to create and edit files
 - **Persistent filesystem** — Files live in a Cloudflare Sandbox and survive
   across chat turns
 - **File browser sidebar** — Browse workspace contents in real-time alongside
@@ -15,7 +15,7 @@ using the OpenAI Python Agents SDK with a Cloudflare Sandbox backend.
 - **Streaming responses** — Uses OpenAI `gpt-5.4` with streaming via the
   AI SDK Data Stream Protocol
 - **Shell access** — The agent can run arbitrary shell commands in the sandbox
-  (bun, node, npm available)
+  via the `Shell` capability (bun, node, npm available)
 
 ## Architecture
 
@@ -26,9 +26,10 @@ workspace-chat/
 ```
 
 The backend creates a Cloudflare Sandbox session at startup and keeps it alive.
-The agent's tools execute commands and read/write files in the sandbox. The
-frontend uses `useChat` from `@ai-sdk/react` for streaming chat and REST
-endpoints for the file browser sidebar.
+The agent uses the `Shell` and `Filesystem` capabilities from the OpenAI Agents
+SDK — `exec_command` for running shell commands and `apply_patch` for structured
+file edits. The frontend uses `useChat` from `@ai-sdk/react` for streaming chat
+and REST endpoints for the file browser sidebar.
 
 ## Prerequisites
 
