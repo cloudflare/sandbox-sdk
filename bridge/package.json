@@ -5,15 +5,14 @@
   "private": true,
   "description": "Cloudflare Worker that exposes the sandbox HTTP API via the @cloudflare/sandbox SDK",
   "scripts": {
-    "deploy": "./script/deploy",
+    "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "format": "biome check --write",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "bun script/integration",
-    "token": "./script/token"
+    "test:integration": "bun script/integration"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.8",
@@ -25,5 +24,18 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.0",
     "wrangler": "^4.70.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SANDBOX_API_KEY": {
+        "description": "Bearer token for API authentication. Generate with `openssl rand -hex 32`."
+      },
+      "WARM_POOL_TARGET": {
+        "description": "Number of pre-warmed containers to keep ready (0 disables the warm pool)."
+      },
+      "WARM_POOL_REFRESH_INTERVAL": {
+        "description": "Milliseconds between warm pool health checks (default: 10000)."
+      }
+    }
   }
 }

@@ -15,9 +15,10 @@
       // Replace with a custom Dockerfile path if you need extra tooling
       // (e.g. git, Python, Node.js) in the sandbox container.
       "image": "./Dockerfile",
-      // "standard" gives 4 vCPU / 8 GiB RAM; use "lite" for lower cost
-      "instance_type": "standard-1",
-      "max_instances": 10
+      // "lite" is a good default for getting started; upgrade to "standard-1"
+      // (4 vCPU / 8 GiB RAM) for production workloads.
+      "instance_type": "lite",
+      "max_instances": 3
     }
   ],
   "durable_objects": {

@@ -2,6 +2,8 @@
 
 Cloudflare Worker (TypeScript + [Hono](https://hono.dev/)) that exposes the sandbox HTTP API. Creates and manages sandboxed execution environments backed by [Cloudflare Containers](https://developers.cloudflare.com/containers/).
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/bridge)
+
 ## Prerequisites
 
 - Node.js and npm
@@ -12,7 +14,8 @@ Cloudflare Worker (TypeScript + [Hono](https://hono.dev/)) that exposes the sand
 
 ```sh
 npm ci
-script/token          # generate a random SANDBOX_API_KEY in .dev.vars
+cp .dev.vars.example .dev.vars
+# Edit .dev.vars and set SANDBOX_API_KEY (generate one with: openssl rand -hex 32)
 npm run dev
 ```
 
@@ -28,18 +31,26 @@ When running locally, a few routes make it easy to explore the API:
 
 ## Deployment
 
+The fastest way to deploy is the **Deploy to Cloudflare** button above. It clones this directory into your GitHub account, provisions the Durable Objects and container resources, and deploys via Workers Builds.
+
+To deploy manually:
+
 ```sh
-script/deploy        # or: npm run deploy
+npm ci
+npx wrangler login
+npx wrangler secret put SANDBOX_API_KEY    # paste a token from: openssl rand -hex 32
+npx wrangler deploy
 ```
 
-The deploy script handles the full production workflow:
+Verify the deployment:
 
-1. **Install dependencies** — runs `npm ci` for a clean, reproducible install.
-2. **Verify authentication** — checks `wrangler whoami` and prompts to log in if needed.
-3. **Configure secrets** — checks whether `SANDBOX_API_KEY` exists in Wrangler secrets. If missing, generates a new `sbx_<random>` token and sets it via `wrangler secret put`.
-4. **Deploy** — runs `wrangler deploy` and extracts the worker URL.
-5. **Health check** — hits the `/health` endpoint to confirm the deployment is live.
-6. **Print summary** — outputs `SANDBOX_API_URL` and `SANDBOX_API_KEY` for use in your application, along with a copyable `curl` command to test the `/exec` endpoint.
+```sh
+curl https://<your-worker>.workers.dev/health
+```
+
+### Container instance type
+
+The default configuration uses `"lite"` instances with `max_instances: 3`. This is a good starting point for development and light usage. For production workloads that need more CPU or memory, change `instance_type` to `"standard-1"` (4 vCPU / 8 GiB RAM) and increase `max_instances` in `wrangler.jsonc`.
 
 ## Authentication
 
