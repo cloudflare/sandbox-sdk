@@ -16,6 +16,7 @@ import uvicorn
 from dotenv import load_dotenv
 from openai.types.responses import (
     ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseReasoningSummaryTextDeltaEvent,
     ResponseTextDeltaEvent,
 )
 from starlette.applications import Starlette
@@ -248,13 +249,29 @@ async def _stream_agent_response(prompt: str, history: list[dict]):
     yield _sse_event({"type": "start-step"})
 
     text_started = False
+    reasoning_started = False
+    reasoning_id = f"reasoning_{uuid.uuid4().hex}"
     active_tool_call_id: str | None = None
-
     async for event in result.stream_events():
         # --- Raw model events (text deltas, tool arg deltas) ---
         if event.type == "raw_response_event":
             data = event.data
+            if isinstance(data, ResponseReasoningSummaryTextDeltaEvent):
+                if text_started:
+                    yield _sse_event({"type": "text-end", "id": text_id})
+                    text_started = False
+                    text_id = f"text_{uuid.uuid4().hex}"
+                if not reasoning_started:
+                    yield _sse_event({"type": "reasoning-start", "id": reasoning_id})
+                    reasoning_started = True
+                yield _sse_event({"type": "reasoning-delta", "id": reasoning_id, "delta": data.delta})
+                continue
+
             if isinstance(data, ResponseTextDeltaEvent):
+                if reasoning_started:
+                    yield _sse_event({"type": "reasoning-end", "id": reasoning_id})
+                    reasoning_started = False
+                    reasoning_id = f"reasoning_{uuid.uuid4().hex}"
                 if not text_started:
                     yield _sse_event({"type": "text-start", "id": text_id})
                     text_started = True
@@ -275,11 +292,15 @@ async def _stream_agent_response(prompt: str, history: list[dict]):
         # --- Run item events (tool calls, tool outputs) ---
         if event.type == "run_item_stream_event":
             if event.name == "tool_called":
-                # Close any open text block
+                # Close any open text or reasoning block
                 if text_started:
                     yield _sse_event({"type": "text-end", "id": text_id})
                     text_started = False
                     text_id = f"text_{uuid.uuid4().hex}"
+                if reasoning_started:
+                    yield _sse_event({"type": "reasoning-end", "id": reasoning_id})
+                    reasoning_started = False
+                    reasoning_id = f"reasoning_{uuid.uuid4().hex}"
 
                 raw = event.item.raw_item
                 if isinstance(raw, dict):
@@ -358,9 +379,11 @@ async def _stream_agent_response(prompt: str, history: list[dict]):
                 yield _sse_event({"type": "start-step"})
                 active_tool_call_id = None
 
-    # Close any open text block
+    # Close any open text or reasoning block
     if text_started:
         yield _sse_event({"type": "text-end", "id": text_id})
+    if reasoning_started:
+        yield _sse_event({"type": "reasoning-end", "id": reasoning_id})
 
     # Finish
     yield _sse_event({"type": "finish-step"})
