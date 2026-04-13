@@ -1,7 +1,7 @@
 /**
  * OpenAPI 3.1 schema for the Cloudflare Sandbox Service API.
  *
- * Served at GET /openapi.json (requires Bearer token auth).
+ * Served at GET /v1/openapi.json (requires Bearer token auth).
  */
 
 export const OPENAPI_SCHEMA = {
@@ -165,7 +165,8 @@ export const OPENAPI_SCHEMA = {
               'capacity_exceeded',
               'pool_error',
               'mount_error',
-              'unmount_error'
+              'unmount_error',
+              'session_error'
             ]
           }
         }
@@ -223,16 +224,16 @@ export const OPENAPI_SCHEMA = {
   },
   security: [{ BearerAuth: [] }],
   paths: {
-    '/sandbox': {
+    '/v1/sandbox': {
       post: {
         operationId: 'createSandbox',
         summary: 'Create a new sandbox session',
-        description: 'Generates a new unique sandbox ID. Use this ID with all `/sandbox/{id}/*` routes.',
+        description: 'Generates a new unique sandbox ID. Use this ID with all `/v1/sandbox/{id}/*` routes.',
         'x-codeSamples': [
           {
             lang: 'curl',
             label: 'cURL',
-            source: 'curl -X POST https://$HOST/sandbox \\\n  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+            source: 'curl -X POST https://$HOST/v1/sandbox \\\n  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
         responses: {
@@ -246,7 +247,7 @@ export const OPENAPI_SCHEMA = {
                   properties: {
                     id: {
                       type: 'string',
-                      description: 'Unique sandbox ID for use with `/sandbox/{id}/*` routes.',
+                      description: 'Unique sandbox ID for use with `/v1/sandbox/{id}/*` routes.',
                       example: 'mfrggzdfmy2tqnrzgezdgnbv'
                     }
                   }
@@ -258,7 +259,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/exec': {
+    '/v1/sandbox/{id}/exec': {
       post: {
         operationId: 'execCommand',
         summary: 'Execute a command in the sandbox',
@@ -271,7 +272,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -N -X POST https://$HOST/sandbox/my-sandbox/exec \\\n' +
+              'curl -N -X POST https://$HOST/v1/sandbox/my-sandbox/exec \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -H "Content-Type: application/json" \\\n' +
               '  -d \'{"argv":["sh","-lc","echo hello"]}\''
@@ -284,6 +285,13 @@ export const OPENAPI_SCHEMA = {
             required: true,
             schema: { type: 'string' },
             description: 'Sandbox instance name (maps to a Durable Object key).'
+          },
+          {
+            name: 'X-Session-Id',
+            in: 'header',
+            required: false,
+            schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
+            description: 'Scope this operation to a specific session. Uses the default session if omitted.'
           }
         ],
         requestBody: {
@@ -336,7 +344,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/file/{path}': {
+    '/v1/sandbox/{id}/file/{path}': {
       get: {
         operationId: 'readFile',
         summary: 'Read a file from the sandbox filesystem',
@@ -345,7 +353,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X GET https://$HOST/sandbox/my-sandbox/file/workspace/main.py \\\n' +
+              'curl -X GET https://$HOST/v1/sandbox/my-sandbox/file/workspace/main.py \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -o main.py'
           }
@@ -365,6 +373,13 @@ export const OPENAPI_SCHEMA = {
             schema: { type: 'string' },
             description:
               'File path inside the sandbox, without leading slash (e.g. workspace/main.py). Must resolve within /workspace.'
+          },
+          {
+            name: 'X-Session-Id',
+            in: 'header',
+            required: false,
+            schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
+            description: 'Scope this operation to a specific session. Uses the default session if omitted.'
           }
         ],
         responses: {
@@ -421,7 +436,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X PUT https://$HOST/sandbox/my-sandbox/file/workspace/main.py \\\n' +
+              'curl -X PUT https://$HOST/v1/sandbox/my-sandbox/file/workspace/main.py \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -H "Content-Type: application/octet-stream" \\\n' +
               '  --data-binary @main.py'
@@ -442,6 +457,13 @@ export const OPENAPI_SCHEMA = {
             schema: { type: 'string' },
             description:
               'File path inside the sandbox, without leading slash (e.g. workspace/main.py). Must resolve within /workspace.'
+          },
+          {
+            name: 'X-Session-Id',
+            in: 'header',
+            required: false,
+            schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
+            description: 'Scope this operation to a specific session. Uses the default session if omitted.'
           }
         ],
         requestBody: {
@@ -491,7 +513,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/pty': {
+    '/v1/sandbox/{id}/pty': {
       get: {
         operationId: 'ptyTerminal',
         summary: 'Open a PTY terminal session via WebSocket',
@@ -514,7 +536,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'JavaScript',
             label: 'WebSocket',
             source:
-              'const ws = new WebSocket("wss://$HOST/sandbox/my-sandbox/pty?cols=120&rows=30");\n' +
+              'const ws = new WebSocket("wss://$HOST/v1/sandbox/my-sandbox/pty?cols=120&rows=30");\n' +
               'ws.binaryType = "arraybuffer";\n' +
               'ws.onmessage = (e) => { /* handle binary output or JSON status */ };'
           }
@@ -554,6 +576,13 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string' },
             description: 'SDK session ID. If provided, the PTY is scoped to this session.'
+          },
+          {
+            name: 'X-Session-Id',
+            in: 'header',
+            required: false,
+            schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
+            description: 'Scope this operation to a specific session. Uses the default session if omitted.'
           }
         ],
         responses: {
@@ -582,7 +611,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/running': {
+    '/v1/sandbox/{id}/running': {
       get: {
         operationId: 'isSandboxRunning',
         summary: 'Check whether the sandbox container is alive',
@@ -593,7 +622,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X GET https://$HOST/sandbox/my-sandbox/running \\\n' +
+              'curl -X GET https://$HOST/v1/sandbox/my-sandbox/running \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
@@ -619,7 +648,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/persist': {
+    '/v1/sandbox/{id}/persist': {
       post: {
         operationId: 'persistWorkspace',
         summary: 'Serialize the sandbox workspace to a tar archive',
@@ -630,7 +659,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X POST https://$HOST/sandbox/my-sandbox/persist \\\n' +
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/persist \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -o workspace.tar'
           }
@@ -686,7 +715,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/hydrate': {
+    '/v1/sandbox/{id}/hydrate': {
       post: {
         operationId: 'hydrateWorkspace',
         summary: 'Populate the sandbox workspace from a tar archive',
@@ -697,7 +726,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X POST https://$HOST/sandbox/my-sandbox/hydrate \\\n' +
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/hydrate \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -H "Content-Type: application/octet-stream" \\\n' +
               '  --data-binary @workspace.tar'
@@ -747,7 +776,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/mount': {
+    '/v1/sandbox/{id}/mount': {
       post: {
         operationId: 'mountBucket',
         summary: 'Mount an S3-compatible bucket into the container',
@@ -759,7 +788,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X POST https://$HOST/sandbox/my-sandbox/mount \\\n' +
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/mount \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -H "Content-Type: application/json" \\\n' +
               '  -d \'{"bucket":"my-bucket","mountPath":"/mnt/data","options":{"endpoint":"https://ACCT.r2.cloudflarestorage.com"}}\''
@@ -805,17 +834,17 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}/unmount': {
+    '/v1/sandbox/{id}/unmount': {
       post: {
         operationId: 'unmountBucket',
         summary: 'Unmount a previously mounted bucket',
-        description: 'Unmounts a bucket filesystem that was previously mounted via `/sandbox/{id}/mount`.',
+        description: 'Unmounts a bucket filesystem that was previously mounted via `/v1/sandbox/{id}/mount`.',
         'x-codeSamples': [
           {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X POST https://$HOST/sandbox/my-sandbox/unmount \\\n' +
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/unmount \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
               '  -H "Content-Type: application/json" \\\n' +
               '  -d \'{"mountPath":"/mnt/data"}\''
@@ -861,18 +890,20 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/sandbox/{id}': {
+    '/v1/sandbox/{id}': {
       delete: {
         operationId: 'deleteSandbox',
-        summary: 'Shut down the sandbox instance (best-effort)',
+        summary: 'Destroy a sandbox instance (best-effort)',
         description:
-          'Attempts to terminate the underlying container. Errors are swallowed; always returns `{"ok": true}`.',
+          'Calls destroy() on the sandbox Durable Object to release container resources. ' +
+          'Best-effort: unknown sandbox IDs return 204 without allocating a container.',
         'x-codeSamples': [
           {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X DELETE https://$HOST/sandbox/my-sandbox \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+              'curl -X DELETE https://$HOST/v1/sandbox/my-sandbox \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
         parameters: [
@@ -885,15 +916,138 @@ export const OPENAPI_SCHEMA = {
           }
         ],
         responses: {
+          '204': {
+            description: 'Sandbox destroyed (best-effort). Container resources are released.'
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' }
+        }
+      }
+    },
+    '/v1/sandbox/{id}/session': {
+      post: {
+        operationId: 'createSession',
+        summary: 'Create an execution session',
+        description:
+          'Sessions isolate working directory and environment variables across commands. ' +
+          'The returned session ID is used with the `X-Session-Id` header on exec, file, and PTY endpoints.',
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Sandbox instance name.'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    description: 'Custom session ID. Auto-generated if omitted.'
+                  },
+                  cwd: {
+                    type: 'string',
+                    description: 'Initial working directory for the session.'
+                  },
+                  env: {
+                    type: 'object',
+                    additionalProperties: { type: 'string' },
+                    description: 'Environment variables scoped to this session.'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
           '200': {
-            description: 'Shutdown requested (best-effort, always succeeds).',
+            description: 'Session created.',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/OkResponse' }
+                schema: {
+                  type: 'object',
+                  required: ['id'],
+                  properties: {
+                    id: {
+                      type: 'string',
+                      description: 'Session ID to pass via `X-Session-Id` header.'
+                    }
+                  }
+                }
               }
             }
           },
-          '401': { $ref: '#/components/responses/Unauthorized' }
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '502': {
+            description: 'Session creation failed.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: { error: 'session creation failed', code: 'session_error' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/v1/sandbox/{id}/session/{sid}': {
+      delete: {
+        operationId: 'deleteSession',
+        summary: 'Delete an execution session',
+        description: 'Removes a named session. The default session cannot be deleted.',
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Sandbox instance name.'
+          },
+          {
+            name: 'sid',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Session ID to delete.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Session deleted.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['success', 'sessionId'],
+                  properties: {
+                    success: {
+                      type: 'boolean',
+                      description: '`true` if the session was deleted.'
+                    },
+                    sessionId: {
+                      type: 'string',
+                      description: 'ID of the deleted session.'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '502': {
+            description: 'Session deletion failed (e.g. cannot delete default session).',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: { error: 'cannot delete the default session', code: 'session_error' }
+              }
+            }
+          }
         }
       }
     },
@@ -922,7 +1076,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/openapi.json': {
+    '/v1/openapi.json': {
       get: {
         operationId: 'getOpenApiSchema',
         summary: 'OpenAPI schema',
@@ -931,7 +1085,7 @@ export const OPENAPI_SCHEMA = {
           {
             lang: 'curl',
             label: 'cURL',
-            source: 'curl https://$HOST/openapi.json \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+            source: 'curl https://$HOST/v1/openapi.json \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
         responses: {
@@ -947,7 +1101,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/pool/stats': {
+    '/v1/pool/stats': {
       get: {
         operationId: 'getPoolStats',
         summary: 'Pool statistics',
@@ -956,7 +1110,7 @@ export const OPENAPI_SCHEMA = {
           {
             lang: 'curl',
             label: 'cURL',
-            source: 'curl https://$HOST/pool/stats \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+            source: 'curl https://$HOST/v1/pool/stats \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
         responses: {
@@ -972,7 +1126,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/pool/shutdown-prewarmed': {
+    '/v1/pool/shutdown-prewarmed': {
       post: {
         operationId: 'shutdownPrewarmed',
         summary: 'Shutdown pre-warmed containers',
@@ -983,7 +1137,7 @@ export const OPENAPI_SCHEMA = {
             lang: 'curl',
             label: 'cURL',
             source:
-              'curl -X POST https://$HOST/pool/shutdown-prewarmed \\\n' +
+              'curl -X POST https://$HOST/v1/pool/shutdown-prewarmed \\\n' +
               '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
@@ -1000,7 +1154,7 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
-    '/pool/prime': {
+    '/v1/pool/prime': {
       post: {
         operationId: 'primePool',
         summary: 'Prime the warm pool',
@@ -1011,7 +1165,7 @@ export const OPENAPI_SCHEMA = {
           {
             lang: 'curl',
             label: 'cURL',
-            source: 'curl -X POST https://$HOST/pool/prime \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+            source: 'curl -X POST https://$HOST/v1/pool/prime \\\n' + '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
           }
         ],
         responses: {
