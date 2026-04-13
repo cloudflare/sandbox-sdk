@@ -32,7 +32,7 @@
  *   SANDBOX_API_KEY=dev-secret
  */
 
-import type { ExecutionSession, ISandbox, PtyOptions } from '@cloudflare/sandbox';
+import type { ExecutionSession, ISandbox, PtyOptions, Sandbox } from '@cloudflare/sandbox';
 import { getSandbox as _getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 import { Hono, type MiddlewareHandler } from 'hono';
 
@@ -51,7 +51,7 @@ type BridgeSandbox = ISandbox & {
 };
 
 /** Typed wrapper around the SDK's getSandbox() that returns a BridgeSandbox. */
-function getSandbox(ns: DurableObjectNamespace, containerUUID: string): BridgeSandbox {
+function getSandbox<T extends Sandbox<any>>(ns: DurableObjectNamespace<T>, containerUUID: string): BridgeSandbox {
   return _getSandbox(ns, containerUUID) as unknown as BridgeSandbox;
 }
 
