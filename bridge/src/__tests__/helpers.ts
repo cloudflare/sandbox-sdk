@@ -39,7 +39,8 @@ export function createMockSandbox() {
       })
     })),
     mountBucket: vi.fn(async () => {}),
-    unmountBucket: vi.fn(async () => {})
+    unmountBucket: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {})
   };
 }
 
@@ -83,6 +84,7 @@ export function createMockEnv(overrides?: Partial<{ SANDBOX_API_KEY: string }>) 
   const poolStub = {
     configure: vi.fn(async () => {}),
     getContainer: vi.fn(async (id: string) => id),
+    lookupContainer: vi.fn(async (id: string) => id),
     getStats: vi.fn(async () => ({
       warm: 0,
       assigned: 0,
@@ -90,7 +92,8 @@ export function createMockEnv(overrides?: Partial<{ SANDBOX_API_KEY: string }>) 
       config: { warmTarget: 0, refreshInterval: 10000 },
       maxInstances: null
     })),
-    shutdownPrewarmed: vi.fn(async () => {})
+    shutdownPrewarmed: vi.fn(async () => {}),
+    reportStopped: vi.fn(async () => {})
   };
 
   return {

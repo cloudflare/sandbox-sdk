@@ -139,6 +139,20 @@ export class WarmPool extends DurableObject<Env> {
   }
 
   /**
+   * Look up an existing container assignment without allocating.
+   * Returns the container UUID if the sandbox ID has an active assignment, null otherwise.
+   * Used by DELETE to avoid starting a container just to destroy it.
+   */
+  async lookupContainer(sandboxId: string): Promise<string | null> {
+    await this.init();
+    const existing = this.assignments.get(sandboxId);
+    if (existing) {
+      return existing;
+    }
+    return null;
+  }
+
+  /**
    * Report that a container has stopped — removes it from tracking.
    */
   async reportStopped(containerUUID: string): Promise<void> {

@@ -317,28 +317,27 @@ app.use('/v1/sandbox/:id/*', async (c, next) => {
   return next();
 });
 
-// Also handle the bare DELETE /v1/sandbox/:id route (no trailing path)
+// Pool resolution for bare DELETE /v1/sandbox/:id (no trailing path).
+// Uses lookupContainer() to avoid allocating a container just to destroy it.
 app.use('/v1/sandbox/:id', async (c, next) => {
-  // Only apply pool resolution for methods that need it
+  // Pool resolution — only for DELETE (the only bare-path handler)
   if (c.req.method !== 'DELETE') return next();
 
   const sandboxId = c.req.param('id');
 
-  const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
-  const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
-
   const poolId = c.env.WARM_POOL.idFromName('global-pool');
   const poolStub = c.env.WARM_POOL.get(poolId);
 
+  // Lookup only — don't allocate a new container just to destroy it
   try {
-    await poolStub.configure({ warmTarget, refreshInterval });
-    const containerUUID = await poolStub.getContainer(sandboxId);
+    const containerUUID = await poolStub.lookupContainer(sandboxId);
+    if (!containerUUID) {
+      // No container exists for this sandbox — nothing to destroy
+      return new Response(null, { status: 204 });
+    }
     c.set('containerUUID', containerUUID);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('instance limit reached')) {
-      return errorJson(msg, 'capacity_exceeded', 503);
-    }
     return errorJson(`pool error: ${msg}`, 'pool_error', 502);
   }
 
@@ -909,26 +908,31 @@ app.post('/v1/sandbox/:id/unmount', async (c) => {
 // ------------------------------------------------------------------
 // DELETE /sandbox/:id
 //
-// Best-effort shutdown of the sandbox instance.
-// The Durable Object will eventually be garbage-collected by Cloudflare;
-// this call just tries to terminate the underlying container early.
-//
-// Response: {"ok": true} always (errors are swallowed — best-effort)
+// Destroys the sandbox container and releases its pool assignment.
+// Returns 204 on success (including when the container is already gone).
+// The middleware short-circuits with 204 if no container is assigned.
 // ------------------------------------------------------------------
 
 app.delete('/v1/sandbox/:id', async (c) => {
-  const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
+  const containerUUID = c.get('containerUUID');
+  const sandbox = getSandbox(c.env.Sandbox, containerUUID);
 
   try {
-    // The CF sandbox SDK does not expose an explicit destroy() on the client
-    // stub; calling exec('true') just to wake it and let the DO handle
-    // cleanup is sufficient.  If the sandbox is already dead this is a no-op.
-    await sandbox.exec('true');
+    await sandbox.destroy();
   } catch {
-    // Intentionally swallow — best-effort.
+    // Best-effort — container may already be gone
   }
 
-  return c.json({ ok: true });
+  // Release the WarmPool assignment so it doesn't track a dead container
+  try {
+    const poolId = c.env.WARM_POOL.idFromName('global-pool');
+    const poolStub = c.env.WARM_POOL.get(poolId);
+    await poolStub.reportStopped(containerUUID);
+  } catch {
+    // Best-effort
+  }
+
+  return new Response(null, { status: 204 });
 });
 
 // ------------------------------------------------------------------
