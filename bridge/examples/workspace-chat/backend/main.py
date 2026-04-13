@@ -124,13 +124,17 @@ async def _reset_sandbox() -> None:
     _sandbox_session = None
     SESSION_FILE.unlink(missing_ok=True)
     HISTORY_FILE.unlink(missing_ok=True)
-    # Start fresh
+    # Start fresh — if this fails, the app is left without a session
+    # and _get_session will raise until a successful restart or retry.
     await _start_sandbox()
 
 
 def _get_session():
     if _sandbox_session is None:
-        raise RuntimeError("Sandbox session not initialized")
+        raise RuntimeError(
+            "Sandbox session not initialized. "
+            "If you just reset, the new sandbox may have failed to start — check the backend logs."
+        )
     return _sandbox_session
 
 
@@ -642,9 +646,8 @@ async def reset_endpoint(request: Request) -> JSONResponse:
         await _reset_sandbox()
         return JSONResponse({"ok": True})
     except Exception as e:
-        logger.exception("Reset failed")
+        logger.exception("Reset failed — sandbox session may be unavailable until backend restart")
         return JSONResponse({"error": str(e)}, status_code=502)
-
 
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB — matches bridge PUT /file/* limit
 
