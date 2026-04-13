@@ -40,8 +40,8 @@ describe('POST /sandbox/:id/persist — hardcoded root, exclude validation, quot
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const call = mockSandbox.exec.mock.calls[0] as any[];
     const cmd = call[0] as string;
-    // shellQuote wraps values that contain underscores (not in the safe-char set)
-    expect(cmd).toContain("--exclude './__pycache__'");
+    // shellQuote wraps values that contain underscores (not in the safe-char set) in $'...'
+    expect(cmd).toContain("--exclude $'./__pycache__'");
     expect(cmd).toContain('--exclude ./.venv');
   });
 
@@ -58,10 +58,9 @@ describe('POST /sandbox/:id/persist — hardcoded root, exclude validation, quot
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const call = mockSandbox.exec.mock.calls[0] as any[];
     const cmd = call[0] as string;
-    // The dangerous value should be wrapped in single quotes, preventing
+    // The dangerous value should be wrapped in $'...' quoting, preventing
     // the shell from interpreting the semicolon as a command separator.
-    // The shell-quoted form wraps the entire value: './foo;rm -rf /'
-    expect(cmd).toMatch(/--exclude '\.\/foo;rm -rf \/'/);
+    expect(cmd).toContain("--exclude $'./foo;rm -rf /'");
     // The tar command itself should not have a bare semicolon outside quotes
     // that would act as a command separator for the shell.
     expect(cmd).not.toMatch(/'\s*;\s*rm/);

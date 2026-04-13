@@ -37,7 +37,7 @@ describe('POST /sandbox/:id/unmount', () => {
     expect(body.ok).toBe(true);
 
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/mnt/data');
-    expect(mockSandbox.exec).toHaveBeenCalledWith("mountpoint -q '/mnt/data' || rmdir '/mnt/data'");
+    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /mnt/data || rmdir /mnt/data');
   });
 
   it('succeeds even if cleanup command fails', async () => {
@@ -85,14 +85,14 @@ describe('POST /sandbox/:id/unmount', () => {
     const res = await unmountRequest({ mountPath: '/workspace' });
     expect(res.status).toBe(200);
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/workspace');
-    expect(mockSandbox.exec).toHaveBeenCalledWith("mountpoint -q '/workspace' || rmdir '/workspace'");
+    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /workspace || rmdir /workspace');
   });
 
   it('normalizes the path before passing to SDK and exec', async () => {
     const res = await unmountRequest({ mountPath: '/mnt/data/../buckets/store' });
     expect(res.status).toBe(200);
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/mnt/buckets/store');
-    expect(mockSandbox.exec).toHaveBeenCalledWith("mountpoint -q '/mnt/buckets/store' || rmdir '/mnt/buckets/store'");
+    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /mnt/buckets/store || rmdir /mnt/buckets/store');
   });
 
   it('rejects invalid JSON body', async () => {

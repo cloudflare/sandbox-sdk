@@ -495,7 +495,12 @@ app.get('/sandbox/:id/file/*', async (c) => {
 //
 // Writes a file into the sandbox filesystem. The file path is encoded
 // in the URL after /file/ (e.g. /sandbox/abc/file/workspace/main.py).
-// The raw file content is sent as the request body.
+// The raw request body is treated as binary: it is base64-encoded and
+// written via writeFile({ encoding: 'base64' }) so non-UTF-8 payloads
+// (images, archives, compiled binaries) survive the round-trip.
+//
+// The underlying RPC layer has a ~32 MiB payload limit. Requests that
+// exceed it are rejected with a 413 before reaching the sandbox.
 //
 // Response: {"ok": true} on success
 // ------------------------------------------------------------------
@@ -522,8 +527,26 @@ app.put('/sandbox/:id/file/*', async (c) => {
 
   try {
     const buffer = await c.req.arrayBuffer();
-    const content = new TextDecoder().decode(buffer);
-    await sandbox.writeFile(resolvedPath, content);
+    const MAX_WRITE_BYTES = 32 * 1024 * 1024; // 32 MiB — matches RPC payload limit
+    if (buffer.byteLength > MAX_WRITE_BYTES) {
+      return errorJson(
+        `payload too large: ${buffer.byteLength} bytes exceeds the ${MAX_WRITE_BYTES}-byte limit`,
+        'payload_too_large',
+        413
+      );
+    }
+
+    // Base64-encode the raw bytes so binary payloads survive the string-based
+    // writeFile RPC. The container decodes via Buffer.from(b64, 'base64').
+    // Chunk size must be a multiple of 3 so intermediate chunks produce clean
+    // base64 without padding; only the final chunk may have trailing '='.
+    const bytes = new Uint8Array(buffer);
+    let b64 = '';
+    const CHUNK = 6144; // 6144 = 3 * 2048 — no intermediate padding
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+    }
+    await sandbox.writeFile(resolvedPath, b64, { encoding: 'base64' });
     const response: WriteResponse = { ok: true };
     return c.json(response);
   } catch (err) {
