@@ -2,7 +2,6 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #     "openai-agents[cloudflare]",
-#     "python-dotenv",
 # ]
 #
 # [tool.uv.sources]
@@ -26,7 +25,6 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from dotenv import load_dotenv
 from openai.types.responses import (
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseTextDeltaEvent,
@@ -247,8 +245,6 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
 
 
 def main() -> None:
-    load_dotenv()
-
     parser = argparse.ArgumentParser(
         description="Run a one-shot JavaScript coding task in a Cloudflare Sandbox."
     )

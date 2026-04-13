@@ -6,7 +6,6 @@ dependencies = [
     "starlette",
     "uvicorn[standard]",
     "openai-agents[cloudflare]",
-    "python-dotenv",
 ]
 
 [tool.uv.sources]

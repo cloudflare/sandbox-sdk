@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from dotenv import load_dotenv
 from openai.types.responses import (
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseReasoningSummaryTextDeltaEvent,
@@ -35,8 +34,6 @@ from agents.extensions.sandbox.cloudflare import (
 from agents.run import RunConfig
 from agents.sandbox import SandboxAgent, SandboxRunConfig, WorkspaceReadNotFoundError
 from agents.sandbox.capabilities import Filesystem, Shell
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
