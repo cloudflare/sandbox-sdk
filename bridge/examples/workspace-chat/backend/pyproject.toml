@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "feat/sandbox-agents" }
+openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "cloudflare-sandbox-revert-99" }
 
 [tool.ruff]
 line-length = 100

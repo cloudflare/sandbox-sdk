@@ -279,7 +279,7 @@ Response:
 { "id": "sess_abc123" }
 ```
 
-Pass the returned session ID via the `X-Session-Id` header on subsequent `/exec`, `/pty`, and file operations to scope them to the session.
+Pass the returned session ID via the `Session-Id` header on subsequent `/exec`, `/pty`, and file operations to scope them to the session.
 
 ---
 
@@ -298,12 +298,12 @@ Returns 204 No Content on success.
 
 ## Session Support
 
-The bridge supports the Sandbox SDK's session mechanism via the `X-Session-Id` request header. Sessions isolate command execution contexts (working directory, environment variables) within a single sandbox.
+The bridge supports the Sandbox SDK's session mechanism via the `Session-Id` request header. Sessions isolate command execution contexts (working directory, environment variables) within a single sandbox.
 
 - **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
-- **Use a session**: Pass `X-Session-Id: <session-id>` on `/exec`, `/pty`, and file operation requests.
+- **Use a session**: Pass `Session-Id: <session-id>` on `/exec`, `/pty`, and file operation requests.
 - **Delete a session**: `DELETE /v1/sandbox/:id/session/:sid` — tears down the session.
-- **Default session**: When no `X-Session-Id` header is provided, requests use the sandbox's default session.
+- **Default session**: When no `Session-Id` header is provided, requests use the sandbox's default session.
 
 ### Session limitations
 

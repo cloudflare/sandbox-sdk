@@ -380,7 +380,7 @@ app.post('/v1/sandbox/:id/exec', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
-  const rawSessionId = c.req.header('X-Session-Id');
+  const rawSessionId = c.req.header('Session-Id');
   let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
   if (rawSessionId) {
     const sessionId = validateSessionId(rawSessionId);
@@ -498,7 +498,7 @@ app.get('/v1/sandbox/:id/file/*', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
-  const rawSessionId = c.req.header('X-Session-Id');
+  const rawSessionId = c.req.header('Session-Id');
   let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
   if (rawSessionId) {
     const sessionId = validateSessionId(rawSessionId);
@@ -556,7 +556,7 @@ app.put('/v1/sandbox/:id/file/*', async (c) => {
   }
 
   const sandbox = getSandbox(c.env.Sandbox, c.get('containerUUID'));
-  const rawSessionId = c.req.header('X-Session-Id');
+  const rawSessionId = c.req.header('Session-Id');
   let executor: BridgeSandbox | Awaited<ReturnType<BridgeSandbox['getSession']>> = sandbox;
   if (rawSessionId) {
     const sessionId = validateSessionId(rawSessionId);
@@ -642,7 +642,7 @@ app.get('/v1/sandbox/:id/pty', async (c) => {
   const colsParam = c.req.query('cols');
   const rowsParam = c.req.query('rows');
   const shell = c.req.query('shell');
-  const sessionId = c.req.header('X-Session-Id') || c.req.query('session');
+  const sessionId = c.req.header('Session-Id') || c.req.query('session');
 
   const cols = colsParam ? Number(colsParam) : 80;
   const rows = rowsParam ? Number(rowsParam) : 24;

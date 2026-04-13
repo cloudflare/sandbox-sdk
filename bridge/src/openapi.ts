@@ -287,7 +287,7 @@ export const OPENAPI_SCHEMA = {
             description: 'Sandbox instance name (maps to a Durable Object key).'
           },
           {
-            name: 'X-Session-Id',
+            name: 'Session-Id',
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
@@ -375,7 +375,7 @@ export const OPENAPI_SCHEMA = {
               'File path inside the sandbox, without leading slash (e.g. workspace/main.py). Must resolve within /workspace.'
           },
           {
-            name: 'X-Session-Id',
+            name: 'Session-Id',
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
@@ -459,7 +459,7 @@ export const OPENAPI_SCHEMA = {
               'File path inside the sandbox, without leading slash (e.g. workspace/main.py). Must resolve within /workspace.'
           },
           {
-            name: 'X-Session-Id',
+            name: 'Session-Id',
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
@@ -578,7 +578,7 @@ export const OPENAPI_SCHEMA = {
             description: 'SDK session ID. If provided, the PTY is scoped to this session.'
           },
           {
-            name: 'X-Session-Id',
+            name: 'Session-Id',
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
@@ -929,7 +929,7 @@ export const OPENAPI_SCHEMA = {
         summary: 'Create an execution session',
         description:
           'Sessions isolate working directory and environment variables across commands. ' +
-          'The returned session ID is used with the `X-Session-Id` header on exec, file, and PTY endpoints.',
+          'The returned session ID is used with the `Session-Id` header on exec, file, and PTY endpoints.',
         parameters: [
           {
             name: 'id',
@@ -975,7 +975,7 @@ export const OPENAPI_SCHEMA = {
                   properties: {
                     id: {
                       type: 'string',
-                      description: 'Session ID to pass via `X-Session-Id` header.'
+                      description: 'Session ID to pass via `Session-Id` header.'
                     }
                   }
                 }

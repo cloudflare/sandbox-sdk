@@ -4,7 +4,7 @@ This is a Cloudflare Worker (TypeScript + Hono) that exposes the sandbox HTTP AP
 
 ## Key files
 
-- `src/index.ts` — Hono routes under `/v1/` prefix: sandbox CRUD, exec, file I/O, persist/hydrate, mount/unmount, session CRUD (`POST /v1/sandbox/:id/session`, `DELETE /v1/sandbox/:id/session/:sid`), pool management, WebSocket PTY proxy at `/v1/sandbox/:id/pty`. Supports `X-Session-Id` header for session-scoped operations.
+- `src/index.ts` — Hono routes under `/v1/` prefix: sandbox CRUD, exec, file I/O, persist/hydrate, mount/unmount, session CRUD (`POST /v1/sandbox/:id/session`, `DELETE /v1/sandbox/:id/session/:sid`), pool management, WebSocket PTY proxy at `/v1/sandbox/:id/pty`. Supports `Session-Id` header for session-scoped operations.
 - `src/warm-pool.ts` — `WarmPool` Durable Object that maintains a pool of pre-started sandbox containers (adapted from [cf-container-warm-pool](https://github.com/mikenomitch/cf-container-warm-pool))
 - `src/openapi.ts` — OpenAPI 3.1 schema definition
 - `src/openapi-html.ts` — Self-contained HTML renderer for the OpenAPI spec

@@ -97,12 +97,12 @@ describe('DELETE /v1/sandbox/:id/session/:sid — delete session', () => {
   });
 });
 
-describe('X-Session-Id header on exec', () => {
+describe('Session-Id header on exec', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('uses getSession when X-Session-Id header is present', async () => {
+  it('uses getSession when Session-Id header is present', async () => {
     const session = createMockSession('my-session');
     session.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
       const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
@@ -117,7 +117,7 @@ describe('X-Session-Id header on exec', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Session-Id': 'my-session'
+          'Session-Id': 'my-session'
         },
         body: JSON.stringify({ argv: ['echo', 'hi'] })
       },
@@ -130,7 +130,7 @@ describe('X-Session-Id header on exec', () => {
     expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
-  it('uses sandbox directly when no X-Session-Id header', async () => {
+  it('uses sandbox directly when no Session-Id header', async () => {
     mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
       const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
       if (onComplete) onComplete({ exitCode: 0 });
@@ -153,7 +153,7 @@ describe('X-Session-Id header on exec', () => {
   });
 });
 
-describe('X-Session-Id header on file operations', () => {
+describe('Session-Id header on file operations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -164,7 +164,7 @@ describe('X-Session-Id header on file operations', () => {
 
     await app.request(
       `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
-      { method: 'GET', headers: { 'X-Session-Id': 'file-sess' } },
+      { method: 'GET', headers: { 'Session-Id': 'file-sess' } },
       env
     );
 
@@ -178,7 +178,7 @@ describe('X-Session-Id header on file operations', () => {
 
     await app.request(
       `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
-      { method: 'PUT', headers: { 'X-Session-Id': 'file-sess' }, body: 'hello' },
+      { method: 'PUT', headers: { 'Session-Id': 'file-sess' }, body: 'hello' },
       env
     );
 
@@ -204,7 +204,7 @@ describe('PTY session precedence', () => {
       sandboxUrl('test', 'pty', 'session=from-query'),
       {
         method: 'GET',
-        headers: { Upgrade: 'websocket', 'X-Session-Id': 'from-header' }
+        headers: { Upgrade: 'websocket', 'Session-Id': 'from-header' }
       },
       env
     );
@@ -246,7 +246,7 @@ describe('Session ID validation', () => {
       sandboxUrl('test', 'exec'),
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
+        headers: { 'Content-Type': 'application/json', 'Session-Id': sessionId },
         body: JSON.stringify({ argv: ['echo', 'hi'] })
       },
       env
