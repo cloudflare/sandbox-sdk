@@ -22,8 +22,8 @@ The worker starts at `http://localhost:8787`.
 
 When running locally, a few routes make it easy to explore the API:
 
-- **`GET /openapi.html`** — self-contained browser UI rendered from the OpenAPI spec. Open this in your browser to explore every endpoint interactively. Auth is skipped when `SANDBOX_API_KEY` is not set in `.dev.vars`.
-- **`GET /openapi.json`** — machine-readable OpenAPI 3.1 schema. Requires `Authorization: Bearer <token>` when the token is set.
+- **`GET /v1/openapi.html`** — self-contained browser UI rendered from the OpenAPI spec. Open this in your browser to explore every endpoint interactively. Auth is skipped when `SANDBOX_API_KEY` is not set in `.dev.vars`.
+- **`GET /v1/openapi.json`** — machine-readable OpenAPI 3.1 schema. Requires `Authorization: Bearer <token>` when the token is set.
 - **`GET /health`** — unauthenticated liveness probe; returns `{"ok": true}`.
 
 ## Deployment
@@ -43,7 +43,7 @@ The deploy script handles the full production workflow:
 
 ## Authentication
 
-All `/sandbox/*` and `/openapi.*` routes require:
+All `/v1/sandbox/*` and `/v1/openapi.*` routes require:
 
 ```
 Authorization: Bearer <SANDBOX_API_KEY>
@@ -59,19 +59,21 @@ wrangler secret put SANDBOX_API_KEY
 
 This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. Each abstract method maps to exactly one route:
 
-| `BaseSandboxSession` method | Route                       | Description                                      |
-| --------------------------- | --------------------------- | ------------------------------------------------ |
-| _(create session)_          | `POST /sandbox`             | Generate a new sandbox ID                        |
-| `_exec_internal()`          | `POST /sandbox/:id/exec`    | Run a command; returns stdout/stderr/exit_code   |
-| `read()`                    | `POST /sandbox/:id/read`    | Read a file from the workspace                   |
-| `write()`                   | `POST /sandbox/:id/write`   | Write a file into the workspace                  |
-| `running()`                 | `GET /sandbox/:id/running`  | Check sandbox liveness                           |
-| `persist_workspace()`       | `POST /sandbox/:id/persist` | Serialize workspace to a tar archive             |
-| `hydrate_workspace()`       | `POST /sandbox/:id/hydrate` | Populate workspace from a tar archive            |
-| `shutdown()`                | `DELETE /sandbox/:id`       | Best-effort sandbox teardown                     |
-| _(terminal)_                | `GET /sandbox/:id/pty`      | WebSocket PTY proxy (bidirectional terminal I/O) |
-| `mountBucket()`             | `POST /sandbox/:id/mount`   | Mount an S3-compatible bucket                    |
-| `unmountBucket()`           | `POST /sandbox/:id/unmount` | Unmount a mounted bucket                         |
+| `BaseSandboxSession` method | Route                                 | Description                                      |
+| --------------------------- | ------------------------------------- | ------------------------------------------------ |
+| _(create session)_          | `POST /v1/sandbox`                    | Generate a new sandbox ID                        |
+| `_exec_internal()`          | `POST /v1/sandbox/:id/exec`           | Run a command; returns stdout/stderr/exit_code   |
+| `read()`                    | `POST /v1/sandbox/:id/read`           | Read a file from the workspace                   |
+| `write()`                   | `POST /v1/sandbox/:id/write`          | Write a file into the workspace                  |
+| `running()`                 | `GET /v1/sandbox/:id/running`         | Check sandbox liveness                           |
+| `persist_workspace()`       | `POST /v1/sandbox/:id/persist`        | Serialize workspace to a tar archive             |
+| `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`        | Populate workspace from a tar archive            |
+| `shutdown()`                | `DELETE /v1/sandbox/:id`              | Destroy sandbox via `destroy()` (returns 204)    |
+| _(terminal)_                | `GET /v1/sandbox/:id/pty`             | WebSocket PTY proxy (bidirectional terminal I/O) |
+| `mountBucket()`             | `POST /v1/sandbox/:id/mount`          | Mount an S3-compatible bucket                    |
+| `unmountBucket()`           | `POST /v1/sandbox/:id/unmount`        | Unmount a mounted bucket                         |
+| _(create session)_          | `POST /v1/sandbox/:id/session`        | Create an execution session                      |
+| _(delete session)_          | `DELETE /v1/sandbox/:id/session/:sid` | Delete an execution session                      |
 
 ## API Reference
 
@@ -85,12 +87,12 @@ Unauthenticated liveness probe.
 curl http://localhost:8787/health
 ```
 
-#### `POST /sandbox`
+#### `POST /v1/sandbox`
 
 Create a new sandbox session. Returns a unique sandbox ID.
 
 ```sh
-curl -X POST http://localhost:8787/sandbox \
+curl -X POST http://localhost:8787/v1/sandbox \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
@@ -104,12 +106,12 @@ Response:
 
 ---
 
-#### `POST /sandbox/:id/exec`
+#### `POST /v1/sandbox/:id/exec`
 
 Run a shell command inside the sandbox. Returns base64-encoded stdout/stderr and an exit code.
 
 ```sh
-curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/exec \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"argv": ["sh", "-lc", "echo hello"], "timeout_ms": 10000, "cwd": "/workspace"}'
@@ -117,12 +119,12 @@ curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/exec \
 
 ---
 
-#### `POST /sandbox/:id/read`
+#### `POST /v1/sandbox/:id/read`
 
 Read a file from the sandbox filesystem. Returns raw bytes (`application/octet-stream`).
 
 ```sh
-curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/read \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/read \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"path": "/workspace/main.py"}'
@@ -130,12 +132,12 @@ curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/read \
 
 ---
 
-#### `POST /sandbox/:id/write`
+#### `POST /v1/sandbox/:id/write`
 
 Write a file into the sandbox filesystem.
 
 ```sh
-curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/write \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/write \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -F "path=/workspace/main.py" \
   -F "file=@main.py"
@@ -143,35 +145,35 @@ curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/write \
 
 ---
 
-#### `GET /sandbox/:id/running`
+#### `GET /v1/sandbox/:id/running`
 
 Check whether the sandbox container is alive.
 
 ```sh
-curl http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/running \
+curl http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/running \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
 ---
 
-#### `POST /sandbox/:id/persist`
+#### `POST /v1/sandbox/:id/persist`
 
 Serialize the sandbox workspace to a tar archive. Returns raw tar bytes.
 
 ```sh
-curl -X POST "http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/persist?excludes=.venv,__pycache__" \
+curl -X POST "http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/persist?excludes=.venv,__pycache__" \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -o workspace.tar
 ```
 
 ---
 
-#### `POST /sandbox/:id/hydrate`
+#### `POST /v1/sandbox/:id/hydrate`
 
 Populate the sandbox workspace from a tar archive.
 
 ```sh
-curl -X POST "http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/hydrate" \
+curl -X POST "http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/hydrate" \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @workspace.tar
@@ -179,7 +181,7 @@ curl -X POST "http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/hydrate" \
 
 ---
 
-#### `GET /sandbox/:id/pty`
+#### `GET /v1/sandbox/:id/pty`
 
 Open a WebSocket PTY session to the sandbox. The connection is a bidirectional proxy to the container's terminal via `sandbox.terminal()`.
 
@@ -205,29 +207,29 @@ The request must include the `Upgrade: websocket` header; plain HTTP requests re
 
 ```sh
 # Example using websocat
-websocat "ws://localhost:8787/sandbox/mfrggzdfmy2tqnrz/pty?cols=120&rows=30" \
+websocat "ws://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/pty?cols=120&rows=30" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
 ---
 
-#### `DELETE /sandbox/:id`
+#### `DELETE /v1/sandbox/:id`
 
-Best-effort sandbox teardown. Always returns `{"ok": true}`.
+Destroy the sandbox via `sandbox.destroy()`. Returns 204 No Content on success.
 
 ```sh
-curl -X DELETE http://localhost:8787/sandbox/my-sandbox \
+curl -X DELETE http://localhost:8787/v1/sandbox/my-sandbox \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
 ---
 
-#### `POST /sandbox/:id/mount`
+#### `POST /v1/sandbox/:id/mount`
 
 Mount an S3-compatible bucket (R2, S3, GCS, etc.) as a local directory inside the container.
 
 ```sh
-curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/mount \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"bucket": "my-bucket", "mountPath": "/mnt/data", "options": {"endpoint": "https://ACCT.r2.cloudflarestorage.com"}}'
@@ -249,12 +251,12 @@ Credentials are optional — the SDK auto-detects from Worker secrets (`R2_ACCES
 
 ---
 
-#### `POST /sandbox/:id/unmount`
+#### `POST /v1/sandbox/:id/unmount`
 
 Unmount a previously mounted bucket.
 
 ```sh
-curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/unmount \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/unmount \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"mountPath": "/mnt/data"}'
@@ -262,7 +264,56 @@ curl -X POST http://localhost:8787/sandbox/mfrggzdfmy2tqnrz/unmount \
 
 ---
 
-See `/openapi.html` in local dev for full request/response schemas.
+#### `POST /v1/sandbox/:id/session`
+
+Create an execution session. Sessions isolate working directory, environment variables, and command execution state within a sandbox.
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/session \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Response:
+
+```json
+{ "id": "sess_abc123" }
+```
+
+Pass the returned session ID via the `X-Session-Id` header on subsequent `/exec`, `/pty`, and file operations to scope them to the session.
+
+---
+
+#### `DELETE /v1/sandbox/:id/session/:sid`
+
+Delete an execution session.
+
+```sh
+curl -X DELETE http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/session/sess_abc123 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Returns 204 No Content on success.
+
+---
+
+## Session Support
+
+The bridge supports the Sandbox SDK's session mechanism via the `X-Session-Id` request header. Sessions isolate command execution contexts (working directory, environment variables) within a single sandbox.
+
+- **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
+- **Use a session**: Pass `X-Session-Id: <session-id>` on `/exec`, `/pty`, and file operation requests.
+- **Delete a session**: `DELETE /v1/sandbox/:id/session/:sid` — tears down the session.
+- **Default session**: When no `X-Session-Id` header is provided, requests use the sandbox's default session.
+
+### Session limitations
+
+- **Custom sessions don't survive container sleep.** Only the default session persists across container restarts. Custom sessions are ephemeral — if the container sleeps and restarts, custom sessions are lost.
+- **`destroy()` kills in-flight operations immediately.** Deleting a sandbox via `DELETE /v1/sandbox/:id` calls `sandbox.destroy()`, which terminates all running commands and sessions without waiting for completion.
+- **Deleted sandbox IDs can be reused.** After destroying a sandbox, the same ID can be used again — it gets a fresh container.
+
+---
+
+See `/v1/openapi.html` in local dev for full request/response schemas.
 
 ## Container Warm Pool
 
@@ -275,7 +326,7 @@ A singleton `WarmPool` Durable Object maintains a set of pre-started containers.
 The pool is primed (its alarm loop started) in two ways:
 
 1. **Cron trigger** — a `* * * * *` (every-minute) cron is configured in `wrangler.jsonc`. On each tick the `scheduled()` handler calls `configure()` on the `WarmPool` DO, which starts the alarm loop. This ensures the pool is active immediately after deploy, even with no HTTP traffic.
-2. **`POST /pool/prime`** — an explicit HTTP route that does the same thing. Useful for manual priming or CI/CD scripts.
+2. **`POST /v1/pool/prime`** — an explicit HTTP route that does the same thing. Useful for manual priming or CI/CD scripts.
 
 ### Configuration
 
@@ -286,18 +337,18 @@ Set these variables in `wrangler.jsonc` (under `vars`) or via `wrangler secret p
 | `WARM_POOL_TARGET`           | `"0"`     | Number of idle containers to keep warm. **0 disables the pool** (no surprise bills). |
 | `WARM_POOL_REFRESH_INTERVAL` | `"10000"` | Milliseconds between pool health-check / replenishment cycles.                       |
 
-The cron trigger frequency can be adjusted in `wrangler.jsonc` under `triggers.crons`. Remove the cron entirely if you only want manual priming via `POST /pool/prime`.
+The cron trigger frequency can be adjusted in `wrangler.jsonc` under `triggers.crons`. Remove the cron entirely if you only want manual priming via `POST /v1/pool/prime`.
 
 ### Pool management routes
 
 These routes require the same `Authorization: Bearer <SANDBOX_API_KEY>` as sandbox routes.
 
-#### `GET /pool/stats`
+#### `GET /v1/pool/stats`
 
 Returns current pool statistics.
 
 ```sh
-curl http://localhost:8787/pool/stats \
+curl http://localhost:8787/v1/pool/stats \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
@@ -313,21 +364,21 @@ Response:
 }
 ```
 
-#### `POST /pool/shutdown-prewarmed`
+#### `POST /v1/pool/shutdown-prewarmed`
 
 Stops all idle (unassigned) warm containers. Does not affect containers currently assigned to sandbox sessions.
 
 ```sh
-curl -X POST http://localhost:8787/pool/shutdown-prewarmed \
+curl -X POST http://localhost:8787/v1/pool/shutdown-prewarmed \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
-#### `POST /pool/prime`
+#### `POST /v1/pool/prime`
 
 Primes the warm pool by pushing the current configuration and starting the alarm loop. Called automatically by the cron trigger; can also be called manually.
 
 ```sh
-curl -X POST http://localhost:8787/pool/prime \
+curl -X POST http://localhost:8787/v1/pool/prime \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
@@ -350,7 +401,7 @@ The worker applies multiple layers of security to constrain operations within th
 
 ### Authentication
 
-All `/sandbox/*` and `/openapi.*` routes require a Bearer token (`SANDBOX_API_KEY`). When the token is not configured, auth is skipped for local development convenience but a warning is logged. Always set the token before deploying:
+All `/v1/sandbox/*` and `/v1/openapi.*` routes require a Bearer token (`SANDBOX_API_KEY`). When the token is not configured, auth is skipped for local development convenience but a warning is logged. Always set the token before deploying:
 
 ```sh
 wrangler secret put SANDBOX_API_KEY

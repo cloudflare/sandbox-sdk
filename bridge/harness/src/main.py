@@ -192,7 +192,7 @@ async def _bridge_mount(
     mount_path: str,
 ) -> None:
     """Mount an R2 bucket into the sandbox via the bridge HTTP API."""
-    url = f"{config.worker_url.rstrip('/')}/sandbox/{sandbox_id}/mount"
+    url = f"{config.worker_url.rstrip('/')}/v1/sandbox/{sandbox_id}/mount"
     headers: dict[str, str] = {}
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
@@ -223,7 +223,7 @@ async def _bridge_unmount(
     mount_path: str,
 ) -> None:
     """Unmount a bucket from the sandbox via the bridge HTTP API."""
-    url = f"{config.worker_url.rstrip('/')}/sandbox/{sandbox_id}/unmount"
+    url = f"{config.worker_url.rstrip('/')}/v1/sandbox/{sandbox_id}/unmount"
     headers: dict[str, str] = {}
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"

@@ -73,36 +73,15 @@ describe('Sandbox ID validation', () => {
     expect(res.status).toBe(200);
   });
 
-  it('rejects an ID with uppercase letters', async () => {
-    const res = await makeRequest(sandboxUrl('ABCDEF', 'running'), {}, createMockEnv());
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('Invalid sandbox ID format');
-  });
-
-  it('rejects an ID with hyphens or underscores', async () => {
-    const res = await makeRequest(sandboxUrl('my-sandbox_01', 'running'), {}, createMockEnv());
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('Invalid sandbox ID format');
-  });
-
-  it('rejects an ID with digits 0, 1, 8, or 9', async () => {
-    const res = await makeRequest(sandboxUrl('abc0189', 'running'), {}, createMockEnv());
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('Invalid sandbox ID format');
-  });
-
-  it('rejects an ID with shell injection characters (semicolon)', async () => {
-    const res = await makeRequest(`${BASE}/v1/sandbox/foo;rm%20-rf%20%2F/running`, {}, createMockEnv());
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('Invalid sandbox ID format');
-  });
-
-  it('rejects an ID with path traversal characters', async () => {
-    const res = await makeRequest(`${BASE}/v1/sandbox/..%2Fetc/running`, {}, createMockEnv());
+  it.each([
+    ['ABCDEF', 'uppercase'],
+    ['my-sandbox_01', 'hyphens/underscores'],
+    ['abc0189', 'digits outside base32'],
+    ['foo;rm%20-rf%20%2F', 'shell injection'],
+    ['..%2Fetc', 'path traversal']
+  ])('rejects ID %s (%s)', async (id) => {
+    const url = id.includes('%') ? `${BASE}/v1/sandbox/${id}/running` : sandboxUrl(id, 'running');
+    const res = await makeRequest(url, {}, createMockEnv());
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('Invalid sandbox ID format');

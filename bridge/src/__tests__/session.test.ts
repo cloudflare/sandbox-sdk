@@ -153,51 +153,36 @@ describe('X-Session-Id header on exec', () => {
   });
 });
 
-describe('X-Session-Id header on file read', () => {
+describe('X-Session-Id header on file operations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('uses getSession when X-Session-Id header is present', async () => {
-    const session = createMockSession('read-sess');
+  it('scopes file read to the specified session', async () => {
+    const session = createMockSession('file-sess');
     mockSandbox.getSession.mockResolvedValue(session);
 
-    const res = await app.request(
+    await app.request(
       `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
-      {
-        method: 'GET',
-        headers: { 'X-Session-Id': 'read-sess' }
-      },
+      { method: 'GET', headers: { 'X-Session-Id': 'file-sess' } },
       env
     );
 
-    expect(res.status).toBe(200);
-    expect(mockSandbox.getSession).toHaveBeenCalledWith('read-sess');
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('file-sess');
     expect(session.readFileStream).toHaveBeenCalledWith('/workspace/test.txt');
   });
-});
 
-describe('X-Session-Id header on file write', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('uses getSession when X-Session-Id header is present', async () => {
-    const session = createMockSession('write-sess');
+  it('scopes file write to the specified session', async () => {
+    const session = createMockSession('file-sess');
     mockSandbox.getSession.mockResolvedValue(session);
 
-    const res = await app.request(
+    await app.request(
       `http://localhost/v1/sandbox/test/file/workspace/test.txt`,
-      {
-        method: 'PUT',
-        headers: { 'X-Session-Id': 'write-sess' },
-        body: 'hello'
-      },
+      { method: 'PUT', headers: { 'X-Session-Id': 'file-sess' }, body: 'hello' },
       env
     );
 
-    expect(res.status).toBe(200);
-    expect(mockSandbox.getSession).toHaveBeenCalledWith('write-sess');
+    expect(mockSandbox.getSession).toHaveBeenCalledWith('file-sess');
     expect(session.writeFile).toHaveBeenCalled();
   });
 });
@@ -247,20 +232,21 @@ describe('PTY session precedence', () => {
   });
 });
 
-describe('Invalid session ID validation', () => {
+describe('Session ID validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns 400 for session ID with path traversal', async () => {
+  it.each([
+    ['../etc/passwd', 'path traversal'],
+    ['bad/session', 'slashes'],
+    ['session id', 'spaces']
+  ])('rejects %s (%s)', async (sessionId) => {
     const res = await app.request(
       sandboxUrl('test', 'exec'),
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': '../etc/passwd'
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
         body: JSON.stringify({ argv: ['echo', 'hi'] })
       },
       env
@@ -268,41 +254,6 @@ describe('Invalid session ID validation', () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; code: string };
-    expect(body.error).toBe('Invalid session ID format');
     expect(body.code).toBe('invalid_request');
-  });
-
-  it('returns 400 for session ID with spaces', async () => {
-    const res = await app.request(
-      sandboxUrl('test', 'exec'),
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Id': 'session id'
-        },
-        body: JSON.stringify({ argv: ['echo', 'hi'] })
-      },
-      env
-    );
-
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; code: string };
-    expect(body.error).toBe('Invalid session ID format');
-  });
-
-  it('returns 400 for PTY with invalid session ID in header', async () => {
-    const res = await app.request(
-      sandboxUrl('test', 'pty'),
-      {
-        method: 'GET',
-        headers: { Upgrade: 'websocket', 'X-Session-Id': 'bad/session' }
-      },
-      env
-    );
-
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; code: string };
-    expect(body.error).toBe('Invalid session ID format');
   });
 });

@@ -173,36 +173,36 @@ async function runTests() {
   if (TOKEN) {
     console.log("\n📋 Auth (SANDBOX_API_KEY is set)");
 
-    await test("rejects /sandbox/:id/running without token", async () => {
-      const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/running`);
+    await test("rejects /v1/sandbox/:id/running without token", async () => {
+      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`);
       assertEqual(res.status, 401, "status");
       const body: any = await res.json();
       assertEqual(body.code, "unauthorized", "code");
     });
 
-    await test("rejects /sandbox/:id/running with wrong token", async () => {
-      const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/running`, {
+    await test("rejects /v1/sandbox/:id/running with wrong token", async () => {
+      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
         headers: { Authorization: "Bearer wrong-token" },
       });
       assertEqual(res.status, 401, "status");
     });
 
-    await test("accepts /sandbox/:id/running with valid token", async () => {
-      const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/running`, {
+    await test("accepts /v1/sandbox/:id/running with valid token", async () => {
+      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       });
       assertEqual(res.status, 200, "status");
     });
 
-    await test("rejects /openapi.json without token", async () => {
-      const res = await fetch(`${BASE}/openapi.json`);
+    await test("rejects /v1/openapi.json without token", async () => {
+      const res = await fetch(`${BASE}/v1/openapi.json`);
       assertEqual(res.status, 401, "status");
     });
   } else {
     console.log("\n📋 Auth (SANDBOX_API_KEY not set — auth disabled)");
 
     await test("allows unauthenticated requests when token is empty", async () => {
-      const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/running`);
+      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`);
       assertEqual(res.status, 200, "status");
     });
   }
@@ -211,7 +211,7 @@ async function runTests() {
   console.log("\n📋 Sandbox ID validation");
 
   await test("rejects sandbox ID with shell injection chars", async () => {
-    const res = await fetch(`${BASE}/sandbox/foo;rm/running`, {
+    const res = await fetch(`${BASE}/v1/sandbox/foo;rm/running`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 400, "status");
@@ -221,17 +221,17 @@ async function runTests() {
 
   await test("rejects sandbox ID longer than 128 chars", async () => {
     const longId = "a".repeat(129);
-    const res = await fetch(`${BASE}/sandbox/${longId}/running`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${longId}/running`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 400, "status");
   });
 
   // ── POST /exec — validation ────────────────────────────
-  console.log("\n📋 POST /sandbox/:id/exec — validation");
+  console.log("\n📋 POST /v1/sandbox/:id/exec — validation");
 
   await test("rejects invalid JSON body", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: "not json",
@@ -242,7 +242,7 @@ async function runTests() {
   });
 
   await test("rejects empty argv", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ argv: [] }),
@@ -253,7 +253,7 @@ async function runTests() {
   });
 
   await test("rejects missing argv", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({}),
@@ -262,7 +262,7 @@ async function runTests() {
   });
 
   await test("rejects cwd outside /workspace", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ argv: ["ls"], cwd: "/tmp" }),
@@ -273,7 +273,7 @@ async function runTests() {
   });
 
   await test("rejects cwd with path traversal", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ argv: ["ls"], cwd: "/workspace/../../etc" }),
@@ -282,7 +282,7 @@ async function runTests() {
   });
 
   await test("returns SSE stream for valid exec (SDK may error)", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/exec`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ argv: ["echo", "hello"] }),
@@ -301,10 +301,10 @@ async function runTests() {
   });
 
   // ── GET /file — validation ────────────────────────────
-  console.log("\n📋 GET /sandbox/:id/file/* — validation");
+  console.log("\n📋 GET /v1/sandbox/:id/file/* — validation");
 
   await test("rejects empty file path", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/file/`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/`, {
       headers: authHeadersRaw(),
     });
     assert(res.status === 400 || res.status === 404, `expected 400 or 404, got ${res.status}`);
@@ -315,7 +315,7 @@ async function runTests() {
   // the route wildcard, then resolveWorkspacePath("/tmp/secret") → null → 403.
   await test("rejects GET file path traversal via ..", async () => {
     const res = await fetch(
-      `${BASE}/sandbox/${SANDBOX_ID}/file/workspace/../tmp/secret`,
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/secret`,
       { headers: authHeadersRaw() },
     );
     assertEqual(res.status, 403, "status");
@@ -324,28 +324,28 @@ async function runTests() {
   });
 
   await test("rejects path outside /workspace", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/file/tmp/secret`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/tmp/secret`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 403, "status");
   });
 
   // ── PUT /file — validation ────────────────────────────
-  console.log("\n📋 PUT /sandbox/:id/file/* — validation");
+  console.log("\n📋 PUT /v1/sandbox/:id/file/* — validation");
 
   await test("rejects PUT file path traversal via ..", async () => {
     const res = await fetch(
-      `${BASE}/sandbox/${SANDBOX_ID}/file/workspace/../tmp/evil`,
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/evil`,
       { method: "PUT", headers: authHeadersRaw(), body: "bad content" },
     );
     assertEqual(res.status, 403, "status");
   });
 
   // ── GET /running ──────────────────────────────────────
-  console.log("\n📋 GET /sandbox/:id/running");
+  console.log("\n📋 GET /v1/sandbox/:id/running");
 
   await test("returns {running: bool} shape", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/running`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 200, "status");
@@ -354,10 +354,10 @@ async function runTests() {
   });
 
   // ── POST /persist — validation ─────────────────────────
-  console.log("\n📋 POST /sandbox/:id/persist — validation");
+  console.log("\n📋 POST /v1/sandbox/:id/persist — validation");
 
   await test("rejects excludes with ..", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/persist?excludes=../secret`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/persist?excludes=../secret`, {
       method: "POST",
       headers: authHeadersRaw(),
     });
@@ -367,10 +367,10 @@ async function runTests() {
   });
 
   // ── POST /hydrate — validation ─────────────────────────
-  console.log("\n📋 POST /sandbox/:id/hydrate — validation");
+  console.log("\n📋 POST /v1/sandbox/:id/hydrate — validation");
 
   await test("rejects empty body", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/hydrate`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/hydrate`, {
       method: "POST",
       headers: { ...authHeadersRaw(), "Content-Type": "application/octet-stream" },
       body: new Uint8Array(0),
@@ -380,11 +380,11 @@ async function runTests() {
     assertIncludes(body.error, "Empty tar payload");
   });
 
-  // ── DELETE /sandbox/:id ────────────────────────────────
-  console.log("\n📋 DELETE /sandbox/:id");
+  // ── DELETE /v1/sandbox/:id ──────────────────────────────
+  console.log("\n📋 DELETE /v1/sandbox/:id");
 
   await test("returns {ok: true} (best-effort)", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}`, {
       method: "DELETE",
       headers: authHeadersRaw(),
     });
@@ -393,11 +393,11 @@ async function runTests() {
     assertEqual(body.ok, true, "body.ok");
   });
 
-  // ── GET /pty — WebSocket upgrade ──────────────────────
-  console.log("\n📋 GET /sandbox/:id/pty — WebSocket PTY");
+  // ── GET /v1/sandbox/:id/pty — WebSocket upgrade ───────
+  console.log("\n📋 GET /v1/sandbox/:id/pty — WebSocket PTY");
 
   await test("rejects plain GET without Upgrade header", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/pty`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 400, "status");
@@ -408,7 +408,7 @@ async function runTests() {
 
   await test("rejects non-numeric cols via fetch with Upgrade header", async () => {
     // Bun's fetch passes the Upgrade header through
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/pty?cols=abc`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?cols=abc`, {
       headers: { ...authHeadersRaw(), Upgrade: "websocket", Connection: "Upgrade" },
     });
     assertEqual(res.status, 400, "status");
@@ -417,7 +417,7 @@ async function runTests() {
   });
 
   await test("rejects non-numeric rows via fetch with Upgrade header", async () => {
-    const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/pty?rows=xyz`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?rows=xyz`, {
       headers: { ...authHeadersRaw(), Upgrade: "websocket", Connection: "Upgrade" },
     });
     assertEqual(res.status, 400, "status");
@@ -430,7 +430,7 @@ async function runTests() {
     // Without a real container the SDK terminal() will throw,
     // resulting in a 502 or a WS close — but the key assertion is
     // that the route is reached (not a 404).
-    const wsUrl = `ws://127.0.0.1:${PORT}/sandbox/${SANDBOX_ID}/pty?cols=80&rows=24`;
+    const wsUrl = `ws://127.0.0.1:${PORT}/v1/sandbox/${SANDBOX_ID}/pty?cols=80&rows=24`;
 
     const result = await new Promise<{
       opened: boolean;
@@ -483,7 +483,7 @@ async function runTests() {
 
   if (TOKEN) {
     await test("WebSocket rejects without auth token", async () => {
-      const res = await fetch(`${BASE}/sandbox/${SANDBOX_ID}/pty`, {
+      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty`, {
         headers: { Upgrade: "websocket", Connection: "Upgrade" },
       });
       assertEqual(res.status, 401, "status");
@@ -493,24 +493,24 @@ async function runTests() {
   // ── OpenAPI ────────────────────────────────────────────
   console.log("\n📋 OpenAPI");
 
-  await test("GET /openapi.json returns valid schema", async () => {
-    const res = await fetch(`${BASE}/openapi.json`, {
+  await test("GET /v1/openapi.json returns valid schema", async () => {
+    const res = await fetch(`${BASE}/v1/openapi.json`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 200, "status");
     const body: any = await res.json();
     assertEqual(body.openapi, "3.1.0", "openapi version");
-    assert(body.paths["/sandbox/{id}/exec"], "missing /exec path");
-    assert(body.paths["/sandbox/{id}/pty"], "missing /pty path");
-    assert(body.paths["/sandbox/{id}/file/{path}"], "missing /file path");
-    assert(body.paths["/sandbox/{id}/running"], "missing /running path");
-    assert(body.paths["/sandbox/{id}/persist"], "missing /persist path");
-    assert(body.paths["/sandbox/{id}/hydrate"], "missing /hydrate path");
+    assert(body.paths["/v1/sandbox/{id}/exec"], "missing /exec path");
+    assert(body.paths["/v1/sandbox/{id}/pty"], "missing /pty path");
+    assert(body.paths["/v1/sandbox/{id}/file/{path}"], "missing /file path");
+    assert(body.paths["/v1/sandbox/{id}/running"], "missing /running path");
+    assert(body.paths["/v1/sandbox/{id}/persist"], "missing /persist path");
+    assert(body.paths["/v1/sandbox/{id}/hydrate"], "missing /hydrate path");
     assert(body.paths["/health"], "missing /health path");
   });
 
-  await test("GET /openapi.html returns HTML", async () => {
-    const res = await fetch(`${BASE}/openapi.html`, {
+  await test("GET /v1/openapi.html returns HTML", async () => {
+    const res = await fetch(`${BASE}/v1/openapi.html`, {
       headers: authHeadersRaw(),
     });
     assertEqual(res.status, 200, "status");
@@ -521,9 +521,9 @@ async function runTests() {
   });
 
   await test("OpenAPI /pty entry has correct parameters", async () => {
-    const res = await fetch(`${BASE}/openapi.json`, { headers: authHeadersRaw() });
+    const res = await fetch(`${BASE}/v1/openapi.json`, { headers: authHeadersRaw() });
     const schema: any = await res.json();
-    const pty = schema.paths["/sandbox/{id}/pty"]?.get;
+    const pty = schema.paths["/v1/sandbox/{id}/pty"]?.get;
     assert(pty, "missing /pty GET entry");
     assertEqual(pty.operationId, "ptyTerminal", "operationId");
 
