@@ -383,14 +383,14 @@ async function runTests() {
   // ── DELETE /v1/sandbox/:id ──────────────────────────────
   console.log("\n📋 DELETE /v1/sandbox/:id");
 
-  await test("returns {ok: true} (best-effort)", async () => {
+  await test("returns 204 No Content (best-effort)", async () => {
     const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}`, {
       method: "DELETE",
       headers: authHeadersRaw(),
     });
-    assertEqual(res.status, 200, "status");
-    const body: any = await res.json();
-    assertEqual(body.ok, true, "body.ok");
+    assertEqual(res.status, 204, "status");
+    const body = await res.text();
+    assertEqual(body, "", "body should be empty");
   });
 
   // ── GET /v1/sandbox/:id/pty — WebSocket upgrade ───────

@@ -45,7 +45,8 @@ confirm() {
 
 if "$deploy"; then
   # --- Production (Wrangler secrets) ---
-  if npx wrangler secret list --format=json 2>/dev/null | node -e "process.exit(JSON.parse(require('fs').readFileSync(0,'utf8').trim()||'[]').some(function(x){return x.name==='${SECRET_NAME}'})?0:1)"; then
+  secret_json=$(npx wrangler secret list --format=json 2>/dev/null || echo "[]")
+  if echo "$secret_json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8').trim()||'[]').some(s => s.name==='${SECRET_NAME}')" 2>/dev/null | grep -q "true"; then
     echo "⚠  ${SECRET_NAME} already exists in Wrangler secrets."
     confirm "Overwrite the production secret?"
   fi

@@ -42,7 +42,7 @@ confirm() {
 # ---------------------------------------------------------------------------
 
 step "Installing dependencies"
-npm ci --no-fund --no-audit --silent
+npm install --no-fund --no-audit --silent
 ok "Dependencies installed"
 
 # ---------------------------------------------------------------------------
@@ -55,9 +55,10 @@ if ! npx wrangler whoami --json >/dev/null 2>&1; then
   confirm "Run 'wrangler login' now?"
   npx wrangler login
 fi
-whoami_ident=$(npx wrangler whoami --json 2>/dev/null \
-  | node -e 'var d=JSON.parse(require("fs").readFileSync(0,"utf8")); var e=d.user&&d.user.email||"unknown"; var a=d.accounts&&d.accounts[0]&&d.accounts[0].name||"unknown"; process.stdout.write(e+" ("+a+")")' 2>/dev/null)
-ok "Authenticated as ${whoami_ident:-unknown}"
+whoami_json=$(npx wrangler whoami --json 2>/dev/null || true)
+whoami_email=$(echo "$whoami_json" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).email || "unknown"' 2>/dev/null || echo "unknown")
+whoami_account=$(echo "$whoami_json" | node -p 'var a=JSON.parse(require("fs").readFileSync(0,"utf8")).accounts; a && a[0] && a[0].name || "unknown"' 2>/dev/null || echo "unknown")
+ok "Authenticated as ${whoami_email} (${whoami_account})"
 
 # ---------------------------------------------------------------------------
 # 3. SANDBOX_API_KEY secret
@@ -66,7 +67,8 @@ ok "Authenticated as ${whoami_ident:-unknown}"
 step "Checking ${SECRET_NAME} secret"
 
 secret_exists=false
-if npx wrangler secret list --format=json 2>/dev/null | node -e "process.exit(JSON.parse(require('fs').readFileSync(0,'utf8').trim()||'[]').some(function(x){return x.name==='${SECRET_NAME}'})?0:1)"; then
+secret_json=$(npx wrangler secret list --format=json 2>/dev/null || echo "[]")
+if echo "$secret_json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8').trim()||'[]').some(s => s.name==='${SECRET_NAME}')" 2>/dev/null | grep -q "true"; then
   secret_exists=true
 fi
 
@@ -88,14 +90,25 @@ fi
 # ---------------------------------------------------------------------------
 
 step "Deploying ${WORKER_NAME}"
-deploy_output=$(npx wrangler deploy 2>&1)
+deploy_output=$(npx wrangler deploy 2>&1) || {
+  echo "$deploy_output"
+  fail "wrangler deploy failed (see output above)."
+}
 echo "$deploy_output"
 
-# Extract the worker URL from deploy output (e.g. https://cloudflare-sandbox-bridge.user.workers.dev)
-worker_url=$(echo "$deploy_output" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -1)
+# Extract the worker URL from deploy output.
+# Wrangler prints URLs on their own line, indented with spaces. Match any
+# https:// URL so custom domains and routes work, not just .workers.dev.
+worker_url=$(echo "$deploy_output" | grep -oE 'https://[a-zA-Z0-9._-]+[a-zA-Z0-9](/[^ ]*)?' | head -1)
+
+# Strip any trailing route wildcard (e.g. "https://sandbox.example.com/*")
+worker_url="${worker_url%/\*}"
 
 if [ -z "$worker_url" ]; then
-  fail "Could not determine worker URL from deploy output."
+  warn "Could not detect worker URL from deploy output."
+  printf "Enter the worker URL (e.g. https://cloudflare-sandbox-bridge.you.workers.dev): "
+  read -r worker_url
+  [ -z "$worker_url" ] && fail "No worker URL provided."
 fi
 
 ok "Deployed to ${worker_url}"
@@ -113,7 +126,7 @@ for attempt in 1 2 3; do
   [ "$attempt" -lt 3 ] && sleep 2
 done
 
-if echo "$health_resp" | grep -q '"ok"'; then
+if echo "$health_resp" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).ok === true' 2>/dev/null | grep -q "true"; then
   ok "Health check passed"
 else
   fail "Health check failed. Response: ${health_resp:-<empty>}"
@@ -147,7 +160,7 @@ echo ""
 echo "Test with:"
 echo ""
 cat <<EOF
-  curl -X POST ${worker_url}/sandbox/test/exec \\
+  curl -X POST ${worker_url}/v1/sandbox/test/exec \\
     -H "Authorization: Bearer ${example_token}" \\
     -H "Content-Type: application/json" \\
     -d '{"argv": ["sh", "-lc", "echo hello world"], "timeout_ms": 10000}'
