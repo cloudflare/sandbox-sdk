@@ -309,8 +309,8 @@ app.use('/v1/sandbox/:id/*', async (c, next) => {
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
-  const poolId = c.env.WARM_POOL.idFromName('global-pool');
-  const poolStub = c.env.WARM_POOL.get(poolId);
+  const poolId = c.env.WarmPool.idFromName('global-pool');
+  const poolStub = c.env.WarmPool.get(poolId);
 
   try {
     await poolStub.configure({ warmTarget, refreshInterval });
@@ -335,8 +335,8 @@ app.use('/v1/sandbox/:id', async (c, next) => {
 
   const sandboxId = c.req.param('id');
 
-  const poolId = c.env.WARM_POOL.idFromName('global-pool');
-  const poolStub = c.env.WARM_POOL.get(poolId);
+  const poolId = c.env.WarmPool.idFromName('global-pool');
+  const poolStub = c.env.WarmPool.get(poolId);
 
   // Lookup only — don't allocate a new container just to destroy it
   try {
@@ -1007,8 +1007,8 @@ app.delete('/v1/sandbox/:id', async (c) => {
 
   // Release the WarmPool assignment so it doesn't track a dead container
   try {
-    const poolId = c.env.WARM_POOL.idFromName('global-pool');
-    const poolStub = c.env.WARM_POOL.get(poolId);
+    const poolId = c.env.WarmPool.idFromName('global-pool');
+    const poolStub = c.env.WarmPool.get(poolId);
     await poolStub.reportStopped(containerUUID);
   } catch {
     // Best-effort
@@ -1047,8 +1047,8 @@ app.get('/v1/pool/stats', async (c) => {
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
-  const poolId = c.env.WARM_POOL.idFromName('global-pool');
-  const poolStub = c.env.WARM_POOL.get(poolId);
+  const poolId = c.env.WarmPool.idFromName('global-pool');
+  const poolStub = c.env.WarmPool.get(poolId);
 
   try {
     await poolStub.configure({ warmTarget, refreshInterval });
@@ -1064,8 +1064,8 @@ app.post('/v1/pool/shutdown-prewarmed', async (c) => {
   const warmTarget = Number.parseInt(c.env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(c.env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
-  const poolId = c.env.WARM_POOL.idFromName('global-pool');
-  const poolStub = c.env.WARM_POOL.get(poolId);
+  const poolId = c.env.WarmPool.idFromName('global-pool');
+  const poolStub = c.env.WarmPool.get(poolId);
 
   try {
     await poolStub.configure({ warmTarget, refreshInterval });
@@ -1134,8 +1134,8 @@ async function primePool(env: Env): Promise<void> {
   const warmTarget = Number.parseInt(env.WARM_POOL_TARGET || '0', 10) || 0;
   const refreshInterval = Number.parseInt(env.WARM_POOL_REFRESH_INTERVAL || '10000', 10) || 10_000;
 
-  const poolId = env.WARM_POOL.idFromName('global-pool');
-  const poolStub = env.WARM_POOL.get(poolId);
+  const poolId = env.WarmPool.idFromName('global-pool');
+  const poolStub = env.WarmPool.get(poolId);
   await poolStub.configure({ warmTarget, refreshInterval });
 }
 

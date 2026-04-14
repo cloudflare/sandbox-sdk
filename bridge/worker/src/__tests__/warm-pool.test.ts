@@ -73,8 +73,8 @@ async function withPool(
   const mock = createMockSandboxNamespace(behavior);
 
   // Use a unique ID per test to avoid state leakage between tests
-  const id = env.WARM_POOL.newUniqueId();
-  const stub = env.WARM_POOL.get(id);
+  const id = env.WarmPool.newUniqueId();
+  const stub = env.WarmPool.get(id);
 
   await runInDurableObject(stub, async (instance: WarmPool, state) => {
     // Inject mock Sandbox namespace

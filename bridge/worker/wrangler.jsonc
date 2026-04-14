@@ -29,7 +29,7 @@
       },
       {
         "class_name": "WarmPool",
-        "name": "WARM_POOL"
+        "name": "WarmPool"
       }
     ]
   },

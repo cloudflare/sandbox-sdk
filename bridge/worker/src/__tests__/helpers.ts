@@ -131,7 +131,7 @@ export function createMockEnv(overrides?: Partial<{ SANDBOX_API_KEY: string }>) 
   return {
     SANDBOX_API_KEY: overrides?.SANDBOX_API_KEY ?? '',
     Sandbox: {},
-    WARM_POOL: {
+    WarmPool: {
       idFromName: vi.fn(() => ({ name: 'global-pool' })),
       get: vi.fn(() => poolStub)
     },
