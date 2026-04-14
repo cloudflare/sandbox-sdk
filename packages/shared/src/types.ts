@@ -1077,10 +1077,8 @@ export interface ExecutionSession {
  * `runtimeId` changes whenever the underlying container boots again.
  */
 export interface RuntimeIdentity {
-  /** Unique identifier for the current container boot. */
+  /** Unique identifier for the current container placement. */
   runtimeId: string;
-  /** When the current container boot started. */
-  startedAt: string;
 }
 
 // Backup types

@@ -55,6 +55,7 @@ import {
   BackupNotFoundError,
   BackupRestoreError,
   CustomDomainRequiredError,
+  createErrorFromResponse,
   ErrorCode,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
@@ -225,6 +226,11 @@ function mergeSandboxConfiguration(
     })
   };
 }
+
+const PLACEMENT_ID_COMMAND = 'printf %s "$CLOUDFLARE_PLACEMENT_ID"';
+
+const MISSING_PLACEMENT_ID_ERROR =
+  'Runtime identity is unavailable because CLOUDFLARE_PLACEMENT_ID is not set in the container environment. Recreate the sandbox with a newer container runtime.';
 
 function applySandboxConfiguration(
   stub: ConfigurableSandboxStub,
@@ -418,6 +424,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private normalizeId: boolean = false;
   private baseUrl: string | null = null;
   private defaultSession: string | null = null;
+  private runtimeIdentity: RuntimeIdentity | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
@@ -622,6 +629,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
+      this.runtimeIdentity =
+        (await this.ctx.storage.get<RuntimeIdentity>('runtimeIdentity')) ||
+        null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) || false;
 
@@ -1428,12 +1438,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     this.defaultSession = null;
+    this.runtimeIdentity = null;
     this.activeMounts.clear();
 
     // Persist cleanup to storage so state is clean on next container start
     await Promise.all([
       this.ctx.storage.delete('portTokens'),
-      this.ctx.storage.delete('defaultSession')
+      this.ctx.storage.delete('defaultSession'),
+      this.ctx.storage.delete('runtimeIdentity')
     ]);
   }
 
@@ -1478,6 +1490,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             waitInterval: this.containerTimeouts.waitIntervalMS,
             abort: request.signal
           }
+        });
+        await this.captureRuntimeIdentity().catch((error) => {
+          this.logger.warn('runtime.identity.capture', {
+            outcome: 'error',
+            error: error instanceof Error ? error.message : String(error)
+          });
         });
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
@@ -1603,6 +1621,89 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Delegate to parent for the actual fetch (handles TCP port access internally)
     return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+  }
+
+  private async ensureRuntimeIdentity(): Promise<RuntimeIdentity> {
+    if (this.runtimeIdentity) {
+      return this.runtimeIdentity;
+    }
+
+    const response = await this.containerFetch(
+      new Request('http://localhost/api/ping', { method: 'GET' }),
+      this.defaultPort
+    );
+
+    if (!response.ok) {
+      await this.throwContainerResponseError(
+        response,
+        'start the container for runtime identity lookup'
+      );
+    }
+
+    if (this.runtimeIdentity) {
+      return this.runtimeIdentity;
+    }
+
+    return await this.captureRuntimeIdentity();
+  }
+
+  private async captureRuntimeIdentity(): Promise<RuntimeIdentity> {
+    const response = await super.containerFetch(
+      new Request('http://localhost/api/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          command: PLACEMENT_ID_COMMAND,
+          origin: 'internal'
+        })
+      }),
+      this.defaultPort
+    );
+
+    if (!response.ok) {
+      await this.throwContainerResponseError(
+        response,
+        'capture runtime identity from the container'
+      );
+    }
+
+    const result = (await response.json()) as ExecuteResponse;
+
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to capture runtime identity: ${result.stderr || 'Placement lookup command failed.'}`
+      );
+    }
+
+    const runtimeId = result.stdout.trim();
+    if (!runtimeId) {
+      throw new Error(MISSING_PLACEMENT_ID_ERROR);
+    }
+
+    const runtimeIdentity = { runtimeId };
+    this.runtimeIdentity = runtimeIdentity;
+    await this.ctx.storage.put('runtimeIdentity', runtimeIdentity);
+    return runtimeIdentity;
+  }
+
+  private async throwContainerResponseError(
+    response: Response,
+    operation: string
+  ): Promise<never> {
+    try {
+      const errorResponse = (await response.json()) as ErrorResponse;
+      throw createErrorFromResponse(errorResponse);
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'SyntaxError') {
+        throw error;
+      }
+
+      throw new Error(
+        `Failed to ${operation}: HTTP ${response.status} ${response.statusText}`
+      );
+    }
   }
 
   /**
@@ -2988,7 +3089,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getRuntimeIdentity(): Promise<RuntimeIdentity> {
-    return await this.client.utils.getRuntimeIdentity();
+    return await this.ensureRuntimeIdentity();
   }
 
   /**
