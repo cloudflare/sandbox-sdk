@@ -35,6 +35,33 @@ export interface FileResult {
   error?: string;
 }
 
+export interface BucketMountResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
+export interface BucketObjectResult {
+  success: boolean;
+  duration: number;
+  content?: string;
+  size?: number;
+  error?: string;
+}
+
+export interface BackupResult {
+  success: boolean;
+  duration: number;
+  id?: string;
+  error?: string;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
 export class PerfSandboxManager {
   private workerUrl: string;
   private sandboxType: string;
@@ -241,5 +268,220 @@ export class PerfSandboxManager {
    */
   getWorkerUrl(): string {
     return this.workerUrl;
+  }
+
+  /**
+   * Mount an R2 bucket in a sandbox
+   */
+  async mountBucket(
+    sandbox: SandboxInstance,
+    bucket: string,
+    mountPath: string,
+    options?: { endpoint?: string }
+  ): Promise<BucketMountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/mount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ bucket, mountPath, options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const text = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${text}`
+        };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Unmount a bucket from a sandbox
+   */
+  async unmountBucket(
+    sandbox: SandboxInstance,
+    mountPath: string
+  ): Promise<BucketMountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/unmount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ mountPath })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Put an object into R2 via the test worker binding
+   */
+  async putBucketObject(
+    sandbox: SandboxInstance,
+    key: string,
+    content: string
+  ): Promise<BucketObjectResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/put`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key, content, contentType: 'text/plain' })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Get an object from R2 via the test worker binding
+   */
+  async getBucketObject(
+    sandbox: SandboxInstance,
+    key: string
+  ): Promise<BucketObjectResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(
+        `${this.workerUrl}/api/bucket/get?key=${encodeURIComponent(key)}`,
+        { method: 'GET', headers: sandbox.headers }
+      );
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      const result = (await response.json()) as {
+        content?: string;
+        size?: number;
+      };
+      return {
+        success: true,
+        duration,
+        content: result.content,
+        size: result.size
+      };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Delete an object from R2 via the test worker binding
+   */
+  async deleteBucketObject(
+    sandbox: SandboxInstance,
+    key: string
+  ): Promise<void> {
+    try {
+      await fetch(`${this.workerUrl}/api/bucket/delete`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key })
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
+  /**
+   * Create a backup of a directory
+   */
+  async createBackup(
+    sandbox: SandboxInstance,
+    dir: string,
+    options?: { name?: string; ttl?: number }
+  ): Promise<BackupResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ dir, ...options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const text = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${text}`
+        };
+      }
+      const result = (await response.json()) as { id: string };
+      return { success: true, duration, id: result.id };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Restore a backup to a directory
+   */
+  async restoreBackup(
+    sandbox: SandboxInstance,
+    id: string,
+    dir: string
+  ): Promise<RestoreResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ id, dir })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        const text = await response.text();
+        return {
+          success: false,
+          duration,
+          error: `HTTP ${response.status}: ${text}`
+        };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
   }
 }

@@ -25,14 +25,14 @@ export interface RunMetadata {
 export interface Measurement {
   name: string;
   value: number;
-  unit: 'ms' | 'ops/s' | 'count' | 'percent';
+  unit: 'ms' | 'ops/s' | 'MB/s' | 'count' | 'percent';
   timestamp: string;
   metadata?: MeasurementMetadata;
 }
 
 export interface MeasurementStats {
   name: string;
-  unit: 'ms' | 'ops/s' | 'count' | 'percent';
+  unit: 'ms' | 'ops/s' | 'MB/s' | 'count' | 'percent';
   count: number;
   min: number;
   max: number;
