@@ -93,6 +93,13 @@
         "tests/perf/**/*.ts",
         "vitest.perf.config.ts",
         "packages/sandbox/Dockerfile"
+      ],
+      "env": [
+        "TEST_WORKER_URL",
+        "GITHUB_SHA",
+        "GITHUB_REF_NAME",
+        "GITHUB_EVENT_NAME",
+        "CI"
       ]
     },
     "test:e2e:browser": {
