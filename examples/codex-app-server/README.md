@@ -133,7 +133,7 @@ The Sandbox subclass combines three layers of network control to minimize data e
 
 The container never sees the real API key. It uses `OPENAI_BASE_URL=http://api.openai.com/v1` so requests flow through the egress proxy, and receives a dummy key (`proxy-injected`). The Worker swaps in the real key and upgrades to HTTPS before forwarding to OpenAI.
 
-> **Note:** DNS resolution is unrestricted, but without network access to blocked hosts, DNS alone does not enable data exfiltration. HTTPS interception requires a preview `@cloudflare/containers` package — this dependency will be removed once the feature ships in the stable release.
+> **Note:** DNS resolution is unrestricted, but without network access to blocked hosts, DNS alone does not enable data exfiltration.
 
 ### Browser client
 
@@ -176,7 +176,7 @@ When deployed with `interceptHttps = true`, HTTPS requests to blocked hosts also
 
 ```
 codex-app-server/
-├── Dockerfile               cloudflare/sandbox:0.8.7 + @openai/codex CLI
+├── Dockerfile               cloudflare/sandbox:0.8.10 + @openai/codex CLI
 ├── wrangler.jsonc            Worker + Sandbox Durable Object + container config
 ├── .dev.vars.example         Environment variable template
 ├── src/
