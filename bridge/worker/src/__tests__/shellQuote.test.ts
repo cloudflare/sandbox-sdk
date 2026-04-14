@@ -1,14 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// Mock @cloudflare/sandbox to avoid importing the real module which requires
-// native Cloudflare container bindings that aren't available in plain Node.
-vi.mock('@cloudflare/sandbox', () => ({
-  getSandbox: vi.fn(),
-  proxyToSandbox: vi.fn(async () => null),
-  Sandbox: class {}
-}));
-
-const { shellQuote } = await import('../index');
+import { describe, expect, it } from 'vitest';
+import { shellQuote } from '../../../../packages/sandbox/src/bridge/helpers';
 
 describe('shellQuote', () => {
   it('returns safe alphanumeric tokens unchanged', () => {

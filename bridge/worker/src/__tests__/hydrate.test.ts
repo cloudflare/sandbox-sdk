@@ -2,13 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockEnv, createMockSandbox, sandboxUrl } from './helpers';
 
 const mockSandbox = createMockSandbox();
-vi.mock('@cloudflare/sandbox', () => ({
+vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
   getSandbox: vi.fn(() => mockSandbox),
-  proxyToSandbox: vi.fn(async () => null),
   Sandbox: class {}
 }));
 
-const { app } = await import('../index');
+const { app } = await import('./bridge-app');
 
 const env = createMockEnv();
 

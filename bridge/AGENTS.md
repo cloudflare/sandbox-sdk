@@ -1,34 +1,25 @@
 # cloudflare-sandbox-bridge
 
-This is a Cloudflare Worker (TypeScript + Hono) that exposes the sandbox HTTP API. See [README.md](./README.md) for setup, configuration, and API details.
+This directory contains a deployable Cloudflare Worker that uses `@cloudflare/sandbox/bridge` to expose the sandbox HTTP API. It is a thin wrapper — all route handling, authentication, pool management, and OpenAPI serving are provided by the SDK.
+
+See [`worker/README.md`](./worker/README.md) for the full API reference, deployment guide, and configuration options.
 
 ## Key files
 
-- `src/index.ts` — Hono routes under `/v1/` prefix: sandbox CRUD, exec, file I/O, persist/hydrate, mount/unmount, session CRUD (`POST /v1/sandbox/:id/session`, `DELETE /v1/sandbox/:id/session/:sid`), pool management, WebSocket PTY proxy at `/v1/sandbox/:id/pty`. Supports `Session-Id` header for session-scoped operations.
-- `src/warm-pool.ts` — `WarmPool` Durable Object that maintains a pool of pre-started sandbox containers (adapted from [cf-container-warm-pool](https://github.com/mikenomitch/cf-container-warm-pool))
-- `src/openapi.ts` — OpenAPI 3.1 schema definition
-- `src/openapi-html.ts` — Self-contained HTML renderer for the OpenAPI spec
-- `src/__tests__/pty.test.ts` — PTY WebSocket proxy unit tests
-- `src/__tests__/warm-pool.test.ts` — WarmPool Durable Object unit tests
-- `Dockerfile` — Container image extending `cloudflare/sandbox` with agent tooling
-- `script/token` — Generate random `SANDBOX_API_KEY` for `.dev.vars` or Wrangler secrets (`--deploy`)
-- `script/deploy` — Full production deploy (deps, auth, secrets, deploy, health-check, summary)
-- `wrangler.jsonc` — Worker and Durable Object configuration (Sandbox + WarmPool DOs, `WARM_POOL_TARGET` / `WARM_POOL_REFRESH_INTERVAL` vars)
+- `worker/src/index.ts` — Worker entrypoint: imports `bridge()` from `@cloudflare/sandbox/bridge`, re-exports `Sandbox` and `WarmPool` DOs, and defines optional application-specific `fetch`/`scheduled` handlers.
+- `worker/Dockerfile` — Container image extending `cloudflare/sandbox` with agent tooling (git, ripgrep, curl, jq, etc.).
+- `worker/wrangler.jsonc` — Worker and Durable Object configuration (Sandbox + WarmPool DOs, warm pool vars).
+- `worker/script/token` — Generate a random `SANDBOX_API_KEY`.
+- `worker/script/deploy` — Full production deploy script.
 
 ## Development
 
 ```sh
+cd worker
 npm ci
 npm run dev
 ```
 
-- Typecheck with `npm run typecheck` (`tsc --noEmit`)
-- Deploy with `npm run deploy`
+## Bridge internals
 
-## Completing a feature
-
-When finishing a feature or PR, ensure documentation is up to date:
-
-- **README.md** — Update the route table, API reference section, and any relevant examples.
-- **AGENTS.md** — Add new key files and update descriptions if behaviour changed.
-- **`src/openapi.ts`** — Add or update endpoint schemas so `/v1/openapi.html` and `/v1/openapi.json` stay accurate.
+Route logic, warm pool implementation, and OpenAPI schema live in `packages/sandbox/src/bridge/`. See the [bridge AGENTS.md](../packages/sandbox/src/bridge/AGENTS.md) there for contributor guidance.

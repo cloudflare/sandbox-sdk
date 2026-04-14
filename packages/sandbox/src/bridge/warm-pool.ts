@@ -71,7 +71,17 @@ const DEFAULT_CONFIG: Required<WarmPoolConfig> = {
 // WarmPool Durable Object
 // ---------------------------------------------------------------------------
 
-export class WarmPool extends DurableObject<Env> {
+/**
+ * The WarmPool expects an environment with a `Sandbox` Durable Object binding.
+ * This interface describes the minimum shape; the actual binding name is
+ * configurable via the bridge, but defaults to "Sandbox".
+ */
+interface WarmPoolEnv {
+  Sandbox: DurableObjectNamespace;
+  [key: string]: unknown;
+}
+
+export class WarmPool extends DurableObject<WarmPoolEnv> {
   private config: Required<WarmPoolConfig> = { ...DEFAULT_CONFIG };
 
   /** Container UUIDs that are warm and available for assignment */
@@ -198,7 +208,12 @@ export class WarmPool extends DurableObject<Env> {
         await (stub as unknown as ContainerRpc).stop();
         this.warmContainers.delete(containerUUID);
       } catch (error) {
-        console.error(`Failed to stop container ${containerUUID}:`, error);
+        console.error({
+          message: 'Failed to stop container',
+          component: 'warm-pool',
+          containerUUID,
+          error
+        });
       }
     }
 
@@ -219,7 +234,11 @@ export class WarmPool extends DurableObject<Env> {
       await this.adjustPool();
       await this.keepWarmContainersAlive();
     } catch (error) {
-      console.error('Alarm handler error:', error);
+      console.error({
+        message: 'Alarm handler error',
+        component: 'warm-pool',
+        error
+      });
     }
 
     await this.ctx.storage.setAlarm(Date.now() + this.config.refreshInterval);
@@ -232,10 +251,12 @@ export class WarmPool extends DurableObject<Env> {
   private async init(): Promise<void> {
     if (this.initialized) return;
 
-    const storedWarm = await this.ctx.storage.get<Set<string>>('warmContainers');
+    const storedWarm =
+      await this.ctx.storage.get<Set<string>>('warmContainers');
     if (storedWarm) this.warmContainers = new Set(storedWarm);
 
-    const storedAssignments = await this.ctx.storage.get<Map<string, string>>('assignments');
+    const storedAssignments =
+      await this.ctx.storage.get<Map<string, string>>('assignments');
     if (storedAssignments) this.assignments = new Map(storedAssignments);
 
     const storedConfig = await this.ctx.storage.get<WarmPoolConfig>('config');
@@ -276,13 +297,22 @@ export class WarmPool extends DurableObject<Env> {
     try {
       const stub = this.getSandboxStub(containerUUID);
       await (stub as unknown as ContainerRpc).startAndWaitForPorts();
-      console.log(`Container ${containerUUID} started successfully`);
+      console.info({
+        message: 'Container started',
+        component: 'warm-pool',
+        containerUUID
+      });
       return containerUUID;
     } catch (error) {
       if (this.isMaxInstancesError(error)) {
         await this.recordCapacityLimit();
       } else {
-        console.error(`Failed to start container ${containerUUID}:`, error);
+        console.error({
+          message: 'Failed to start container',
+          component: 'warm-pool',
+          containerUUID,
+          error
+        });
       }
       return null;
     } finally {
@@ -298,7 +328,12 @@ export class WarmPool extends DurableObject<Env> {
       const state = await (stub as unknown as ContainerWithState).getState();
       return state.status === 'running' || state.status === 'healthy';
     } catch (error) {
-      console.warn(`Failed to check status for ${containerUUID}, assuming stopped:`, error);
+      console.warn({
+        message: 'Failed to check container status, assuming stopped',
+        component: 'warm-pool',
+        containerUUID,
+        error
+      });
       return false;
     }
   }
@@ -310,7 +345,11 @@ export class WarmPool extends DurableObject<Env> {
     for (const uuid of allUUIDs) {
       const running = await this.isContainerRunning(uuid);
       if (!running) {
-        console.log(`Health check: container ${uuid} is not running, removing from pool`);
+        console.info({
+          message: 'Container not running, removing from pool',
+          component: 'warm-pool',
+          containerUUID: uuid
+        });
         if (this.removeContainer(uuid)) anyRemoved = true;
       }
     }
@@ -327,7 +366,12 @@ export class WarmPool extends DurableObject<Env> {
         const stub = this.getSandboxStub(containerUUID);
         (stub as unknown as ContainerRpc).renewActivityTimeout();
       } catch (error) {
-        console.error(`Failed to renew activity timeout for ${containerUUID}:`, error);
+        console.error({
+          message: 'Failed to renew activity timeout',
+          component: 'warm-pool',
+          containerUUID,
+          error
+        });
       }
     }
   }
@@ -343,12 +387,17 @@ export class WarmPool extends DurableObject<Env> {
 
       // Probe with one start to detect if max_instances was increased
       if (capacity === 0 && this.knownMaxInstances !== null) {
-        console.log(
-          `Pool at inferred limit (${this.knownMaxInstances}), probing with 1 container to detect limit changes`
-        );
+        console.info({
+          message: 'Pool at inferred limit, probing for capacity changes',
+          component: 'warm-pool',
+          knownMaxInstances: this.knownMaxInstances
+        });
         const probeUUID = await this.startContainer();
         if (probeUUID) {
-          console.log('Probe succeeded — max_instances limit appears to have increased, clearing cached limit');
+          console.info({
+            message: 'Probe succeeded, clearing cached limit',
+            component: 'warm-pool'
+          });
           this.knownMaxInstances = null;
           this.warmContainers.add(probeUUID);
           diff--;
@@ -361,19 +410,31 @@ export class WarmPool extends DurableObject<Env> {
 
       const toStart = Math.min(diff, this.remainingCapacity());
       if (toStart <= 0) {
-        console.log(
-          `Cannot scale up pool: need ${diff} warm containers but only ${this.remainingCapacity()} slots available ` +
-            `(${this.warmContainers.size} warm + ${this.assignments.size} assigned, limit: ${this.knownMaxInstances ?? 'unknown'})`
-        );
+        console.log({
+          message: 'Cannot scale up pool',
+          component: 'warm-pool',
+          needed: diff,
+          available: this.remainingCapacity(),
+          warm: this.warmContainers.size,
+          assigned: this.assignments.size,
+          knownMaxInstances: this.knownMaxInstances ?? 'unknown'
+        });
         return;
       }
 
-      console.log(
-        `Scaling up pool: starting ${toStart} of ${diff} needed warm containers (capacity: ${this.remainingCapacity()})`
-      );
+      console.info({
+        message: 'Scaling up pool',
+        component: 'warm-pool',
+        starting: toStart,
+        needed: diff,
+        capacity: this.remainingCapacity()
+      });
       for (let i = 0; i < toStart; i++) {
         if (this.capacityExhausted) {
-          console.log('Capacity exhausted mid-loop, stopping further starts');
+          console.log({
+            message: 'Capacity exhausted mid-loop, stopping further starts',
+            component: 'warm-pool'
+          });
           break;
         }
         const uuid = await this.startContainer();
@@ -382,7 +443,11 @@ export class WarmPool extends DurableObject<Env> {
       await this.persist();
     } else if (diff < 0) {
       const excess = -diff;
-      console.log(`Scaling down pool: stopping ${excess} excess warm containers`);
+      console.info({
+        message: 'Scaling down pool',
+        component: 'warm-pool',
+        stopping: excess
+      });
 
       const toStop = [...this.warmContainers].slice(0, excess);
       const stopped: string[] = [];
@@ -393,7 +458,12 @@ export class WarmPool extends DurableObject<Env> {
           await (stub as unknown as ContainerRpc).stop();
           stopped.push(uuid);
         } catch (error) {
-          console.error(`Failed to stop container ${uuid}:`, error);
+          console.error({
+            message: 'Failed to stop container',
+            component: 'warm-pool',
+            containerUUID: uuid,
+            error
+          });
         }
       }
 
@@ -426,22 +496,31 @@ export class WarmPool extends DurableObject<Env> {
 
   private remainingCapacity(): number {
     if (this.knownMaxInstances === null) return Infinity;
-    return Math.max(0, this.knownMaxInstances - (this.warmContainers.size + this.assignments.size));
+    return Math.max(
+      0,
+      this.knownMaxInstances -
+        (this.warmContainers.size + this.assignments.size)
+    );
   }
 
   private isMaxInstancesError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
-    return message.includes('Maximum number of running container instances exceeded');
+    return message.includes(
+      'Maximum number of running container instances exceeded'
+    );
   }
 
   private async recordCapacityLimit(): Promise<void> {
     const currentTotal = this.warmContainers.size + this.assignments.size;
     this.knownMaxInstances = currentTotal;
     this.capacityExhausted = true;
-    console.warn(
-      `Hit max_instances limit. Inferred ceiling: ${currentTotal} ` +
-        `(${this.warmContainers.size} warm + ${this.assignments.size} assigned)`
-    );
+    console.warn({
+      message: 'Hit max_instances limit',
+      component: 'warm-pool',
+      inferredCeiling: currentTotal,
+      warm: this.warmContainers.size,
+      assigned: this.assignments.size
+    });
     await this.ctx.storage.put('knownMaxInstances', this.knownMaxInstances);
   }
 

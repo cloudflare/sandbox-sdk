@@ -3,14 +3,13 @@ import { BASE, createMockEnv, createMockSandbox, sandboxUrl } from './helpers';
 
 // Mock @cloudflare/sandbox before importing app
 const mockSandbox = createMockSandbox();
-vi.mock('@cloudflare/sandbox', () => ({
+vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
   getSandbox: vi.fn(() => mockSandbox),
-  proxyToSandbox: vi.fn(async () => null),
   Sandbox: class {}
 }));
 
 // Must import after mock is set up
-const { app } = await import('../index');
+const { app } = await import('./bridge-app');
 
 // Helper to make requests with specific env bindings
 function makeRequest(url: string, opts?: RequestInit, env?: Record<string, unknown>) {

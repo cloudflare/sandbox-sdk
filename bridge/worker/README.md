@@ -52,6 +52,21 @@ curl https://<your-worker>.workers.dev/health
 
 The default configuration uses `"lite"` instances with `max_instances: 3`. This is a good starting point for development and light usage. For production workloads that need more CPU or memory, change `instance_type` to `"standard-1"` (4 vCPU / 8 GiB RAM) and increase `max_instances` in `wrangler.jsonc`.
 
+## Updating
+
+The bridge worker depends on two versioned artifacts that should be kept in sync:
+
+1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.8.7`). Update the tag to match the SDK version.
+
+Both versions should match — the SDK and container image are released together. After updating:
+
+```sh
+npm install
+npm run dev          # verify locally
+npx wrangler deploy  # deploy the update
+```
+
 ## Authentication
 
 All `/v1/sandbox/*` and `/v1/openapi.*` routes require:
