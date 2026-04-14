@@ -179,7 +179,7 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"expiration_minutes": 30, "permissions": ["pull", "library_push"]}')
+            -d '{"expiration_minutes": 30, "permissions": ["pull", "push", "library_push"]}')
           CF_USER=$(echo "$CREDS" | jq -r '.result.username')
           CF_PASS=$(echo "$CREDS" | jq -r '.result.password')
           echo "$CF_PASS" | docker login registry.cloudflare.com -u "$CF_USER" --password-stdin
