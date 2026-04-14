@@ -556,17 +556,18 @@ console.log('Terminal server on port ' + port);
 
       // Bucket mount
       if (url.pathname === '/api/bucket/mount' && request.method === 'POST') {
-        // Pass R2 credentials from worker env to sandbox env
+        // Forward R2 credentials from worker env to sandbox env
         const sandboxEnvVars: Record<string, string> = {};
-        if (env.CLOUDFLARE_ACCOUNT_ID) {
+        if (env.CLOUDFLARE_ACCOUNT_ID)
           sandboxEnvVars.CLOUDFLARE_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID;
-        }
-        if (env.AWS_ACCESS_KEY_ID) {
+        if (env.AWS_ACCESS_KEY_ID)
           sandboxEnvVars.AWS_ACCESS_KEY_ID = env.AWS_ACCESS_KEY_ID;
-        }
-        if (env.AWS_SECRET_ACCESS_KEY) {
+        if (env.AWS_SECRET_ACCESS_KEY)
           sandboxEnvVars.AWS_SECRET_ACCESS_KEY = env.AWS_SECRET_ACCESS_KEY;
-        }
+        if (env.R2_ACCESS_KEY_ID)
+          sandboxEnvVars.R2_ACCESS_KEY_ID = env.R2_ACCESS_KEY_ID;
+        if (env.R2_SECRET_ACCESS_KEY)
+          sandboxEnvVars.R2_SECRET_ACCESS_KEY = env.R2_SECRET_ACCESS_KEY;
 
         if (Object.keys(sandboxEnvVars).length > 0) {
           await sandbox.setEnvVars(sandboxEnvVars);
