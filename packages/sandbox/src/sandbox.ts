@@ -1700,6 +1700,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Discard the ping response body so the base class decrements its
+    // inflight-request counter (it only fires in pipeTo's finally callback).
+    // Without this, inflightRequests stays > 0 and the sleepAfter timer
+    // never considers the container idle.
+    await response.body?.cancel();
+
     if (this.runtimeIdentity) {
       return this.runtimeIdentity;
     }
