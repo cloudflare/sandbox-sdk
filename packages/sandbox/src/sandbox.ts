@@ -1518,12 +1518,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         });
         restartedContainer = true;
-        await this.captureRuntimeIdentity().catch((error) => {
-          this.logger.warn('runtime.identity.capture', {
-            outcome: 'error',
-            error: error instanceof Error ? error.message : String(error)
-          });
-        });
+        this.runtimeIdentity = null;
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
@@ -1560,8 +1555,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             message:
               'Container failed to start due to a permanent error. Check your container configuration.',
             context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
+              phase: 'startup'
             },
             httpStatus: 500,
             timestamp: new Date().toISOString(),
@@ -1600,8 +1594,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             code: ErrorCode.INTERNAL_ERROR,
             message: 'Container is starting. Please retry in a moment.',
             context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
+              phase: 'startup'
             },
             httpStatus: 503,
             timestamp: new Date().toISOString(),
@@ -1628,8 +1621,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           code: ErrorCode.INTERNAL_ERROR,
           message: 'Container is starting. Please retry in a moment.',
           context: {
-            phase: 'startup',
-            error: e instanceof Error ? e.message : String(e)
+            phase: 'startup'
           },
           httpStatus: 503,
           timestamp: new Date().toISOString(),
@@ -1666,8 +1658,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           code: ErrorCode.INTERNAL_ERROR,
           message: 'Container is starting. Please retry in a moment.',
           context: {
-            phase: 'startup',
-            error: error instanceof Error ? error.message : String(error)
+            phase: 'startup'
           },
           httpStatus: 503,
           timestamp: new Date().toISOString(),
@@ -1691,7 +1682,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const state = await this.getState();
     const containerRunning = this.ctx.container?.running;
     const containerMayNeedRestart =
-      state.status !== 'healthy' || containerRunning === false;
+      state.status !== 'healthy' || containerRunning !== true;
 
     if (!containerMayNeedRestart && this.runtimeIdentity) {
       return this.runtimeIdentity;
@@ -1747,18 +1738,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     response: Response,
     operation: string
   ): Promise<never> {
+    let body: unknown;
     try {
-      const errorResponse = (await response.json()) as ErrorResponse;
-      throw createErrorFromResponse(errorResponse);
-    } catch (error) {
-      if (error instanceof Error && error.name !== 'SyntaxError') {
-        throw error;
-      }
-
+      body = await response.json();
+    } catch {
       throw new Error(
         `Failed to ${operation}: HTTP ${response.status} ${response.statusText}`
       );
     }
+
+    throw createErrorFromResponse(body as ErrorResponse);
   }
 
   /**

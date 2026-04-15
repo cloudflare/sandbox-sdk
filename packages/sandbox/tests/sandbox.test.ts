@@ -293,6 +293,7 @@ describe('Sandbox - Automatic Session Management', () => {
           'containerFetch'
         );
         (sandbox as any).runtimeIdentity = { runtimeId: 'placement-1' };
+        mockCtx.container = { running: true };
 
         const result = await sandbox.getRuntimeIdentity();
 
@@ -359,7 +360,7 @@ describe('Sandbox - Automatic Session Management', () => {
         });
       });
 
-      it('should refresh runtime identity after container startup', async () => {
+      it('should clear cached runtime identity after container startup', async () => {
         (sandbox as any).runtimeIdentity = { runtimeId: 'placement-old' };
         storageState.set('runtimeIdentity', { runtimeId: 'placement-old' });
 
@@ -374,25 +375,6 @@ describe('Sandbox - Automatic Session Management', () => {
           Container.prototype as any,
           'containerFetch'
         ).mockImplementation((...args: unknown[]) => {
-          const request = args[0] as Request;
-          const url = new URL(request.url);
-
-          if (url.pathname === '/api/runtime/identity') {
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({
-                  success: true,
-                  runtimeId: 'placement-new',
-                  timestamp: new Date().toISOString()
-                }),
-                {
-                  status: 200,
-                  headers: { 'Content-Type': 'application/json' }
-                }
-              )
-            );
-          }
-
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -413,12 +395,7 @@ describe('Sandbox - Automatic Session Management', () => {
           sandbox.defaultPort
         );
 
-        expect((sandbox as any).runtimeIdentity).toEqual({
-          runtimeId: 'placement-new'
-        });
-        expect(storageState.get('runtimeIdentity')).toEqual({
-          runtimeId: 'placement-new'
-        });
+        expect((sandbox as any).runtimeIdentity).toBeNull();
       });
 
       it('should throw when placement ID is unavailable', async () => {
