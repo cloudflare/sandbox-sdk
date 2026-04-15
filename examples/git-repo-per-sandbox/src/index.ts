@@ -193,11 +193,11 @@ const COMMIT_SCRIPT = [
   'fi',
   'cd "$REPO_DIR"',
   'git checkout -B "$DEFAULT_BRANCH"',
-  'touch "$FILE_NAME"',
+  'touch -- "$FILE_NAME"',
   'printf "created by %s at %s\n" "$FILE_NAME" "$(date -u +%FT%TZ)" >> "$FILE_NAME"',
   'git config user.name "Sandbox SDK example"',
   'git config user.email "sandbox-sdk@example.com"',
-  'git add "$FILE_NAME"',
+  'git add -- "$FILE_NAME"',
   'git commit -m "Add $FILE_NAME"',
   'git push origin "HEAD:$DEFAULT_BRANCH"',
   'git rev-parse HEAD'
