@@ -7,6 +7,7 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { waitForCondition } from './helpers/test-fixtures';
 
 interface SandboxStateResponse {
   status: 'healthy' | 'stopped' | 'stopped_with_code' | 'stopping';
@@ -204,22 +205,29 @@ describe('Streaming Operations Edge Cases', () => {
       const stateHeaders = { ...shortSleepSandbox.headers() };
       delete stateHeaders['X-Sandbox-Sleep-After'];
 
-      // Give the alarm loop time to observe idleness and persist the stopped state
-      // before checking it, without issuing repeated requests that can delay delivery.
-      await new Promise((resolve) => setTimeout(resolve, 8000));
+      await waitForCondition(
+        async () => {
+          const stateResponse = await fetch(
+            `${shortSleepSandbox.workerUrl}/api/state`,
+            {
+              method: 'GET',
+              headers: stateHeaders
+            }
+          );
 
-      const stateResponse = await fetch(
-        `${shortSleepSandbox.workerUrl}/api/state`,
+          expect(stateResponse.status).toBe(200);
+
+          const state = (await stateResponse.json()) as SandboxStateResponse;
+          expect(['stopped', 'stopped_with_code']).toContain(state.status);
+
+          return state;
+        },
         {
-          method: 'GET',
-          headers: stateHeaders
+          timeout: 15000,
+          interval: 500,
+          errorMessage: 'Sandbox did not stop after sleepAfter'
         }
       );
-
-      expect(stateResponse.status).toBe(200);
-
-      const state = (await stateResponse.json()) as SandboxStateResponse;
-      expect(['stopped', 'stopped_with_code']).toContain(state.status);
     } finally {
       await cleanupTestSandbox(shortSleepSandbox);
     }

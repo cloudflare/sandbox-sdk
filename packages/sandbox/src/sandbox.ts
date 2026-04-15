@@ -1454,6 +1454,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
+    this.client.disconnect();
+
     // Stop local sync managers before clearing the map to avoid leaking timers
     for (const [, m] of this.activeMounts) {
       if (m.mountType === 'local-sync')

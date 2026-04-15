@@ -514,6 +514,14 @@ describe('Sandbox - Automatic Session Management', () => {
           (sandbox as any).checkVersionCompatibility()
         ).resolves.toBeUndefined();
       });
+
+      it('should disconnect the client transport when the container stops', async () => {
+        const disconnectSpy = vi.spyOn(sandbox.client, 'disconnect');
+
+        await sandbox.onStop();
+
+        expect(disconnectSpy).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('should reuse default session across multiple operations', async () => {

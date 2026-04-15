@@ -78,16 +78,26 @@ describe('Runtime Identity E2E', () => {
       const stateHeaders = { ...sandbox.headers() };
       delete stateHeaders['X-Sandbox-Sleep-After'];
 
-      await new Promise((resolve) => setTimeout(resolve, 8000));
+      await waitForCondition(
+        async () => {
+          const stateResponse = await fetch(`${sandbox.workerUrl}/api/state`, {
+            method: 'GET',
+            headers: stateHeaders
+          });
+          expect(stateResponse.ok).toBe(true);
 
-      const stateResponse = await fetch(`${sandbox.workerUrl}/api/state`, {
-        method: 'GET',
-        headers: stateHeaders
-      });
-      expect(stateResponse.ok).toBe(true);
+          const state = (await stateResponse.json()) as SandboxStateResponse;
+          expect(['stopped', 'stopped_with_code']).toContain(state.status);
 
-      const state = (await stateResponse.json()) as SandboxStateResponse;
-      expect(['stopped', 'stopped_with_code']).toContain(state.status);
+          return state;
+        },
+        {
+          timeout: 15000,
+          interval: 500,
+          errorMessage:
+            'Sandbox did not stop before runtime identity restart check'
+        }
+      );
 
       const response2 = await waitForCondition(
         async () => {
