@@ -9,7 +9,8 @@
   "type": "module",
   "dependencies": {
     "@cloudflare/containers": "^0.3.0",
-    "aws4fetch": "^1.0.20"
+    "aws4fetch": "^1.0.20",
+    "hono": "^4.7.11"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
@@ -73,6 +74,11 @@
       "types": "./dist/xterm/index.d.ts",
       "import": "./dist/xterm/index.js",
       "require": "./dist/xterm/index.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge/index.d.ts",
+      "import": "./dist/bridge/index.js",
+      "require": "./dist/bridge/index.js"
     }
   },
   "keywords": [],

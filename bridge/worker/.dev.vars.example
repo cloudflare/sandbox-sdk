@@ -1,0 +1,2 @@
+# Bearer token for API authentication. Generate with: openssl rand -hex 32
+SANDBOX_API_KEY=""

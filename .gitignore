@@ -130,7 +130,8 @@ dist
 
 
 .wrangler
-.dev.vars
+.dev.vars*
+!.dev.vars.example
 
 # Generated wrangler config (use wrangler.template.jsonc as source of truth)
 tests/e2e/test-worker/wrangler.jsonc
@@ -152,7 +153,8 @@ tests/e2e/test-worker/wrangler.jsonc
 # Allow config files and scripts
 !scripts/**/*.js
 !examples/**/*.js
-# Allow generated types in examples
+# Allow generated types in bridge & examples
+!bridge/**/*.d.ts
 !examples/**/*.d.ts
 # Allow source in dist directories
 !dist/**
