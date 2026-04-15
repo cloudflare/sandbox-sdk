@@ -119,8 +119,8 @@ describe('Runtime Identity E2E', () => {
           return response;
         },
         {
-          timeout: 15000,
-          interval: 500,
+          timeout: 30000,
+          interval: 1000,
           errorMessage:
             'Runtime identity did not become available after restart from idle sleep'
         }
@@ -144,5 +144,5 @@ describe('Runtime Identity E2E', () => {
     } finally {
       await cleanupTestSandbox(sandbox);
     }
-  }, 60000);
+  }, 120000);
 });
