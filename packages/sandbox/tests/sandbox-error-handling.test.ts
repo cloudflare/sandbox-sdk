@@ -549,5 +549,43 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(abortSpy).not.toHaveBeenCalled();
       expect(response.status).toBe(503);
     });
+
+    it('returns 503 and aborts when the first fetch after restart loses the network connection', async () => {
+      vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
+        status: 'unhealthy'
+      });
+      const abortSpy = vi.fn();
+      (sandbox as any).ctx.abort = abortSpy;
+      startAndWaitSpy.mockResolvedValueOnce(undefined);
+
+      const parentContainerFetch = vi
+        .spyOn(
+          Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
+          'containerFetch'
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ runtimeId: 'runtime-123' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+        .mockRejectedValueOnce(new Error('Network connection lost.'));
+
+      const response = await sandbox.containerFetch(
+        new Request('http://localhost/test'),
+        {},
+        3000
+      );
+
+      expect(abortSpy).toHaveBeenCalled();
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('3');
+      await expect(response.json()).resolves.toMatchObject({
+        message: 'Container is starting. Please retry in a moment.',
+        context: { error: 'Network connection lost.' }
+      });
+
+      parentContainerFetch.mockRestore();
+    });
   });
 });

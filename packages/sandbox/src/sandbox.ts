@@ -1499,6 +1499,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const state = await this.getState();
     const containerRunning = this.ctx.container?.running;
+    let restartedContainer = false;
 
     // Start container if persisted state is not healthy OR if runtime reports container is not running.
     // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
@@ -1516,6 +1517,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             abort: request.signal
           }
         });
+        restartedContainer = true;
         await this.captureRuntimeIdentity().catch((error) => {
           this.logger.warn('runtime.identity.capture', {
             outcome: 'error',
@@ -1645,7 +1647,44 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Delegate to parent for the actual fetch (handles TCP port access internally)
-    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    try {
+      return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    } catch (error) {
+      if (this.isTransientStartupError(error)) {
+        this.logger.warn('container.fetch', {
+          outcome: 'transient_error_after_start',
+          restartedContainer,
+          staleStateDetected,
+          error: error instanceof Error ? error.message : String(error)
+        });
+
+        if (restartedContainer || staleStateDetected) {
+          this.ctx.abort();
+        }
+
+        const errorBody: ErrorResponse = {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: 'Container is starting. Please retry in a moment.',
+          context: {
+            phase: 'startup',
+            error: error instanceof Error ? error.message : String(error)
+          },
+          httpStatus: 503,
+          timestamp: new Date().toISOString(),
+          suggestion:
+            'The container is booting. The SDK will retry automatically.'
+        };
+        return new Response(JSON.stringify(errorBody), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '3'
+          }
+        });
+      }
+
+      throw error;
+    }
   }
 
   private async ensureRuntimeIdentity(): Promise<RuntimeIdentity> {
