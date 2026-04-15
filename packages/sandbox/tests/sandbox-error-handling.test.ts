@@ -329,8 +329,8 @@ describe('Sandbox.containerFetch() error classification', () => {
 
       expect(response.status).toBe(500);
       expect(response.headers.get('Retry-After')).toBeNull();
-      const body = (await response.json()) as { context: { error: string } };
-      expect(body.context.error).toContain('No such image');
+      const body = (await response.json()) as { message: string };
+      expect(body.message).toContain('permanent error');
     });
   });
   describe('unrecognized errors → 503 (safe to retry)', () => {
@@ -563,12 +563,6 @@ describe('Sandbox.containerFetch() error classification', () => {
           Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
           'containerFetch'
         )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ runtimeId: 'runtime-123' }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' }
-          })
-        )
         .mockRejectedValueOnce(new Error('Network connection lost.'));
 
       const response = await sandbox.containerFetch(
@@ -582,7 +576,7 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(response.headers.get('Retry-After')).toBe('3');
       await expect(response.json()).resolves.toMatchObject({
         message: 'Container is starting. Please retry in a moment.',
-        context: { error: 'Network connection lost.' }
+        context: { phase: 'startup' }
       });
 
       parentContainerFetch.mockRestore();

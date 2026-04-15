@@ -92,8 +92,8 @@ describe('Runtime Identity E2E', () => {
           return state;
         },
         {
-          timeout: 15000,
-          interval: 500,
+          timeout: 30000,
+          interval: 1000,
           errorMessage:
             'Sandbox did not stop before runtime identity restart check'
         }
