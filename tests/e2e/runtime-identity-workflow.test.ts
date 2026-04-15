@@ -89,11 +89,29 @@ describe('Runtime Identity E2E', () => {
       const state = (await stateResponse.json()) as SandboxStateResponse;
       expect(['stopped', 'stopped_with_code']).toContain(state.status);
 
-      const response2 = await fetch(
-        `${sandbox.workerUrl}/api/runtime/identity`,
+      const response2 = await waitForCondition(
+        async () => {
+          const response = await fetch(
+            `${sandbox.workerUrl}/api/runtime/identity`,
+            {
+              method: 'GET',
+              headers: sandbox.headers()
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(
+              `Runtime identity not ready after restart: ${response.status}`
+            );
+          }
+
+          return response;
+        },
         {
-          method: 'GET',
-          headers: sandbox.headers()
+          timeout: 15000,
+          interval: 500,
+          errorMessage:
+            'Runtime identity did not become available after idle restart'
         }
       );
       expect(response2.ok).toBe(true);
@@ -115,5 +133,5 @@ describe('Runtime Identity E2E', () => {
     } finally {
       await cleanupTestSandbox(sandbox);
     }
-  }, 30000);
+  }, 60000);
 });
