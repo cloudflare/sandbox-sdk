@@ -466,6 +466,56 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
+    describe('startup version checking', () => {
+      it('should fetch the container version directly during startup checks', async () => {
+        const getVersionSpy = vi.spyOn(sandbox.client.utils, 'getVersion');
+        const containerFetchSpy = vi
+          .spyOn(Container.prototype as any, 'containerFetch')
+          .mockImplementation((...args: unknown[]) => {
+            const request = args[0] as Request;
+            const url = new URL(request.url);
+
+            if (url.pathname === '/api/version') {
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    success: true,
+                    version: '1.2.3',
+                    timestamp: new Date().toISOString()
+                  }),
+                  {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                  }
+                )
+              );
+            }
+
+            return Promise.resolve(new Response('ok'));
+          });
+
+        await (sandbox as any).checkVersionCompatibility();
+
+        expect(getVersionSpy).not.toHaveBeenCalled();
+        expect(containerFetchSpy).toHaveBeenCalledTimes(1);
+
+        const request = containerFetchSpy.mock.calls[0]?.[0] as Request;
+        expect(new URL(request.url).pathname).toBe('/api/version');
+      });
+
+      it('should treat startup version check failures as unknown', async () => {
+        vi.spyOn(sandbox.client.utils, 'getVersion');
+        vi.spyOn(
+          Container.prototype as any,
+          'containerFetch'
+        ).mockResolvedValue(new Response('not available', { status: 500 }));
+
+        await expect(
+          (sandbox as any).checkVersionCompatibility()
+        ).resolves.toBeUndefined();
+      });
+    });
+
     it('should reuse default session across multiple operations', async () => {
       await sandbox.exec('echo test1');
       await sandbox.writeFile('/test.txt', 'content');

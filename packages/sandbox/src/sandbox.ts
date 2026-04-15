@@ -1396,7 +1396,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let outcome: string;
 
     try {
-      containerVersion = await this.client.utils.getVersion();
+      containerVersion = await this.getContainerVersionForCompatibilityCheck();
 
       if (containerVersion === 'unknown') {
         outcome = 'container_version_unknown';
@@ -1429,6 +1429,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       { successLevel }
     );
+  }
+
+  private async getContainerVersionForCompatibilityCheck(): Promise<string> {
+    try {
+      const response = await super.containerFetch(
+        new Request('http://localhost/api/version', {
+          method: 'GET'
+        }),
+        this.defaultPort
+      );
+
+      if (!response.ok) {
+        return 'unknown';
+      }
+
+      const result = (await response.json()) as { version?: unknown };
+      return typeof result.version === 'string' ? result.version : 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   override async onStop() {
