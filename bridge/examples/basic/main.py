@@ -2,10 +2,11 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #     "openai-agents[cloudflare]",
+#     "rich",
 # ]
 #
 # [tool.uv.sources]
-# openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "cloudflare-sandbox-revert-99" }
+# openai-agents = { git = "ssh://git@github.com/OpenAI-Early-Access/openai-agents-python-preview.git", rev = "public-main" }
 # ///
 """One-shot JavaScript coding agent backed by a Cloudflare Sandbox.
 
@@ -23,14 +24,11 @@ import io
 import os
 import sys
 from pathlib import Path
-from typing import cast
 
-from openai.types.responses import (
-    ResponseFunctionCallArgumentsDeltaEvent,
-    ResponseTextDeltaEvent,
-)
+from openai.types.responses import ResponseTextDeltaEvent
+from rich.console import Console
 
-from agents import Runner
+from agents import Runner, RunResultStreaming
 from agents.extensions.sandbox.cloudflare import (
     CloudflareSandboxClient,
     CloudflareSandboxClientOptions,
@@ -38,6 +36,8 @@ from agents.extensions.sandbox.cloudflare import (
 from agents.run import RunConfig
 from agents.sandbox import SandboxAgent, SandboxRunConfig
 from agents.sandbox.capabilities import Filesystem, Shell
+from agents.sandbox.session import SandboxSession
+from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 
 MODEL = "gpt-5.4"
 
@@ -50,14 +50,15 @@ When the user gives you a coding task:
 
 1. Implement the solution inside /workspace.
 2. Test that it works by running it (e.g. `bun run`, `node`, or `npm test`).
-3. Use apply_patch to create or edit files. Use exec_command to run commands.
-4. If an image was provided as a visual reference, use view_image to inspect it
+3. Use apply_patch to create or edit files. IMPORTANT: Stay within /workspace.
+4. Use exec_command to run commands.
+5. If an image was provided as a visual reference, use view_image to inspect it
    before you start coding. The image path will be mentioned in the task prompt.
-5. IMPORTANT: Copy **only the relevant generated files** into /workspace/output/.
+6. IMPORTANT: Copy **only the relevant generated files** into /workspace/output/.
    - If the deliverable is a single file, copy it directly.
    - If there are multiple files, bundle them into /workspace/output/result.zip
      using a command like `cd /workspace && zip -r output/result.zip <files>`.
-6. Confirm what you placed in /workspace/output/ and briefly explain how to use it.
+7. Confirm what you placed in /workspace/output/ and briefly explain how to use it.
 
 IMPORTANT: Always create the output directory first: `mkdir -p /workspace/output`.
 """.strip()
@@ -67,78 +68,40 @@ IMPORTANT: Always create the output directory first: `mkdir -p /workspace/output
 # Streaming helpers
 # ---------------------------------------------------------------------------
 
-
-def _tool_call_name(raw_item: object) -> str:
-    """Extract the tool name from a raw response item."""
-    if isinstance(raw_item, dict):
-        return cast(str, raw_item.get("name") or raw_item.get("type") or "")
-    return cast(
-        str, getattr(raw_item, "name", None) or getattr(raw_item, "type", None) or ""
-    )
+console = Console(highlight=False)
 
 
-async def _print_stream(result) -> None:  # noqa: ANN001
-    """Print streamed text deltas and tool-call activity to the console."""
-    saw_text = False
-    active_tool: str | None = None
+async def _print_stream(result: RunResultStreaming) -> None:
+    """Print streamed text deltas and tool-call banners."""
+    in_text = False
 
     async for event in result.stream_events():
-        # --- raw model events ---
-        if event.type == "raw_response_event":
-            data = event.data
-            if isinstance(data, ResponseTextDeltaEvent):
-                if active_tool is not None:
-                    print()
-                    active_tool = None
-                if not saw_text:
-                    print("\nassistant> ", end="", flush=True)
-                    saw_text = True
-                print(data.delta, end="", flush=True)
-                continue
-            if isinstance(data, ResponseFunctionCallArgumentsDeltaEvent):
-                if saw_text:
-                    print()
-                    saw_text = False
-                if active_tool is None:
-                    active_tool = "tool"
-                continue
-            # tool-call completion frames
-            event_type = getattr(data, "type", None)
-            if event_type == "response.output_item.done" and active_tool is not None:
-                active_tool = None
-            continue
+        if isinstance(event, RawResponsesStreamEvent):
+            if isinstance(event.data, ResponseTextDeltaEvent):
+                if not in_text:
+                    console.print("assistant> ", end="", style="bold")
+                    in_text = True
+                console.print(event.data.delta, end="", highlight=False)
 
-        # --- run-item events (tool calls / outputs) ---
-        if event.type != "run_item_stream_event":
-            continue
+        elif isinstance(event, RunItemStreamEvent):
+            if in_text:
+                console.print()
+                in_text = False
 
-        if saw_text:
-            print()
-            saw_text = False
-        if active_tool is not None:
-            print()
-            active_tool = None
+            if event.item.type == "tool_call_item":
+                name = getattr(event.item, "tool_name", None) or ""
+                label = f"  [dim]\\[{name}][/dim]" if name else "  [dim]Working\u2026[/dim]"
+                console.print(label)
 
-        if event.name == "tool_called":
-            name = _tool_call_name(event.item.raw_item)
-            if name:
-                print(f"  [tool] {name}")
-        elif event.name == "tool_output":
-            output_text = str(getattr(event.item, "output", ""))
-            if len(output_text) > 200:
-                output_text = output_text[:200] + "…"
-            print(f"  [output] {output_text}")
-
-    if saw_text:
-        print()
-
+    if in_text:
+        console.print()
 
 # ---------------------------------------------------------------------------
 # Sandbox file extraction
 # ---------------------------------------------------------------------------
 
 
-async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
+async def _copy_sandbox_output(session: SandboxSession, output_dir: Path) -> list[Path]:
     """Read files from /workspace/output/ in the sandbox and write them locally."""
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
@@ -155,9 +118,9 @@ async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
     )
     if not ls_result.ok():
         stderr = ls_result.stderr.decode(errors="replace").strip()
-        print(
-            f"⚠  Could not list sandbox output (exit {ls_result.exit_code}): {stderr}",
-            file=sys.stderr,
+        console.print(
+            f"[yellow]⚠[/yellow]  Could not list sandbox output (exit {ls_result.exit_code}): {stderr}",
+            stderr=True,
         )
         return copied
 
@@ -190,9 +153,9 @@ async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
 async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
     worker_url = os.environ.get("CLOUDFLARE_SANDBOX_WORKER_URL", "")
     if not worker_url:
-        print(
-            "Error: CLOUDFLARE_SANDBOX_WORKER_URL is not set. Check your .env file.",
-            file=sys.stderr,
+        console.print(
+            "[red]Error:[/red] CLOUDFLARE_SANDBOX_WORKER_URL is not set. Check your .env file.",
+            stderr=True,
         )
         sys.exit(1)
 
@@ -209,6 +172,8 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
 
     try:
         async with session:
+            await session.mkdir("/workspace/output")
+
             # Copy the image into the sandbox so the agent can inspect it.
             if image is not None:
                 sandbox_image_path = f"/workspace/{image.name}"
@@ -228,18 +193,22 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
                 tracing_disabled=True,
             )
 
-            print(f"\U0001f680 Sending task to sandbox agent ({MODEL})\u2026")
+            console.print(f"\U0001f680 Sending task to sandbox agent ({MODEL})\u2026")
             result = Runner.run_streamed(agent, prompt, run_config=run_config)
             await _print_stream(result)
 
             # --- extract output files ---
             copied = await _copy_sandbox_output(session, output_dir)
             if copied:
-                print(f"\n\u2705 Copied {len(copied)} file(s) to {output_dir}:")
+                console.print(
+                    f"\n[green]✅[/green] Copied {len(copied)} file(s) to {output_dir}:"
+                )
                 for path in copied:
-                    print(f"   {path}")
+                    console.print(f"   {path}")
             else:
-                print("\n\u26a0  Agent did not produce any output files.")
+                console.print(
+                    "\n[yellow]⚠[/yellow]  Agent did not produce any output files. Perhaps check your prompt?"
+                )
     finally:
         await client.delete(session)
 
@@ -248,7 +217,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a one-shot JavaScript coding task in a Cloudflare Sandbox."
     )
-    parser.add_argument("prompt", help="Coding task for the agent.")
+    parser.add_argument(
+        "prompt",
+        help="Coding task for the agent.",
+        default="Write me a Python script that produces a Haiku about cheese",
+    )
     parser.add_argument(
         "--output",
         default=".",
@@ -263,7 +236,7 @@ def main() -> None:
 
     image_path = Path(args.image).resolve() if args.image else None
     if image_path is not None and not image_path.is_file():
-        print(f"Error: image not found: {image_path}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] image not found: {image_path}", stderr=True)
         sys.exit(1)
 
     asyncio.run(run(args.prompt, Path(args.output).resolve(), image=image_path))
