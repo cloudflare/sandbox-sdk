@@ -156,6 +156,7 @@ tests/e2e/test-worker/wrangler.jsonc
 # Allow generated types in bridge & examples
 !bridge/**/*.d.ts
 !examples/**/*.d.ts
+!bridge/examples/**/*.d.ts
 # Allow source in dist directories
 !dist/**
 !node_modules/**

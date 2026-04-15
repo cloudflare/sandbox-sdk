@@ -320,12 +320,14 @@ describe('POST /sandbox/:id/exec — argv to command string quoting', () => {
     expect(capturedCommand()).toBe("echo $'`whoami`' $'$(id)'");
   });
 
+  // Mirrors test_cloudflare_exec_applies_manifest_environment from the OpenAI SDK
   it('handles env-prefixed argv (env KEY=VALUE command)', async () => {
     await execRequest({ argv: ['env', 'A=1', 'B=two', 'printenv', 'A'] });
     expect(capturedCommand()).toBe('env A=1 B=two printenv A');
   });
 
-  it('handles mixed special characters', async () => {
+  // Mirrors test_cloudflare_exec_quotes_argv_for_worker from the OpenAI SDK
+  it('handles mixed special characters matching OpenAI SDK test vectors', async () => {
     await execRequest({
       argv: ['sh', '-c', 'printf argv-ok', 'argv-test', 'space value', '$dollar', 'quote\'"value', 'line\nbreak']
     });

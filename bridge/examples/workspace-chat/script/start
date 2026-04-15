@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set -m  # enable job control so background jobs get their own process groups
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BACKEND_DIR="$ROOT/backend"
+FRONTEND_DIR="$ROOT/frontend"
+
+# ── colours for interleaved output ──────────────────────────────────────────
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+log()  { printf "${BOLD}[start]${RESET} %s\n" "$*"; }
+fail() { printf "${RED}${BOLD}[start]${RESET}${RED} %s${RESET}\n" "$*" >&2; exit 1; }
+
+# ── prefixed-output helper ──────────────────────────────────────────────────
+# Usage: prefix_output COLOUR LABEL
+# Reads stdin line-by-line and prints with a coloured tag.
+prefix_output() {
+  local colour="$1" label="$2"
+  while IFS= read -r line; do
+    printf "${colour}${BOLD}%-10s |${RESET} %s\n" "$label" "$line"
+  done
+}
+
+# ── environment checks ─────────────────────────────────────────────────────
+log "Checking prerequisites…"
+
+command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+command -v uv      >/dev/null 2>&1 || fail "uv not found — install from https://docs.astral.sh/uv/"
+command -v node    >/dev/null 2>&1 || fail "node not found"
+command -v npm     >/dev/null 2>&1 || fail "npm not found"
+
+PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+NODE_VERSION="$(node -e 'console.log(process.versions.node.split(".")[0])')"
+
+log "  python $PYTHON_VERSION  (need ≥3.12)"
+log "  node   v$NODE_VERSION  (need ≥18)"
+log "  uv     $(uv --version 2>/dev/null | head -1)"
+
+if [ "$(printf '%s\n' "3.12" "$PYTHON_VERSION" | sort -V | head -1)" != "3.12" ]; then
+  fail "Python ≥3.12 required (found $PYTHON_VERSION)"
+fi
+if [ "$NODE_VERSION" -lt 18 ] 2>/dev/null; then
+  fail "Node ≥18 required (found v$NODE_VERSION)"
+fi
+
+# ── .env check ──────────────────────────────────────────────────────────────
+if [ ! -f "$BACKEND_DIR/.env" ]; then
+  fail "backend/.env not found — copy backend/.env.example and fill in your keys"
+fi
+
+MISSING_VARS=()
+for var in OPENAI_API_KEY CLOUDFLARE_SANDBOX_API_KEY CLOUDFLARE_SANDBOX_WORKER_URL; do
+  val="$(sed -n "s/^${var}=//p" "$BACKEND_DIR/.env" 2>/dev/null || true)"
+  if [ -z "$val" ] || [[ "$val" == *"your-"* ]] || [[ "$val" == *"your_"* ]]; then
+    MISSING_VARS+=("$var")
+  fi
+done
+if [ ${#MISSING_VARS[@]} -gt 0 ]; then
+  fail "backend/.env has placeholder values for: ${MISSING_VARS[*]}"
+fi
+
+# ── install dependencies if needed ──────────────────────────────────────────
+log "Installing backend dependencies…"
+(cd "$BACKEND_DIR" && uv sync --quiet)
+
+log "Installing frontend dependencies…"
+(cd "$FRONTEND_DIR" && npm install --silent)
+
+# ── launch both servers ─────────────────────────────────────────────────────
+PIDS=()
+FORCE=0
+
+cleanup() {
+  if [ "$FORCE" -eq 1 ]; then
+    log "Force killing…"
+    kill -9 -$$ 2>/dev/null || true
+    exit 1
+  fi
+  FORCE=1
+  log "Shutting down (Ctrl-C again to force)…"
+  for pid in "${PIDS[@]}"; do
+    # kill the whole process group rooted at the pipeline
+    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null
+  exit 0
+}
+trap cleanup INT TERM
+
+log "Starting backend  → http://localhost:8000"
+(cd "$BACKEND_DIR" && exec uv run main.py) 2>&1 | prefix_output "$CYAN" "backend" &
+PIDS+=($!)
+
+log "Starting frontend → http://localhost:5173"
+(cd "$FRONTEND_DIR" && exec npm run dev -- --clearScreen false) 2>&1 | prefix_output "$MAGENTA" "frontend" &
+PIDS+=($!)
+
+log "Both servers running. Press Ctrl-C to stop."
+wait
