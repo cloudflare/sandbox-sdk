@@ -43,7 +43,6 @@ async function handleAIRequest(input: string, env: Env): Promise<string> {
   const workersai = createWorkersAI({ binding: env.AI });
 
   const result = await generateText({
-    // @ts-expect-error - gpt-oss-120b is a valid Workers AI model but not yet in the type definitions
     model: workersai(MODEL),
     messages: [{ role: 'user', content: input }],
     tools: {
