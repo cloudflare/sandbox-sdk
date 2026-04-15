@@ -1,6 +1,6 @@
 # Base image provided by Cloudflare — includes the sandbox control-plane server
 # that listens on port 3000 and handles all SDK API calls.
-FROM docker.io/cloudflare/sandbox:0.8.7
+FROM docker.io/cloudflare/sandbox:0.8.11
 
 # Install tooling for UC workspace operations and agent use.
 # The base image is Debian-based and includes sh, ls, rm, mkdir, cp, etc.

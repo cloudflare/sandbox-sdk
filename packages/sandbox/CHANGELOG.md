@@ -1,5 +1,26 @@
 # @cloudflare/sandbox
 
+## 0.8.11
+
+### Patch Changes
+
+- [#585](https://github.com/cloudflare/sandbox-sdk/pull/585) [`ab84333`](https://github.com/cloudflare/sandbox-sdk/commit/ab843334764e0fe0fe268e406f2332d3381bd94e) Thanks [@aron-cf](https://github.com/aron-cf)! - Add the sandbox bridge — an HTTP API that translates REST calls into Sandbox Durable Object operations. Deploy the bridge as a standalone Cloudflare Worker to expose session management, command execution, file read/write, PTY, and workspace mount/unmount over HTTP. Includes an optional warm pool Durable Object for pre-provisioning sandboxes to reduce cold-start latency.
+
+  Import the bridge factory and warm pool from `@cloudflare/sandbox/bridge`.
+
+  ```ts
+  import { bridge } from '@cloudflare/sandbox/bridge';
+  export { Sandbox } from '@cloudflare/sandbox';
+  export { WarmPool } from '@cloudflare/sandbox/bridge';
+
+  export default bridge({
+    fetch(request, env, ctx) {
+      // your code here
+      return new Response('OK');
+    }
+  });
+  ```
+
 ## 0.8.10
 
 ### Patch Changes
