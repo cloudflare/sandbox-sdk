@@ -59,7 +59,7 @@ describe('Runtime Identity E2E', () => {
     }
   }, 120000);
 
-  test('should keep returning a stable identity after an idle restart', async () => {
+  test('should return a stable runtime identity after restarting from idle sleep', async () => {
     const sandbox = await createTestSandbox({ sleepAfter: '3s' });
 
     try {
@@ -122,7 +122,7 @@ describe('Runtime Identity E2E', () => {
           timeout: 15000,
           interval: 500,
           errorMessage:
-            'Runtime identity did not become available after idle restart'
+            'Runtime identity did not become available after restart from idle sleep'
         }
       );
       expect(response2.ok).toBe(true);
