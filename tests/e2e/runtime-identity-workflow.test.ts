@@ -1,63 +1,102 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
-  createTestSandbox,
-  type TestSandbox
+  createTestSandbox
 } from './helpers/global-sandbox';
 import type { RuntimeIdentityResponse } from './test-worker/types';
 
+interface SandboxStateResponse {
+  status: string;
+}
+
 describe('Runtime Identity E2E', () => {
-  let sandbox: TestSandbox | null = null;
-  let workerUrl: string;
+  test('should keep identity stable while a runtime stays active', async () => {
+    const sandbox = await createTestSandbox();
 
-  beforeAll(async () => {
-    sandbox = await createTestSandbox();
-    workerUrl = sandbox.workerUrl;
-  }, 120000);
+    try {
+      const response1 = await fetch(
+        `${sandbox.workerUrl}/api/runtime/identity`,
+        {
+          method: 'GET',
+          headers: sandbox.headers()
+        }
+      );
+      expect(response1.ok).toBe(true);
 
-  afterAll(async () => {
-    await cleanupTestSandbox(sandbox);
-    sandbox = null;
-  }, 120000);
+      const runtime1 = (await response1.json()) as RuntimeIdentityResponse;
+      expect(runtime1.runtimeId).not.toBe('');
 
-  test('should keep identity stable until the sandbox is recreated', async () => {
-    if (!sandbox) {
-      throw new Error('Sandbox was not initialized');
+      const response2 = await fetch(
+        `${sandbox.workerUrl}/api/runtime/identity`,
+        {
+          method: 'GET',
+          headers: sandbox.headers()
+        }
+      );
+      expect(response2.ok).toBe(true);
+
+      const runtime2 = (await response2.json()) as RuntimeIdentityResponse;
+      expect(runtime2).toEqual(runtime1);
+    } finally {
+      await cleanupTestSandbox(sandbox);
     }
-
-    const response1 = await fetch(`${workerUrl}/api/runtime/identity`, {
-      method: 'GET',
-      headers: sandbox.headers()
-    });
-    expect(response1.ok).toBe(true);
-
-    const runtime1 = (await response1.json()) as RuntimeIdentityResponse;
-
-    const response2 = await fetch(`${workerUrl}/api/runtime/identity`, {
-      method: 'GET',
-      headers: sandbox.headers()
-    });
-    expect(response2.ok).toBe(true);
-
-    const runtime2 = (await response2.json()) as RuntimeIdentityResponse;
-    expect(runtime2).toEqual(runtime1);
-
-    await cleanupTestSandbox(sandbox);
-
-    const recreateResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: sandbox.headers(),
-      body: JSON.stringify({ command: 'echo ready' })
-    });
-    expect(recreateResponse.ok).toBe(true);
-
-    const response3 = await fetch(`${workerUrl}/api/runtime/identity`, {
-      method: 'GET',
-      headers: sandbox.headers()
-    });
-    expect(response3.ok).toBe(true);
-
-    const runtime3 = (await response3.json()) as RuntimeIdentityResponse;
-    expect(runtime3.runtimeId).not.toBe(runtime1.runtimeId);
   }, 120000);
+
+  test('should keep returning a stable identity after an idle restart', async () => {
+    const sandbox = await createTestSandbox({ sleepAfter: '3s' });
+
+    try {
+      const response1 = await fetch(
+        `${sandbox.workerUrl}/api/runtime/identity`,
+        {
+          method: 'GET',
+          headers: sandbox.headers()
+        }
+      );
+      expect(response1.ok).toBe(true);
+
+      const runtime1 = (await response1.json()) as RuntimeIdentityResponse;
+      expect(runtime1.runtimeId).not.toBe('');
+
+      const stateHeaders = { ...sandbox.headers() };
+      delete stateHeaders['X-Sandbox-Sleep-After'];
+
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+
+      const stateResponse = await fetch(`${sandbox.workerUrl}/api/state`, {
+        method: 'GET',
+        headers: stateHeaders
+      });
+      expect(stateResponse.ok).toBe(true);
+
+      const state = (await stateResponse.json()) as SandboxStateResponse;
+      expect(['stopped', 'stopped_with_code']).toContain(state.status);
+
+      const response2 = await fetch(
+        `${sandbox.workerUrl}/api/runtime/identity`,
+        {
+          method: 'GET',
+          headers: sandbox.headers()
+        }
+      );
+      expect(response2.ok).toBe(true);
+
+      const restarted1 = (await response2.json()) as RuntimeIdentityResponse;
+      expect(restarted1.runtimeId).not.toBe('');
+
+      const response3 = await fetch(
+        `${sandbox.workerUrl}/api/runtime/identity`,
+        {
+          method: 'GET',
+          headers: sandbox.headers()
+        }
+      );
+      expect(response3.ok).toBe(true);
+
+      const restarted2 = (await response3.json()) as RuntimeIdentityResponse;
+      expect(restarted2).toEqual(restarted1);
+    } finally {
+      await cleanupTestSandbox(sandbox);
+    }
+  }, 30000);
 });

@@ -1072,12 +1072,14 @@ export interface ExecutionSession {
 }
 
 /**
- * Identity for a single container runtime.
+ * Placement-derived identity for the currently observed container runtime.
  *
- * `runtimeId` changes whenever the underlying container boots again.
+ * The SDK refreshes this value when it starts a container or detects that the
+ * previously observed container stopped. While a container stays active,
+ * repeated reads return the same value.
  */
 export interface RuntimeIdentity {
-  /** Unique identifier for the current container placement. */
+  /** Placement-derived identifier for the current observed container runtime. */
   runtimeId: string;
 }
 

@@ -2,7 +2,8 @@
 '@cloudflare/sandbox': patch
 ---
 
-Add `getRuntimeIdentity()` to detect when a sandbox starts a new
-container runtime. It returns a stable placement-based `runtimeId`
-that stays available after the initial container startup, so callers
-can compare the current runtime with the last one they observed.
+Add `getRuntimeIdentity()` to read a placement-derived `runtimeId`
+for the currently observed sandbox runtime. The value stays stable
+while the same container keeps running, refreshes after SDK-observed
+restarts, and falls back to older container images that do not yet
+expose the dedicated runtime identity endpoint.

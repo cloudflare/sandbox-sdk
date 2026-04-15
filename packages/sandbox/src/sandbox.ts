@@ -232,6 +232,11 @@ const PLACEMENT_ID_COMMAND = 'printf %s "$CLOUDFLARE_PLACEMENT_ID"';
 const MISSING_PLACEMENT_ID_ERROR =
   'Runtime identity is unavailable because CLOUDFLARE_PLACEMENT_ID is not set in the container environment. Recreate the sandbox with a newer container runtime.';
 
+type RuntimeIdentityLookupResponse = RuntimeIdentity & {
+  success: boolean;
+  timestamp: string;
+};
+
 function applySandboxConfiguration(
   stub: ConfigurableSandboxStub,
   configuration: SandboxConfiguration
@@ -1624,7 +1629,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private async ensureRuntimeIdentity(): Promise<RuntimeIdentity> {
-    if (this.runtimeIdentity) {
+    const state = await this.getState();
+    const containerRunning = this.ctx.container?.running;
+    const containerMayNeedRestart =
+      state.status !== 'healthy' || containerRunning === false;
+
+    if (!containerMayNeedRestart && this.runtimeIdentity) {
       return this.runtimeIdentity;
     }
 
@@ -1648,6 +1658,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private async captureRuntimeIdentity(): Promise<RuntimeIdentity> {
+    const response = await super.containerFetch(
+      new Request('http://localhost/api/runtime/identity', {
+        method: 'GET'
+      }),
+      this.defaultPort
+    );
+
+    if (!response.ok) {
+      if (await this.isRuntimeIdentityEndpointUnavailable(response)) {
+        return await this.captureRuntimeIdentityLegacy();
+      }
+
+      await this.throwContainerResponseError(
+        response,
+        'capture runtime identity from the container'
+      );
+    }
+
+    const result = (await response.json()) as RuntimeIdentityLookupResponse;
+    const runtimeId = result.runtimeId.trim();
+    if (!runtimeId) {
+      throw new Error(MISSING_PLACEMENT_ID_ERROR);
+    }
+
+    const runtimeIdentity = { runtimeId };
+    this.runtimeIdentity = runtimeIdentity;
+    await this.ctx.storage.put('runtimeIdentity', runtimeIdentity);
+    return runtimeIdentity;
+  }
+
+  private async captureRuntimeIdentityLegacy(): Promise<RuntimeIdentity> {
     const response = await super.containerFetch(
       new Request('http://localhost/api/execute', {
         method: 'POST',
@@ -1686,6 +1727,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.runtimeIdentity = runtimeIdentity;
     await this.ctx.storage.put('runtimeIdentity', runtimeIdentity);
     return runtimeIdentity;
+  }
+
+  private async isRuntimeIdentityEndpointUnavailable(
+    response: Response
+  ): Promise<boolean> {
+    if (response.status === 404) {
+      return true;
+    }
+
+    try {
+      const errorResponse = (await response.clone().json()) as ErrorResponse;
+      return (
+        errorResponse.code === ErrorCode.UNKNOWN_ERROR &&
+        errorResponse.message === 'Invalid endpoint'
+      );
+    } catch {
+      return false;
+    }
   }
 
   private async throwContainerResponseError(

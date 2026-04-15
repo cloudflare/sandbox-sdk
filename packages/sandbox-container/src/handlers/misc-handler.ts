@@ -11,6 +11,12 @@ export interface VersionResult {
   timestamp: string;
 }
 
+export interface RuntimeIdentityResult {
+  success: boolean;
+  runtimeId: string;
+  timestamp: string;
+}
+
 export class MiscHandler extends BaseHandler<Request, Response> {
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const url = new URL(request.url);
@@ -25,6 +31,8 @@ export class MiscHandler extends BaseHandler<Request, Response> {
         return await this.handleHealth(request, context);
       case '/api/shutdown':
         return await this.handleShutdown(request, context);
+      case '/api/runtime/identity':
+        return await this.handleRuntimeIdentity(request, context);
       case '/api/version':
         return await this.handleVersion(request, context);
       default:
@@ -85,6 +93,21 @@ export class MiscHandler extends BaseHandler<Request, Response> {
     const response: VersionResult = {
       success: true,
       version,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleRuntimeIdentity(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const runtimeId = (process.env.CLOUDFLARE_PLACEMENT_ID || '').trim();
+
+    const response: RuntimeIdentityResult = {
+      success: true,
+      runtimeId,
       timestamp: new Date().toISOString()
     };
 

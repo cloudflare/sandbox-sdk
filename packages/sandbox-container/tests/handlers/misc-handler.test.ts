@@ -4,6 +4,7 @@ import type { ErrorResponse } from '@repo/shared/errors';
 import type { RequestContext } from '@sandbox-container/core/types';
 import {
   MiscHandler,
+  type RuntimeIdentityResult,
   type VersionResult
 } from '@sandbox-container/handlers/misc-handler';
 
@@ -221,6 +222,46 @@ describe('MiscHandler', () => {
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
         'Content-Type'
       );
+    });
+  });
+
+  describe('handleRuntimeIdentity - GET /api/runtime/identity', () => {
+    it('should return placement ID from environment variable', async () => {
+      process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-123';
+
+      const request = new Request(
+        'http://localhost:3000/api/runtime/identity',
+        {
+          method: 'GET'
+        }
+      );
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/json');
+
+      const responseData = (await response.json()) as RuntimeIdentityResult;
+      expect(responseData.success).toBe(true);
+      expect(responseData.runtimeId).toBe('placement-123');
+      expect(responseData.timestamp).toBeDefined();
+    });
+
+    it('should return empty runtime ID when placement ID is not set', async () => {
+      delete process.env.CLOUDFLARE_PLACEMENT_ID;
+
+      const request = new Request(
+        'http://localhost:3000/api/runtime/identity',
+        {
+          method: 'GET'
+        }
+      );
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseData = (await response.json()) as RuntimeIdentityResult;
+      expect(responseData.runtimeId).toBe('');
     });
   });
 
