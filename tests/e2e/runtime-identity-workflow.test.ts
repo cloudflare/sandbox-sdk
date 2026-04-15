@@ -3,6 +3,7 @@ import {
   cleanupTestSandbox,
   createTestSandbox
 } from './helpers/global-sandbox';
+import { waitForCondition } from './helpers/test-fixtures';
 import type { RuntimeIdentityResponse } from './test-worker/types';
 
 interface SandboxStateResponse {
@@ -26,11 +27,27 @@ describe('Runtime Identity E2E', () => {
       const runtime1 = (await response1.json()) as RuntimeIdentityResponse;
       expect(runtime1.runtimeId).not.toBe('');
 
-      const response2 = await fetch(
-        `${sandbox.workerUrl}/api/runtime/identity`,
+      const response2 = await waitForCondition(
+        async () => {
+          const response = await fetch(
+            `${sandbox.workerUrl}/api/runtime/identity`,
+            {
+              method: 'GET',
+              headers: sandbox.headers()
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Runtime identity not ready: ${response.status}`);
+          }
+
+          return response;
+        },
         {
-          method: 'GET',
-          headers: sandbox.headers()
+          timeout: 15000,
+          interval: 500,
+          errorMessage:
+            'Runtime identity did not become available after idle restart'
         }
       );
       expect(response2.ok).toBe(true);

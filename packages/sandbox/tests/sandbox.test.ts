@@ -1,6 +1,5 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ErrorCode } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -299,78 +298,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
         expect(result).toEqual({ runtimeId: 'placement-1' });
         expect(containerFetchSpy).not.toHaveBeenCalled();
-      });
-
-      it('should fall back to legacy placement lookup when the new endpoint is unavailable', async () => {
-        const containerFetchSpy = vi
-          .spyOn(Container.prototype as any, 'containerFetch')
-          .mockImplementation((...args: unknown[]) => {
-            const request = args[0] as Request;
-            const url = new URL(request.url);
-
-            if (url.pathname === '/api/ping') {
-              return Promise.resolve(
-                new Response(
-                  JSON.stringify({
-                    success: true,
-                    status: 'healthy',
-                    timestamp: new Date().toISOString()
-                  }),
-                  {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' }
-                  }
-                )
-              );
-            }
-
-            if (url.pathname === '/api/runtime/identity') {
-              return Promise.resolve(
-                new Response(
-                  JSON.stringify({
-                    code: ErrorCode.UNKNOWN_ERROR,
-                    message: 'Invalid endpoint',
-                    context: {},
-                    httpStatus: 500,
-                    timestamp: new Date().toISOString()
-                  }),
-                  {
-                    status: 500,
-                    headers: { 'Content-Type': 'application/json' }
-                  }
-                )
-              );
-            }
-
-            if (url.pathname === '/api/execute') {
-              return Promise.resolve(
-                new Response(
-                  JSON.stringify({
-                    success: true,
-                    stdout: 'placement-legacy',
-                    stderr: '',
-                    exitCode: 0,
-                    command: 'printf %s "$CLOUDFLARE_PLACEMENT_ID"',
-                    timestamp: new Date().toISOString()
-                  }),
-                  {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' }
-                  }
-                )
-              );
-            }
-
-            return Promise.resolve(new Response('ok'));
-          });
-
-        const result = await sandbox.getRuntimeIdentity();
-
-        expect(result).toEqual({ runtimeId: 'placement-legacy' });
-        expect(mockCtx.storage.put).toHaveBeenCalledWith('runtimeIdentity', {
-          runtimeId: 'placement-legacy'
-        });
-        expect(containerFetchSpy).toHaveBeenCalledTimes(3);
       });
 
       it('should refresh cached runtime identity when the runtime reports the container stopped', async () => {

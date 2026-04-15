@@ -227,8 +227,6 @@ function mergeSandboxConfiguration(
   };
 }
 
-const PLACEMENT_ID_COMMAND = 'printf %s "$CLOUDFLARE_PLACEMENT_ID"';
-
 const MISSING_PLACEMENT_ID_ERROR =
   'Runtime identity is unavailable because CLOUDFLARE_PLACEMENT_ID is not set in the container environment. Recreate the sandbox with a newer container runtime.';
 
@@ -1666,10 +1664,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     if (!response.ok) {
-      if (await this.isRuntimeIdentityEndpointUnavailable(response)) {
-        return await this.captureRuntimeIdentityLegacy();
-      }
-
       await this.throwContainerResponseError(
         response,
         'capture runtime identity from the container'
@@ -1686,65 +1680,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.runtimeIdentity = runtimeIdentity;
     await this.ctx.storage.put('runtimeIdentity', runtimeIdentity);
     return runtimeIdentity;
-  }
-
-  private async captureRuntimeIdentityLegacy(): Promise<RuntimeIdentity> {
-    const response = await super.containerFetch(
-      new Request('http://localhost/api/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          command: PLACEMENT_ID_COMMAND,
-          origin: 'internal'
-        })
-      }),
-      this.defaultPort
-    );
-
-    if (!response.ok) {
-      await this.throwContainerResponseError(
-        response,
-        'capture runtime identity from the container'
-      );
-    }
-
-    const result = (await response.json()) as ExecuteResponse;
-
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Failed to capture runtime identity: ${result.stderr || 'Placement lookup command failed.'}`
-      );
-    }
-
-    const runtimeId = result.stdout.trim();
-    if (!runtimeId) {
-      throw new Error(MISSING_PLACEMENT_ID_ERROR);
-    }
-
-    const runtimeIdentity = { runtimeId };
-    this.runtimeIdentity = runtimeIdentity;
-    await this.ctx.storage.put('runtimeIdentity', runtimeIdentity);
-    return runtimeIdentity;
-  }
-
-  private async isRuntimeIdentityEndpointUnavailable(
-    response: Response
-  ): Promise<boolean> {
-    if (response.status === 404) {
-      return true;
-    }
-
-    try {
-      const errorResponse = (await response.clone().json()) as ErrorResponse;
-      return (
-        errorResponse.code === ErrorCode.UNKNOWN_ERROR &&
-        errorResponse.message === 'Invalid endpoint'
-      );
-    } catch {
-      return false;
-    }
   }
 
   private async throwContainerResponseError(
