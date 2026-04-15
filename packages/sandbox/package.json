@@ -51,7 +51,8 @@
     "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
     "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
     "test:e2e:browser": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && npx playwright install chromium && playwright test --config tests/e2e/browser/playwright.config.ts",
-    "test:perf": "cd ../.. && vitest run --config vitest.perf.config.ts \"$@\""
+    "test:perf": "cd ../.. && vitest run --config vitest.perf.config.ts tests/perf/scenarios/cold-start.test.ts tests/perf/scenarios/sustained-throughput.test.ts tests/perf/scenarios/bursty-traffic.test.ts tests/perf/scenarios/concurrent-creation.test.ts tests/perf/scenarios/burst-startup.test.ts tests/perf/scenarios/file-io.test.ts",
+    "test:perf:heavy": "cd ../.. && vitest run --config vitest.perf.config.ts tests/perf/scenarios/backup-restore.test.ts tests/perf/scenarios/bucket-mounting.test.ts"
   },
   "exports": {
     ".": {

@@ -1,4 +1,4 @@
-name: Performance Tests
+name: Performance Tests (Heavy)
 
 on:
   workflow_dispatch:
@@ -10,14 +10,10 @@ on:
         type: choice
         options:
           - all
-          - cold-start
-          - sustained-throughput
-          - bursty-traffic
-          - concurrent-creation
-          - burst-startup
-          - file-io
+          - backup-restore
+          - bucket-mounting
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 2 * * *'
 
 permissions:
   contents: read
@@ -25,12 +21,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: perf-${{ github.ref }}
+  group: perf-heavy-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
-  PERF_WORKER_NAME: sandbox-perf-test-worker
+  PERF_WORKER_NAME: sandbox-perf-heavy-test-worker
 
 jobs:
   setup:
@@ -88,7 +84,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: build-${{ github.sha }}
+          name: build-heavy-${{ github.sha }}
           path: |
             packages/sandbox/dist/
             packages/shared/dist/
@@ -106,7 +102,7 @@ jobs:
       - name: Build default Docker image
         uses: docker/bake-action@v6
         env:
-          TAG: perf
+          TAG: perf-heavy
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
           CACHE_REPO: ghcr.io/${{ github.repository }}/cache
           BUN_VERSION: ${{ steps.bun-version.outputs.version }}
@@ -116,7 +112,7 @@ jobs:
           load: true
 
       - name: Push image to CF registry
-        run: npx wrangler containers push sandbox:perf
+        run: npx wrangler containers push sandbox:perf-heavy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -126,26 +122,44 @@ jobs:
           cd tests/e2e/test-worker
           sed -e "s|{{WORKER_NAME}}|${{ env.PERF_WORKER_NAME }}|g" \
             -e "s|{{CONTAINER_NAME}}|${{ env.PERF_WORKER_NAME }}|g" \
-            -e "s|{{IMAGE_SANDBOX}}|registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:perf|g" \
-            wrangler.perf.template.jsonc > wrangler.jsonc
+            -e "s|{{IMAGE_SANDBOX}}|registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:perf-heavy|g" \
+            wrangler.perf-heavy.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name ${{ env.PERF_WORKER_NAME }}
-          workingDirectory: tests/e2e/test-worker
+        run: |
+          cd tests/e2e/test-worker
+          npx wrangler deploy --name ${{ env.PERF_WORKER_NAME }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Push worker secrets
+        run: |
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg d "$R2_ACCESS_KEY_ID" \
+            --arg e "$R2_SECRET_ACCESS_KEY" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e}' \
+          | npx wrangler secret bulk --name ${{ env.PERF_WORKER_NAME }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Set worker URL
         id: deploy
         run: |
           echo "worker_url=https://${{ env.PERF_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
-  performance-tests:
+  performance-tests-heavy:
     needs: setup
     runs-on: ubuntu-24.04-8core
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
         with:
@@ -172,19 +186,19 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-heavy-${{ github.sha }}
           path: packages
 
       - name: Create output directory
         run: mkdir -p perf-results
 
-      - name: Run performance tests
+      - name: Run heavy performance tests
         env:
           TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
-            npm run test:perf
+            npm run test:perf:heavy
           else
             npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
           fi
@@ -193,16 +207,8 @@ jobs:
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: perf-results-${{ github.run_id }}
+          name: perf-heavy-results-${{ github.run_id }}
           path: perf-results/
-          retention-days: 7
-
-      - name: Upload baseline
-        uses: actions/upload-artifact@v7
-        if: success()
-        with:
-          name: perf-baseline
-          path: perf-results/latest.json
           retention-days: 7
 
       - name: Ingest results into D1

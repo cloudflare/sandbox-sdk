@@ -16,6 +16,7 @@
     "test:e2e:vitest": "turbo run test:e2e:vitest",
     "test:e2e:browser": "turbo run test:e2e:browser",
     "test:perf": "turbo run test:perf",
+    "test:perf:heavy": "turbo run test:perf:heavy",
     "test:perf:cold-start": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/cold-start.test.ts",
     "test:perf:concurrent": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/concurrent-creation.test.ts",
     "test:perf:sustained": "vitest run --config vitest.perf.config.ts tests/perf/scenarios/sustained-throughput.test.ts",
