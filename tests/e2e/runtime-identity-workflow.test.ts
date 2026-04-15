@@ -100,8 +100,9 @@ describe('Runtime Identity E2E', () => {
           );
 
           if (!response.ok) {
+            const body = await response.text();
             throw new Error(
-              `Runtime identity not ready after restart: ${response.status}`
+              `Runtime identity not ready after restart: status=${response.status} body=${body}`
             );
           }
 

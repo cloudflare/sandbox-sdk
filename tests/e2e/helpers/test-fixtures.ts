@@ -133,17 +133,20 @@ export async function waitForCondition<T>(
     options.errorMessage || 'Condition not met within timeout';
 
   const startTime = Date.now();
+  let lastError: unknown;
 
   while (Date.now() - startTime < timeout) {
     try {
       return await condition();
     } catch (error) {
+      lastError = error;
       // Wait before retrying
       await new Promise((resolve) => setTimeout(resolve, interval));
     }
   }
 
-  throw new Error(errorMessage);
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
+  throw new Error(`${errorMessage}${suffix}`);
 }
 
 /**
