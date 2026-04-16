@@ -7,11 +7,10 @@
   "observability": {
     "enabled": true
   },
-  "services": [
+  "artifacts": [
     {
       "binding": "ARTIFACTS",
-      "service": "artifacts",
-      "entrypoint": "ArtifactsBinding"
+      "namespace": "default"
     }
   ],
   "containers": [

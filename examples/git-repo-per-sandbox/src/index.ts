@@ -3,25 +3,31 @@ import { Hono } from 'hono';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
-interface ArtifactsRepoInfo {
+export interface ArtifactsRepoInfo {
   name: string;
   remote: string;
   defaultBranch: string;
   lastPushAt: string | null;
 }
 
-interface ArtifactsRepo {
+export interface ArtifactsTokenResult {
+  expiresAt: string;
+  plaintext: string;
+}
+
+export interface ArtifactsRepo {
   info(): Promise<ArtifactsRepoInfo | null>;
   createToken(
     scope?: 'write' | 'read',
     ttl?: number
-  ): Promise<{ plaintext: string }>;
+  ): Promise<ArtifactsTokenResult>;
 }
 
-interface ArtifactsBinding {
+export interface Artifacts {
   get(name: string): Promise<ArtifactsRepo | null>;
   create(name: string): Promise<{
     defaultBranch: string;
+    expiresAt: string;
     remote: string;
     token: string;
   }>;
@@ -29,11 +35,19 @@ interface ArtifactsBinding {
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
-  ARTIFACTS: ArtifactsBinding;
+  ARTIFACTS: Artifacts;
 }
 
 interface CommitRequest {
   filename?: string;
+}
+
+interface SandboxRepoState {
+  defaultBranch: string;
+  remote: string;
+  repoExisted: boolean;
+  sandbox: Sandbox;
+  tokenExpiresAt: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -48,6 +62,7 @@ app.post('/sandboxes/:id/setup', async (c) => {
     repoExisted: state.repoExisted,
     remote: state.remote,
     defaultBranch: state.defaultBranch,
+    tokenExpiresAt: state.tokenExpiresAt,
     message: 'Sandbox is ready to use ARTIFACTS_GIT_REMOTE.'
   });
 });
@@ -145,11 +160,13 @@ function getFilename(filename?: string) {
 
 async function ensureSandboxRepo(env: Env, sandboxId: string) {
   const sandbox = getSandbox(env.Sandbox, sandboxId);
+  // Mirror the current binding methods the example uses so the Worker code stays explicit.
   const existingRepo = await env.ARTIFACTS.get(sandboxId);
 
   let defaultBranch: string;
   let remote: string;
   let token: string;
+  let tokenExpiresAt: string;
   let repoExisted = false;
 
   if (existingRepo) {
@@ -162,13 +179,16 @@ async function ensureSandboxRepo(env: Env, sandboxId: string) {
     repoExisted = true;
     defaultBranch = info.defaultBranch;
     remote = info.remote;
-    token = (await existingRepo.createToken('write', 3600)).plaintext;
+    const createdToken = await existingRepo.createToken('write', 3600);
+    token = createdToken.plaintext;
+    tokenExpiresAt = createdToken.expiresAt;
   } else {
     const created = await env.ARTIFACTS.create(sandboxId);
 
     defaultBranch = created.defaultBranch;
     remote = created.remote;
     token = created.token;
+    tokenExpiresAt = created.expiresAt;
   }
 
   // The sandbox gets a normal authenticated Git remote it can reuse across commands.
@@ -180,8 +200,9 @@ async function ensureSandboxRepo(env: Env, sandboxId: string) {
     sandbox,
     defaultBranch,
     remote,
-    repoExisted
-  };
+    repoExisted,
+    tokenExpiresAt
+  } satisfies SandboxRepoState;
 }
 
 const COMMIT_SCRIPT = [
