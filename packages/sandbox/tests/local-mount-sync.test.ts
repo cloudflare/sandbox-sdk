@@ -462,7 +462,7 @@ describe('LocalMountSyncManager', () => {
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
         mountPath: '/mnt/data',
-        prefix: 'data/',
+        prefix: '/data/',
         readOnly: true,
         client,
         sessionId: 'test-session',
@@ -471,7 +471,7 @@ describe('LocalMountSyncManager', () => {
 
       await manager.start();
 
-      // Should list with prefix
+      // Leading slash stripped for R2 key semantics
       expect(bucket.list).toHaveBeenCalledWith(
         expect.objectContaining({ prefix: 'data/' })
       );
@@ -487,6 +487,141 @@ describe('LocalMountSyncManager', () => {
       await manager.stop();
     });
 
+    it('should normalize leading-slash prefix for R2 list and path mapping', async () => {
+      const r2Objects = new Map([
+        ['some/prefix/file.txt', { body: 'content', etag: 'etag1' }]
+      ]);
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const watchClient = createMockWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: '/some/prefix/',
+        readOnly: true,
+        client,
+        sessionId: 'test-session',
+        logger
+      });
+
+      await manager.start();
+
+      // Leading slash must be stripped before passing to R2
+      expect(bucket.list).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: 'some/prefix/' })
+      );
+
+      // Container path should have prefix stripped
+      expect(fileClient.writeFile).toHaveBeenCalledWith(
+        '/mnt/data/file.txt',
+        expect.any(String),
+        'test-session',
+        { encoding: 'base64' }
+      );
+
+      await manager.stop();
+    });
+
+    it('should normalize leading-slash prefix for Container→R2 uploads', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: '/some/prefix/',
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/mnt/data/foo.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      // R2 key must NOT have a leading slash
+      expect(bucket.put).toHaveBeenCalledWith(
+        'some/prefix/foo.txt',
+        expect.any(Uint8Array)
+      );
+
+      close();
+      await manager.stop();
+    });
+
+    it('should treat a bare slash prefix as no prefix', async () => {
+      const r2Objects = new Map([
+        ['file.txt', { body: 'content', etag: 'etag1' }]
+      ]);
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const watchClient = createMockWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: '/',
+        readOnly: true,
+        client,
+        sessionId: 'test-session',
+        logger
+      });
+
+      await manager.start();
+
+      // Bare '/' stripped to empty string → treated as undefined (no prefix filter)
+      expect(bucket.list).toHaveBeenCalledWith({});
+
+      expect(fileClient.writeFile).toHaveBeenCalledWith(
+        '/mnt/data/file.txt',
+        expect.any(String),
+        'test-session',
+        { encoding: 'base64' }
+      );
+
+      await manager.stop();
+    });
+
+    it('should reject prefix without leading slash (matches production)', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const fileClient = createMockFileClient();
+      const watchClient = createMockWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      expect(
+        () =>
+          new LocalMountSyncManager({
+            bucket: bucket as unknown as R2Bucket,
+            mountPath: '/mnt/data',
+            prefix: 'data/',
+            readOnly: true,
+            client,
+            sessionId: 'test-session',
+            logger
+          })
+      ).toThrow(/Prefix must start with/);
+    });
+
     it('should handle prefix without trailing slash', async () => {
       const r2Objects = new Map([
         ['uploads/photo.jpg', { body: 'img', etag: 'etag1' }]
@@ -499,7 +634,7 @@ describe('LocalMountSyncManager', () => {
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
         mountPath: '/mnt/data',
-        prefix: 'uploads',
+        prefix: '/uploads',
         readOnly: true,
         client,
         sessionId: 'test-session',
@@ -821,7 +956,7 @@ describe('LocalMountSyncManager', () => {
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
         mountPath: '/mnt/data',
-        prefix: 'uploads/',
+        prefix: '/uploads/',
         readOnly: false,
         client,
         sessionId: 'test-session',
@@ -841,7 +976,7 @@ describe('LocalMountSyncManager', () => {
 
       await flush();
 
-      // R2 key should include prefix
+      // R2 key should include prefix (leading slash stripped)
       expect(bucket.put).toHaveBeenCalledWith(
         'uploads/photo.jpg',
         expect.any(Uint8Array)

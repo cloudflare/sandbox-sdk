@@ -955,6 +955,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      if (options.prefix !== undefined) {
+        validatePrefix(options.prefix);
+      }
+
       if (this.activeMounts.has(mountPath)) {
         throw new InvalidMountConfigError(
           `Mount path already in use: ${mountPath}`
