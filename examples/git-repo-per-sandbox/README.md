@@ -2,7 +2,7 @@
 
 Create one Artifacts repo per sandbox and let the sandbox push to that repo with a normal Git remote.
 
-This example uses the same ID for the sandbox and the Artifacts repo. It creates both resources on demand, passes an authenticated Git remote into the sandbox, and then uses `git clone`, `touch`, `git add`, `git commit`, and `git push` inside the sandbox.
+This example uses the same ID for the sandbox and the Artifacts repo. It creates both resources on demand, mints a short-lived write token, passes an authenticated Git remote into the sandbox, and then uses `git clone`, `touch`, `git add`, `git commit`, and `git push` inside the sandbox.
 
 ## What It Shows
 
@@ -16,6 +16,7 @@ This example uses the same ID for the sandbox and the Artifacts repo. It creates
 - `POST /sandboxes/:id/setup`
   - Creates or reuses the sandbox and repo
   - Stores `ARTIFACTS_GIT_REMOTE` inside the sandbox
+  - Returns the write token expiration time used for the sandbox remote
 - `GET /sandboxes/:id/repo`
   - Returns the existing repo metadata for that sandbox ID
 - `POST /sandboxes/:id/commit`
@@ -46,6 +47,8 @@ npm run dev
 
 The first run builds the Docker container. Later runs are much faster.
 
+The Worker binds Artifacts through the `artifacts` block in `wrangler.jsonc`, and `src/index.ts` keeps the Artifacts methods it uses explicit.
+
 ## Try It
 
 Create or reuse the sandbox and repo:
@@ -74,4 +77,5 @@ If you omit `filename`, the example creates a unique file name for you.
 
 - This example expects access to the `artifacts` service in your Cloudflare account.
 - The sandbox receives an authenticated Git remote through `ARTIFACTS_GIT_REMOTE`.
+- The Worker mints a short-lived write token and does not return that secret in API responses.
 - The example returns the public repo remote in JSON responses, not the authenticated one.
