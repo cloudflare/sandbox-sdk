@@ -11,8 +11,7 @@
  */
 
 const WS_URL =
-  process.env.WS_URL ||
-  `ws://localhost:8787/ws/egress-test-${Date.now()}`;
+  process.env.WS_URL || `ws://localhost:8787/ws/egress-test-${Date.now()}`;
 const TIMEOUT_MS = 120_000;
 
 let nextId = 0;
@@ -35,7 +34,11 @@ function waitFor(predicate, label, timeoutMs = TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const handler = (event) => {
       let msg;
-      try { msg = JSON.parse(event.data); } catch { return; }
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       if (predicate(msg)) {
         clearTimeout(timer);
         ws.removeEventListener('message', handler);
@@ -53,7 +56,7 @@ function waitFor(predicate, label, timeoutMs = TIMEOUT_MS) {
 function waitForResponse(id, label) {
   return waitFor(
     (m) => m.id === id && (m.result !== undefined || m.error !== undefined),
-    label,
+    label
   );
 }
 
@@ -79,7 +82,10 @@ async function step(label, fn) {
 async function sandboxExec(command) {
   const msg = req('sandbox/exec', { command });
   send(msg);
-  const resp = await waitForResponse(msg.id, `sandbox/exec: ${command.slice(0, 60)}`);
+  const resp = await waitForResponse(
+    msg.id,
+    `sandbox/exec: ${command.slice(0, 60)}`
+  );
   if (resp.error) throw new Error(`sandbox/exec error: ${resp.error.message}`);
   return resp.result;
 }
@@ -97,7 +103,9 @@ async function run() {
     ws = new WebSocket(WS_URL);
     await new Promise((resolve, reject) => {
       ws.addEventListener('open', resolve);
-      ws.addEventListener('error', () => reject(new Error('WebSocket connect failed')));
+      ws.addEventListener('error', () =>
+        reject(new Error('WebSocket connect failed'))
+      );
     });
     assert(ws.readyState === WebSocket.OPEN, 'WebSocket is open');
   });
@@ -105,8 +113,12 @@ async function run() {
   // 2. Initialize handshake
   await step('Initialize', async () => {
     const initMsg = req('initialize', {
-      clientInfo: { name: 'egress_test', title: 'Egress Test', version: '1.0.0' },
-      capabilities: { experimentalApi: true },
+      clientInfo: {
+        name: 'egress_test',
+        title: 'Egress Test',
+        version: '1.0.0'
+      },
+      capabilities: { experimentalApi: true }
     });
     send(initMsg);
     const resp = await waitForResponse(initMsg.id, 'initialize response');
@@ -130,36 +142,54 @@ async function run() {
   // intercepts HTTP (not HTTPS), so we use http:// URLs. The proxy upgrades
   // api.openai.com to HTTPS and injects the API key.
 
-  await step('Egress: api.openai.com — should be ALLOWED with API key injection', async () => {
-    // Hit the models endpoint via HTTP — the egress proxy upgrades to HTTPS
-    // and injects the real API key. The container only has a dummy key.
-    const result = await sandboxExec(
-      'curl -s -o /dev/null -w "%{http_code}" http://api.openai.com/v1/models'
-    );
-    const stdout = (result.stdout || result.output || '').trim();
-    assert(stdout === '200', `api.openai.com returned HTTP 200 (got: ${stdout})`);
-  });
+  await step(
+    'Egress: api.openai.com — should be ALLOWED with API key injection',
+    async () => {
+      // Hit the models endpoint via HTTP — the egress proxy upgrades to HTTPS
+      // and injects the real API key. The container only has a dummy key.
+      const result = await sandboxExec(
+        'curl -s -o /dev/null -w "%{http_code}" http://api.openai.com/v1/models'
+      );
+      const stdout = (result.stdout || result.output || '').trim();
+      assert(
+        stdout === '200',
+        `api.openai.com returned HTTP 200 (got: ${stdout})`
+      );
+    }
+  );
 
-  await step('Egress: api.openai.com API key injection — container should NOT have real key', async () => {
-    // The container receives a dummy OPENAI_API_KEY via setEnvVars.
-    const result = await sandboxExec('echo $OPENAI_API_KEY');
-    const stdout = (result.stdout || result.output || '').trim();
-    assert(
-      stdout === 'proxy-injected',
-      `OPENAI_API_KEY is dummy value (got: "${stdout.slice(0, 40)}")`,
-    );
-  });
+  await step(
+    'Egress: api.openai.com API key injection — container should NOT have real key',
+    async () => {
+      // The container receives a dummy OPENAI_API_KEY via setEnvVars.
+      const result = await sandboxExec('echo $OPENAI_API_KEY');
+      const stdout = (result.stdout || result.output || '').trim();
+      assert(
+        stdout === 'proxy-injected',
+        `OPENAI_API_KEY is dummy value (got: "${stdout.slice(0, 40)}")`
+      );
+    }
+  );
 
-  await step('Egress: api.openai.com API key injection — verify key is injected', async () => {
-    // Make a real API call that requires auth — list models
-    const result = await sandboxExec(
-      'curl -s http://api.openai.com/v1/models | head -c 200'
-    );
-    const stdout = (result.stdout || result.output || '').trim();
-    // Should get JSON with model data, not an auth error
-    assert(!stdout.includes('invalid_api_key'), 'Response is not an auth error');
-    assert(stdout.startsWith('{'), `Response is JSON (starts with: "${stdout.slice(0, 30)}")`);
-  });
+  await step(
+    'Egress: api.openai.com API key injection — verify key is injected',
+    async () => {
+      // Make a real API call that requires auth — list models
+      const result = await sandboxExec(
+        'curl -s http://api.openai.com/v1/models | head -c 200'
+      );
+      const stdout = (result.stdout || result.output || '').trim();
+      // Should get JSON with model data, not an auth error
+      assert(
+        !stdout.includes('invalid_api_key'),
+        'Response is not an auth error'
+      );
+      assert(
+        stdout.startsWith('{'),
+        `Response is JSON (starts with: "${stdout.slice(0, 30)}")`
+      );
+    }
+  );
 
   await step('Egress: github.com — should be ALLOWED', async () => {
     const result = await sandboxExec(
@@ -169,7 +199,10 @@ async function run() {
     // github.com over HTTP redirects to HTTPS (301/302), which means the
     // egress proxy allowed it through. Any 3xx or 200 counts as success.
     const code = parseInt(stdout, 10);
-    assert(code >= 200 && code < 400, `github.com returned HTTP ${code} (allowed)`);
+    assert(
+      code >= 200 && code < 400,
+      `github.com returned HTTP ${code} (allowed)`
+    );
   });
 
   await step('Egress: example.com — should be BLOCKED (403)', async () => {
@@ -193,7 +226,7 @@ async function run() {
     const stdout = (result.stdout || result.output || '').trim();
     assert(
       stdout.includes('Forbidden by egress policy'),
-      `Blocked response contains "Forbidden by egress policy" (got: "${stdout.slice(0, 80)}")`,
+      `Blocked response contains "Forbidden by egress policy" (got: "${stdout.slice(0, 80)}")`
     );
   });
 

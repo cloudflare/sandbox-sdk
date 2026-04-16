@@ -127,7 +127,7 @@ export function bridge(
       // 1. Try bridge API routes
       const url = new URL(request.url);
       if (
-        url.pathname.startsWith(apiPrefix + '/') ||
+        url.pathname.startsWith(`${apiPrefix}/`) ||
         url.pathname === apiPrefix ||
         url.pathname === healthPath
       ) {

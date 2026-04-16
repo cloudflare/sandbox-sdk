@@ -3703,33 +3703,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Generate a presigned GET URL for downloading an object from R2.
-   * The container can curl this URL directly without credentials.
-   */
-  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
-    url.searchParams.set(
-      'X-Amz-Expires',
-      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
-    );
-
-    const signed = await client.sign(new Request(url), {
-      aws: { signQuery: true }
-    });
-
-    return signed.url;
-  }
-
-  /**
    * Generate a presigned PUT URL for uploading an object to R2.
    * The container can curl PUT to this URL directly without credentials.
    */

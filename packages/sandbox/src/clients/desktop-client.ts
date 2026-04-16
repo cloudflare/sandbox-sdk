@@ -188,14 +188,10 @@ export class DesktopClient extends BaseHttpClient {
    * Get desktop lifecycle and process health status.
    */
   async status(): Promise<DesktopStatusResponse> {
-    try {
-      const response = await this.get<DesktopStatusResponse>(
-        '/api/desktop/status'
-      );
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    const response = await this.get<DesktopStatusResponse>(
+      '/api/desktop/status'
+    );
+    return response;
   }
 
   /**
@@ -213,41 +209,37 @@ export class DesktopClient extends BaseHttpClient {
   async screenshot(
     options?: ScreenshotOptions
   ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
-    try {
-      const wantsBytes = options?.format === 'bytes';
-      const data = {
-        format: 'base64',
-        ...(options?.imageFormat !== undefined && {
-          imageFormat: options.imageFormat
-        }),
-        ...(options?.quality !== undefined && { quality: options.quality }),
-        ...(options?.showCursor !== undefined && {
-          showCursor: options.showCursor
-        })
-      };
+    const wantsBytes = options?.format === 'bytes';
+    const data = {
+      format: 'base64',
+      ...(options?.imageFormat !== undefined && {
+        imageFormat: options.imageFormat
+      }),
+      ...(options?.quality !== undefined && { quality: options.quality }),
+      ...(options?.showCursor !== undefined && {
+        showCursor: options.showCursor
+      })
+    };
 
-      const response = await this.post<ScreenshotResponse>(
-        '/api/desktop/screenshot',
-        data
-      );
+    const response = await this.post<ScreenshotResponse>(
+      '/api/desktop/screenshot',
+      data
+    );
 
-      if (wantsBytes) {
-        const binaryString = atob(response.data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        return {
-          ...response,
-          data: bytes
-        } as ScreenshotBytesResponse;
+    if (wantsBytes) {
+      const binaryString = atob(response.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
       }
 
-      return response;
-    } catch (error) {
-      throw error;
+      return {
+        ...response,
+        data: bytes
+      } as ScreenshotBytesResponse;
     }
+
+    return response;
   }
 
   /**
@@ -268,58 +260,50 @@ export class DesktopClient extends BaseHttpClient {
     region: ScreenshotRegion,
     options?: ScreenshotOptions
   ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
-    try {
-      const wantsBytes = options?.format === 'bytes';
-      const data = {
-        region,
-        format: 'base64',
-        ...(options?.imageFormat !== undefined && {
-          imageFormat: options.imageFormat
-        }),
-        ...(options?.quality !== undefined && { quality: options.quality }),
-        ...(options?.showCursor !== undefined && {
-          showCursor: options.showCursor
-        })
-      };
+    const wantsBytes = options?.format === 'bytes';
+    const data = {
+      region,
+      format: 'base64',
+      ...(options?.imageFormat !== undefined && {
+        imageFormat: options.imageFormat
+      }),
+      ...(options?.quality !== undefined && { quality: options.quality }),
+      ...(options?.showCursor !== undefined && {
+        showCursor: options.showCursor
+      })
+    };
 
-      const response = await this.post<ScreenshotResponse>(
-        '/api/desktop/screenshot/region',
-        data
-      );
+    const response = await this.post<ScreenshotResponse>(
+      '/api/desktop/screenshot/region',
+      data
+    );
 
-      if (wantsBytes) {
-        const binaryString = atob(response.data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        return {
-          ...response,
-          data: bytes
-        } as ScreenshotBytesResponse;
+    if (wantsBytes) {
+      const binaryString = atob(response.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
       }
 
-      return response;
-    } catch (error) {
-      throw error;
+      return {
+        ...response,
+        data: bytes
+      } as ScreenshotBytesResponse;
     }
+
+    return response;
   }
 
   /**
    * Single-click at the given coordinates.
    */
   async click(x: number, y: number, options?: ClickOptions): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
-        x,
-        y,
-        button: options?.button ?? 'left',
-        clickCount: 1
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
+      x,
+      y,
+      button: options?.button ?? 'left',
+      clickCount: 1
+    });
   }
 
   /**
@@ -330,16 +314,12 @@ export class DesktopClient extends BaseHttpClient {
     y: number,
     options?: ClickOptions
   ): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
-        x,
-        y,
-        button: options?.button ?? 'left',
-        clickCount: 2
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
+      x,
+      y,
+      button: options?.button ?? 'left',
+      clickCount: 2
+    });
   }
 
   /**
@@ -350,48 +330,36 @@ export class DesktopClient extends BaseHttpClient {
     y: number,
     options?: ClickOptions
   ): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
-        x,
-        y,
-        button: options?.button ?? 'left',
-        clickCount: 3
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
+      x,
+      y,
+      button: options?.button ?? 'left',
+      clickCount: 3
+    });
   }
 
   /**
    * Right-click at the given coordinates.
    */
   async rightClick(x: number, y: number): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
-        x,
-        y,
-        button: 'right',
-        clickCount: 1
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
+      x,
+      y,
+      button: 'right',
+      clickCount: 1
+    });
   }
 
   /**
    * Middle-click at the given coordinates.
    */
   async middleClick(x: number, y: number): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
-        x,
-        y,
-        button: 'middle',
-        clickCount: 1
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/click', {
+      x,
+      y,
+      button: 'middle',
+      clickCount: 1
+    });
   }
 
   /**
@@ -402,41 +370,29 @@ export class DesktopClient extends BaseHttpClient {
     y?: number,
     options?: ClickOptions
   ): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/down', {
-        ...(x !== undefined && { x }),
-        ...(y !== undefined && { y }),
-        button: options?.button ?? 'left'
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/down', {
+      ...(x !== undefined && { x }),
+      ...(y !== undefined && { y }),
+      button: options?.button ?? 'left'
+    });
   }
 
   /**
    * Release a held mouse button.
    */
   async mouseUp(x?: number, y?: number, options?: ClickOptions): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/up', {
-        ...(x !== undefined && { x }),
-        ...(y !== undefined && { y }),
-        button: options?.button ?? 'left'
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/up', {
+      ...(x !== undefined && { x }),
+      ...(y !== undefined && { y }),
+      button: options?.button ?? 'left'
+    });
   }
 
   /**
    * Move the mouse cursor to coordinates.
    */
   async moveMouse(x: number, y: number): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/move', { x, y });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/move', { x, y });
   }
 
   /**
@@ -449,17 +405,13 @@ export class DesktopClient extends BaseHttpClient {
     endY: number,
     options?: ClickOptions
   ): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/drag', {
-        startX,
-        startY,
-        endX,
-        endY,
-        button: options?.button ?? 'left'
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/drag', {
+      startX,
+      startY,
+      endX,
+      endY,
+      button: options?.button ?? 'left'
+    });
   }
 
   /**
@@ -471,91 +423,63 @@ export class DesktopClient extends BaseHttpClient {
     direction: ScrollDirection,
     amount = 3
   ): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/mouse/scroll', {
-        x,
-        y,
-        direction,
-        amount
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/mouse/scroll', {
+      x,
+      y,
+      direction,
+      amount
+    });
   }
 
   /**
    * Get the current cursor coordinates.
    */
   async getCursorPosition(): Promise<CursorPositionResponse> {
-    try {
-      const response = await this.get<CursorPositionResponse>(
-        '/api/desktop/mouse/position'
-      );
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    const response = await this.get<CursorPositionResponse>(
+      '/api/desktop/mouse/position'
+    );
+    return response;
   }
 
   /**
    * Type text into the focused element.
    */
   async type(text: string, options?: TypeOptions): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/keyboard/type', {
-        text,
-        ...(options?.delayMs !== undefined && { delayMs: options.delayMs })
-      });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/keyboard/type', {
+      text,
+      ...(options?.delayMs !== undefined && { delayMs: options.delayMs })
+    });
   }
 
   /**
    * Press and release a key or key combination.
    */
   async press(key: KeyInput): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/keyboard/press', { key });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/keyboard/press', { key });
   }
 
   /**
    * Press and hold a key.
    */
   async keyDown(key: KeyInput): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/keyboard/down', { key });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/keyboard/down', { key });
   }
 
   /**
    * Release a held key.
    */
   async keyUp(key: KeyInput): Promise<void> {
-    try {
-      await this.post<BaseApiResponse>('/api/desktop/keyboard/up', { key });
-    } catch (error) {
-      throw error;
-    }
+    await this.post<BaseApiResponse>('/api/desktop/keyboard/up', { key });
   }
 
   /**
    * Get the active desktop screen size.
    */
   async getScreenSize(): Promise<ScreenSizeResponse> {
-    try {
-      const response = await this.get<ScreenSizeResponse>(
-        '/api/desktop/screen/size'
-      );
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    const response = await this.get<ScreenSizeResponse>(
+      '/api/desktop/screen/size'
+    );
+    return response;
   }
 
   /**
@@ -566,14 +490,10 @@ export class DesktopClient extends BaseHttpClient {
   ): Promise<
     BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
   > {
-    try {
-      const response = await this.get<
-        BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-      >(`/api/desktop/process/${encodeURIComponent(name)}/status`);
+    const response = await this.get<
+      BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
+    >(`/api/desktop/process/${encodeURIComponent(name)}/status`);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 }

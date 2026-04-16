@@ -75,7 +75,9 @@ function assert(condition: boolean, msg: string) {
 
 function assertEqual(actual: any, expected: any, label = '') {
   if (actual !== expected) {
-    throw new Error(`${label ? label + ': ' : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    throw new Error(
+      `${label ? label + ': ' : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+    );
   }
 }
 
@@ -113,12 +115,20 @@ function parseSSE(text: string) {
 // ---------------------------------------------------------------------------
 
 async function startServer() {
-  const env = { ...process.env, SANDBOX_API_KEY: TOKEN, WRANGLER_SKIP_UPDATE_CHECK: '1' };
-  const child = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--enable-containers=false'], {
-    cwd: process.cwd(),
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
+  const env = {
+    ...process.env,
+    SANDBOX_API_KEY: TOKEN,
+    WRANGLER_SKIP_UPDATE_CHECK: '1'
+  };
+  const child = spawn(
+    'npx',
+    ['wrangler', 'dev', '--port', String(PORT), '--enable-containers=false'],
+    {
+      cwd: process.cwd(),
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
 
   let stdout = '';
   let stderr = '';
@@ -133,7 +143,9 @@ async function startServer() {
 
   if (!stdout.includes('Ready on') && !stderr.includes('Ready on')) {
     child.kill('SIGTERM');
-    throw new Error(`wrangler dev did not start within 30s.\nstdout: ${stdout}\nstderr: ${stderr}`);
+    throw new Error(
+      `wrangler dev did not start within 30s.\nstdout: ${stdout}\nstderr: ${stderr}`
+    );
   }
 
   await sleep(500);
@@ -284,7 +296,11 @@ async function runTests() {
       body: JSON.stringify({ argv: ['echo', 'hello'] })
     });
     assertEqual(res.status, 200, 'status');
-    assertEqual(res.headers.get('Content-Type'), 'text/event-stream', 'content-type');
+    assertEqual(
+      res.headers.get('Content-Type'),
+      'text/event-stream',
+      'content-type'
+    );
 
     const text = await res.text();
     const events = parseSSE(text);
@@ -303,25 +319,34 @@ async function runTests() {
     const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/`, {
       headers: authHeadersRaw()
     });
-    assert(res.status === 400 || res.status === 404, `expected 400 or 404, got ${res.status}`);
+    assert(
+      res.status === 400 || res.status === 404,
+      `expected 400 or 404, got ${res.status}`
+    );
   });
 
   // A single .. stays within the /file/* route but escapes /workspace.
   // fetch() normalises workspace/../tmp/secret → tmp/secret which matches
   // the route wildcard, then resolveWorkspacePath("/tmp/secret") → null → 403.
   await test('rejects GET file path traversal via ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/secret`, {
-      headers: authHeadersRaw()
-    });
+    const res = await fetch(
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/secret`,
+      {
+        headers: authHeadersRaw()
+      }
+    );
     assertEqual(res.status, 403, 'status');
     const body: any = await res.json();
     assertIncludes(body.error, 'within /workspace');
   });
 
   await test('rejects path outside /workspace', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/tmp/secret`, {
-      headers: authHeadersRaw()
-    });
+    const res = await fetch(
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/file/tmp/secret`,
+      {
+        headers: authHeadersRaw()
+      }
+    );
     assertEqual(res.status, 403, 'status');
   });
 
@@ -329,11 +354,14 @@ async function runTests() {
   console.log('\n📋 PUT /v1/sandbox/:id/file/* — validation');
 
   await test('rejects PUT file path traversal via ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/evil`, {
-      method: 'PUT',
-      headers: authHeadersRaw(),
-      body: 'bad content'
-    });
+    const res = await fetch(
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/evil`,
+      {
+        method: 'PUT',
+        headers: authHeadersRaw(),
+        body: 'bad content'
+      }
+    );
     assertEqual(res.status, 403, 'status');
   });
 
@@ -353,10 +381,13 @@ async function runTests() {
   console.log('\n📋 POST /v1/sandbox/:id/persist — validation');
 
   await test('rejects excludes with ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/persist?excludes=../secret`, {
-      method: 'POST',
-      headers: authHeadersRaw()
-    });
+    const res = await fetch(
+      `${BASE}/v1/sandbox/${SANDBOX_ID}/persist?excludes=../secret`,
+      {
+        method: 'POST',
+        headers: authHeadersRaw()
+      }
+    );
     assertEqual(res.status, 400, 'status');
     const body: any = await res.json();
     assertIncludes(body.error, '..');
@@ -368,7 +399,10 @@ async function runTests() {
   await test('rejects empty body', async () => {
     const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/hydrate`, {
       method: 'POST',
-      headers: { ...authHeadersRaw(), 'Content-Type': 'application/octet-stream' },
+      headers: {
+        ...authHeadersRaw(),
+        'Content-Type': 'application/octet-stream'
+      },
       body: new Uint8Array(0)
     });
     assertEqual(res.status, 400, 'status');
@@ -405,7 +439,11 @@ async function runTests() {
   await test('rejects non-numeric cols via fetch with Upgrade header', async () => {
     // Bun's fetch passes the Upgrade header through
     const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?cols=abc`, {
-      headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
+      headers: {
+        ...authHeadersRaw(),
+        Upgrade: 'websocket',
+        Connection: 'Upgrade'
+      }
     });
     assertEqual(res.status, 400, 'status');
     const body: any = await res.json();
@@ -414,7 +452,11 @@ async function runTests() {
 
   await test('rejects non-numeric rows via fetch with Upgrade header', async () => {
     const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?rows=xyz`, {
-      headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
+      headers: {
+        ...authHeadersRaw(),
+        Upgrade: 'websocket',
+        Connection: 'Upgrade'
+      }
     });
     assertEqual(res.status, 400, 'status');
     const body: any = await res.json();
@@ -517,7 +559,9 @@ async function runTests() {
   });
 
   await test('OpenAPI /pty entry has correct parameters', async () => {
-    const res = await fetch(`${BASE}/v1/openapi.json`, { headers: authHeadersRaw() });
+    const res = await fetch(`${BASE}/v1/openapi.json`, {
+      headers: authHeadersRaw()
+    });
     const schema: any = await res.json();
     const pty = schema.paths['/v1/sandbox/{id}/pty']?.get;
     assert(pty, 'missing /pty GET entry');
@@ -540,7 +584,11 @@ async function runTests() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log('🚀 Starting wrangler dev on port', PORT, TOKEN ? '(auth enabled)' : '(auth disabled)');
+  console.log(
+    '🚀 Starting wrangler dev on port',
+    PORT,
+    TOKEN ? '(auth enabled)' : '(auth disabled)'
+  );
 
   let server: ReturnType<typeof spawn> | undefined;
   try {

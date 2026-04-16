@@ -5,7 +5,8 @@
  * sends a prompt, and verifies streamed responses.
  */
 
-const WS_URL = process.env.WS_URL || `ws://localhost:8787/ws/test-${Date.now()}`;
+const WS_URL =
+  process.env.WS_URL || `ws://localhost:8787/ws/test-${Date.now()}`;
 const TIMEOUT_MS = 120_000;
 const REPO_URL = 'https://github.com/cloudflare/sandbox-sdk';
 
@@ -29,7 +30,11 @@ function waitFor(predicate, label, timeoutMs = TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const handler = (event) => {
       let msg;
-      try { msg = JSON.parse(event.data); } catch { return; }
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       const arrow = msg.method ? `${msg.method}` : `response(id=${msg.id})`;
       if (!msg.method?.includes('/delta')) {
         console.log(`  <<< ${arrow}`);
@@ -74,7 +79,9 @@ async function run() {
     ws = new WebSocket(WS_URL);
     await new Promise((resolve, reject) => {
       ws.addEventListener('open', resolve);
-      ws.addEventListener('error', (e) => reject(new Error('WebSocket connect failed')));
+      ws.addEventListener('error', (e) =>
+        reject(new Error('WebSocket connect failed'))
+      );
     });
     assert(ws.readyState === WebSocket.OPEN, 'WebSocket is open');
   });
@@ -86,9 +93,12 @@ async function run() {
     send(setupMsg);
     const resp = await waitFor(
       (m) => m.id === setupId && (m.result || m.error),
-      'sandbox/setup response',
+      'sandbox/setup response'
     );
-    assert(!resp.error, `No error (got: ${JSON.stringify(resp.error || 'none')})`);
+    assert(
+      !resp.error,
+      `No error (got: ${JSON.stringify(resp.error || 'none')})`
+    );
     assert(resp.result?.ok === true, 'result.ok === true');
     console.log(`  Clone result: ${JSON.stringify(resp.result)}`);
   });
@@ -97,13 +107,13 @@ async function run() {
   await step('initialize', async () => {
     const initMsg = req('initialize', {
       clientInfo: { name: 'smoke_test', title: 'Smoke Test', version: '1.0.0' },
-      capabilities: { experimentalApi: true },
+      capabilities: { experimentalApi: true }
     });
     const initId = initMsg.id;
     send(initMsg);
     const resp = await waitFor(
       (m) => m.id === initId && m.result,
-      'initialize response',
+      'initialize response'
     );
     assert(resp.result != null, 'Got initialize result');
     console.log(`  Server: ${JSON.stringify(resp.result?.serverInfo || {})}`);
@@ -120,7 +130,7 @@ async function run() {
     send(threadMsg);
     const resp = await waitFor(
       (m) => m.id === threadReqId && m.result,
-      'thread/start response',
+      'thread/start response'
     );
     assert(resp.result?.thread?.id, 'Got thread ID');
     threadId = resp.result.thread.id;
@@ -131,7 +141,12 @@ async function run() {
   await step('turn/start — send prompt', async () => {
     const turnMsg = req('turn/start', {
       threadId,
-      input: [{ type: 'text', text: 'What files are in /workspace? List them briefly.' }],
+      input: [
+        {
+          type: 'text',
+          text: 'What files are in /workspace? List them briefly.'
+        }
+      ]
     });
     send(turnMsg);
 
@@ -157,7 +172,7 @@ async function run() {
     // Let's verify the thread is still usable with a trivial prompt.
     const turnMsg = req('turn/start', {
       threadId,
-      input: [{ type: 'text', text: 'Reply with exactly: SMOKE_TEST_OK' }],
+      input: [{ type: 'text', text: 'Reply with exactly: SMOKE_TEST_OK' }]
     });
     send(turnMsg);
 
@@ -169,7 +184,10 @@ async function run() {
       return m.method === 'turn/completed';
     }, 'second turn completed');
 
-    assert(agentText.includes('SMOKE_TEST_OK'), `Agent echoed marker: "${agentText.slice(0, 100)}"`);
+    assert(
+      agentText.includes('SMOKE_TEST_OK'),
+      `Agent echoed marker: "${agentText.slice(0, 100)}"`
+    );
   });
 
   // Clean close

@@ -1,9 +1,10 @@
+@import '@cloudflare/kumo/styles/tailwind';
+@import 'tailwindcss';
+
 /* Scan Kumo and Streamdown for Tailwind class names */
 @source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 @source "../node_modules/streamdown/dist/*.js";
 @source "../node_modules/@streamdown/code/dist/*.js";
-@import "@cloudflare/kumo/styles/tailwind";
-@import "tailwindcss";
 
 .sd-theme {
   --color-primary: light-dark(#e07315, #f6821f);
@@ -44,7 +45,7 @@
   background: none;
 }
 .sd-theme .rounded-xl:has(pre) > :not(:has(pre)):not(pre) {
-  display: none !important;
+  display: none;
 }
 .sd-theme pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -59,10 +60,10 @@
   border: none;
   margin: 0;
 }
-.sd-theme [data-streamdown="code-block-body"] {
-  border: none !important;
-  background: none !important;
-  padding: 0 !important;
+.sd-theme [data-streamdown='code-block-body'] {
+  border: none;
+  background: none;
+  padding: 0;
 }
 .sd-theme ol,
 .sd-theme ul {

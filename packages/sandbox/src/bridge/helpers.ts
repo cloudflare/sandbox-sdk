@@ -83,7 +83,7 @@ export function shellQuote(arg: string): string {
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
-  return "$'" + escaped + "'";
+  return `$'${escaped}'`;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ export function resolveWorkspacePath(userPath: string): string | null {
       parts.push(seg);
     }
   }
-  const resolved = '/' + parts.join('/');
+  const resolved = `/${parts.join('/')}`;
 
   // Must be exactly /workspace or start with /workspace/
   if (resolved === '/workspace' || resolved.startsWith('/workspace/')) {

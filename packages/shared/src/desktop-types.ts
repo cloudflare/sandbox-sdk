@@ -47,8 +47,7 @@ export interface DesktopScreenshotRequest {
   showCursor?: boolean;
 }
 
-export interface DesktopScreenshotRegionRequest
-  extends DesktopScreenshotRequest {
+export interface DesktopScreenshotRegionRequest extends DesktopScreenshotRequest {
   region: DesktopScreenshotRegion;
 }
 

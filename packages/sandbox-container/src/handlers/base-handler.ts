@@ -9,9 +9,10 @@ import {
 } from '@repo/shared/errors';
 import type { Handler, RequestContext, ServiceError } from '../core/types';
 
-export abstract class BaseHandler<TRequest, TResponse>
-  implements Handler<TRequest, TResponse>
-{
+export abstract class BaseHandler<TRequest, TResponse> implements Handler<
+  TRequest,
+  TResponse
+> {
   constructor(protected logger: Logger) {}
 
   abstract handle(

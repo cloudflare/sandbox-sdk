@@ -64,26 +64,18 @@ export class UtilityClient extends BaseHttpClient {
    * Ping the sandbox to check if it's responsive
    */
   async ping(): Promise<string> {
-    try {
-      const response = await this.get<PingResponse>('/api/ping');
+    const response = await this.get<PingResponse>('/api/ping');
 
-      return response.message;
-    } catch (error) {
-      throw error;
-    }
+    return response.message;
   }
 
   /**
    * Get list of available commands in the sandbox environment
    */
   async getCommands(): Promise<string[]> {
-    try {
-      const response = await this.get<CommandsResponse>('/api/commands');
+    const response = await this.get<CommandsResponse>('/api/commands');
 
-      return response.availableCommands;
-    } catch (error) {
-      throw error;
-    }
+    return response.availableCommands;
   }
 
   /**
@@ -93,16 +85,12 @@ export class UtilityClient extends BaseHttpClient {
   async createSession(
     options: CreateSessionRequest
   ): Promise<CreateSessionResponse> {
-    try {
-      const response = await this.post<CreateSessionResponse>(
-        '/api/session/create',
-        options
-      );
+    const response = await this.post<CreateSessionResponse>(
+      '/api/session/create',
+      options
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -110,16 +98,12 @@ export class UtilityClient extends BaseHttpClient {
    * @param sessionId - Session ID to delete
    */
   async deleteSession(sessionId: string): Promise<DeleteSessionResponse> {
-    try {
-      const response = await this.post<DeleteSessionResponse>(
-        '/api/session/delete',
-        { sessionId }
-      );
+    const response = await this.post<DeleteSessionResponse>(
+      '/api/session/delete',
+      { sessionId }
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**

@@ -35,14 +35,10 @@ export class WatchClient extends BaseHttpClient {
    * @param request - Watch request with path and options
    */
   async watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>> {
-    try {
-      const stream = await this.doStreamFetch('/api/watch', request);
-      const readyStream = await this.waitForReadiness(stream);
+    const stream = await this.doStreamFetch('/api/watch', request);
+    const readyStream = await this.waitForReadiness(stream);
 
-      return readyStream;
-    } catch (error) {
-      throw error;
-    }
+    return readyStream;
   }
 
   /**
