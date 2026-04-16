@@ -582,6 +582,72 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('placement id capture', () => {
+    it('should store containerPlacementId from session-create response', async () => {
+      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
+        success: true,
+        id: 'sandbox-default',
+        message: 'Created',
+        containerPlacementId: 'placement-abc-123'
+      } as any);
+
+      await sandbox.exec('echo hi');
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'containerPlacementId',
+        'placement-abc-123'
+      );
+    });
+
+    it('should store null when container reports containerPlacementId as null', async () => {
+      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
+        success: true,
+        id: 'sandbox-default',
+        message: 'Created',
+        containerPlacementId: null
+      } as any);
+
+      await sandbox.exec('echo hi');
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'containerPlacementId',
+        null
+      );
+    });
+
+    it('should not touch containerPlacementId storage when response omits the field', async () => {
+      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
+        success: true,
+        id: 'sandbox-default',
+        message: 'Created'
+      } as any);
+
+      await sandbox.exec('echo hi');
+
+      const placementCalls = mockCtx.storage.put.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'containerPlacementId'
+      );
+      expect(placementCalls).toHaveLength(0);
+    });
+
+    it('getContainerPlacementId returns stored value', async () => {
+      mockCtx.storage.get.mockImplementation(async (key: string) => {
+        if (key === 'containerPlacementId') return 'placement-stored-xyz';
+        return null;
+      });
+
+      await expect(sandbox.getContainerPlacementId()).resolves.toBe(
+        'placement-stored-xyz'
+      );
+    });
+
+    it('getContainerPlacementId returns undefined when no handshake has occurred', async () => {
+      mockCtx.storage.get.mockResolvedValue(undefined);
+
+      await expect(sandbox.getContainerPlacementId()).resolves.toBeUndefined();
+    });
+  });
+
   describe('ExecutionSession operations', () => {
     let session: any;
 

@@ -1347,6 +1347,15 @@ export interface ISandbox {
   createSession(options?: SessionOptions): Promise<ExecutionSession>;
   deleteSession(sessionId: string): Promise<SessionDeleteResult>;
 
+  // Container metadata
+  /**
+   * Returns the Cloudflare placement ID observed during the most recent
+   * session-create handshake with the container. `null` when the container
+   * does not expose `CLOUDFLARE_PLACEMENT_ID` (local development). `undefined`
+   * when no handshake has been observed yet on this sandbox.
+   */
+  getContainerPlacementId(): Promise<string | null | undefined>;
+
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;

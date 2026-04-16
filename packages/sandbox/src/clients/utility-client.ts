@@ -35,11 +35,16 @@ export interface CreateSessionRequest {
 }
 
 /**
- * Response interface for creating sessions
+ * Response interface for creating sessions.
+ *
+ * `containerPlacementId` carries the container's `CLOUDFLARE_PLACEMENT_ID` at session
+ * creation time so the DO can capture it without a separate request. It is
+ * `null` when the environment variable is not set, such as in local dev.
  */
 export interface CreateSessionResponse extends BaseApiResponse {
   id: string;
   message: string;
+  containerPlacementId?: string | null;
 }
 
 /**

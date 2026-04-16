@@ -152,6 +152,108 @@ describe('SessionHandler', () => {
 
       expect(mockSessionManager.createSession).toHaveBeenCalledTimes(2);
     });
+
+    it('should include containerPlacementId from CLOUDFLARE_PLACEMENT_ID env var on success', async () => {
+      process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-abc-123';
+
+      (mockSessionManager.createSession as any).mockResolvedValue({
+        success: true,
+        data: {} as Session
+      });
+
+      const request = new Request('http://localhost:3000/api/session/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SessionCreateResultGeneric & {
+        containerPlacementId: string | null;
+      };
+      expect(body.containerPlacementId).toBe('placement-abc-123');
+
+      delete process.env.CLOUDFLARE_PLACEMENT_ID;
+    });
+
+    it('should return containerPlacementId: null when CLOUDFLARE_PLACEMENT_ID is not set', async () => {
+      delete process.env.CLOUDFLARE_PLACEMENT_ID;
+
+      (mockSessionManager.createSession as any).mockResolvedValue({
+        success: true,
+        data: {} as Session
+      });
+
+      const request = new Request('http://localhost:3000/api/session/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      const body = (await response.json()) as SessionCreateResultGeneric & {
+        containerPlacementId: string | null;
+      };
+      expect(body.containerPlacementId).toBeNull();
+    });
+
+    it('should include containerPlacementId in error details when session already exists', async () => {
+      process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-xyz-789';
+
+      (mockSessionManager.createSession as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: "Session 'foo' already exists",
+          code: ErrorCode.SESSION_ALREADY_EXISTS,
+          details: { sessionId: 'foo' }
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/session/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'foo' })
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.code).toBe(ErrorCode.SESSION_ALREADY_EXISTS);
+      expect(body.context).toEqual({
+        sessionId: 'foo',
+        containerPlacementId: 'placement-xyz-789'
+      });
+
+      delete process.env.CLOUDFLARE_PLACEMENT_ID;
+    });
+
+    it('should not add containerPlacementId to unrelated error codes', async () => {
+      process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-should-not-appear';
+
+      (mockSessionManager.createSession as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Some other failure',
+          code: ErrorCode.UNKNOWN_ERROR,
+          details: { foo: 'bar' }
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/session/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.context).toEqual({ foo: 'bar' });
+      expect(
+        (body.context as Record<string, unknown>).containerPlacementId
+      ).toBeUndefined();
+
+      delete process.env.CLOUDFLARE_PLACEMENT_ID;
+    });
   });
 
   describe('handleDelete - POST /api/session/delete', () => {

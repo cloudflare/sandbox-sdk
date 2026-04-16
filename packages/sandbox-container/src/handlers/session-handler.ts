@@ -79,11 +79,25 @@ export class SessionHandler extends BaseHandler<Request, Response> {
       const response = {
         success: true,
         data: result.data,
+        containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null,
         timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
     } else {
+      // Include placement ID on the already-exists path so the DO can capture
+      // it after a DO restart where the container is still the original
+      // placement and the session was created before the DO restarted.
+      if (result.error.code === ErrorCode.SESSION_ALREADY_EXISTS) {
+        const errorWithPlacement = {
+          ...result.error,
+          details: {
+            ...(result.error.details ?? {}),
+            containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
+          }
+        };
+        return this.createErrorResponse(errorWithPlacement, context);
+      }
       return this.createErrorResponse(result.error, context);
     }
   }

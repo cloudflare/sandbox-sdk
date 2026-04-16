@@ -2227,18 +2227,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     sessionId: string,
     generation: number
   ): Promise<string> {
+    let placementId: string | null | undefined;
     try {
-      await this.client.utils.createSession({
+      const response = await this.client.utils.createSession({
         id: sessionId,
         env: this.envVars || {},
         cwd: '/workspace'
       });
+      placementId = response.containerPlacementId;
     } catch (error: unknown) {
       // The container can outlive this DO instance, so an existing session
       // means the container is already in the state we need.
       if (!(error instanceof SessionAlreadyExistsError)) {
         throw error;
       }
+      placementId = error.containerPlacementId;
       this.logger.debug(
         'Session exists in container but not in DO state, syncing',
         { sessionId }
@@ -2258,9 +2261,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Durable storage is the cross-eviction source of truth for the default
     // session identity. Update the in-memory cache only after persistence.
     await this.ctx.storage.put('defaultSession', sessionId);
+    await this.capturePlacementId(placementId);
     this.defaultSession = sessionId;
     this.logger.debug('Default session initialized', { sessionId });
     return sessionId;
+  }
+
+  /**
+   * Persist the container's placement ID in DO storage.
+   *
+   * Called from the session-create handshake so subsequent reads via
+   * `getContainerPlacementId()` do not require a round-trip to the container. The value
+   * is overwritten on every handshake so that container replacements (which
+   * assign a new placement ID) are reflected on the next session-create.
+   *
+   * A value of `undefined` means the handshake response omitted the field
+   * (older container, unexpected error shape) and the stored value is left
+   * untouched. `null` means the env var is not set in the container and is
+   * stored as-is so callers can distinguish "observed and absent" from "not
+   * yet observed."
+   */
+  private async capturePlacementId(
+    containerPlacementId: string | null | undefined
+  ): Promise<void> {
+    if (containerPlacementId === undefined) return;
+    await this.ctx.storage.put('containerPlacementId', containerPlacementId);
   }
 
   // Enhanced exec method - always returns ExecResult with optional streaming
@@ -3758,7 +3783,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
 
     // Create session in container
-    await this.client.utils.createSession({
+    const response = await this.client.utils.createSession({
       id: sessionId,
       ...(envPayload && { env: envPayload }),
       ...(options?.cwd && { cwd: options.cwd }),
@@ -3766,6 +3791,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         commandTimeoutMs: options.commandTimeoutMs
       })
     });
+
+    await this.capturePlacementId(response.containerPlacementId);
 
     // Return wrapper that binds sessionId to all operations
     return this.getSessionWrapper(sessionId);
@@ -3812,6 +3839,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sessionId: response.sessionId,
       timestamp: response.timestamp
     };
+  }
+
+  /**
+   * Get the Cloudflare placement ID observed for the underlying container.
+   *
+   * The placement ID is captured during the first session-create handshake
+   * after a container start and stored in Durable Object storage, so this
+   * method returns the cached value without contacting the container. A new
+   * placement ID is captured on each subsequent session-create handshake,
+   * which occurs whenever the container has been replaced.
+   *
+   * Returns `null` when a handshake has completed but the container's
+   * `CLOUDFLARE_PLACEMENT_ID` environment variable is not set (for example,
+   * in local development).
+   *
+   * Returns `undefined` when no handshake has been observed yet on this
+   * sandbox. Call any method that triggers session creation (such as
+   * `exec()`) to populate the value.
+   */
+  async getContainerPlacementId(): Promise<string | null | undefined> {
+    return this.ctx.storage.get<string | null>('containerPlacementId');
   }
 
   private getSessionWrapper(sessionId: string): ExecutionSession {

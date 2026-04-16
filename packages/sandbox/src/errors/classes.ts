@@ -279,6 +279,10 @@ export class SessionAlreadyExistsError extends SandboxError<SessionAlreadyExists
   get sessionId() {
     return this.context.sessionId;
   }
+
+  get containerPlacementId(): string | null | undefined {
+    return this.context.containerPlacementId;
+  }
 }
 
 /**

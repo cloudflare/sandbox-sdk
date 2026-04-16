@@ -57,6 +57,13 @@ export interface ProcessErrorContext {
 
 export interface SessionAlreadyExistsContext {
   sessionId: string;
+  /**
+   * `CLOUDFLARE_PLACEMENT_ID` captured from the container at the moment the
+   * duplicate create was detected. Included so a restarted DO can learn the
+   * container's placement ID from an idempotent session-create. `null` when
+   * the env var is not set (for example, in local development).
+   */
+  containerPlacementId?: string | null;
 }
 
 export interface SessionDestroyedContext {
