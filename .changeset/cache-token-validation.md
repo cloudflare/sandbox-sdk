@@ -1,5 +1,5 @@
 ---
-'@cloudflare/sandbox': minor
+'@cloudflare/sandbox': patch
 ---
 
 Cache successful preview URL token validations at the Worker level so page
