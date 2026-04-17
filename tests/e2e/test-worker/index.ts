@@ -1080,6 +1080,21 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Test-only: SIGTERM the container without destroying the DO, so tests
+      // can exercise restart-recovery paths (port re-exposure, token
+      // persistence). The next RPC on the sandbox will start a fresh
+      // container, which triggers onStart().
+      if (url.pathname === '/api/container/stop' && request.method === 'POST') {
+        await (sandbox as unknown as { stop: () => Promise<void> }).stop();
+        const response: SuccessWithMessageResponse = {
+          success: true,
+          message: 'Container stopped'
+        };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // PTY: Browser test page for Playwright tests
       if (url.pathname === '/terminal-test') {
         const sessionId =
