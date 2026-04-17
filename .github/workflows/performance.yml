@@ -204,7 +204,7 @@ jobs:
           CI: true
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
-            npx vitest run --config vitest.perf.config.ts
+            npm run test:perf
           else
             npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
           fi
