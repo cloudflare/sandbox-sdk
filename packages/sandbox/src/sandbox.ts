@@ -3312,11 +3312,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
-   * Preview URLs survive transient container restarts: the token and any
+Preview URLs survive transient container restarts: the token and any
    * friendly name are persisted in Durable Object storage, and the port is
    * automatically re-exposed on the container when it comes back up. Tokens
    * are cleared only on explicit `unexposePort()` or full sandbox
    * `destroy()`.
+   *
+   * At the Worker level, successful preview URL token validations are cached
+   * for a short window (10 s by default) to avoid an RPC per preview
+   * request. This means `unexposePort()` can take up to one cache TTL to
+   * propagate to other Worker isolates. See `TokenValidationCache` for
+   * tuning or disabling that cache.
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
