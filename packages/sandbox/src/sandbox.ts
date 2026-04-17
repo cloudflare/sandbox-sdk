@@ -1465,11 +1465,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.activeMounts.clear();
 
-    // Persist cleanup to storage so state is clean on next container start
-    await Promise.all([
-      this.ctx.storage.delete('portTokens'),
-      this.ctx.storage.delete('defaultSession')
-    ]);
+    // Persist cleanup to storage so state is clean on next container start.
+    // Port tokens are intentionally preserved so preview URLs survive container
+    // restarts. Tokens are only removed on explicit unexposePort() or full
+    // sandbox destroy(). If a port isn't actually exposed on the container
+    // after restart, validatePortToken()'s isPortExposed() check rejects the
+    // request regardless of what's in storage.
+    await this.ctx.storage.delete('defaultSession');
   }
 
   override onError(error: unknown) {
