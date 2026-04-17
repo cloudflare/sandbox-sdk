@@ -1,7 +1,5 @@
 # Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
 ARG BUN_VERSION=1
-ARG UBUNTU_MIRROR=http://mirrors.edge.kernel.org/ubuntu
-ARG UBUNTU_PORTS_MIRROR=http://mirrors.edge.kernel.org/ubuntu-ports
 FROM oven/bun:${BUN_VERSION} AS bun-binary
 
 # Sandbox container images (default and python variants)
@@ -53,9 +51,6 @@ RUN npx turbo run build
 # ============================================================================
 FROM ubuntu:22.04 AS python-builder
 
-ARG UBUNTU_MIRROR
-ARG UBUNTU_PORTS_MIRROR
-
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -67,15 +62,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
-    if [ "$(dpkg --print-architecture)" = "amd64" ] || [ "$(dpkg --print-architecture)" = "i386" ]; then \
-        M=$UBUNTU_MIRROR; \
-    else \
-        M=$UBUNTU_PORTS_MIRROR; \
-    fi && \
-    echo "deb $M jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-    echo "deb $M jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
     apt-get update && apt-get install -y --no-install-recommends \
     wget ca-certificates
 
@@ -107,9 +93,6 @@ RUN --mount=type=cache,target=/tmp/python-cache \
 # ============================================================================
 FROM ubuntu:22.04 AS runtime-base
 
-ARG UBUNTU_MIRROR
-ARG UBUNTU_PORTS_MIRROR
-
 # Accept version as build argument (passed from npm_package_version)
 ARG SANDBOX_VERSION=unknown
 
@@ -129,15 +112,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/* && \
-    if [ "$(dpkg --print-architecture)" = "amd64" ] || [ "$(dpkg --print-architecture)" = "i386" ]; then \
-        M=$UBUNTU_MIRROR; \
-    else \
-        M=$UBUNTU_PORTS_MIRROR; \
-    fi && \
-    echo "deb $M jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-    echo "deb $M jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
     apt-get update && apt-get install -y --no-install-recommends \
     s3fs fuse3 squashfs-tools squashfuse fuse-overlayfs \
     ca-certificates curl wget procps git unzip zip jq file \
@@ -272,23 +246,11 @@ RUN go mod tidy && go build -buildmode=c-shared -o /usr/lib/desktop.so .
 
 FROM runtime-base AS desktop
 
-ARG UBUNTU_MIRROR
-ARG UBUNTU_PORTS_MIRROR
-
 # Install display stack
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
-    if [ "$(dpkg --print-architecture)" = "amd64" ] || [ "$(dpkg --print-architecture)" = "i386" ]; then \
-        M=$UBUNTU_MIRROR; \
-    else \
-        M=$UBUNTU_PORTS_MIRROR; \
-    fi && \
-    echo "deb $M jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-    echo "deb $M jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb $M jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
     apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11vnc novnc websockify \
     xfce4 xfce4-terminal dbus-x11 \
