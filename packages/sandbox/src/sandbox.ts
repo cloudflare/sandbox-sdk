@@ -1471,8 +1471,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       await work;
     } finally {
-      // Clear only if we are still the owner — defensive against a future
-      // refactor that reassigns the field mid-flight.
+      // Clears only if the field still references this teardown.
       if (this.inflightDestroy === work) {
         this.inflightDestroy = null;
       }
