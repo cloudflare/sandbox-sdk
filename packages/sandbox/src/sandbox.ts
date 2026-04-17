@@ -1406,6 +1406,86 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error instanceof Error ? error : new Error(String(error))
       );
     });
+
+    // Re-expose ports that were exposed before the container restarted.
+    // Tokens persist in DO storage across restarts (see onStop), but the
+    // container runtime has no memory of which ports were exposed. We ask the
+    // container to re-expose each port so preview URLs keep working without
+    // any customer action.
+    this.restoreExposedPorts().catch((error) => {
+      this.logger.error(
+        'Failed to restore exposed ports after container start',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    });
+  }
+
+  /**
+   * Re-expose ports on the container runtime using tokens persisted in DO
+   * storage. Called from onStart() after a container (re)start.
+   *
+   * The DO storage holds the source of truth for which ports should be
+   * exposed and with which tokens. If a port is already exposed on the
+   * container (e.g. first start after exposePort() was just called) this is
+   * a no-op for that port. Individual port failures are logged but do not
+   * abort the overall restore — a transient failure for one port must not
+   * prevent the others from being restored.
+   */
+  private async restoreExposedPorts(): Promise<void> {
+    const savedTokens =
+      await this.ctx.storage.get<Record<string, string>>('portTokens');
+    if (!savedTokens || Object.keys(savedTokens).length === 0) {
+      return;
+    }
+
+    const startTime = Date.now();
+    let restored = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    // Resolving the session ensures the container HTTP API is reachable
+    // before we start firing exposePort requests at it.
+    const sessionId = await this.ensureDefaultSession();
+
+    for (const portStr of Object.keys(savedTokens)) {
+      const port = Number.parseInt(portStr, 10);
+      if (!Number.isFinite(port) || !validatePort(port)) {
+        this.logger.warn('Skipping restore of invalid port in storage', {
+          port: portStr
+        });
+        failed++;
+        continue;
+      }
+
+      try {
+        const alreadyExposed = await this.isPortExposed(port).catch(
+          () => false
+        );
+        if (alreadyExposed) {
+          skipped++;
+          continue;
+        }
+
+        await this.client.ports.exposePort(port, sessionId);
+        restored++;
+      } catch (error) {
+        failed++;
+        this.logger.warn('Failed to re-expose port on container restart', {
+          port,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    logCanonicalEvent(this.logger, {
+      event: 'port.restore',
+      outcome: failed === 0 ? 'success' : 'error',
+      durationMs: Date.now() - startTime,
+      restored,
+      skipped,
+      failed,
+      total: Object.keys(savedTokens).length
+    });
   }
 
   /**
