@@ -2143,4 +2143,82 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(instance.client.getTransportMode()).toBe('websocket');
     });
   });
+
+  describe('destroy() coalescing', () => {
+    /**
+     * Stub the parent Container.destroy() with a caller-controlled promise so
+     * we can observe how concurrent destroy() calls behave while the first
+     * one is still in flight.
+     */
+    function stubSuperDestroy(): {
+      resolve: () => void;
+      reject: (err: Error) => void;
+      calls: () => number;
+    } {
+      let resolve: () => void = () => {};
+      let reject: (err: Error) => void = () => {};
+      let calls = 0;
+      const parent = Object.getPrototypeOf(Object.getPrototypeOf(sandbox)) as {
+        destroy: () => Promise<void>;
+      };
+      parent.destroy = vi.fn().mockImplementation(
+        () =>
+          new Promise<void>((res, rej) => {
+            calls++;
+            resolve = res;
+            reject = rej;
+          })
+      );
+      return {
+        resolve: () => resolve(),
+        reject: (err) => reject(err),
+        calls: () => calls
+      };
+    }
+
+    it('coalesces concurrent destroy() calls onto a single teardown', async () => {
+      const superDestroy = stubSuperDestroy();
+
+      const first = sandbox.destroy();
+      const second = sandbox.destroy();
+      const third = sandbox.destroy();
+
+      // All three callers are awaiting the same underlying work; the parent
+      // container destroy must only be invoked once.
+      expect(superDestroy.calls()).toBe(1);
+
+      superDestroy.resolve();
+      await expect(Promise.all([first, second, third])).resolves.toEqual([
+        undefined,
+        undefined,
+        undefined
+      ]);
+    });
+
+    it('propagates the same rejection to all coalesced callers', async () => {
+      const superDestroy = stubSuperDestroy();
+      const first = sandbox.destroy();
+      const second = sandbox.destroy();
+
+      superDestroy.reject(new Error('container teardown failed'));
+
+      await expect(first).rejects.toThrow('container teardown failed');
+      await expect(second).rejects.toThrow('container teardown failed');
+    });
+
+    it('runs a fresh teardown for a later destroy() after the previous one settles', async () => {
+      const first = stubSuperDestroy();
+      const firstCall = sandbox.destroy();
+      expect(first.calls()).toBe(1);
+      first.resolve();
+      await firstCall;
+
+      // Re-stub to track the second teardown independently.
+      const second = stubSuperDestroy();
+      const secondCall = sandbox.destroy();
+      expect(second.calls()).toBe(1);
+      second.resolve();
+      await secondCall;
+    });
+  });
 });
