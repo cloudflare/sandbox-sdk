@@ -86,6 +86,16 @@ import type {
 } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
+/**
+ * Persisted record for a single exposed port. `token` authorizes preview
+ * URL requests; `name` is the optional friendly name the caller passed to
+ * `exposePort()` and is preserved across container restarts.
+ */
+type PortTokenEntry = {
+  token: string;
+  name?: string;
+};
+
 type SandboxConfiguration = {
   sandboxName?: {
     name: string;
@@ -1406,6 +1416,109 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error instanceof Error ? error : new Error(String(error))
       );
     });
+
+    // Re-expose ports that were exposed before the container restarted.
+    // Tokens persist in DO storage across restarts (see onStop), but the
+    // container runtime has no memory of which ports were exposed. Run the
+    // restore inside blockConcurrencyWhile so any request that arrives on the
+    // DO while the container is coming up (including validatePortToken calls
+    // from the Worker preview-URL proxy) queues behind restore completion.
+    // This removes the window where the port exists in storage but the
+    // container reports it as unexposed.
+    this.ctx
+      .blockConcurrencyWhile(() => this.restoreExposedPorts())
+      .catch((error) => {
+        this.logger.error(
+          'Failed to restore exposed ports after container start',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
+  }
+
+  /**
+   * Re-expose ports on the container runtime using tokens persisted in DO
+   * storage. Called from onStart() after a container (re)start.
+   *
+   * The DO storage holds the source of truth for which ports should be
+   * exposed, which tokens authorize them, and the friendly name (if any)
+   * that the caller set when first exposing the port. If a port is already
+   * exposed on the container this is a no-op for that port. Individual port
+   * failures are logged but do not abort the overall restore — a transient
+   * failure for one port must not prevent the others from being restored.
+   */
+  private async restoreExposedPorts(): Promise<void> {
+    const savedTokens = await this.readPortTokens();
+    const portEntries = Object.entries(savedTokens);
+    if (portEntries.length === 0) {
+      return;
+    }
+
+    const startTime = Date.now();
+    let restored = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    // Resolving the session ensures the container HTTP API is reachable
+    // before we start firing exposePort requests at it.
+    const sessionId = await this.ensureDefaultSession();
+
+    for (const [portStr, entry] of portEntries) {
+      const port = Number.parseInt(portStr, 10);
+      if (!Number.isFinite(port) || !validatePort(port)) {
+        this.logger.warn('Skipping restore of invalid port in storage', {
+          port: portStr
+        });
+        failed++;
+        continue;
+      }
+
+      try {
+        const alreadyExposed = await this.isPortExposed(port).catch(
+          () => false
+        );
+        if (alreadyExposed) {
+          skipped++;
+          continue;
+        }
+
+        await this.client.ports.exposePort(port, sessionId, entry.name);
+        restored++;
+      } catch (error) {
+        failed++;
+        this.logger.warn('Failed to re-expose port on container restart', {
+          port,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    logCanonicalEvent(this.logger, {
+      event: 'port.restore',
+      outcome: failed === 0 ? 'success' : 'error',
+      durationMs: Date.now() - startTime,
+      restored,
+      skipped,
+      failed,
+      total: portEntries.length
+    });
+  }
+
+  /**
+   * Read the `portTokens` map from DO storage, normalizing the legacy
+   * string-valued format (just a token) to the current object format
+   * ({ token, name? }). The legacy format predates port-name persistence and
+   * can appear on any DO whose storage was written before that change.
+   */
+  private async readPortTokens(): Promise<Record<string, PortTokenEntry>> {
+    const raw =
+      (await this.ctx.storage.get<Record<string, string | PortTokenEntry>>(
+        'portTokens'
+      )) ?? {};
+    const normalized: Record<string, PortTokenEntry> = {};
+    for (const [port, value] of Object.entries(raw)) {
+      normalized[port] = typeof value === 'string' ? { token: value } : value;
+    }
+    return normalized;
   }
 
   /**
@@ -1465,11 +1578,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.activeMounts.clear();
 
-    // Persist cleanup to storage so state is clean on next container start
-    await Promise.all([
-      this.ctx.storage.delete('portTokens'),
-      this.ctx.storage.delete('defaultSession')
-    ]);
+    // Persist cleanup to storage so state is clean on next container start.
+    // Port tokens are intentionally preserved so preview URLs survive container
+    // restarts. Tokens are only removed on explicit unexposePort() or full
+    // sandbox destroy(). If a port isn't actually exposed on the container
+    // after restart, validatePortToken()'s isPortExposed() check rejects the
+    // request regardless of what's in storage.
+    await this.ctx.storage.delete('defaultSession');
   }
 
   override onError(error: unknown) {
@@ -2938,16 +3053,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       url = result.url;
     } catch {
       // Port may already be exposed — look up the existing token from DO storage
-      const tokens =
-        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
-        {};
-      const existingToken = tokens['6080'];
-      if (existingToken && this.sandboxName) {
+      const tokens = await this.readPortTokens();
+      const existingEntry = tokens['6080'];
+      if (existingEntry && this.sandboxName) {
         url = this.constructPreviewUrl(
           6080,
           this.sandboxName,
           hostname,
-          existingToken
+          existingEntry.token
         );
       } else {
         throw new Error(
@@ -3091,11 +3204,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Allow re-exposing same port with same token, but reject if another port uses this token
-      const tokens =
-        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
-        {};
+      const tokens = await this.readPortTokens();
       const existingPort = Object.entries(tokens).find(
-        ([p, t]) => t === token && p !== port.toString()
+        ([p, entry]) => entry.token === token && p !== port.toString()
       );
       if (existingPort) {
         throw new SecurityError(
@@ -3105,7 +3216,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const sessionId = await this.ensureDefaultSession();
       await this.client.ports.exposePort(port, sessionId, options?.name);
 
-      tokens[port.toString()] = token;
+      tokens[port.toString()] = { token, name: options?.name };
       await this.ctx.storage.put('portTokens', tokens);
 
       const url = this.constructPreviewUrl(
@@ -3152,9 +3263,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.client.ports.unexposePort(port, sessionId);
 
       // Clean up token for this port (storage is protected by input gates)
-      const tokens =
-        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
-        {};
+      const tokens = await this.readPortTokens();
       if (tokens[port.toString()]) {
         delete tokens[port.toString()];
         await this.ctx.storage.put('portTokens', tokens);
@@ -3187,12 +3296,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Read all tokens from storage (protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    const tokens = await this.readPortTokens();
 
     return response.ports.map((port) => {
-      const token = tokens[port.port.toString()];
-      if (!token) {
+      const entry = tokens[port.port.toString()];
+      if (!entry) {
         throw new Error(
           `Port ${port.port} is exposed but has no token. This should not happen.`
         );
@@ -3203,7 +3311,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           port.port,
           this.sandboxName!,
           hostname,
-          token
+          entry.token
         ),
         port: port.port,
         status: port.status
@@ -3234,10 +3342,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Read stored token from storage (protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    const storedToken = tokens[port.toString()];
-    if (!storedToken) {
+    const tokens = await this.readPortTokens();
+    const entry = tokens[port.toString()];
+    if (!entry) {
       this.logger.error(
         'Port is exposed but has no token - bug detected',
         undefined,
@@ -3247,7 +3354,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const encoder = new TextEncoder();
-    const a = encoder.encode(storedToken);
+    const a = encoder.encode(entry.token);
     const b = encoder.encode(token);
 
     try {

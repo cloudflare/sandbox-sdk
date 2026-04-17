@@ -1024,6 +1024,138 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('port restoration on container restart', () => {
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        exposedAt: new Date().toISOString()
+      } as any);
+      vi.spyOn(sandbox.client.ports, 'getExposedPorts').mockResolvedValue({
+        success: true,
+        ports: [],
+        count: 0,
+        timestamp: new Date().toISOString()
+      } as any);
+    });
+
+    it('should re-expose saved ports with their friendly names when the container starts', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens'
+          ? {
+              '8080': { token: 'tok8080', name: 'api' },
+              '9000': { token: 'tok9000', name: 'admin' }
+            }
+          : null
+      );
+
+      await (sandbox as any).restoreExposedPorts();
+
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledTimes(2);
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledWith(
+        8080,
+        expect.any(String),
+        'api'
+      );
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledWith(
+        9000,
+        expect.any(String),
+        'admin'
+      );
+    });
+
+    it('should migrate legacy string-only storage entries on restore', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': 'legacytoken1234' } : null
+      );
+
+      await (sandbox as any).restoreExposedPorts();
+
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledWith(
+        8080,
+        expect.any(String),
+        undefined
+      );
+    });
+
+    it('should skip ports the container already reports as exposed', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': { token: 'tok8080' } } : null
+      );
+      vi.mocked(sandbox.client.ports.getExposedPorts as any).mockResolvedValue({
+        success: true,
+        ports: [{ port: 8080, status: 'active' }],
+        count: 1,
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await (sandbox as any).restoreExposedPorts();
+
+      expect(sandbox.client.ports.exposePort).not.toHaveBeenCalled();
+    });
+
+    it('should continue restoring other ports when one fails', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens'
+          ? {
+              '8080': { token: 'tok8080' },
+              '9000': { token: 'tok9000' }
+            }
+          : null
+      );
+      vi.mocked(sandbox.client.ports.exposePort as any)
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValue({
+          success: true,
+          port: 9000,
+          exposedAt: new Date().toISOString()
+        } as any);
+
+      await (sandbox as any).restoreExposedPorts();
+
+      // First call failed, second succeeded — both were attempted.
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledTimes(2);
+    });
+
+    it('should be a no-op when no ports are saved in storage', async () => {
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue(undefined as any);
+
+      await (sandbox as any).restoreExposedPorts();
+
+      expect(sandbox.client.ports.exposePort).not.toHaveBeenCalled();
+    });
+
+    it('onStop() must preserve portTokens so restore has something to read', async () => {
+      await (sandbox as any).onStop();
+
+      // Nothing in the onStop path should delete portTokens.
+      const deletedKeys = vi
+        .mocked(mockCtx.storage!.delete)
+        .mock.calls.map((call) => call[0]);
+      expect(deletedKeys).not.toContain('portTokens');
+    });
+
+    it('exposePort() persists the friendly name alongside the token', async () => {
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
+      const putSpy = vi.mocked(mockCtx.storage!.put);
+
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: 'friendlytok',
+        name: 'my-api'
+      });
+
+      const portsPut = putSpy.mock.calls.find(
+        (call) => call[0] === 'portTokens'
+      );
+      expect(portsPut).toBeDefined();
+      expect(portsPut?.[1]).toEqual({
+        '8080': { token: 'friendlytok', name: 'my-api' }
+      });
+    });
+  });
+
   describe('sleepAfter configuration', () => {
     it('should call renewActivityTimeout when setSleepAfter is called', async () => {
       // Spy on renewActivityTimeout (inherited from Container)
