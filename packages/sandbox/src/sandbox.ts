@@ -1389,6 +1389,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
+      // Clear port tokens on full sandbox teardown. onStop() intentionally
+      // preserves them so preview URLs survive transient container restarts;
+      // destroy() is the explicit teardown path where that guarantee no
+      // longer applies and leftover tokens would be restored by
+      // restoreExposedPorts() if the same DO ID is reused.
+      await this.ctx.storage.delete('portTokens');
+
       outcome = 'success';
       await super.destroy();
     } catch (error) {

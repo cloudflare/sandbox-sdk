@@ -1136,6 +1136,23 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(deletedKeys).not.toContain('portTokens');
     });
 
+    it('destroy() clears portTokens from storage', async () => {
+      // Stub the parent Container.destroy() path so the test does not try to
+      // tear down a real container runtime.
+      (
+        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)) as {
+          destroy: () => Promise<void>;
+        }
+      ).destroy = vi.fn().mockResolvedValue(undefined);
+
+      await sandbox.destroy();
+
+      const deletedKeys = vi
+        .mocked(mockCtx.storage!.delete)
+        .mock.calls.map((call) => call[0]);
+      expect(deletedKeys).toContain('portTokens');
+    });
+
     it('exposePort() persists the friendly name alongside the token', async () => {
       vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
       const putSpy = vi.mocked(mockCtx.storage!.put);
