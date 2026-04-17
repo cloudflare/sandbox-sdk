@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { proxyToSandbox, type SandboxEnv } from '../src/request-handler';
+import {
+  clearTokenValidationCache,
+  proxyToSandbox,
+  type SandboxEnv
+} from '../src/request-handler';
 import type { Sandbox } from '../src/sandbox';
 
 // Mock getSandbox from sandbox.ts
@@ -20,6 +24,7 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearTokenValidationCache();
 
     // Mock Sandbox with necessary methods
     mockSandbox = {
@@ -151,7 +156,7 @@ describe('proxyToSandbox - WebSocket Support', () => {
   describe('Token validation', () => {
     it('should validate token for both WebSocket and HTTP requests', async () => {
       const wsRequest = new Request(
-        'https://8080-sandbox-token12345678901.example.com/ws',
+        'https://8080-sandbox-wstoken123456789a.example.com/ws',
         {
           headers: { Upgrade: 'websocket' }
         }
@@ -160,18 +165,19 @@ describe('proxyToSandbox - WebSocket Support', () => {
       await proxyToSandbox(wsRequest, mockEnv);
       expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
         8080,
-        'token12345678901'
+        'wstoken123456789a'
       );
 
       vi.clearAllMocks();
-
+      // Use a different token so we bypass the validation cache and confirm
+      // HTTP requests also trigger validation.
       const httpRequest = new Request(
-        'https://8080-sandbox-token12345678901.example.com/api'
+        'https://8080-sandbox-httptoken12345678.example.com/api'
       );
       await proxyToSandbox(httpRequest, mockEnv);
       expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
         8080,
-        'token12345678901'
+        'httptoken12345678'
       );
     });
 
@@ -212,6 +218,71 @@ describe('proxyToSandbox - WebSocket Support', () => {
       expect(response).toBeNull();
       expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
       expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Token validation cache', () => {
+    it('should not re-validate the same sandbox+port+token on subsequent requests', async () => {
+      const url = 'https://8080-sandbox-cachedtoken12345.example.com/';
+
+      await proxyToSandbox(new Request(url), mockEnv);
+      await proxyToSandbox(new Request(url), mockEnv);
+      await proxyToSandbox(new Request(url), mockEnv);
+
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+      expect(mockSandbox.containerFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('should validate separately for different tokens on the same port', async () => {
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokenaaaaaaaaaaaa.example.com/'),
+        mockEnv
+      );
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokenbbbbbbbbbbbb.example.com/'),
+        mockEnv
+      );
+
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
+    });
+
+    it('should validate separately for different ports with the same token', async () => {
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-sharedtoken1234567.example.com/'),
+        mockEnv
+      );
+      await proxyToSandbox(
+        new Request('https://9090-sandbox-sharedtoken1234567.example.com/'),
+        mockEnv
+      );
+
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not cache failed validations', async () => {
+      vi.mocked(mockSandbox.validatePortToken as any).mockResolvedValue(false);
+
+      const url = 'https://8080-sandbox-badtoken1234567890.example.com/';
+      const first = await proxyToSandbox(new Request(url), mockEnv);
+      const second = await proxyToSandbox(new Request(url), mockEnv);
+
+      expect(first?.status).toBe(404);
+      expect(second?.status).toBe(404);
+      // Each request re-checks with the DO so a later successful
+      // re-exposure of the port starts working immediately.
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
+    });
+
+    it('should re-validate after the cache is cleared', async () => {
+      const url = 'https://8080-sandbox-recheckedtoken12.example.com/';
+
+      await proxyToSandbox(new Request(url), mockEnv);
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+
+      clearTokenValidationCache();
+
+      await proxyToSandbox(new Request(url), mockEnv);
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
     });
   });
 

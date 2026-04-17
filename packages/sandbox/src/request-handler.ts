@@ -14,6 +14,56 @@ export interface RouteInfo {
   token: string;
 }
 
+// Per-isolate cache of successful token validations. Preview URLs are hit many
+// times per page load (20+ for a Vite dev page), and every miss goes over RPC
+// to the Sandbox Durable Object. Caching successes collapses those to a single
+// RPC per {sandboxId, port, token} triple within the TTL window.
+//
+// - Successes only: a failed validation during a transient window (e.g. while
+//   the container is restarting and ports have not yet been re-exposed) must
+//   be retried on the next request, never cached.
+// - TTL-bounded: limits how long a revoked token can keep working after
+//   unexposePort(). 30s is short enough to feel responsive, long enough to
+//   absorb a page load burst.
+// - Size-bounded: a Map with a hard cap protects against adversarial traffic
+//   that rotates tokens on every request. Oldest entries are evicted first
+//   (insertion order, which Map preserves).
+// - Per-isolate: lost on Worker eviction, which is fine — the next request
+//   simply re-validates.
+const TOKEN_CACHE_TTL_MS = 30_000;
+const TOKEN_CACHE_MAX_ENTRIES = 10_000;
+const tokenValidationCache = new Map<string, number>();
+
+function getCachedTokenValidation(key: string): boolean {
+  const timestamp = tokenValidationCache.get(key);
+  if (timestamp === undefined) return false;
+  if (Date.now() - timestamp >= TOKEN_CACHE_TTL_MS) {
+    tokenValidationCache.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function rememberTokenValidation(key: string): void {
+  // Refresh insertion order so recently validated entries survive eviction.
+  if (tokenValidationCache.has(key)) {
+    tokenValidationCache.delete(key);
+  } else if (tokenValidationCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
+    // Evict the oldest entry (first key by insertion order).
+    const oldest = tokenValidationCache.keys().next().value;
+    if (oldest !== undefined) tokenValidationCache.delete(oldest);
+  }
+  tokenValidationCache.set(key, Date.now());
+}
+
+/**
+ * Clear the token validation cache. Exposed for tests and for callers that
+ * need to force re-validation (e.g. after an out-of-band token rotation).
+ */
+export function clearTokenValidationCache(): void {
+  tokenValidationCache.clear();
+}
+
 export async function proxyToSandbox<
   T extends Sandbox<any>,
   E extends SandboxEnv<T>
@@ -42,8 +92,21 @@ export async function proxyToSandbox<
     // Critical security check: Validate token (mandatory for all user ports)
     // Skip check for control plane port 3000
     if (port !== 3000) {
-      // Validate the token matches the port
-      const isValidToken = await sandbox.validatePortToken(port, token);
+      const cacheKey = `${sandboxId}:${port}:${token}`;
+
+      // Fast path: recent successful validation for this exact triple.
+      let isValidToken = getCachedTokenValidation(cacheKey);
+
+      if (!isValidToken) {
+        // Slow path: ask the Durable Object. Only successes are cached —
+        // failures must re-check on every request so a transient "not
+        // exposed" state does not get pinned as permanently invalid.
+        isValidToken = await sandbox.validatePortToken(port, token);
+        if (isValidToken) {
+          rememberTokenValidation(cacheKey);
+        }
+      }
+
       if (!isValidToken) {
         logger.warn('Invalid token access blocked', {
           port,
