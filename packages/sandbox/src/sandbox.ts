@@ -1435,6 +1435,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * onto the same teardown instead of triggering a second one. Cleared when
    * the underlying work settles, so a later call that genuinely needs to
    * recreate a destroyed sandbox still runs.
+   *
+   * If the underlying teardown hangs (e.g. `super.destroy()` never resolves
+   * because the Containers control plane is unresponsive), every coalesced
+   * caller hangs on the same promise until the Durable Object is evicted.
+   * This is deliberate: a second concurrent teardown would not make a stuck
+   * control plane unstuck, and spawning one would defeat the point of
+   * coalescing. Callers that need bounded waits must apply their own
+   * timeout around `destroy()`.
    */
   private inflightDestroy: Promise<void> | null = null;
 
