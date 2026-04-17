@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearTokenValidationCache,
   proxyToSandbox,
-  type SandboxEnv
+  type SandboxEnv,
+  TokenValidationCache
 } from '../src/request-handler';
 import type { Sandbox } from '../src/sandbox';
 
@@ -282,6 +283,116 @@ describe('proxyToSandbox - WebSocket Support', () => {
       clearTokenValidationCache();
 
       await proxyToSandbox(new Request(url), mockEnv);
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
+    });
+
+    it('should re-validate after the TTL has elapsed', async () => {
+      vi.useFakeTimers();
+      try {
+        const cache = new TokenValidationCache({ ttlMs: 10_000 });
+        const url = 'https://8080-sandbox-ttlexpiredtoken12.example.com/';
+
+        await proxyToSandbox(new Request(url), mockEnv, {
+          tokenValidationCache: cache
+        });
+        expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+
+        // Inside TTL — still cached.
+        vi.advanceTimersByTime(9_000);
+        await proxyToSandbox(new Request(url), mockEnv, {
+          tokenValidationCache: cache
+        });
+        expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+
+        // Past TTL — re-validates.
+        vi.advanceTimersByTime(2_000);
+        await proxyToSandbox(new Request(url), mockEnv, {
+          tokenValidationCache: cache
+        });
+        expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should evict the oldest entry when the size cap is reached', async () => {
+      const cache = new TokenValidationCache({ maxEntries: 2 });
+
+      // Fill the cache with two distinct triples.
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokenaaaaaaaaaaaa.example.com/'),
+        mockEnv,
+        { tokenValidationCache: cache }
+      );
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokenbbbbbbbbbbbb.example.com/'),
+        mockEnv,
+        { tokenValidationCache: cache }
+      );
+      // Third distinct triple evicts the first.
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokencccccccccccc.example.com/'),
+        mockEnv,
+        { tokenValidationCache: cache }
+      );
+      expect(cache.size).toBe(2);
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(3);
+
+      // Re-requesting the evicted first triple must re-validate.
+      vi.mocked(mockSandbox.validatePortToken as any).mockClear();
+      await proxyToSandbox(
+        new Request('https://8080-sandbox-tokenaaaaaaaaaaaa.example.com/'),
+        mockEnv,
+        { tokenValidationCache: cache }
+      );
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refresh insertion order on cache hit so recent entries survive eviction', async () => {
+      const cache = new TokenValidationCache({ maxEntries: 2 });
+      const a = 'https://8080-sandbox-tokenaaaaaaaaaaaa.example.com/';
+      const b = 'https://8080-sandbox-tokenbbbbbbbbbbbb.example.com/';
+      const c = 'https://8080-sandbox-tokencccccccccccc.example.com/';
+
+      await proxyToSandbox(new Request(a), mockEnv, {
+        tokenValidationCache: cache
+      });
+      await proxyToSandbox(new Request(b), mockEnv, {
+        tokenValidationCache: cache
+      });
+      // Hit A — it should now be newest in insertion order.
+      await proxyToSandbox(new Request(a), mockEnv, {
+        tokenValidationCache: cache
+      });
+      // C enters — B should be evicted, not A.
+      await proxyToSandbox(new Request(c), mockEnv, {
+        tokenValidationCache: cache
+      });
+
+      vi.mocked(mockSandbox.validatePortToken as any).mockClear();
+      // A remains cached — no new validation.
+      await proxyToSandbox(new Request(a), mockEnv, {
+        tokenValidationCache: cache
+      });
+      expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
+      // B was evicted — must re-validate.
+      await proxyToSandbox(new Request(b), mockEnv, {
+        tokenValidationCache: cache
+      });
+      expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('should disable caching entirely when ttlMs is 0', async () => {
+      const cache = new TokenValidationCache({ ttlMs: 0 });
+      const url = 'https://8080-sandbox-disabledtoken123.example.com/';
+
+      await proxyToSandbox(new Request(url), mockEnv, {
+        tokenValidationCache: cache
+      });
+      await proxyToSandbox(new Request(url), mockEnv, {
+        tokenValidationCache: cache
+      });
+
       expect(mockSandbox.validatePortToken).toHaveBeenCalledTimes(2);
     });
   });

@@ -14,60 +14,123 @@ export interface RouteInfo {
   token: string;
 }
 
-// Per-isolate cache of successful token validations. Preview URLs are hit many
-// times per page load (20+ for a Vite dev page), and every miss goes over RPC
-// to the Sandbox Durable Object. Caching successes collapses those to a single
-// RPC per {sandboxId, port, token} triple within the TTL window.
-//
-// - Successes only: a failed validation during a transient window (e.g. while
-//   the container is restarting and ports have not yet been re-exposed) must
-//   be retried on the next request, never cached.
-// - TTL-bounded: limits how long a revoked token can keep working after
-//   unexposePort(). 30s is short enough to feel responsive, long enough to
-//   absorb a page load burst.
-// - Size-bounded: a Map with a hard cap protects against adversarial traffic
-//   that rotates tokens on every request. Oldest entries are evicted first
-//   (insertion order, which Map preserves).
-// - Per-isolate: lost on Worker eviction, which is fine — the next request
-//   simply re-validates.
-const TOKEN_CACHE_TTL_MS = 30_000;
-const TOKEN_CACHE_MAX_ENTRIES = 10_000;
-const tokenValidationCache = new Map<string, number>();
-
-function getCachedTokenValidation(key: string): boolean {
-  const timestamp = tokenValidationCache.get(key);
-  if (timestamp === undefined) return false;
-  if (Date.now() - timestamp >= TOKEN_CACHE_TTL_MS) {
-    tokenValidationCache.delete(key);
-    return false;
-  }
-  return true;
+/**
+ * Options that tune the per-isolate token validation cache.
+ *
+ * The cache turns preview URL traffic from one DO RPC per request into one
+ * RPC per {sandboxId, port, token} triple per TTL window. It is intentionally
+ * a bridge toward signed (HMAC) tokens that can be verified locally with
+ * zero RPCs; until that lands, caching is the cheapest way to keep DO load
+ * proportional to unique previews rather than unique requests.
+ */
+export interface TokenValidationCacheOptions {
+  /**
+   * How long a successful validation is trusted before re-checking with the
+   * Durable Object. This directly bounds how long a token revoked via
+   * `unexposePort()` can continue to authorize traffic in other isolates.
+   *
+   * Defaults to 10 seconds: long enough to absorb a page-load burst (which
+   * happens in sub-second), short enough that revocation feels responsive.
+   * Set to 0 to disable caching entirely.
+   */
+  ttlMs?: number;
+  /**
+   * Maximum number of entries held per isolate. When exceeded, the oldest
+   * entry is evicted first. Protects against adversarial traffic that rotates
+   * tokens on every request. Defaults to 10,000.
+   */
+  maxEntries?: number;
 }
 
-function rememberTokenValidation(key: string): void {
-  // Refresh insertion order so recently validated entries survive eviction.
-  if (tokenValidationCache.has(key)) {
-    tokenValidationCache.delete(key);
-  } else if (tokenValidationCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
-    // Evict the oldest entry (first key by insertion order).
-    const oldest = tokenValidationCache.keys().next().value;
-    if (oldest !== undefined) tokenValidationCache.delete(oldest);
-  }
-  tokenValidationCache.set(key, Date.now());
-}
+const DEFAULT_TOKEN_CACHE_TTL_MS = 10_000;
+const DEFAULT_TOKEN_CACHE_MAX_ENTRIES = 10_000;
 
 /**
- * Clear the token validation cache. Exposed for tests and for callers that
- * need to force re-validation (e.g. after an out-of-band token rotation).
+ * Per-isolate cache of successful token validations. Invariants:
+ *
+ * - Only successes are stored. A `false` result must never be cached so a
+ *   transient "port not exposed" state (e.g. mid-restart) recovers on the
+ *   next request rather than being pinned as invalid.
+ * - TTL-bounded. Caps the revocation-propagation window.
+ * - Size-bounded. Oldest entries evicted first; hits refresh insertion
+ *   order so recently validated triples survive.
+ * - Per-isolate. Lost on Worker eviction, which is fine — the next request
+ *   simply re-validates.
+ */
+export class TokenValidationCache {
+  private readonly entries = new Map<string, number>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+
+  constructor(options: TokenValidationCacheOptions = {}) {
+    this.ttlMs = options.ttlMs ?? DEFAULT_TOKEN_CACHE_TTL_MS;
+    this.maxEntries = options.maxEntries ?? DEFAULT_TOKEN_CACHE_MAX_ENTRIES;
+  }
+
+  has(key: string): boolean {
+    if (this.ttlMs <= 0) return false;
+    const timestamp = this.entries.get(key);
+    if (timestamp === undefined) return false;
+    if (Date.now() - timestamp >= this.ttlMs) {
+      this.entries.delete(key);
+      return false;
+    }
+    // Refresh insertion order so hot entries survive size-cap eviction.
+    this.entries.delete(key);
+    this.entries.set(key, timestamp);
+    return true;
+  }
+
+  remember(key: string): void {
+    if (this.ttlMs <= 0) return;
+    if (this.entries.has(key)) {
+      this.entries.delete(key);
+    } else if (this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
+    }
+    this.entries.set(key, Date.now());
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+}
+
+// Default per-isolate cache used by the simple `proxyToSandbox(request, env)`
+// call path. Callers that need custom TTL or size limits can pass options.
+const defaultTokenValidationCache = new TokenValidationCache();
+
+/**
+ * Clear the default token validation cache. Useful in tests and for callers
+ * that need to force re-validation after an out-of-band token change.
  */
 export function clearTokenValidationCache(): void {
-  tokenValidationCache.clear();
+  defaultTokenValidationCache.clear();
+}
+
+export interface ProxyToSandboxOptions {
+  /**
+   * Override the per-isolate token validation cache. Pass a long-lived
+   * `TokenValidationCache` instance to use tuned TTL/size limits; omit to
+   * share the module-level default (10 s TTL, 10,000 entries).
+   */
+  tokenValidationCache?: TokenValidationCache;
 }
 
 export async function proxyToSandbox<
   T extends Sandbox<any>,
   E extends SandboxEnv<T>
->(request: Request, env: E): Promise<Response | null> {
+>(
+  request: Request,
+  env: E,
+  options?: ProxyToSandboxOptions
+): Promise<Response | null> {
+  const cache = options?.tokenValidationCache ?? defaultTokenValidationCache;
   // Create logger context for this request
   const traceId =
     TraceContext.fromHeaders(request.headers) || TraceContext.generate();
@@ -95,7 +158,7 @@ export async function proxyToSandbox<
       const cacheKey = `${sandboxId}:${port}:${token}`;
 
       // Fast path: recent successful validation for this exact triple.
-      let isValidToken = getCachedTokenValidation(cacheKey);
+      let isValidToken = cache.has(cacheKey);
 
       if (!isValidToken) {
         // Slow path: ask the Durable Object. Only successes are cached —
@@ -103,7 +166,7 @@ export async function proxyToSandbox<
         // exposed" state does not get pinned as permanently invalid.
         isValidToken = await sandbox.validatePortToken(port, token);
         if (isValidToken) {
-          rememberTokenValidation(cacheKey);
+          cache.remember(cacheKey);
         }
       }
 

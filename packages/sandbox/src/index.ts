@@ -153,9 +153,13 @@ export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export {
+  clearTokenValidationCache,
+  type ProxyToSandboxOptions,
   proxyToSandbox,
   type RouteInfo,
-  type SandboxEnv
+  type SandboxEnv,
+  TokenValidationCache,
+  type TokenValidationCacheOptions
 } from './request-handler';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export {
