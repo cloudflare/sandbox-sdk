@@ -6,7 +6,7 @@ import { z } from 'zod';
 export { Sandbox } from '@cloudflare/sandbox';
 
 const API_PATH = '/run';
-const MODEL = '@cf/openai/gpt-oss-120b' as const;
+const MODEL = '@cf/openai/gpt-oss-120b';
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
@@ -43,7 +43,6 @@ async function handleAIRequest(input: string, env: Env): Promise<string> {
   const workersai = createWorkersAI({ binding: env.AI });
 
   const result = await generateText({
-    // @ts-expect-error - gpt-oss-120b is a valid Workers AI model but not yet in the type definitions
     model: workersai(MODEL),
     messages: [{ role: 'user', content: input }],
     tools: {

@@ -2,14 +2,27 @@
  * Generates console and JSON reports from collected metrics
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { METRICS, PASS_THRESHOLD, SCENARIOS } from './constants';
 import type {
   GlobalMetricsStore,
   MeasurementStats,
   MetricsCollector
 } from './metrics-collector';
+
+function getSdkVersion(): string {
+  try {
+    const pkgPath = resolve(
+      __dirname,
+      '../../../packages/sandbox/package.json'
+    );
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 export interface PerfTestResult {
   version: string;
@@ -170,7 +183,7 @@ export class ReportGenerator {
     const failedCount = scenarios.length - passedCount;
 
     return {
-      version: '1.0.0',
+      version: getSdkVersion(),
       timestamp: new Date().toISOString(),
       runId: `perf-${Date.now()}`,
       environment: {

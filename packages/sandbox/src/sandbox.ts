@@ -915,6 +915,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
+    if (options.prefix !== undefined) {
+      validatePrefix(options.prefix);
+    }
+
     if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
@@ -1224,10 +1228,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate prefix format if provided
-    if (options.prefix !== undefined) {
-      validatePrefix(options.prefix);
-    }
+    // Prefix validation is handled centrally in mountBucket()
   }
 
   /**
@@ -1276,7 +1277,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: RemoteMountBucketOptions,
     provider: BucketProvider | null,
-    passwordFilePath: string
+    passwordFilePath: string,
+    sessionId?: string
   ): Promise<void> {
     // Resolve s3fs options (provider defaults + user overrides)
     const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
@@ -1303,7 +1305,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
     // Execute mount command
-    const result = await this.execInternal(mountCmd);
+    const result = sessionId
+      ? await this.execWithSession(mountCmd, sessionId, { origin: 'internal' })
+      : await this.execInternal(mountCmd);
 
     if (result.exitCode !== 0) {
       throw new S3FSMountError(
@@ -3700,33 +3704,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Generate a presigned GET URL for downloading an object from R2.
-   * The container can curl this URL directly without credentials.
-   */
-  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
-    url.searchParams.set(
-      'X-Amz-Expires',
-      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
-    );
-
-    const signed = await client.sign(new Request(url), {
-      aws: { signQuery: true }
-    });
-
-    return signed.url;
-  }
-
-  /**
    * Generate a presigned PUT URL for uploading an object to R2.
    * The container can curl PUT to this URL directly without credentials.
    */
@@ -3820,103 +3797,75 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Download a backup archive via presigned GET URL.
-   * The container curls the archive directly from R2, bypassing the DO.
-   * ~93 MB/s throughput vs ~0.6 MB/s for base64 writeFile.
+   * Mount a backup archive from R2 via s3fs so squashfuse can read it lazily.
    */
-  private async downloadBackupPresigned(
-    archivePath: string,
-    r2Key: string,
-    expectedSize: number,
-    backupId: string,
-    dir: string,
+  private async mountBackupR2(
+    mountPath: string,
+    prefix: string,
     backupSession: string
   ): Promise<void> {
-    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
-
-    await this.execWithSession('mkdir -p /var/backups', backupSession, {
-      origin: 'internal'
+    const { accountId, bucketName } = this.requirePresignedUrlSupport();
+    const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
+    const normalizedPrefix = prefix.startsWith('/') ? prefix : `/${prefix}`;
+    const options: RemoteMountBucketOptions = {
+      endpoint,
+      provider: 'r2',
+      readOnly: true,
+      prefix: normalizedPrefix,
+      s3fsOptions: ['use_path_request_style']
+    };
+    const passwordFilePath = this.generatePasswordFilePath();
+    const s3fsSource = buildS3fsSource(bucketName, normalizedPrefix);
+    const envObj = this.env as Record<string, unknown>;
+    const envCredentials = {
+      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+      R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
+      R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
+    };
+    const credentials = detectCredentials(options, {
+      ...envCredentials,
+      ...this.envVars
     });
+    const mountInfo: FuseMountInfo = {
+      mountType: 'fuse',
+      bucket: s3fsSource,
+      mountPath,
+      endpoint,
+      provider: 'r2',
+      passwordFilePath,
+      mounted: false
+    };
 
-    const tmpPath = `${archivePath}.tmp`;
-    const curlCmd = [
-      'curl -sSf',
-      '--connect-timeout 10',
-      '--max-time 1800',
-      '--retry 2',
-      '--retry-max-time 60',
-      `-o ${shellEscape(tmpPath)}`,
-      shellEscape(presignedUrl)
-    ].join(' ');
+    this.activeMounts.set(mountPath, mountInfo);
 
-    const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000,
-      origin: 'internal'
-    });
-
-    if (result.exitCode !== 0) {
+    try {
+      await this.createPasswordFile(passwordFilePath, bucketName, credentials);
       await this.execWithSession(
-        `rm -f ${shellEscape(tmpPath)}`,
+        `mkdir -p ${shellEscape(mountPath)}`,
         backupSession,
         { origin: 'internal' }
-      ).catch(() => {});
-      throw new BackupRestoreError({
-        message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Verify downloaded file size before committing
-    const sizeCheck = await this.execWithSession(
-      `stat -c %s ${shellEscape(tmpPath)}`,
-      backupSession,
-      { origin: 'internal' }
-    );
-    const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
-    if (actualSize !== expectedSize) {
-      await this.execWithSession(
-        `rm -f ${shellEscape(tmpPath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
-      throw new BackupRestoreError({
-        message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Atomic move from temp to final path
-    const mvResult = await this.execWithSession(
-      `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
-      backupSession,
-      { origin: 'internal' }
-    );
-    if (mvResult.exitCode !== 0) {
-      await this.execWithSession(
-        `rm -f ${shellEscape(tmpPath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
-      throw new BackupRestoreError({
-        message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
+      );
+      await this.executeS3FSMount(
+        s3fsSource,
+        mountPath,
+        options,
+        'r2',
+        passwordFilePath,
+        backupSession
+      );
+      mountInfo.mounted = true;
+    } catch (error) {
+      await this.deletePasswordFile(passwordFilePath);
+      this.activeMounts.delete(mountPath);
+      throw error;
     }
   }
 
   /**
    * Serialize backup operations on this sandbox instance.
    * Concurrent backup/restore calls are queued so the multi-step
-   * create-archive → read → upload (or download → write → extract) flow
+   * create-archive → read → upload (or mount → extract) flow
    * is not interleaved with another backup operation on the same directory.
    */
   private enqueueBackupOp<T>(fn: () => Promise<T>): Promise<T> {
@@ -4127,7 +4076,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *
    * Flow:
    *   1. DO reads metadata from R2 and checks TTL
-   *   2. Container downloads the archive directly from R2 via presigned URL
+   *   2. Container mounts the backup archive from R2 via s3fs
    *   3. Container mounts the squashfs archive with FUSE overlayfs
    *
    * The target directory becomes an overlay mount with the backup as a
@@ -4239,7 +4188,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      // Step 2: Check archive exists and get its size via HEAD (no body stream)
+      // Step 2: Check archive exists via HEAD (no body stream)
       const r2Key = `backups/${id}/data.sqsh`;
       const archiveHead = await bucket.head(r2Key);
       if (!archiveHead) {
@@ -4255,15 +4204,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       backupSession = await this.ensureBackupSession();
-      const archivePath = `/var/backups/${id}.sqsh`;
+      const r2MountPath = `/var/backups/r2mount/${id}`;
+      const archivePath = `${r2MountPath}/data.sqsh`;
 
-      // Step 3: Tear down existing FUSE mounts before overwriting the archive.
-      // squashfuse holds the .sqsh file open; writing a new archive to the same
-      // path while the old mount is active corrupts the backing store.
-      // Unmount the overlay on dir, then iterate over all mount bases for this
-      // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
-      // their squashfuse lower dirs.
-      const mountGlob = `/var/backups/mounts/${id}`;
+      // Step 3: Tear down existing restore mounts before replacing the backing
+      // R2 mount. squashfuse reads the archive lazily through the s3fs mount,
+      // so the overlay and lower mounts must come down before the bucket mount.
+      const mountGlob = `/var/backups/mounts/r2mount/${id}/data`;
       await this.execWithSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
         backupSession,
@@ -4274,31 +4221,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupSession,
         { origin: 'internal' }
       ).catch(() => {});
-
-      // Step 4: Write archive to the container (skip if already present and
-      // same size — avoids overwriting a file that a lazily-unmounted
-      // squashfuse may still hold open).
-      const sizeCheck = await this.execWithSession(
-        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
+      await this.execWithSession(
+        `/usr/bin/fusermount3 -u ${shellEscape(r2MountPath)} 2>/dev/null; /usr/bin/fusermount3 -uz ${shellEscape(r2MountPath)} 2>/dev/null; true`,
         backupSession,
         { origin: 'internal' }
-      ).catch(() => ({ stdout: '0' }));
-      const existingSize = Number.parseInt(
-        (sizeCheck.stdout ?? '0').trim(),
-        10
-      );
+      ).catch(() => {});
 
-      if (existingSize !== archiveHead.size) {
-        // Download archive via presigned URL (container curls directly from R2)
-        await this.downloadBackupPresigned(
-          archivePath,
-          r2Key,
-          archiveHead.size,
-          id,
-          dir,
-          backupSession
-        );
+      const previousBackupMount = this.activeMounts.get(r2MountPath);
+      if (previousBackupMount?.mountType === 'fuse') {
+        previousBackupMount.mounted = false;
+        this.activeMounts.delete(r2MountPath);
+        await this.deletePasswordFile(previousBackupMount.passwordFilePath);
       }
+
+      // Step 4: Mount the backup archive from R2 and restore directly from it.
+      await this.mountBackupR2(r2MountPath, `backups/${id}/`, backupSession);
 
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
@@ -4325,16 +4262,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      // Clean up archive file on failure only — squashfuse needs it as
-      // backing storage for the lifetime of the mount
-      if (id && backupSession) {
-        const archivePath = `/var/backups/${id}.sqsh`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(archivePath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
-      }
       throw error;
     } finally {
       if (backupSession) {

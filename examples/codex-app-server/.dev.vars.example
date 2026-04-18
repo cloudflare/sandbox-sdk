@@ -1,0 +1,11 @@
+# OpenAI API key - injected into sandbox requests via the egress proxy.
+# Never enters the container.
+OPENAI_API_KEY=sk-...
+
+# Optional: bearer token for WebSocket auth. If set, clients must provide
+# Authorization: Bearer <token> header or ?token=<token> query param.
+# AUTH_TOKEN=your-secret-token
+
+# How long the sandbox container stays alive after the last request.
+# Accepts durations like '1m', '5m', '1h'. Default: 1m.
+# SANDBOX_SLEEP_AFTER=1m

@@ -1,0 +1,12 @@
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Agent-driven QA test harness for cloudflare-sandbox-bridge"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "openai-agents[cloudflare]",
+    "python-dotenv>=1.0.0",
+    "boto3>=1.34",
+]
+

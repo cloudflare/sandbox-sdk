@@ -1,0 +1,26 @@
+{
+  "name": "@cloudflare/sandbox-codex-app-server-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Codex App Server running inside a Cloudflare Sandbox with WebSocket middleman and egress proxy for OpenAI API",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "MINIFLARE_CONTAINER_EGRESS_IMAGE=cloudflare/proxy-everything:3cb1195@sha256:78c7910f4575a511d928d7824b1cbcaec6b7c4bf4dbb3fafaeeae3104030e73c wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "./run-integration-tests.sh"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.76.0"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.0"
+  }
+}

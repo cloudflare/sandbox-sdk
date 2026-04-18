@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>codex</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-0: #0a0a0a;
+      --bg-1: #111111;
+      --bg-2: #1a1a1a;
+      --border: #2a2a2a;
+      --text-0: #999999;
+      --text-1: #cccccc;
+      --text-2: #e0e0e0;
+      --accent: #c8ff00;
+      --accent-dim: #6b8a00;
+      --danger: #ff4040;
+      --info: #606060;
+      --user-bg: #141410;
+      --agent-bg: #0f1210;
+      --tool-bg: #0d0d0d;
+      --tool-border: #1f1f1f;
+      --file-add: #4a9a4a;
+      --file-mod: #9a8a3a;
+      --file-del: #9a4a4a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-0);
+      color: var(--text-1);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::selection { background: var(--accent); color: var(--bg-0); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #444; }
+    input, textarea, button { font-family: inherit; font-size: inherit; }
+
+    /* --- Layout --- */
+
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    #app.disconnected .main { display: none; }
+    #app:not(.disconnected) .session-gate { display: none; }
+
+    /* --- Session gate --- */
+
+    .session-gate { flex: 1; display: grid; place-items: center; }
+    .session-form { width: 400px; max-width: 90vw; }
+
+    .session-form h1 {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 32px;
+    }
+
+    .session-form .field { margin-bottom: 16px; }
+
+    .session-form label {
+      display: block;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-0);
+      margin-bottom: 6px;
+    }
+
+    .session-form input {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      outline: none;
+    }
+
+    .session-form input:focus { border-color: var(--accent-dim); }
+    .session-form input::placeholder { color: var(--info); }
+    .session-form .hint { font-size: 11px; color: var(--info); margin-top: 4px; }
+
+    .session-form button {
+      margin-top: 24px;
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      color: var(--bg-0);
+      border: none;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .session-form button:hover { opacity: 0.85; }
+    .session-form button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .session-form .status-line {
+      margin-top: 16px;
+      font-size: 11px;
+      color: var(--text-0);
+      min-height: 1.5em;
+    }
+
+    .session-form .status-line.error { color: var(--danger); }
+
+    /* --- Main view --- */
+
+    .main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    .topbar {
+      height: 44px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .topbar .session-label {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      flex: 1;
+    }
+
+    .turn-indicator { display: none; align-items: center; gap: 6px; font-size: 11px; color: var(--accent-dim); }
+    .turn-indicator.active { display: flex; }
+
+    .turn-indicator .spinner {
+      width: 10px; height: 10px;
+      border: 1.5px solid var(--accent-dim);
+      border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .topbar button {
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--info);
+      cursor: pointer;
+      padding: 4px 8px;
+      border: 1px solid transparent;
+      background: none;
+      user-select: none;
+    }
+
+    .topbar button:hover { color: var(--text-0); }
+    .topbar button.active { color: var(--text-1); border-color: var(--border); }
+    .topbar .end-btn:hover { color: var(--danger); }
+
+    /* --- Messages --- */
+
+    .messages { flex: 1; overflow-y: auto; padding: 20px; }
+
+    .messages .empty-state {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--info);
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    .msg { margin-bottom: 16px; animation: fadeIn 0.15s ease; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-header {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .msg-header .role { color: var(--text-0); }
+    .msg-header .role.user { color: var(--accent); }
+    .msg-header .ts { color: var(--info); font-weight: 400; }
+
+    .msg-body {
+      padding: 10px 14px;
+      border-left: 2px solid var(--border);
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text-1);
+      line-height: 1.6;
+    }
+
+    .msg.user .msg-body { border-left-color: var(--accent-dim); background: var(--user-bg); }
+    .msg.agent .msg-body { border-left-color: var(--border); background: var(--agent-bg); }
+
+    .streaming-cursor {
+      display: inline-block;
+      width: 6px; height: 14px;
+      background: var(--accent);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 0.6s step-end infinite;
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* --- Tool call grid --- */
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+      gap: 6px;
+      margin: 8px 0 4px;
+    }
+
+    /* Single tool fills full width */
+    .tool-grid .tool-block:only-child { grid-column: 1 / -1; }
+
+    .tool-block {
+      border: 1px solid var(--tool-border);
+      background: var(--tool-bg);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .tool-header {
+      padding: 4px 8px;
+      background: var(--bg-2);
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tool-header:hover { background: #222; }
+
+    .tool-header .tool-type {
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-0);
+      padding: 0 4px;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+      line-height: 1.6;
+    }
+
+    .tool-header .tool-label {
+      color: var(--accent);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+
+    .tool-header .tool-meta-inline {
+      font-size: 10px;
+      color: var(--info);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
+    .tool-header .tool-status {
+      font-size: 10px;
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+
+    .tool-status.running { color: var(--text-0); }
+    .tool-status.ok { color: var(--accent); }
+    .tool-status.fail { color: var(--danger); }
+    .tool-status.declined { color: var(--danger); }
+
+    .tool-header .tool-chevron {
+      color: var(--info);
+      font-size: 9px;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+
+    .tool-block.expanded .tool-chevron { transform: rotate(90deg); }
+    .tool-block.expanded .tool-header { border-bottom: 1px solid var(--tool-border); }
+
+    .tool-detail { display: none; }
+    .tool-block.expanded .tool-detail { display: block; }
+
+    .tool-output {
+      padding: 4px 8px;
+      font-size: 11px;
+      color: var(--text-0);
+      max-height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .tool-output:empty { display: none; }
+
+    /* File changes */
+
+    .file-changes { padding: 0; }
+    .file-change { border-bottom: 1px solid var(--tool-border); }
+    .file-change:last-child { border-bottom: none; }
+
+    .file-change-header {
+      padding: 4px 8px;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .file-change-kind {
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0 3px;
+    }
+
+    .file-change-kind.create { color: var(--file-add); }
+    .file-change-kind.modify { color: var(--file-mod); }
+    .file-change-kind.delete, .file-change-kind.remove { color: var(--file-del); }
+
+    .file-change-path { color: var(--text-1); font-size: 11px; }
+
+    .file-change-diff {
+      padding: 2px 8px 4px;
+      font-size: 11px;
+      color: var(--text-0);
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .diff-add { color: var(--file-add); }
+    .diff-del { color: var(--file-del); }
+
+    /* --- Content layout --- */
+
+    .content { display: flex; flex: 1; overflow: hidden; }
+    .chat-col { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: hidden; }
+
+    /* --- Log side panel --- */
+
+    .log-panel {
+      display: none;
+      width: 380px;
+      flex-shrink: 0;
+      border-left: 1px solid var(--border);
+      background: var(--bg-1);
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .log-panel.visible { display: flex; }
+
+    .log-panel-header {
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-0);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .log-panel-header .log-close {
+      background: none;
+      border: none;
+      color: var(--info);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    .log-panel-header .log-close:hover { color: var(--text-1); }
+
+    .log-entries {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 10px;
+      font-size: 10px;
+      color: var(--info);
+    }
+
+    .log-entries .log-entry {
+      white-space: pre-wrap;
+      word-break: break-all;
+      padding: 1px 0;
+      line-height: 1.4;
+    }
+
+    .log-entries .log-entry.out { color: #5a7a9a; }
+    .log-entries .log-entry.in  { color: #7a6a9a; }
+
+    /* --- Input --- */
+
+    .input-area {
+      border-top: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+
+    .input-area textarea {
+      flex: 1;
+      resize: none;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 10px 12px;
+      outline: none;
+      min-height: 40px;
+      max-height: 120px;
+      line-height: 1.5;
+    }
+
+    .input-area textarea:focus { border-color: var(--accent-dim); }
+    .input-area textarea:disabled { opacity: 0.3; }
+    .input-area textarea::placeholder { color: var(--info); }
+
+    .input-area button {
+      padding: 10px 16px;
+      background: var(--accent);
+      color: var(--bg-0);
+      border: none;
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      align-self: stretch;
+    }
+
+    .input-area button:hover { opacity: 0.85; }
+    .input-area button:disabled { opacity: 0.2; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+<div id="app" class="disconnected">
+
+  <div class="session-gate">
+    <div class="session-form">
+      <h1>Codex App Server</h1>
+      <div class="field">
+        <label for="sf-session">Session</label>
+        <input id="sf-session" type="text" placeholder="my-project" autocomplete="off" spellcheck="false" />
+        <div class="hint">Names a sandbox instance. Each session gets a fresh container.</div>
+      </div>
+      <div class="field">
+        <label for="sf-repo">Repository (optional)</label>
+        <input id="sf-repo" type="text" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false" />
+        <div class="hint">Cloned into /workspace via sandbox/setup.</div>
+      </div>
+      <button id="sf-connect" disabled>Connect</button>
+      <div id="sf-status" class="status-line"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <span class="session-label" id="topbar-session"></span>
+      <div class="turn-indicator" id="turn-indicator">
+        <div class="spinner"></div>
+        <span>working</span>
+      </div>
+      <button id="btn-log-toggle">Log</button>
+      <button class="end-btn" id="btn-end">End</button>
+    </div>
+
+    <div class="content">
+      <div class="chat-col">
+        <div class="messages" id="messages">
+          <div class="empty-state">Send a message to begin.</div>
+        </div>
+        <div class="input-area">
+          <textarea id="prompt" rows="1" placeholder="Send a message..." disabled></textarea>
+          <button id="btn-send" disabled>Send</button>
+        </div>
+      </div>
+      <div class="log-panel" id="raw-log">
+        <div class="log-panel-header">
+          <span>JSON-RPC Log</span>
+          <button class="log-close" id="btn-log-close">&times;</button>
+        </div>
+        <div class="log-entries" id="log-entries"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// --- State ---
+
+const wsEndpoint = document.documentElement.dataset.wsEndpoint || 'ws://localhost:8787/ws';
+
+let ws = null;
+let nextId = 0;
+let sessionName = '';
+let repoUrl = '';
+
+// Connection: disconnected → connecting → setup → initializing → starting → ready
+let connState = 'disconnected';
+let pendingId = null;
+
+// Single thread
+let threadId = null;
+let turnActive = false;
+let activeAgentMsg = null; // index into messages[]
+const messages = [];       // [{role, text, streaming, items[]}] or [{role, text, ts}]
+const items = {};          // itemId → {id, type, ...metadata}
+
+// --- DOM refs ---
+
+const $ = (s) => document.getElementById(s);
+const app           = $('app');
+const sfSession     = $('sf-session');
+const sfRepo        = $('sf-repo');
+const sfConnect     = $('sf-connect');
+const sfStatus      = $('sf-status');
+const topbarSession = $('topbar-session');
+const turnIndicator = $('turn-indicator');
+const messagesEl    = $('messages');
+const logPanel      = $('raw-log');
+const logEntriesEl  = $('log-entries');
+const btnLogClose   = $('btn-log-close');
+const promptEl      = $('prompt');
+const btnSend       = $('btn-send');
+const btnEnd        = $('btn-end');
+const btnLogToggle  = $('btn-log-toggle');
+
+// --- Helpers ---
+
+function ts() { return new Date().toLocaleTimeString('en-US', { hour12: false }); }
+
+const _escEl = document.createElement('div');
+function esc(s) { _escEl.textContent = s; return _escEl.innerHTML; }
+
+function rpcReq(method, params = {}) { return { method, id: nextId++, params }; }
+
+function send(msg) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const raw = JSON.stringify(msg);
+  ws.send(raw);
+  rawLog('out', raw);
+}
+
+function rawLog(dir, text) {
+  const d = document.createElement('div');
+  d.className = `log-entry ${dir}`;
+  d.textContent = `${dir === 'out' ? '>>>' : '<<<'} ${text}`;
+  logEntriesEl.appendChild(d);
+  while (logEntriesEl.childElementCount > 500) logEntriesEl.removeChild(logEntriesEl.firstChild);
+  logEntriesEl.scrollTop = logEntriesEl.scrollHeight;
+}
+
+function fmtCmd(command) {
+  if (Array.isArray(command)) return command.join(' ');
+  return String(command || '');
+}
+
+// --- Session gate ---
+
+sfSession.value = localStorage.getItem('codex-session') || '';
+sfRepo.value = localStorage.getItem('codex-repo') || '';
+
+function updateConnectBtn() { sfConnect.disabled = !sfSession.value.trim(); }
+sfSession.addEventListener('input', updateConnectBtn);
+updateConnectBtn();
+
+for (const el of [sfSession, sfRepo]) {
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); startSession(); }
+  });
+}
+sfConnect.addEventListener('click', startSession);
+
+function startSession() {
+  const name = sfSession.value.trim();
+  if (!name) return;
+  sessionName = name;
+  repoUrl = sfRepo.value.trim();
+  localStorage.setItem('codex-session', name);
+  localStorage.setItem('codex-repo', repoUrl);
+  sfStatus.textContent = '';
+  sfStatus.className = 'status-line';
+  sfConnect.disabled = true;
+  connect();
+}
+
+// --- Connection flow ---
+
+function connect() {
+  if (ws) ws.close();
+  connState = 'connecting';
+  sfStatus.textContent = 'Connecting...';
+  nextId = 0;
+
+  ws = new WebSocket(`${wsEndpoint}/${encodeURIComponent(sessionName)}`);
+
+  ws.addEventListener('open', () => {
+    if (repoUrl) {
+      connState = 'setup';
+      sfStatus.textContent = 'Cloning repository...';
+      const msg = rpcReq('sandbox/setup', { repoUrl });
+      pendingId = msg.id;
+      send(msg);
+    } else {
+      sendInitialize();
+    }
+  });
+
+  ws.addEventListener('message', (e) => {
+    const raw = e.data;
+    rawLog('in', raw);
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+    routeMessage(msg);
+  });
+
+  ws.addEventListener('close', () => {
+    const wasConnecting = connState !== 'ready';
+    connState = 'disconnected';
+    ws = null;
+    turnActive = false;
+    updateInputState();
+    if (wasConnecting) {
+      sfStatus.textContent = 'Disconnected.';
+      sfStatus.className = 'status-line error';
+      sfConnect.disabled = false;
+    }
+  });
+
+  ws.addEventListener('error', () => {
+    sfStatus.textContent = 'Connection failed.';
+    sfStatus.className = 'status-line error';
+  });
+}
+
+function sendInitialize() {
+  connState = 'initializing';
+  sfStatus.textContent = 'Initializing...';
+  const msg = rpcReq('initialize', {
+    clientInfo: { name: 'sandbox_codex_client', title: 'Sandbox Codex Client', version: '0.2.0' },
+    capabilities: { experimentalApi: true },
+  });
+  pendingId = msg.id;
+  send(msg);
+}
+
+function sendThreadStart() {
+  connState = 'starting';
+  send({ method: 'initialized', params: {} });
+  const msg = rpcReq('thread/start');
+  pendingId = msg.id;
+  send(msg);
+}
+
+function enterReady(codexThreadId) {
+  connState = 'ready';
+  threadId = codexThreadId;
+  app.classList.remove('disconnected');
+  topbarSession.textContent = sessionName;
+  updateInputState();
+  promptEl.focus();
+}
+
+// --- Message routing ---
+
+function routeMessage(msg) {
+  if (msg.id !== undefined && msg.method === undefined) {
+    handleResponse(msg);
+  } else if (msg.method) {
+    handleNotification(msg);
+  }
+}
+
+function handleResponse(msg) {
+  if (msg.error && msg.id === pendingId) {
+    sfStatus.textContent = `Error: ${msg.error.message}`;
+    sfStatus.className = 'status-line error';
+    sfConnect.disabled = false;
+    return;
+  }
+
+  if (msg.id !== pendingId) return;
+  pendingId = null;
+
+  switch (connState) {
+    case 'setup':        sendInitialize(); break;
+    case 'initializing': sendThreadStart(); break;
+    case 'starting':
+      if (msg.result?.thread?.id) enterReady(msg.result.thread.id);
+      break;
+  }
+}
+
+function ensureAgentMsg() {
+  if (activeAgentMsg === null) {
+    activeAgentMsg = messages.length;
+    messages.push({ role: 'agent', text: '', streaming: false, items: [] });
+  }
+  return messages[activeAgentMsg];
+}
+
+function handleNotification(msg) {
+  const p = msg.params || {};
+
+  switch (msg.method) {
+    case 'turn/started':
+      turnActive = true;
+      updateInputState();
+      break;
+
+    case 'turn/completed':
+      turnActive = false;
+      if (activeAgentMsg !== null) {
+        messages[activeAgentMsg].streaming = false;
+        activeAgentMsg = null;
+        renderMessages();
+      }
+      updateInputState();
+      break;
+
+    case 'item/agentMessage/delta': {
+      const m = ensureAgentMsg();
+      m.streaming = true;
+      const delta = p.delta || '';
+      m.text += delta;
+      updateStreamingText(delta);
+      break;
+    }
+
+    case 'item/started': {
+      const item = p.item || {};
+      if (item.type === 'commandExecution') {
+        items[item.id] = {
+          id: item.id,
+          type: 'command',
+          command: fmtCmd(item.command),
+          cwd: item.cwd || '',
+          output: '',
+          exitCode: null,
+          durationMs: null,
+          status: 'running',
+        };
+      } else if (item.type === 'fileChange') {
+        items[item.id] = {
+          id: item.id,
+          type: 'fileChange',
+          changes: item.changes || [],
+          status: 'running',
+        };
+      }
+      if (items[item.id]) {
+        ensureAgentMsg().items.push(item.id);
+        renderMessages();
+      }
+      break;
+    }
+
+    case 'item/completed': {
+      const item = p.item || {};
+      if (item.type === 'commandExecution' && items[item.id]) {
+        items[item.id].exitCode = item.exitCode ?? null;
+        items[item.id].durationMs = item.durationMs ?? null;
+        items[item.id].status = item.exitCode === 0 ? 'ok' : 'fail';
+        if (item.aggregatedOutput && !items[item.id].output) {
+          items[item.id].output = item.aggregatedOutput;
+        }
+      } else if (item.type === 'fileChange' && items[item.id]) {
+        items[item.id].changes = item.changes || items[item.id].changes;
+        items[item.id].status = item.status === 'declined' ? 'declined' : 'ok';
+      }
+      if (item.type === 'agentMessage' && activeAgentMsg !== null) {
+        messages[activeAgentMsg].streaming = false;
+        activeAgentMsg = null;
+      }
+      renderMessages();
+      break;
+    }
+
+    case 'item/commandExecution/outputDelta':
+      if (p.itemId && items[p.itemId] && items[p.itemId].output.length < 100_000) {
+        items[p.itemId].output += (p.output || p.delta || '');
+        updateItemOutput(p.itemId);
+      }
+      break;
+  }
+}
+
+// --- Render ---
+
+function updateInputState() {
+  const ready = connState === 'ready' && threadId && !turnActive;
+  turnIndicator.className = 'turn-indicator' + (turnActive ? ' active' : '');
+  promptEl.disabled = !ready;
+  btnSend.disabled = !ready;
+}
+
+function renderMessages() {
+  messagesEl.innerHTML = '';
+
+  if (messages.length === 0) {
+    messagesEl.innerHTML = '<div class="empty-state">Send a message to begin.</div>';
+    return;
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const div = document.createElement('div');
+    div.className = `msg ${m.role}`;
+
+    const header = `<div class="msg-header">
+      <span class="role ${m.role}">${m.role}</span>
+      <span class="ts">${m.ts || ''}</span>
+    </div>`;
+
+    let body;
+    if (m.role === 'user') {
+      body = `<div class="msg-body">${esc(m.text)}</div>`;
+    } else {
+      let text = esc(m.text || '');
+      if (m.streaming) text += '<span class="streaming-cursor"></span>';
+
+      let toolsHtml = '';
+      const itemIds = (m.items || []).filter((id) => items[id]);
+      if (itemIds.length) {
+        toolsHtml = '<div class="tool-grid">';
+        for (const id of itemIds) toolsHtml += renderToolBlock(items[id]);
+        toolsHtml += '</div>';
+      }
+
+      body = `<div class="msg-body" data-msg-idx="${i}"><span class="agent-text">${text}</span>${toolsHtml}</div>`;
+    }
+
+    div.innerHTML = header + body;
+    messagesEl.appendChild(div);
+  }
+
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderToolBlock(item) {
+  if (item.type === 'command') return renderCommandBlock(item);
+  if (item.type === 'fileChange') return renderFileChangeBlock(item);
+  return '';
+}
+
+function renderCommandBlock(item) {
+  const statusClass = item.status;
+  let statusLabel = '...';
+  if (item.status === 'ok') statusLabel = `0`;
+  else if (item.status === 'fail') statusLabel = `${item.exitCode}`;
+
+  const metaParts = [];
+  if (item.cwd) metaParts.push(item.cwd);
+  if (item.durationMs !== null) metaParts.push(`${(item.durationMs / 1000).toFixed(1)}s`);
+  const metaInline = metaParts.length ? `<span class="tool-meta-inline">${esc(metaParts.join(' '))}</span>` : '';
+
+  return `<div class="tool-block${item.output ? ' expanded' : ''}" data-item-id="${esc(item.id)}">
+    <div class="tool-header">
+      <span class="tool-type">cmd</span>
+      <span class="tool-label">$ ${esc(item.command)}</span>
+      ${metaInline}
+      <span class="tool-status ${statusClass}">${statusLabel}</span>
+      <span class="tool-chevron">&#9654;</span>
+    </div>
+    <div class="tool-detail">
+      <div class="tool-output">${esc(item.output)}</div>
+    </div>
+  </div>`;
+}
+
+function renderFileChangeBlock(item) {
+  const statusClass = item.status;
+  const count = item.changes?.length || 0;
+  const statusLabel = item.status === 'running' ? '...'
+    : item.status === 'declined' ? 'declined'
+    : `${count} file${count !== 1 ? 's' : ''}`;
+
+  let changesHtml = '';
+  if (item.changes?.length) {
+    changesHtml = '<div class="file-changes">';
+    for (const c of item.changes) {
+      const kind = (c.kind || 'modify').toLowerCase();
+      const diffHtml = c.diff ? renderDiff(c.diff) : '';
+      changesHtml += `<div class="file-change">
+        <div class="file-change-header">
+          <span class="file-change-kind ${kind}">${kind}</span>
+          <span class="file-change-path">${esc(c.path || '')}</span>
+        </div>
+        ${diffHtml ? `<div class="file-change-diff">${diffHtml}</div>` : ''}
+      </div>`;
+    }
+    changesHtml += '</div>';
+  }
+
+  return `<div class="tool-block" data-item-id="${esc(item.id)}">
+    <div class="tool-header">
+      <span class="tool-type">file</span>
+      <span class="tool-label">file changes</span>
+      <span class="tool-status ${statusClass}">${statusLabel}</span>
+      <span class="tool-chevron">&#9654;</span>
+    </div>
+    <div class="tool-detail">
+      ${changesHtml}
+    </div>
+  </div>`;
+}
+
+function renderDiff(diff) {
+  return diff.split('\n').map((line) => {
+    const escaped = esc(line);
+    if (line.startsWith('+')) return `<span class="diff-add">${escaped}</span>`;
+    if (line.startsWith('-')) return `<span class="diff-del">${escaped}</span>`;
+    return escaped;
+  }).join('\n');
+}
+
+function updateStreamingText(delta) {
+  if (activeAgentMsg === null) return;
+  const span = messagesEl.querySelector(`.msg-body[data-msg-idx="${activeAgentMsg}"] .agent-text`);
+  if (!span) { renderMessages(); return; }
+
+  const cursor = span.querySelector('.streaming-cursor');
+  if (cursor && delta) {
+    cursor.insertAdjacentText('beforebegin', delta);
+  } else {
+    const m = messages[activeAgentMsg];
+    let html = esc(m.text || '');
+    if (m.streaming) html += '<span class="streaming-cursor"></span>';
+    span.innerHTML = html;
+  }
+  autoScroll();
+}
+
+function updateItemOutput(itemId) {
+  const block = messagesEl.querySelector(`.tool-block[data-item-id="${CSS.escape(itemId)}"]`);
+  if (!block) { renderMessages(); return; }
+
+  const item = items[itemId];
+  if (!item?.output) return;
+
+  // Auto-expand when output arrives
+  block.classList.add('expanded');
+
+  let el = block.querySelector('.tool-output');
+  if (!el) {
+    const detail = block.querySelector('.tool-detail');
+    if (!detail) return;
+    el = document.createElement('div');
+    el.className = 'tool-output';
+    detail.appendChild(el);
+  }
+  el.textContent = item.output;
+  autoScroll();
+}
+
+function autoScroll() {
+  if (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 60) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+}
+
+// --- Input ---
+
+function sendPrompt() {
+  if (!threadId || turnActive || connState !== 'ready') return;
+  const text = promptEl.value.trim();
+  if (!text) return;
+
+  messages.push({ role: 'user', text, ts: ts() });
+  activeAgentMsg = null;
+
+  send(rpcReq('turn/start', {
+    threadId,
+    input: [{ type: 'text', text }],
+  }));
+
+  promptEl.value = '';
+  autoResizePrompt();
+  renderMessages();
+}
+
+function autoResizePrompt() {
+  promptEl.style.height = 'auto';
+  promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + 'px';
+}
+
+promptEl.addEventListener('input', autoResizePrompt);
+promptEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+});
+btnSend.addEventListener('click', sendPrompt);
+
+// --- Actions ---
+
+btnEnd.addEventListener('click', disconnect);
+
+function disconnect() {
+  if (ws) ws.close();
+  connState = 'disconnected';
+  ws = null;
+  threadId = null;
+  turnActive = false;
+  activeAgentMsg = null;
+  messages.length = 0;
+  for (const k of Object.keys(items)) delete items[k];
+  app.classList.add('disconnected');
+  sfConnect.disabled = false;
+  sfStatus.textContent = '';
+  sfStatus.className = 'status-line';
+}
+
+function toggleLog() {
+  logPanel.classList.toggle('visible');
+  btnLogToggle.classList.toggle('active');
+}
+
+btnLogToggle.addEventListener('click', toggleLog);
+btnLogClose.addEventListener('click', toggleLog);
+
+// Event delegation for tool header expand/collapse
+messagesEl.addEventListener('click', (e) => {
+  const header = e.target.closest('.tool-header');
+  if (header) header.closest('.tool-block').classList.toggle('expanded');
+});
+
+sfSession.focus();
+</script>
+
+</body>
+</html>

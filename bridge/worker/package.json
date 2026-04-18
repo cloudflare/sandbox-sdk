@@ -1,0 +1,41 @@
+{
+  "name": "@cloudflare/sandbox-bridge",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Cloudflare Worker that exposes the sandbox HTTP API via the @cloudflare/sandbox SDK",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "format": "biome check --write",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "bun script/integration"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.7",
+    "@cloudflare/sandbox": "*",
+    "@cloudflare/vitest-pool-workers": "^0.12.5",
+    "@cloudflare/workers-types": "^4.20251126.0",
+    "@types/node": "^24.10.1",
+    "hono": "^4.7.11",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.76.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SANDBOX_API_KEY": {
+        "description": "Bearer token for API authentication. Generate with `openssl rand -hex 32`."
+      },
+      "WARM_POOL_TARGET": {
+        "description": "Number of pre-warmed containers to keep ready (0 disables the warm pool)."
+      },
+      "WARM_POOL_REFRESH_INTERVAL": {
+        "description": "Milliseconds between warm pool health checks (default: 10000)."
+      }
+    }
+  }
+}

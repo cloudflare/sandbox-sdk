@@ -1272,10 +1272,9 @@ describe('Sandbox - Automatic Session Management', () => {
       const restoreArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
-      vi.spyOn(
-        backupSandbox as any,
-        'downloadBackupPresigned'
-      ).mockResolvedValue(undefined);
+      const mountBackupR2Spy = vi
+        .spyOn(backupSandbox as any, 'mountBackupR2')
+        .mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '0',
         stderr: '',
@@ -1294,9 +1293,22 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
-        `/var/backups/${backupId}.sqsh`,
+        `/var/backups/r2mount/${backupId}/data.sqsh`,
         expect.stringMatching(/^__sandbox_backup_/)
       );
+      expect(mountBackupR2Spy).toHaveBeenCalledWith(
+        `/var/backups/r2mount/${backupId}`,
+        `backups/${backupId}/`,
+        expect.stringMatching(/^__sandbox_backup_/)
+      );
+      expect(
+        (backupSandbox as any).execWithSession.mock.calls.some(
+          ([command]: [string]) =>
+            command.includes(
+              `/usr/bin/fusermount3 -uz '/var/backups/r2mount/${backupId}'`
+            )
+        )
+      ).toBe(true);
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {
