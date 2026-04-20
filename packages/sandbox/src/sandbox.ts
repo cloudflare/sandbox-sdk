@@ -4636,16 +4636,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      // Clean up archive file on failure only — squashfuse needs it as
-      // backing storage for the lifetime of the mount
-      if (id && backupSession) {
-        const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(archivePath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
-      }
       throw error;
     } finally {
       if (backupSession) {
