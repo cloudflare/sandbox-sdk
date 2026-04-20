@@ -386,6 +386,7 @@ describe('Session', () => {
 
     it('should handle heredoc with variable expansion', async () => {
       await session.exec('MY_VAR="expanded"');
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional shell variable syntax
       const result = await session.exec('cat << EOF\n${MY_VAR}\nEOF');
 
       expect(result.exitCode).toBe(0);

@@ -62,6 +62,7 @@ describe('SessionManager PTY env inheritance', () => {
     // entry and only the first var is parsed correctly.
     const pathOutput = await collectPtyOutput(
       pty,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional shell variable syntax
       'echo "HAS_PATH=${PATH:+yes}"\n'
     );
     expect(pathOutput).toContain('HAS_PATH=yes');

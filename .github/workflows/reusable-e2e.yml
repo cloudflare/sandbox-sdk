@@ -48,30 +48,36 @@ jobs:
     outputs:
       http-url: ${{ steps.urls.outputs.http_url }}
       ws-url: ${{ steps.urls.outputs.ws_url }}
+      capnweb-url: ${{ steps.urls.outputs.capnweb_url }}
     steps:
       - name: Check if deploy can be skipped
         if: ${{ inputs.deploy_hash != '' }}
         id: deploy-check
         run: |
-          HTTP_URL="https://${{ inputs.worker_name_prefix }}-http.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
-          WS_URL="https://${{ inputs.worker_name_prefix }}-websocket.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
           EXPECTED="${{ inputs.deploy_hash }}"
 
-          # Check both workers — both must match to skip
-          HTTP_HASH=$(curl -sf --max-time 10 "$HTTP_URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
-          WS_HASH=$(curl -sf --max-time 10 "$WS_URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
+          # Check all workers — all must match to skip
+          ALL_MATCH=true
+          for TRANSPORT in http websocket capnweb; do
+            URL="https://${{ inputs.worker_name_prefix }}-${TRANSPORT}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
+            HASH=$(curl -sf --max-time 10 "$URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
+            if [[ "$HASH" != "$EXPECTED" ]]; then
+              ALL_MATCH=false
+              echo "::notice::${TRANSPORT} deploy_hash=$HASH (expected $EXPECTED)"
+            fi
+          done
 
-          if [[ "$HTTP_HASH" == "$EXPECTED" && "$WS_HASH" == "$EXPECTED" ]]; then
+          if [[ "$ALL_MATCH" == "true" ]]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "::notice::Both workers report deploy_hash=$EXPECTED — skipping deploy"
+            echo "::notice::All workers report deploy_hash=$EXPECTED — skipping deploy"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
-            echo "::notice::Deploy hash mismatch (http=$HTTP_HASH ws=$WS_HASH expected=$EXPECTED) — deploying"
+            echo "::notice::Deploy hash mismatch — deploying"
           fi
 
       # --- Capacity guard (only when deploy is needed) ---
       # Ensures enough container app headroom before deploying. Each PR
-      # creates 12 container apps (2 workers × 6 classes). The account
+      # creates 18 container apps (3 workers × 6 classes). The account
       # has a ~100 app limit. We keep a budget of 84 (leaving 16 headroom)
       # and evict the least-recently-active PR's resources when over budget.
       # Protects: current PR, main workers, and PRs with in-progress CI.
@@ -88,7 +94,7 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           SAFE_BUDGET=84
-          EXPECTED_PR_APPS=12
+          EXPECTED_PR_APPS=18
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
           if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then
@@ -164,7 +170,7 @@ jobs:
             # Re-read live state to avoid double-counting with concurrent evictions
             LIVE_CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
             EVICTED=0
-            for suffix in "-http" "-websocket"; do
+            for suffix in "-http" "-websocket" "-capnweb"; do
               WORKER="sandbox-e2e-test-worker-pr-${PR_NUM}${suffix}"
               IDS=$(echo "$LIVE_CONTAINERS" | jq -r --arg w "$WORKER" \
                 '.[] | select(.name | startswith($w)) | .id' 2>/dev/null)
@@ -232,79 +238,36 @@ jobs:
           name: build-${{ github.sha }}
           path: packages
 
-      - name: Deploy HTTP worker
+      - name: Deploy and configure workers
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
-          cd tests/e2e/test-worker
-          ./generate-config.sh \
-            "${{ inputs.worker_name_prefix }}-http" \
-            "${{ inputs.worker_name_prefix }}-http" \
-            "http" \
-            "registry:${{ inputs.image_tag }}"
-          npx wrangler deploy \
-            --name "${{ inputs.worker_name_prefix }}-http" \
-            ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          for TRANSPORT in http websocket capnweb; do
+            WORKER="${{ inputs.worker_name_prefix }}-${TRANSPORT}"
+            echo "::group::Deploy ${TRANSPORT} worker"
+            cd tests/e2e/test-worker
+            ./generate-config.sh \
+              "${WORKER}" \
+              "${WORKER}" \
+              "${TRANSPORT}" \
+              "registry:${{ inputs.image_tag }}"
+            npx wrangler deploy \
+              --name "${WORKER}" \
+              ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
+            cd "$GITHUB_WORKSPACE"
+            echo "::endgroup::"
 
-      - name: Inject HTTP worker secrets
-        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
-        run: |
-          jq -n \
-            --arg a "$AWS_ACCESS_KEY_ID" \
-            --arg b "$AWS_SECRET_ACCESS_KEY" \
-            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
-            --arg d "$R2_ACCESS_KEY_ID" \
-            --arg e "$R2_SECRET_ACCESS_KEY" \
-            --arg f "$DEPLOY_HASH" \
-            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
-          | npx wrangler secret bulk --name "${{ inputs.worker_name_prefix }}-http"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          DEPLOY_HASH: ${{ inputs.deploy_hash }}
-
-      - name: Deploy WebSocket worker
-        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
-        run: |
-          cd tests/e2e/test-worker
-          ./generate-config.sh \
-            "${{ inputs.worker_name_prefix }}-websocket" \
-            "${{ inputs.worker_name_prefix }}-websocket" \
-            "websocket" \
-            "registry:${{ inputs.image_tag }}"
-          npx wrangler deploy \
-            --name "${{ inputs.worker_name_prefix }}-websocket" \
-            ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Inject WebSocket worker secrets
-        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
-        run: |
-          jq -n \
-            --arg a "$AWS_ACCESS_KEY_ID" \
-            --arg b "$AWS_SECRET_ACCESS_KEY" \
-            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
-            --arg d "$R2_ACCESS_KEY_ID" \
-            --arg e "$R2_SECRET_ACCESS_KEY" \
-            --arg f "$DEPLOY_HASH" \
-            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
-          | npx wrangler secret bulk --name "${{ inputs.worker_name_prefix }}-websocket"
+            echo "::group::Inject ${TRANSPORT} worker secrets"
+            jq -n \
+              --arg a "$AWS_ACCESS_KEY_ID" \
+              --arg b "$AWS_SECRET_ACCESS_KEY" \
+              --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+              --arg d "$R2_ACCESS_KEY_ID" \
+              --arg e "$R2_SECRET_ACCESS_KEY" \
+              --arg f "$DEPLOY_HASH" \
+              '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
+            | npx wrangler secret bulk --name "${WORKER}"
+            echo "::endgroup::"
+          done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -320,13 +283,27 @@ jobs:
         run: |
           echo "http_url=https://${{ inputs.worker_name_prefix }}-http.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
           echo "ws_url=https://${{ inputs.worker_name_prefix }}-websocket.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+          echo "capnweb_url=https://${{ inputs.worker_name_prefix }}-capnweb.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
-  test-http:
+  test-vitest:
     permissions:
       contents: read
     needs: deploy
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - transport: http
+            worker_url: http-url
+            sandbox_id: e2e-http
+          - transport: websocket
+            worker_url: ws-url
+            sandbox_id: e2e-ws
+          - transport: capnweb
+            worker_url: capnweb-url
+            sandbox_id: e2e-capnweb
     steps:
       - uses: actions/checkout@v6
         with:
@@ -364,64 +341,11 @@ jobs:
         with:
           name: build-${{ github.sha }}
           path: packages
-      - name: E2E tests (HTTP transport)
+      - name: E2E tests (${{ matrix.transport }} transport)
         run: npx vitest run --config vitest.e2e.config.ts
         env:
-          TEST_WORKER_URL: ${{ needs.deploy.outputs.http-url }}
-          TEST_SANDBOX_ID: e2e-http-${{ github.run_id }}
-          CI: true
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-  test-websocket:
-    permissions:
-      contents: read
-    needs: deploy
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: ${{ inputs.checkout_repo || github.repository }}
-          ref: ${{ inputs.checkout_ref || '' }}
-          persist-credentials: false
-          fetch-depth: 1
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Restore npm package cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.npm
-          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            npm-cache-${{ runner.os }}-
-
-      - uses: actions/cache/restore@v5
-        id: nm-cache
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-            examples/*/node_modules
-            sites/*/node_modules
-          key: node-modules-${{ hashFiles('package-lock.json') }}
-
-      - run: npm ci --prefer-offline --no-audit --no-fund
-        if: steps.nm-cache.outputs.cache-hit != 'true'
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: build-${{ github.sha }}
-          path: packages
-      - name: E2E tests (WebSocket transport)
-        run: npx vitest run --config vitest.e2e.config.ts
-        env:
-          TEST_WORKER_URL: ${{ needs.deploy.outputs.ws-url }}
-          TEST_SANDBOX_ID: e2e-ws-${{ github.run_id }}
+          TEST_WORKER_URL: ${{ needs.deploy.outputs[matrix.worker_url] }}
+          TEST_SANDBOX_ID: ${{ matrix.sandbox_id }}-${{ github.run_id }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
