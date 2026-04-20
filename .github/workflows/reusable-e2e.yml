@@ -77,7 +77,7 @@ jobs:
 
       # --- Capacity guard (only when deploy is needed) ---
       # Ensures enough container app headroom before deploying. Each PR
-      # creates 12 container apps (2 workers × 6 classes). The account
+      # creates 18 container apps (3 workers × 6 classes). The account
       # has a ~100 app limit. We keep a budget of 84 (leaving 16 headroom)
       # and evict the least-recently-active PR's resources when over budget.
       # Protects: current PR, main workers, and PRs with in-progress CI.
@@ -94,7 +94,7 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           SAFE_BUDGET=84
-          EXPECTED_PR_APPS=12
+          EXPECTED_PR_APPS=18
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
           if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then
@@ -170,7 +170,7 @@ jobs:
             # Re-read live state to avoid double-counting with concurrent evictions
             LIVE_CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
             EVICTED=0
-            for suffix in "-http" "-websocket"; do
+            for suffix in "-http" "-websocket" "-capnweb"; do
               WORKER="sandbox-e2e-test-worker-pr-${PR_NUM}${suffix}"
               IDS=$(echo "$LIVE_CONTAINERS" | jq -r --arg w "$WORKER" \
                 '.[] | select(.name | startswith($w)) | .id' 2>/dev/null)
