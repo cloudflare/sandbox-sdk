@@ -172,7 +172,7 @@ jobs:
           fi
           echo "docker-changed=$DOCKER_CHANGED" >> $GITHUB_OUTPUT
 
-          # Needs E2E?
+          # Needs E2E? (code changes or run-e2e label)
           NEEDS_E2E=false
           if [[ "${{ steps.filter.outputs.shared }}" == "true" \
              || "${{ steps.filter.outputs.sdk }}" == "true" \
@@ -180,7 +180,9 @@ jobs:
              || "${{ steps.filter.outputs.docker-config }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.e2e-tests }}" == "true" \
-             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+             || "${{ steps.filter.outputs.ci-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" \
+             || "${{ contains(github.event.pull_request.labels.*.name, 'run-e2e') }}" == "true" ]]; then
             NEEDS_E2E=true
           fi
           echo "needs-e2e=$NEEDS_E2E" >> $GITHUB_OUTPUT

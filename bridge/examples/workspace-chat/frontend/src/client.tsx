@@ -1,46 +1,46 @@
-import {
-  Suspense,
-  useCallback,
-  useState,
-  useEffect,
-  useRef,
-  useImperativeHandle,
-  forwardRef
-} from 'react';
 import { useChat } from '@ai-sdk/react';
-import { isToolUIPart, getToolName } from 'ai';
-import type { UIMessage } from 'ai';
 import {
-  Button,
   Badge,
-  InputArea,
+  Button,
   Empty,
+  InputArea,
   Surface,
   Text,
   Toasty,
   useKumoToastManager
 } from '@cloudflare/kumo';
 import {
+  ArrowCounterClockwiseIcon,
+  ArrowSquareOutIcon,
+  BrowserIcon,
+  CaretRightIcon,
+  CheckIcon,
+  FileIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  GearIcon,
+  InfoIcon,
+  MoonIcon,
   PaperPlaneRightIcon,
   StopIcon,
-  TrashIcon,
-  GearIcon,
-  FolderIcon,
-  FileIcon,
-  FolderOpenIcon,
-  ArrowCounterClockwiseIcon,
-  InfoIcon,
-  TerminalIcon,
-  MoonIcon,
   SunIcon,
-  CheckIcon,
-  CaretRightIcon,
-  XCircleIcon,
-  ArrowSquareOutIcon,
-  BrowserIcon
+  TerminalIcon,
+  TrashIcon,
+  XCircleIcon
 } from '@phosphor-icons/react';
-import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
+import type { UIMessage } from 'ai';
+import { getToolName, isToolUIPart } from 'ai';
+import {
+  forwardRef,
+  Suspense,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState
+} from 'react';
+import { Streamdown } from 'streamdown';
 
 // ---------------------------------------------------------------------------
 // JSON syntax highlighting
@@ -54,10 +54,10 @@ type JsonToken = {
 function tokenizeJson(json: string): JsonToken[] {
   const tokens: JsonToken[] = [];
   const re =
-    /("(?:[^"\\]|\\.)*")\s*:|"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\btrue\b|\bfalse\b|\bnull\b|[{}\[\]:,]/g;
-  let match: RegExpExecArray | null;
+    /("(?:[^"\\]|\\.)*")\s*:|"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\btrue\b|\bfalse\b|\bnull\b|[{}[\]:,]/g;
+  let match: RegExpExecArray | null = re.exec(json);
   let last = 0;
-  while ((match = re.exec(json)) !== null) {
+  while (match !== null) {
     if (match.index > last) {
       tokens.push({ type: 'punct', text: json.slice(last, match.index) });
     }
@@ -77,6 +77,7 @@ function tokenizeJson(json: string): JsonToken[] {
       tokens.push({ type: 'punct', text: t });
     }
     last = match.index + t.length;
+    match = re.exec(json);
   }
   if (last < json.length) {
     tokens.push({ type: 'punct', text: json.slice(last) });
@@ -98,7 +99,7 @@ function HighlightedJson({ value }: { value: string }) {
   return (
     <pre className="text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
       {tokens.map((tok, i) => (
-        <span key={i} className={tokenColors[tok.type]}>
+        <span key={`${tok.type}-${i}`} className={tokenColors[tok.type]}>
           {tok.text}
         </span>
       ))}
@@ -245,7 +246,7 @@ function buildTree(files: { path: string; size: number }[]): TreeNode[] {
         } else {
           const dir: TreeNode = {
             name: parts[i],
-            path: '/' + parts.slice(0, i + 1).join('/'),
+            path: `/${parts.slice(0, i + 1).join('/')}`,
             children: []
           };
           node.children.push(dir);
@@ -375,7 +376,7 @@ const FileBrowser = forwardRef<FileBrowserHandle, {}>(
     useEffect(() => {
       loadTree();
       loadInfo();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [loadTree, loadInfo]);
 
     const refresh = useCallback(
       (opts?: { silent?: boolean }) => {
@@ -703,9 +704,10 @@ function Chat() {
     prevStreamingRef.current = isStreaming;
   }, [isStreaming, toasts, fetchTree]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages.length]);
 
   const hasUploading = pendingFiles.some((f) => f.status === 'uploading');
 
@@ -1001,7 +1003,8 @@ function Chat() {
                       const htmlArtifacts = extractHtmlArtifacts(part.text);
 
                       return (
-                        <div key={partIndex} className="space-y-2">
+                        // biome-ignore lint/suspicious/noArrayIndexKey: message parts lack stable IDs
+                        <div key={`text-${partIndex}`} className="space-y-2">
                           <div className="flex justify-start">
                             <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md bg-kumo-base text-kumo-default text-sm leading-relaxed">
                               <Streamdown
@@ -1032,7 +1035,11 @@ function Chat() {
                       const reasoningKey = `reasoning-${message.id}-${partIndex}`;
                       const isExpanded = expandedTools.has(reasoningKey);
                       return (
-                        <div key={partIndex} className="flex justify-start">
+                        <div
+                          // biome-ignore lint/suspicious/noArrayIndexKey: message parts lack stable IDs
+                          key={`reasoning-${partIndex}`}
+                          className="flex justify-start"
+                        >
                           <Surface className="max-w-[85%] rounded-xl ring ring-kumo-line overflow-hidden">
                             <button
                               type="button"

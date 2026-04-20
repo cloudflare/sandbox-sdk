@@ -6,7 +6,7 @@ import { z } from 'zod';
 export { Sandbox } from '@cloudflare/sandbox';
 
 const API_PATH = '/run';
-const MODEL = '@cf/openai/gpt-oss-120b' as const;
+const MODEL = '@cf/openai/gpt-oss-120b';
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
