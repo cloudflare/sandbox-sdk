@@ -185,7 +185,9 @@ export class ReportGenerator {
     return {
       version: getSdkVersion(),
       timestamp: new Date().toISOString(),
-      runId: `perf-${Date.now()}`,
+      runId: process.env.PERF_RUN_ID
+        ? `perf-${process.env.PERF_RUN_ID}`
+        : `perf-${Date.now()}`,
       environment: {
         workerUrl,
         commitSha: process.env.GITHUB_SHA,
