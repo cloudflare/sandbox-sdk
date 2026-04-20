@@ -48,6 +48,7 @@ jobs:
     outputs:
       http-url: ${{ steps.urls.outputs.http_url }}
       ws-url: ${{ steps.urls.outputs.ws_url }}
+      capnweb-url: ${{ steps.urls.outputs.capnweb_url }}
     steps:
       - name: Check if deploy can be skipped
         if: ${{ inputs.deploy_hash != '' }}
@@ -314,12 +315,54 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           DEPLOY_HASH: ${{ inputs.deploy_hash }}
 
+      - name: Deploy capnweb worker
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        run: |
+          cd tests/e2e/test-worker
+          ./generate-config.sh \
+            "${{ inputs.worker_name_prefix }}-capnweb" \
+            "${{ inputs.worker_name_prefix }}-capnweb" \
+            "capnweb" \
+            "registry:${{ inputs.image_tag }}"
+          npx wrangler deploy \
+            --name "${{ inputs.worker_name_prefix }}-capnweb" \
+            ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Inject capnweb worker secrets
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        run: |
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg d "$R2_ACCESS_KEY_ID" \
+            --arg e "$R2_SECRET_ACCESS_KEY" \
+            --arg f "$DEPLOY_HASH" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
+          | npx wrangler secret bulk --name "${{ inputs.worker_name_prefix }}-capnweb"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          DEPLOY_HASH: ${{ inputs.deploy_hash }}
+
       # Always set URLs (deterministic, needed by test jobs)
       - name: Set worker URLs
         id: urls
         run: |
           echo "http_url=https://${{ inputs.worker_name_prefix }}-http.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
           echo "ws_url=https://${{ inputs.worker_name_prefix }}-websocket.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+          echo "capnweb_url=https://${{ inputs.worker_name_prefix }}-capnweb.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
   test-http:
     permissions:
@@ -422,6 +465,59 @@ jobs:
         env:
           TEST_WORKER_URL: ${{ needs.deploy.outputs.ws-url }}
           TEST_SANDBOX_ID: e2e-ws-${{ github.run_id }}
+          CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  test-capnweb:
+    permissions:
+      contents: read
+    needs: deploy
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore npm package cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}-
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+      - name: E2E tests (capnweb transport)
+        run: npx vitest run --config vitest.e2e.config.ts
+        env:
+          TEST_WORKER_URL: ${{ needs.deploy.outputs.capnweb-url }}
+          TEST_SANDBOX_ID: e2e-capnweb-${{ github.run_id }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
