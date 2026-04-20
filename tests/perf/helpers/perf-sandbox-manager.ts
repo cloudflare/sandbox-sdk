@@ -35,6 +35,31 @@ export interface FileResult {
   error?: string;
 }
 
+export interface BackupResult {
+  success: boolean;
+  duration: number;
+  id?: string;
+  error?: string;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
+export interface MountResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
+export interface UnmountResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
 export class PerfSandboxManager {
   private workerUrl: string;
   private sandboxType: string;
@@ -190,6 +215,198 @@ export class PerfSandboxManager {
         error: error instanceof Error ? error.message : String(error)
       };
     }
+  }
+
+  /**
+   * Create a backup of a directory in a sandbox
+   */
+  async createBackup(
+    sandbox: SandboxInstance,
+    dir: string,
+    options?: { name?: string; ttl?: number }
+  ): Promise<BackupResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ dir, ...options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      const result = (await response.json()) as { id: string };
+      return { success: true, duration, id: result.id };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Restore a backup to a directory in a sandbox
+   */
+  async restoreBackup(
+    sandbox: SandboxInstance,
+    id: string,
+    dir: string
+  ): Promise<RestoreResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ id, dir })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Mount an R2 bucket into a sandbox
+   */
+  async mountBucket(
+    sandbox: SandboxInstance,
+    bucket: string,
+    mountPath: string,
+    options?: {
+      endpoint?: string;
+      credentials?: { accessKeyId: string; secretAccessKey: string };
+    }
+  ): Promise<MountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/mount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ bucket, mountPath, options })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Unmount a bucket from a sandbox
+   */
+  async unmountBucket(
+    sandbox: SandboxInstance,
+    mountPath: string
+  ): Promise<UnmountResult> {
+    const start = performance.now();
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/unmount`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ mountPath })
+      });
+      const duration = performance.now() - start;
+      if (!response.ok) {
+        return { success: false, duration, error: `HTTP ${response.status}` };
+      }
+      return { success: true, duration };
+    } catch (error) {
+      return {
+        success: false,
+        duration: performance.now() - start,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Put an object into the R2 test bucket via the worker
+   */
+  async putBucketObject(
+    sandbox: SandboxInstance,
+    key: string,
+    content: string
+  ): Promise<{ success: boolean }> {
+    try {
+      const response = await fetch(`${this.workerUrl}/api/bucket/put`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key, content, contentType: 'text/plain' })
+      });
+      return { success: response.ok };
+    } catch {
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get an object from the R2 test bucket via the worker
+   */
+  async getBucketObject(
+    sandbox: SandboxInstance,
+    key: string
+  ): Promise<{ success: boolean; content?: string }> {
+    try {
+      const response = await fetch(
+        `${this.workerUrl}/api/bucket/get?key=${encodeURIComponent(key)}`,
+        { method: 'GET', headers: sandbox.headers }
+      );
+      if (!response.ok) return { success: false };
+      const result = (await response.json()) as { content?: string };
+      return { success: true, content: result.content };
+    } catch {
+      return { success: false };
+    }
+  }
+
+  /**
+   * Delete an object from the R2 test bucket via the worker
+   */
+  async deleteBucketObject(
+    sandbox: SandboxInstance,
+    key: string
+  ): Promise<void> {
+    try {
+      await fetch(`${this.workerUrl}/api/bucket/delete`, {
+        method: 'POST',
+        headers: sandbox.headers,
+        body: JSON.stringify({ key })
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
+  /**
+   * Set environment variables on a sandbox
+   */
+  async setEnvVars(
+    sandbox: SandboxInstance,
+    envVars: Record<string, string>
+  ): Promise<void> {
+    await fetch(`${this.workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers: sandbox.headers,
+      body: JSON.stringify({ envVars })
+    });
   }
 
   /**

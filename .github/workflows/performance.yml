@@ -16,6 +16,8 @@ on:
           - concurrent-creation
           - burst-startup
           - file-io
+          - backup-restore
+          - bucket-mounting
   schedule:
     - cron: '0 0 * * *'
 
@@ -180,8 +182,11 @@ jobs:
 
       - name: Run performance tests
         env:
-          TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          PERF_DEPLOYED_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           PERF_RUN_ID: ${{ github.run_id }}
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then

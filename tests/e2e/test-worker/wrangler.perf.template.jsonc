@@ -6,7 +6,8 @@
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
   "vars": {
-    "SANDBOX_LOG_LEVEL": "debug"
+    "SANDBOX_LOG_LEVEL": "debug",
+    "BACKUP_BUCKET_NAME": "sandbox-e2e-test"
   },
   "observability": {
     "enabled": true
@@ -17,7 +18,9 @@
     {
       "class_name": "Sandbox",
       "image": "{{IMAGE_SANDBOX}}",
-      "name": "{{CONTAINER_NAME}}"
+      "name": "{{CONTAINER_NAME}}",
+      "max_instances": 50,
+      "instance_type": "standard-2"
     }
   ],
 
@@ -29,6 +32,17 @@
       }
     ]
   },
+
+  "r2_buckets": [
+    {
+      "binding": "TEST_BUCKET",
+      "bucket_name": "sandbox-e2e-test"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "sandbox-e2e-test"
+    }
+  ],
 
   "migrations": [
     {

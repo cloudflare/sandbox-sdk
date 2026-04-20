@@ -94,14 +94,13 @@
         "vitest.perf.config.ts",
         "packages/sandbox/Dockerfile"
       ],
-      "env": [
-        "TEST_WORKER_URL",
-        "GITHUB_SHA",
-        "GITHUB_REF_NAME",
-        "GITHUB_EVENT_NAME",
-        "CI",
-        "PERF_RUN_ID"
-      ]
+      "passThroughEnv": [
+        "PERF_DEPLOYED_WORKER_URL",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY"
+      ],
+      "env": ["GITHUB_SHA", "GITHUB_REF_NAME", "GITHUB_EVENT_NAME", "CI", "PERF_RUN_ID"]
     },
     "test:e2e:browser": {
       "dependsOn": ["^build", "docker:local"],
