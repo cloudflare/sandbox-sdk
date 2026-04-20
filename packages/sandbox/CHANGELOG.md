@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.12
+
+### Patch Changes
+
+- [#593](https://github.com/cloudflare/sandbox-sdk/pull/593) [`3ddf9f4`](https://github.com/cloudflare/sandbox-sdk/commit/3ddf9f49aac20d84fcefa8fcb75a70ca031c144d) Thanks [@scuffi](https://github.com/scuffi)! - Fix `localBucket: true` mount silently syncing nothing when prefix starts with `/`
+
 ## 0.8.11
 
 ### Patch Changes

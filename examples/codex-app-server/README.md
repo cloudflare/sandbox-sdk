@@ -176,7 +176,7 @@ When deployed with `interceptHttps = true`, HTTPS requests to blocked hosts also
 
 ```
 codex-app-server/
-├── Dockerfile               cloudflare/sandbox:0.8.11 + @openai/codex CLI
+├── Dockerfile               cloudflare/sandbox:0.8.12 + @openai/codex CLI
 ├── wrangler.jsonc            Worker + Sandbox Durable Object + container config
 ├── .dev.vars.example         Environment variable template
 ├── src/
