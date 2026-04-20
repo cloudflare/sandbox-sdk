@@ -217,8 +217,9 @@ jobs:
         run: npx tsx tests/perf/scripts/ingest-to-d1.ts perf-results/latest.json
 
       - name: Call notifier webhook
+        if: always()
         run: |
-          curl -X POST ${{ secrets.PERF_NOTIFIER_API_SECRET }}/api/notify \
-            -H "Authorization: Bearer ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}" \
+          curl -X POST ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}/api/notify \
+            -H "Authorization: Bearer ${{ secrets.PERF_NOTIFIER_API_SECRET }}" \
             -H "Content-Type: application/json" \
             -d '{"run_id": "perf-${{ github.run_id }}"}'
