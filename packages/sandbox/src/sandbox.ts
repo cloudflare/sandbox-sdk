@@ -915,6 +915,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
+    if (options.prefix !== undefined) {
+      validatePrefix(options.prefix);
+    }
+
     if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
@@ -1224,10 +1228,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate prefix format if provided
-    if (options.prefix !== undefined) {
-      validatePrefix(options.prefix);
-    }
+    // Prefix validation is handled centrally in mountBucket()
   }
 
   /**
@@ -3700,33 +3701,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       accountId: this.r2AccountId,
       bucketName: this.backupBucketName
     };
-  }
-
-  /**
-   * Generate a presigned GET URL for downloading an object from R2.
-   * The container can curl this URL directly without credentials.
-   */
-  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
-    url.searchParams.set(
-      'X-Amz-Expires',
-      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
-    );
-
-    const signed = await client.sign(new Request(url), {
-      aws: { signQuery: true }
-    });
-
-    return signed.url;
   }
 
   /**

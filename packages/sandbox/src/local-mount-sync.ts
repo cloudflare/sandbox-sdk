@@ -2,6 +2,7 @@ import path from 'node:path/posix';
 import type { FileWatchSSEEvent, Logger } from '@repo/shared';
 import type { SandboxClient } from './clients';
 import { parseSSEStream } from './sse-parser';
+import { validatePrefix } from './storage-mount';
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
@@ -55,7 +56,12 @@ export class LocalMountSyncManager {
   constructor(options: LocalMountSyncOptions) {
     this.bucket = options.bucket;
     this.mountPath = options.mountPath;
-    this.prefix = options.prefix;
+    if (options.prefix !== undefined) {
+      validatePrefix(options.prefix);
+    }
+    // R2 keys never have leading slashes. Convert the validated '/'-prefixed
+    // value into bare R2 key format for list() and put().
+    this.prefix = options.prefix?.replace(/^\//, '') || undefined;
     this.readOnly = options.readOnly;
     this.client = options.client;
     this.sessionId = options.sessionId;
