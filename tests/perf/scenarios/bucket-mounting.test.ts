@@ -12,7 +12,10 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
-import type { SandboxInstance } from '../helpers/perf-sandbox-manager';
+import {
+  PerfSandboxManager,
+  type SandboxInstance
+} from '../helpers/perf-sandbox-manager';
 import {
   createPerfTestContext,
   registerPerfScenario
@@ -21,6 +24,7 @@ import {
 describe('Bucket Mounting', () => {
   const ctx = createPerfTestContext(SCENARIOS.BUCKET_MOUNTING);
   let sandbox: SandboxInstance;
+  let manager: PerfSandboxManager;
 
   const TEST_BUCKET = 'sandbox-e2e-test';
   const MOUNT_PATH = '/mnt/perf-bucket';
@@ -56,10 +60,19 @@ describe('Bucket Mounting', () => {
   }
 
   beforeAll(async () => {
-    sandbox = await ctx.manager.createSandbox({ initialize: true });
+    const deployedUrl = process.env.PERF_DEPLOYED_WORKER_URL;
+    if (!deployedUrl) {
+      console.warn(
+        '[BucketMounting] PERF_DEPLOYED_WORKER_URL not set — tests will be skipped'
+      );
+      return;
+    }
+
+    manager = new PerfSandboxManager({ workerUrl: deployedUrl });
+    sandbox = await manager.createSandbox({ initialize: true });
 
     // Probe bucket mounting availability (requires FUSE + R2 credentials)
-    const probeResult = await ctx.manager.mountBucket(
+    const probeResult = await manager.mountBucket(
       sandbox,
       TEST_BUCKET,
       '/mnt/perf-probe',
@@ -70,7 +83,7 @@ describe('Bucket Mounting', () => {
 
     if (probeResult.success) {
       bucketAvailable = true;
-      await ctx.manager.unmountBucket(sandbox, '/mnt/perf-probe');
+      await manager.unmountBucket(sandbox, '/mnt/perf-probe');
     } else {
       console.warn(
         `[BucketMounting] Bucket mounting not available: ${probeResult.error}`
@@ -82,11 +95,13 @@ describe('Bucket Mounting', () => {
   }, 120000);
 
   afterAll(async () => {
-    // Clean up any leftover R2 objects
-    for (const key of r2Keys) {
-      await ctx.manager.deleteBucketObject(sandbox, key);
+    if (manager) {
+      // Clean up any leftover R2 objects
+      for (const key of r2Keys) {
+        await manager.deleteBucketObject(sandbox, key);
+      }
+      await manager.destroyAll();
     }
-    await ctx.manager.destroyAll();
     registerPerfScenario(ctx);
   });
 
@@ -98,7 +113,7 @@ describe('Bucket Mounting', () => {
     for (let i = 0; i < ITERATIONS; i++) {
       const mountPath = `${MOUNT_PATH}-lat-${i}`;
 
-      const mountResult = await ctx.manager.mountBucket(
+      const mountResult = await manager.mountBucket(
         sandbox,
         TEST_BUCKET,
         mountPath,
@@ -117,10 +132,7 @@ describe('Bucket Mounting', () => {
       );
 
       if (mountResult.success) {
-        const unmountResult = await ctx.manager.unmountBucket(
-          sandbox,
-          mountPath
-        );
+        const unmountResult = await manager.unmountBucket(sandbox, mountPath);
         ctx.collector.record(
           METRICS.BUCKET_UNMOUNT_LATENCY,
           unmountResult.duration,
@@ -157,7 +169,7 @@ describe('Bucket Mounting', () => {
     );
 
     const mountPath = `${MOUNT_PATH}-write`;
-    const mountResult = await ctx.manager.mountBucket(
+    const mountResult = await manager.mountBucket(
       sandbox,
       TEST_BUCKET,
       mountPath,
@@ -176,7 +188,7 @@ describe('Bucket Mounting', () => {
           const filePath = `${mountPath}/${filename}`;
           r2Keys.push(filename);
 
-          const writeResult = await ctx.manager.executeCommand(
+          const writeResult = await manager.executeCommand(
             sandbox,
             `cat > ${filePath} << 'PERFEOF'\n${content}\nPERFEOF`
           );
@@ -198,7 +210,7 @@ describe('Bucket Mounting', () => {
         }
       }
     } finally {
-      await ctx.manager.unmountBucket(sandbox, mountPath);
+      await manager.unmountBucket(sandbox, mountPath);
     }
 
     const smallWriteRate = ctx.collector.getSuccessRate(
@@ -215,7 +227,7 @@ describe('Bucket Mounting', () => {
     );
 
     const mountPath = `${MOUNT_PATH}-read`;
-    const mountResult = await ctx.manager.mountBucket(
+    const mountResult = await manager.mountBucket(
       sandbox,
       TEST_BUCKET,
       mountPath,
@@ -231,7 +243,7 @@ describe('Bucket Mounting', () => {
           const filename = `${FILE_PREFIX}-w-${label}-${i}.txt`;
           const filePath = `${mountPath}/${filename}`;
 
-          const readResult = await ctx.manager.executeCommand(
+          const readResult = await manager.executeCommand(
             sandbox,
             `cat ${filePath} > /dev/null`
           );
@@ -253,7 +265,7 @@ describe('Bucket Mounting', () => {
         }
       }
     } finally {
-      await ctx.manager.unmountBucket(sandbox, mountPath);
+      await manager.unmountBucket(sandbox, mountPath);
     }
 
     const smallReadRate = ctx.collector.getSuccessRate(
@@ -268,7 +280,7 @@ describe('Bucket Mounting', () => {
     console.log(`\n  Mount→R2 propagation latency (${ITERATIONS} iterations):`);
 
     const mountPath = `${MOUNT_PATH}-r2verify`;
-    const mountResult = await ctx.manager.mountBucket(
+    const mountResult = await manager.mountBucket(
       sandbox,
       TEST_BUCKET,
       mountPath,
@@ -284,7 +296,7 @@ describe('Bucket Mounting', () => {
         const content = generatePseudorandomContent(1024);
         r2Keys.push(key);
 
-        await ctx.manager.executeCommand(
+        await manager.executeCommand(
           sandbox,
           `echo '${content}' > ${mountPath}/${key}`
         );
@@ -292,7 +304,7 @@ describe('Bucket Mounting', () => {
         // Allow s3fs cache to flush
         await new Promise((r) => setTimeout(r, 2000));
 
-        const verifyResult = await ctx.manager.getBucketObject(sandbox, key);
+        const verifyResult = await manager.getBucketObject(sandbox, key);
         ctx.collector.record(
           METRICS.BUCKET_R2_VERIFY_LATENCY,
           verifyResult.duration,
@@ -301,7 +313,7 @@ describe('Bucket Mounting', () => {
         );
       }
     } finally {
-      await ctx.manager.unmountBucket(sandbox, mountPath);
+      await manager.unmountBucket(sandbox, mountPath);
     }
 
     const verifyStats = ctx.collector.getStats(
@@ -321,7 +333,7 @@ describe('Bucket Mounting', () => {
 
     for (const count of FILE_COUNTS) {
       const mountPath = `${MOUNT_PATH}-multi-${count}`;
-      const mountResult = await ctx.manager.mountBucket(
+      const mountResult = await manager.mountBucket(
         sandbox,
         TEST_BUCKET,
         mountPath,
@@ -339,7 +351,7 @@ describe('Bucket Mounting', () => {
         for (let i = 0; i < count; i++) {
           const key = `${FILE_PREFIX}-multi-${count}-${i}.txt`;
           r2Keys.push(key);
-          const result = await ctx.manager.executeCommand(
+          const result = await manager.executeCommand(
             sandbox,
             `cat > ${mountPath}/${key} << 'PERFEOF'\n${content}\nPERFEOF`
           );
@@ -359,7 +371,7 @@ describe('Bucket Mounting', () => {
             ` (${(totalDuration / count).toFixed(0)}ms/file)`
         );
       } finally {
-        await ctx.manager.unmountBucket(sandbox, mountPath);
+        await manager.unmountBucket(sandbox, mountPath);
       }
     }
   }, 600000);

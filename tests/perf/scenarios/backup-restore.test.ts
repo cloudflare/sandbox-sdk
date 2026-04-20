@@ -12,7 +12,10 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
-import type { SandboxInstance } from '../helpers/perf-sandbox-manager';
+import {
+  PerfSandboxManager,
+  type SandboxInstance
+} from '../helpers/perf-sandbox-manager';
 import {
   createPerfTestContext,
   registerPerfScenario
@@ -21,6 +24,7 @@ import {
 describe('Backup / Restore', () => {
   const ctx = createPerfTestContext(SCENARIOS.BACKUP_RESTORE);
   let sandbox: SandboxInstance;
+  let manager: PerfSandboxManager;
 
   let backupBucketAvailable = false;
 
@@ -34,15 +38,24 @@ describe('Backup / Restore', () => {
   const ITERATIONS = 2;
 
   beforeAll(async () => {
-    sandbox = await ctx.manager.createSandbox({ initialize: true });
+    const deployedUrl = process.env.PERF_DEPLOYED_WORKER_URL;
+    if (!deployedUrl) {
+      console.warn(
+        '[BackupRestore] PERF_DEPLOYED_WORKER_URL not set — tests will be skipped'
+      );
+      return;
+    }
+
+    manager = new PerfSandboxManager({ workerUrl: deployedUrl });
+    sandbox = await manager.createSandbox({ initialize: true });
 
     // Probe backup availability by attempting a backup of a tiny directory
     const probeDir = '/tmp/perf-backup-probe';
-    await ctx.manager.executeCommand(
+    await manager.executeCommand(
       sandbox,
       `mkdir -p ${probeDir} && echo probe > ${probeDir}/probe.txt`
     );
-    const probeResult = await ctx.manager.createBackup(sandbox, probeDir, {
+    const probeResult = await manager.createBackup(sandbox, probeDir, {
       name: 'perf-probe',
       ttl: 60
     });
@@ -58,11 +71,11 @@ describe('Backup / Restore', () => {
       );
     }
 
-    await ctx.manager.executeCommand(sandbox, `rm -rf ${probeDir}`);
+    await manager.executeCommand(sandbox, `rm -rf ${probeDir}`);
   }, 120000);
 
   afterAll(async () => {
-    await ctx.manager.destroyAll();
+    if (manager) await manager.destroyAll();
     registerPerfScenario(ctx);
   });
 
@@ -85,13 +98,13 @@ describe('Backup / Restore', () => {
         const restoreDir = `/tmp/perf-restore-${label}-${i}`;
 
         // ── Generate data ──
-        await ctx.manager.executeCommand(
+        await manager.executeCommand(
           sandbox,
           `mkdir -p ${srcDir} && for f in $(seq 0 $((${fileCount}-1))); do dd if=/dev/urandom of=${srcDir}/file-$f.bin bs=1M count=${perFileMB} 2>/dev/null; done`
         );
 
         // ── Create backup (timed) ──
-        const backupResult = await ctx.manager.createBackup(sandbox, srcDir, {
+        const backupResult = await manager.createBackup(sandbox, srcDir, {
           name: `perf-${label}-${i}`,
           ttl: 3600
         });
@@ -104,12 +117,12 @@ describe('Backup / Restore', () => {
 
         if (!backupResult.success || !backupResult.id) {
           console.warn(`    ${label}-${i}: backup failed, skipping rest`);
-          await ctx.manager.executeCommand(sandbox, `rm -rf ${srcDir}`);
+          await manager.executeCommand(sandbox, `rm -rf ${srcDir}`);
           continue;
         }
 
         // ── Restore backup (timed) ──
-        const restoreResult = await ctx.manager.restoreBackup(
+        const restoreResult = await manager.restoreBackup(
           sandbox,
           backupResult.id,
           restoreDir
@@ -123,7 +136,7 @@ describe('Backup / Restore', () => {
 
         if (!restoreResult.success) {
           console.warn(`    ${label}-${i}: restore failed, skipping I/O`);
-          await ctx.manager.executeCommand(
+          await manager.executeCommand(
             sandbox,
             `fusermount3 -u ${restoreDir} 2>/dev/null || true; rm -rf ${srcDir} ${restoreDir}`
           );
@@ -131,7 +144,7 @@ describe('Backup / Restore', () => {
         }
 
         // ── Bulk read all files (timed) ──
-        const bulkReadResult = await ctx.manager.executeCommand(
+        const bulkReadResult = await manager.executeCommand(
           sandbox,
           `find ${restoreDir} -name '*.bin' -type f | sort | xargs cat > /dev/null`
         );
@@ -153,7 +166,7 @@ describe('Backup / Restore', () => {
         // ── Sample per-file read latency ──
         const sampleStep = Math.max(1, Math.floor(fileCount / IO_SAMPLE_COUNT));
         for (let f = 0; f < fileCount; f += sampleStep) {
-          const r = await ctx.manager.executeCommand(
+          const r = await manager.executeCommand(
             sandbox,
             `cat ${restoreDir}/file-${f}.bin > /dev/null`
           );
@@ -166,7 +179,7 @@ describe('Backup / Restore', () => {
         }
 
         // ── Bulk write new files through COW layer (timed) ──
-        const bulkWriteResult = await ctx.manager.executeCommand(
+        const bulkWriteResult = await manager.executeCommand(
           sandbox,
           `for f in $(seq 0 $((${fileCount}-1))); do dd if=/dev/urandom of=${restoreDir}/new-$f.bin bs=1M count=${perFileMB} 2>/dev/null; done`
         );
@@ -187,7 +200,7 @@ describe('Backup / Restore', () => {
 
         // ── Sample per-file write latency ──
         for (let f = 0; f < fileCount; f += sampleStep) {
-          const w = await ctx.manager.executeCommand(
+          const w = await manager.executeCommand(
             sandbox,
             `dd if=/dev/urandom of=${restoreDir}/sample-${f}.bin bs=1M count=${perFileMB} 2>/dev/null`
           );
@@ -200,7 +213,7 @@ describe('Backup / Restore', () => {
         }
 
         // ── Cleanup ──
-        await ctx.manager.executeCommand(
+        await manager.executeCommand(
           sandbox,
           `fusermount3 -u ${restoreDir} 2>/dev/null || true; rm -rf ${srcDir} ${restoreDir}`
         );

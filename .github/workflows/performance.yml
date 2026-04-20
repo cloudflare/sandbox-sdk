@@ -132,12 +132,12 @@ jobs:
             wrangler.perf.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker
-        run: |
-          cd tests/e2e/test-worker
-          npx wrangler deploy --name ${{ env.PERF_WORKER_NAME }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name ${{ env.PERF_WORKER_NAME }}
+          workingDirectory: tests/e2e/test-worker
 
       - name: Push worker secrets
         run: |
@@ -200,11 +200,12 @@ jobs:
 
       - name: Run performance tests
         env:
-          TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          PERF_DEPLOYED_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CI: true
         run: |
           if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
-            npx vitest run --config vitest.perf.config.ts
+            npm run test:perf
           else
             npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
           fi
