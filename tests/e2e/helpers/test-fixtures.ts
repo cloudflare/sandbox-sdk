@@ -79,25 +79,57 @@ export function createPythonImageHeaders(
 }
 
 /**
- * Fetch with timeout to prevent hanging tests
+ * Fetch with retries for setup/teardown actions that may be flakey
+ * (e.g. waiting for a container to boot).
  *
- * Usage:
- * ```typescript
- * const res = await fetchOrTimeout(
- *   fetch('http://example.com'),
- *   5000
- * );
- * ```
+ * Each attempt uses `AbortSignal.timeout()` so individual requests
+ * cannot hang indefinitely.
  */
-export async function fetchOrTimeout(
-  fetchPromise: Promise<Response>,
-  timeoutMs: number
+export async function fetchWithRetry(
+  factory: () => Promise<Response>,
+  options: {
+    retries?: number;
+    delayMs?: number;
+  } = {}
 ): Promise<Response> {
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('timeout')), timeoutMs)
-  );
+  const { retries = 3, delayMs = 500 } = options;
+  let lastError: unknown;
 
-  return await Promise.race([fetchPromise, timeoutPromise]);
+  let url: string = '';
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await factory();
+      url = res.url;
+      if (res.ok) return res;
+      if (attempt < retries && res.status >= 500) {
+        console.warn({
+          message: 'fetchWithRetry: transient error',
+          url,
+          status: res.status,
+          attempt
+        });
+        await sleep(delayMs);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        console.warn({
+          message: 'fetchWithRetry: attempt failed, retrying',
+          url,
+          attempt,
+          error: String(err)
+        });
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(`fetchWithRetry: all ${retries + 1} attempts failed for ${url}`)
+  );
 }
 
 /**
@@ -171,6 +203,14 @@ export function sleep(ms: number): Promise<void> {
  * });
  * ```
  */
+/** Teardown timeout — fail fast so hanging cleanup doesn't block the suite. */
+const CLEANUP_TIMEOUT_MS = 1_000;
+
+/**
+ * Cleanup a sandbox instance by calling its destroy() RPC method.
+ *
+ * Uses a short timeout so teardown doesn't hang the suite.
+ */
 export async function cleanupSandbox(
   workerUrl: string,
   sandboxId: string
@@ -178,21 +218,26 @@ export async function cleanupSandbox(
   try {
     const headers = createTestHeaders(sandboxId);
 
-    // Call the cleanup RPC method via a special endpoint
     const response = await fetch(`${workerUrl}/cleanup`, {
       method: 'POST',
-      headers
+      headers,
+      signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS)
     });
 
     if (!response.ok) {
-      console.warn(
-        `Failed to cleanup sandbox ${sandboxId}: ${response.status}`
-      );
+      console.warn({
+        message: 'cleanupSandbox: non-OK response',
+        sandboxId,
+        status: response.status
+      });
     } else {
-      console.log(`Cleaned up sandbox: ${sandboxId}`);
+      console.log({ message: 'cleanupSandbox: success', sandboxId });
     }
   } catch (error) {
-    // Don't fail tests if cleanup fails
-    console.warn(`Error cleaning up sandbox ${sandboxId}:`, error);
+    console.warn({
+      message: 'cleanupSandbox: request failed (teardown continuing)',
+      sandboxId,
+      error
+    });
   }
 }

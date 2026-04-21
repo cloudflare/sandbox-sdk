@@ -6,7 +6,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { createSandboxId, createTestHeaders } from './test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithRetry
+} from './test-fixtures';
 
 export type SandboxType =
   | 'default'
@@ -43,35 +47,55 @@ export interface CreateTestSandboxOptions {
 export async function createTestSandbox(
   options: CreateTestSandboxOptions = {}
 ): Promise<TestSandbox> {
-  const { type = 'default', initCommand = 'echo ready', sleepAfter } = options;
+  const { type = 'default', initCommand = 'true', sleepAfter = '1m' } = options;
   const workerUrl = await getWorkerUrl();
   const sandboxId = createSandboxId();
 
   const makeHeaders = (sessionId?: string): Record<string, string> => {
-    const h: Record<string, string> = {
-      ...createTestHeaders(sandboxId, sessionId)
+    return {
+      ...createTestHeaders(sandboxId, sessionId),
+      // This is required on every request for correct routing.
+      ...(type !== 'default' ? { 'X-Sandbox-Type': type } : {})
     };
-    if (type !== 'default') {
-      h['X-Sandbox-Type'] = type;
-    }
-    if (sleepAfter !== undefined) {
-      h['X-Sandbox-Sleep-After'] = String(sleepAfter);
-    }
-    return h;
   };
 
-  // Initialize the container with a simple command
-  const initResponse = await fetch(`${workerUrl}/api/execute`, {
-    method: 'POST',
-    headers: makeHeaders(),
-    body: JSON.stringify({ command: initCommand })
-  });
+  // Initialize the container — retried because the container may still be booting
+  const initResponse = await fetchWithRetry(
+    () =>
+      fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ command: initCommand }),
+        signal: AbortSignal.timeout(30_000)
+      }),
+    { retries: 3, delayMs: 1000 }
+  );
 
   if (!initResponse.ok) {
     const body = await initResponse.text().catch(() => '<unreadable>');
     throw new Error(
       `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
     );
+  }
+
+  if (sleepAfter !== undefined) {
+    const sleepAfterHeaders = makeHeaders();
+    sleepAfterHeaders['X-Sandbox-Sleep-After'] = String(sleepAfter);
+
+    // Configure sleep-after once the container has booted.
+    const sleepAfterResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: sleepAfterHeaders,
+      body: JSON.stringify({ command: initCommand }),
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!sleepAfterResponse.ok) {
+      const body = await sleepAfterResponse.text().catch(() => '<unreadable>');
+      throw new Error(
+        `Failed to set sleep after: ${sleepAfterResponse.status} - ${body}`
+      );
+    }
   }
 
   return {
@@ -84,9 +108,12 @@ export async function createTestSandbox(
   };
 }
 
+/** Teardown timeout — fail fast so hanging cleanup doesn't block the suite. */
+const CLEANUP_TIMEOUT_MS = 1_000;
+
 /**
  * Clean up a sandbox created by createTestSandbox().
- * Safe to call with null (no-op).
+ * Safe to call with null (no-op). Uses a short timeout so hangs are logged quickly.
  */
 export async function cleanupTestSandbox(
   sandbox: TestSandbox | null
@@ -95,17 +122,27 @@ export async function cleanupTestSandbox(
   try {
     const response = await fetch(`${sandbox.workerUrl}/cleanup`, {
       method: 'POST',
-      headers: sandbox.headers()
+      headers: sandbox.headers(),
+      signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS)
     });
     if (!response.ok) {
-      console.warn(
-        `Failed to cleanup sandbox ${sandbox.sandboxId}: ${response.status}`
-      );
+      console.warn({
+        message: 'cleanupTestSandbox: non-OK response',
+        sandboxId: sandbox.sandboxId,
+        status: response.status
+      });
     } else {
-      console.log(`Cleaned up sandbox: ${sandbox.sandboxId}`);
+      console.log({
+        message: 'cleanupTestSandbox: success',
+        sandboxId: sandbox.sandboxId
+      });
     }
   } catch (error) {
-    console.warn(`Error cleaning up sandbox ${sandbox.sandboxId}:`, error);
+    console.warn({
+      message: 'cleanupTestSandbox: request failed (teardown continuing)',
+      sandboxId: sandbox.sandboxId,
+      error
+    });
   }
 }
 
