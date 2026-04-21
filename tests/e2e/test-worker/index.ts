@@ -192,9 +192,11 @@ export default {
       url.searchParams.get('sandboxId') ||
       'default-test-sandbox';
 
-    // Check if keepAlive is requested
+    // Only pass keepAlive / sleepAfter when the caller explicitly set them.
+    // Passing keepAlive: false on every request triggers setKeepAlive(false)
+    // which calls renewActivityTimeout(), resetting the sleepAfter countdown
+    // whenever the Worker isolate recycles and the configuration cache is cold.
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
-    const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
 
     // Select sandbox type based on X-Sandbox-Type header
@@ -215,7 +217,9 @@ export default {
     }
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
-      keepAlive,
+      ...(keepAliveHeader !== null && {
+        keepAlive: keepAliveHeader === 'true'
+      }),
       ...(sleepAfter !== null && { sleepAfter })
     });
 
