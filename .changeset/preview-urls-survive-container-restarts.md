@@ -1,12 +1,8 @@
 ---
-'@cloudflare/sandbox': minor
+'@cloudflare/sandbox': patch
 ---
 
-Preview URLs now survive transient container restarts. Port tokens persist
-across restarts, and the container re-exposes previously exposed ports
-automatically when it comes back up, preserving any friendly names passed to
-`exposePort()`. Restoration runs under `blockConcurrencyWhile` so preview URL
-requests that arrive during the startup window queue behind it rather than
-seeing a 404. Tokens are still cleared on explicit `unexposePort()` and on
-full sandbox `destroy()`; `validatePortToken()`'s live-container check
-remains the ultimate authorization gate.
+Fix preview URLs returning 404 after a container restart. Tokens and names
+passed to `exposePort()` now persist across restarts, so URLs issued by
+`exposePort()` keep working without re-exposing the port. Tokens are still
+cleared when you call `unexposePort()` or `destroy()`.
