@@ -1309,6 +1309,14 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(result).toBe(true);
       expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
     });
+
+    it('does not call isPortExposed', async () => {
+      const spy = vi.spyOn(sandbox, 'isPortExposed');
+
+      await sandbox.validatePortToken(8080, 'correcttoken');
+
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 
   describe('sleepAfter configuration', () => {
