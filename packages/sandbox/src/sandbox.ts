@@ -1413,10 +1413,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  override onStart() {
+  override async onStart() {
     this.logger.debug('Sandbox started');
 
-    // Check version compatibility asynchronously (don't block startup)
+    // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
       this.logger.error(
         'Version compatibility check failed',
@@ -1426,20 +1426,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Re-expose ports that were exposed before the container restarted.
     // Tokens persist in DO storage across restarts (see onStop), but the
-    // container runtime has no memory of which ports were exposed. Run the
-    // restore inside blockConcurrencyWhile so any request that arrives on the
-    // DO while the container is coming up (including validatePortToken calls
-    // from the Worker preview-URL proxy) queues behind restore completion.
-    // This removes the window where the port exists in storage but the
-    // container reports it as unexposed.
-    this.ctx
-      .blockConcurrencyWhile(() => this.restoreExposedPorts())
-      .catch((error) => {
-        this.logger.error(
-          'Failed to restore exposed ports after container start',
-          error instanceof Error ? error : new Error(String(error))
-        );
-      });
+    // container runtime has no memory of which ports were exposed. The base
+    // @cloudflare/containers class wraps onStart in blockConcurrencyWhile,
+    // so awaiting restore here keeps the DO gate held until restore
+    // completes — requests that arrive during the startup window (including
+    // validatePortToken calls from the Worker preview-URL proxy) queue
+    // behind it.
+    try {
+      await this.restoreExposedPorts();
+    } catch (error) {
+      this.logger.error(
+        'Failed to restore exposed ports after container start',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
   }
 
   /**
@@ -1469,6 +1469,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // before we start firing exposePort requests at it.
     const sessionId = await this.ensureDefaultSession();
 
+    // Fetch the container's current exposed-port list once, then check
+    // membership in the loop. On a fresh restart this is empty; on a
+    // retry path (re-entering onStart) it may already contain entries
+    // that should be skipped.
+    const exposedSet = await this.client.ports
+      .getExposedPorts(sessionId)
+      .then((response) => new Set(response.ports.map((p) => p.port)))
+      .catch((error) => {
+        this.logger.warn(
+          'Failed to fetch exposed ports for restore; assuming none exposed',
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+        return new Set<number>();
+      });
+
     for (const [portStr, entry] of portEntries) {
       const port = Number.parseInt(portStr, 10);
       if (!Number.isFinite(port) || !validatePort(port)) {
@@ -1479,15 +1494,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         continue;
       }
 
-      try {
-        const alreadyExposed = await this.isPortExposed(port).catch(
-          () => false
-        );
-        if (alreadyExposed) {
-          skipped++;
-          continue;
-        }
+      if (exposedSet.has(port)) {
+        skipped++;
+        continue;
+      }
 
+      try {
         await this.client.ports.exposePort(port, sessionId, entry.name);
         restored++;
       } catch (error) {
