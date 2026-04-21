@@ -1,8 +1,4 @@
-import type {
-  ExecResult,
-  SessionCreateResult,
-  SessionDeleteResult
-} from '@repo/shared';
+import type { ExecResult, SessionCreateResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
@@ -11,7 +7,6 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 import { createTestHeaders } from './helpers/test-fixtures';
-import type { ErrorResponse } from './test-worker/types';
 
 // Diagnostic instrumentation for #482 flake investigation.
 // Remove once root cause is confirmed.

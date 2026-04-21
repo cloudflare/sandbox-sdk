@@ -10,7 +10,6 @@
  * - Server continues running after CMD exits
  */
 
-import type { ExecResult, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

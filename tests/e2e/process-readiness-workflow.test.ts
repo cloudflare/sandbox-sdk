@@ -1,4 +1,4 @@
-import type { PortExposeResult, Process, WaitForLogResult } from '@repo/shared';
+import type { PortExposeResult, Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
