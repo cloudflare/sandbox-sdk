@@ -16,11 +16,11 @@ const RESTART_TEST_PORT = 9851;
 /**
  * Preview URLs survive container restarts.
  *
- * Exposes a port with a custom token, stops the container mid-flight, then
- * fetches the preview URL again. The second fetch triggers a fresh container
- * start, and the restore path under `blockConcurrencyWhile` must re-expose
- * the saved port before the request is served so the preview URL returns a
- * 200 without the caller doing anything.
+ * Exposes a port with a custom token, stops the container, restarts the
+ * user process inside a fresh container, and fetches the preview URL
+ * again. The preview URL responds 200 without the caller re-issuing
+ * exposePort() — the SDK re-registers the port with the container on
+ * startup using tokens persisted in Durable Object storage.
  */
 describe('Preview URL survives container restart', () => {
   let workerUrl: string;

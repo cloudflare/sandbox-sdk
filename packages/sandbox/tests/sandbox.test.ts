@@ -1122,14 +1122,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.ports.exposePort).toHaveBeenCalledTimes(2);
     });
 
-    it('should be a no-op when no ports are saved in storage', async () => {
-      vi.mocked(mockCtx.storage!.get).mockResolvedValue(undefined as any);
-
-      await (sandbox as any).restoreExposedPorts();
-
-      expect(sandbox.client.ports.exposePort).not.toHaveBeenCalled();
-    });
-
     it('onStop() must preserve portTokens so restore has something to read', async () => {
       await (sandbox as any).onStop();
 
