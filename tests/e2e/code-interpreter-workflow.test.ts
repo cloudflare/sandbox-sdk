@@ -105,13 +105,15 @@ describe('Code Interpreter Workflow (E2E)', () => {
     // Delete Python context
     const deleteResponse = await deleteContext(pythonCtx.id);
     expect(deleteResponse.status).toBe(200);
-    const deleteData = (await deleteResponse.json()) as { success: boolean };
-    expect(deleteData.success).toBe(true);
+    await expect(deleteResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
 
     // Verify context is removed from list
     const listAfterDelete = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
     const contextsAfter = (await listAfterDelete.json()) as CodeContext[];
     expect(contextsAfter.map((c) => c.id)).not.toContain(pythonCtx.id);
@@ -464,25 +466,29 @@ for i in range(3):
         options: {
           context: { id: 'fake-context-id-12345', language: 'python' }
         }
-      })
+      }),
+      signal: AbortSignal.timeout(10000)
     });
     expect(fakeContextExec.status).toBeGreaterThanOrEqual(400);
-    const fakeContextError = (await fakeContextExec.json()) as ErrorResponse;
-    expect(fakeContextError.error).toBeTruthy();
+    await expect(fakeContextExec.json()).resolves.toEqual(
+      expect.objectContaining({ error: expect.anything() })
+    );
 
     // Delete non-existent context
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "init"' })
+      body: JSON.stringify({ command: 'true' }),
+      signal: AbortSignal.timeout(10000)
     });
     const deleteFakeResponse = await fetch(
       `${workerUrl}/api/code/context/fake-id-99999`,
-      { method: 'DELETE', headers }
+      { method: 'DELETE', headers, signal: AbortSignal.timeout(10000) }
     );
     expect(deleteFakeResponse.status).toBeGreaterThanOrEqual(400);
-    const deleteFakeError = (await deleteFakeResponse.json()) as ErrorResponse;
-    expect(deleteFakeError.error).toBeTruthy();
+    await expect(deleteFakeResponse.json()).resolves.toEqual(
+      expect.objectContaining({ error: expect.anything() })
+    );
 
     // Python unavailable on base image
     // Use base image headers (without python type) for this specific test

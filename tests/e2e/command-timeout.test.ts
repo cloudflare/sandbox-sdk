@@ -65,9 +65,11 @@ describe('Command Timeout', () => {
     const elapsed = Date.now() - startTime;
 
     expect(response.status).toBe(500);
-    const data = (await response.json()) as ErrorResponse;
-    expect(data.error).toBeDefined();
-    expect(data.error).toMatch(/timeout/i);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout/i)
+      })
+    );
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -108,9 +110,11 @@ describe('Command Timeout', () => {
     const elapsed = Date.now() - startTime;
 
     expect(execResponse.status).toBe(500);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout/i);
+    await expect(execResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout/i)
+      })
+    );
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -153,9 +157,11 @@ describe('Command Timeout', () => {
     const elapsed = Date.now() - startTime;
 
     expect(execResponse.status).toBe(500);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout/i);
+    await expect(execResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout/i)
+      })
+    );
 
     // Session-level timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -201,8 +207,11 @@ describe('Command Timeout', () => {
     const elapsed = Date.now() - startTime;
 
     expect(execResponse.status).toBe(500);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout/i);
+    await expect(execResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout/i)
+      })
+    );
 
     // Should have timed out in ~1s, not ~30s
     expect(elapsed).toBeLessThan(10000);
@@ -247,8 +256,11 @@ describe('Command Timeout', () => {
     const elapsed = Date.now() - startTime;
 
     expect(execResponse.status).toBe(500);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout/i);
+    await expect(execResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout/i)
+      })
+    );
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -282,8 +294,9 @@ describe('Command Timeout', () => {
     );
 
     expect(deleteResponse.status).toBe(200);
-    const deleteData = (await deleteResponse.json()) as SessionDeleteResult;
-    expect(deleteData.success).toBe(true);
+    await expect(deleteResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
 
     // Wait briefly for process cleanup after session destruction
     await new Promise((resolve) => setTimeout(resolve, 1000));

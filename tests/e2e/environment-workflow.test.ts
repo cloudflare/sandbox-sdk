@@ -221,13 +221,14 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'cat'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(catResponse.status).toBe(200);
-    const catData = (await catResponse.json()) as ExecResult;
-    expect(catData.success).toBe(true);
-    expect(catData.stdout).toBe('');
+    await expect(catResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true, stdout: '' })
+    );
 
     // Test 2: bash read command should return immediately
     const readResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -250,12 +251,14 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'grep "test" || true'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(grepResponse.status).toBe(200);
-    const grepData = (await grepResponse.json()) as ExecResult;
-    expect(grepData.success).toBe(true);
+    await expect(grepResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
   }, 90000);
 
   test('should handle null as unset in setEnvVars', async () => {

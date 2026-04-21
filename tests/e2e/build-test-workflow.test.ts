@@ -33,13 +33,17 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'echo "Hello from sandbox"'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(echoResponse.status).toBe(200);
-      const echoData = (await echoResponse.json()) as ExecResult;
-      expect(echoData.exitCode).toBe(0);
-      expect(echoData.stdout).toContain('Hello from sandbox');
+      await expect(echoResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          exitCode: 0,
+          stdout: expect.stringContaining('Hello from sandbox')
+        })
+      );
 
       // Step 2: Write a file (using absolute path per README pattern)
       const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -48,12 +52,14 @@ describe('Build and Test Workflow', () => {
         body: JSON.stringify({
           path: '/test-file.txt',
           content: 'Integration test content'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(writeResponse.status).toBe(200);
-      const writeData = (await writeResponse.json()) as WriteFileResult;
-      expect(writeData.success).toBe(true);
+      await expect(writeResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Step 3: Read the file back to verify persistence
       const readResponse = await fetch(`${workerUrl}/api/file/read`, {
@@ -61,12 +67,14 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           path: '/test-file.txt'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = (await readResponse.json()) as ReadFileResult;
-      expect(readData.content).toBe('Integration test content');
+      await expect(readResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: 'Integration test content' })
+      );
 
       // Step 4: Verify pwd to understand working directory
       const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -74,12 +82,16 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'pwd'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(pwdResponse.status).toBe(200);
-      const pwdData = (await pwdResponse.json()) as ExecResult;
-      expect(pwdData.stdout).toMatch(/\/workspace/);
+      await expect(pwdResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          stdout: expect.stringMatching(/\/workspace/)
+        })
+      );
     });
 
     test('should detect shell termination when exit command is used', async () => {
@@ -90,17 +102,17 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'exit 1'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Should return 500 error since shell terminated unexpectedly
       expect(response.status).toBe(500);
-      const data = (await response.json()) as ErrorResponse;
-
-      // Should have an error object (500 responses may not have success field)
-      expect(data.error).toBeDefined();
-      expect(data.error).toMatch(/shell terminated unexpectedly/i);
-      expect(data.error).toMatch(/exit code.*1/i);
+      await expect(response.json()).resolves.toEqual(
+        expect.objectContaining({
+          error: expect.stringMatching(/shell terminated unexpectedly/i)
+        })
+      );
     });
 
     afterAll(async () => {

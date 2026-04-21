@@ -95,18 +95,21 @@ describe('Comprehensive Workflow', () => {
           repoUrl: 'https://github.com/octocat/Hello-World',
           branch: 'master',
           targetDir: testDir
-        })
+        }),
+        signal: AbortSignal.timeout(30000)
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-      expect(cloneData.success).toBe(true);
+      await expect(cloneResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Verify repo structure using listFiles
       const listResponse = await fetch(`${workerUrl}/api/list-files`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ path: testDir })
+        body: JSON.stringify({ path: testDir }),
+        signal: AbortSignal.timeout(30000)
       });
 
       expect(listResponse.status).toBe(200);
@@ -121,12 +124,14 @@ describe('Comprehensive Workflow', () => {
       const readReadmeResponse = await fetch(`${workerUrl}/api/file/read`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ path: `${testDir}/README` })
+        body: JSON.stringify({ path: `${testDir}/README` }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(readReadmeResponse.status).toBe(200);
-      const readmeData = (await readReadmeResponse.json()) as ReadFileResult;
-      expect(readmeData.content).toContain('Hello');
+      await expect(readReadmeResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: expect.stringContaining('Hello') })
+      );
 
       // Create a new directory structure
       const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -201,12 +206,14 @@ export function greet(name) {
         headers,
         body: JSON.stringify({
           path: `${testDir}/src/utils/greeter.js`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(readRenamedResponse.status).toBe(200);
-      const renamedData = (await readRenamedResponse.json()) as ReadFileResult;
-      expect(renamedData.content).toContain('greet');
+      await expect(readRenamedResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: expect.stringContaining('greet') })
+      );
 
       // Phase 3: Run commands with environment
 

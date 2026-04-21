@@ -683,13 +683,15 @@ describe('Backup Workflow E2E', () => {
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 400 (BACKUP_EXPIRED)
       expect(restoreResponse.status).toBe(400);
-      const errorResult = (await restoreResponse.json()) as ErrorResponse;
-      expect(errorResult.code).toBe('BACKUP_EXPIRED');
+      await expect(restoreResponse.json()).resolves.toEqual(
+        expect.objectContaining({ code: 'BACKUP_EXPIRED' })
+      );
 
       // Cleanup (unmounts FUSE overlay if present, then removes directory)
       await cleanupDir(workerUrl, headers, TEST_DIR);
@@ -708,13 +710,15 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           id: fakeBackupId,
           dir: '/workspace/test'
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 404 (BACKUP_NOT_FOUND)
       expect(restoreResponse.status).toBe(404);
-      const errorResult = (await restoreResponse.json()) as ErrorResponse;
-      expect(errorResult.code).toBe('BACKUP_NOT_FOUND');
+      await expect(restoreResponse.json()).resolves.toEqual(
+        expect.objectContaining({ code: 'BACKUP_NOT_FOUND' })
+      );
     }, 30000);
 
     test('should reject invalid backup ID format', async () => {

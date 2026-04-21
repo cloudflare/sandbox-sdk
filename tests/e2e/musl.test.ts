@@ -39,12 +39,14 @@ describe('Musl Image Variant', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "ok"' })
+      body: JSON.stringify({ command: 'echo "ok"' }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
-    const result = (await response.json()) as ExecResult;
-    expect(result.exitCode).toBe(0);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ exitCode: 0 })
+    );
   });
 
   test('file operations work on Alpine', async () => {
@@ -54,17 +56,20 @@ describe('Musl Image Variant', () => {
     const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath, content: testContent })
+      body: JSON.stringify({ path: testPath, content: testContent }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(writeResponse.status).toBe(200);
 
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(readResponse.status).toBe(200);
-    const result = (await readResponse.json()) as ReadFileResult;
-    expect(result.content).toBe(testContent);
+    await expect(readResponse.json()).resolves.toEqual(
+      expect.objectContaining({ content: testContent })
+    );
   });
 });
