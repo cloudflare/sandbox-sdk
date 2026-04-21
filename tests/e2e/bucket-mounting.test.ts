@@ -96,8 +96,9 @@ describe('Bucket Mounting E2E', () => {
           signal: AbortSignal.timeout(5000)
         });
         expect(mountResponse.ok).toBe(true);
-        const mountResult = (await mountResponse.json()) as SuccessResponse;
-        expect(mountResult.success).toBe(true);
+        await expect(mountResponse.json()).resolves.toEqual(
+          expect.objectContaining({ success: true })
+        );
 
         // 3. Verify pre-existing R2 file appears in mount (R2 → Mount)
         const readPreExistingResponse = await fetch(
@@ -125,8 +126,9 @@ describe('Bucket Mounting E2E', () => {
           }),
           signal: AbortSignal.timeout(5000)
         });
-        const writeResult = (await writeResponse.json()) as ExecResult;
-        expect(writeResult.exitCode).toBe(0);
+        await expect(writeResponse.json()).resolves.toEqual(
+          expect.objectContaining({ exitCode: 0 })
+        );
 
         // 5. Verify new file appears in R2 via binding (Mount → R2)
         const getResponse = await fetch(

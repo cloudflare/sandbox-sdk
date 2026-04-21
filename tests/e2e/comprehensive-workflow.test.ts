@@ -100,8 +100,9 @@ describe('Comprehensive Workflow', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-      expect(cloneData.success).toBe(true);
+      await expect(cloneResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Verify repo structure using listFiles
       const listResponse = await fetch(`${workerUrl}/api/list-files`, {
@@ -128,8 +129,9 @@ describe('Comprehensive Workflow', () => {
       });
 
       expect(readReadmeResponse.status).toBe(200);
-      const readmeData = (await readReadmeResponse.json()) as ReadFileResult;
-      expect(readmeData.content).toContain('Hello');
+      await expect(readReadmeResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: expect.stringContaining('Hello') })
+      );
 
       // Create a new directory structure
       const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -209,8 +211,9 @@ export function greet(name) {
       });
 
       expect(readRenamedResponse.status).toBe(200);
-      const renamedData = (await readRenamedResponse.json()) as ReadFileResult;
-      expect(renamedData.content).toContain('greet');
+      await expect(readRenamedResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: expect.stringContaining('greet') })
+      );
 
       // Phase 3: Run commands with environment
 

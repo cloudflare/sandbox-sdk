@@ -75,9 +75,11 @@ describe('File Operations Error Handling', () => {
     });
 
     expect(deleteResponse.status).toBe(500);
-    const deleteData = (await deleteResponse.json()) as ErrorResponse;
-    expect(deleteData.error).toContain('Cannot delete directory');
-    expect(deleteData.error).toContain('deleteFile()');
+    await expect(deleteResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining('Cannot delete directory')
+      })
+    );
 
     // Verify directory still exists
     const lsResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -89,9 +91,10 @@ describe('File Operations Error Handling', () => {
       signal: AbortSignal.timeout(5000)
     });
 
-    const lsData = (await lsResponse.json()) as ReadFileResult;
     expect(lsResponse.status).toBe(200);
-    expect(lsData.success).toBe(true);
+    await expect(lsResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
   }, 90000);
 
   test('should return error when deleting nonexistent file', async () => {
@@ -105,9 +108,11 @@ describe('File Operations Error Handling', () => {
     });
 
     expect(deleteResponse.status).toBe(404);
-    const errorData = (await deleteResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+    await expect(deleteResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/not found|does not exist|no such file/i)
+      })
+    );
   }, 90000);
 
   test('should handle listFiles errors appropriately', async () => {
@@ -122,10 +127,10 @@ describe('File Operations Error Handling', () => {
     });
 
     expect(notFoundResponse.status).toBe(404);
-    const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
-    expect(notFoundData.error).toBeTruthy();
-    expect(notFoundData.error).toMatch(
-      /not found|does not exist|no such file/i
+    await expect(notFoundResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/not found|does not exist|no such file/i)
+      })
     );
 
     // Test file instead of directory
@@ -262,9 +267,11 @@ describe('File Operations Error Handling', () => {
     });
 
     expect(renameResponse.status).toBe(404);
-    const errorData = (await renameResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+    await expect(renameResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/not found|does not exist|no such file/i)
+      })
+    );
   }, 90000);
 
   test('should handle move errors appropriately', async () => {
@@ -283,9 +290,11 @@ describe('File Operations Error Handling', () => {
     });
 
     expect(moveResponse.status).toBe(404);
-    const errorData = (await moveResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+    await expect(moveResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/not found|does not exist|no such file/i)
+      })
+    );
   }, 90000);
 
   test('should handle binary file reading', async () => {

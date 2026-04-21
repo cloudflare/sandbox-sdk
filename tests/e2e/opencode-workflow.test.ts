@@ -38,9 +38,12 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
       signal: AbortSignal.timeout(5000)
     });
     expect(res.status).toBe(200);
-    const result = (await res.json()) as ExecResult;
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/\d+\.\d+/);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        exitCode: 0,
+        stdout: expect.stringMatching(/\d+\.\d+/)
+      })
+    );
   });
 
   describe('OpenCode proxy helpers', () => {

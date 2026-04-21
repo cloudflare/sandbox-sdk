@@ -121,10 +121,12 @@ describe('Process Lifecycle Error Handling', () => {
     );
 
     expect(killResponse.status).toBe(404);
-    const errorData = (await killResponse.json()) as { error: string };
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(
-      /not found|does not exist|invalid|unknown/i
+    await expect(killResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(
+          /not found|does not exist|invalid|unknown/i
+        )
+      })
     );
   }, 90000);
 
@@ -157,8 +159,11 @@ describe('Process Lifecycle Error Handling', () => {
     );
 
     expect(logsResponse.status).toBe(200);
-    const logsData = (await logsResponse.json()) as ProcessLogsResult;
-    expect(logsData.stdout).toContain('Hello from process');
+    await expect(logsResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        stdout: expect.stringContaining('Hello from process')
+      })
+    );
   }, 90000);
 
   test('should terminate the full background process tree when killed', async () => {
@@ -260,8 +265,9 @@ wait`;
       { method: 'GET', headers, signal: AbortSignal.timeout(5000) }
     );
     expect(statusResponse.ok).toBe(true);
-    const record = (await statusResponse.json()) as Process;
-    expect(record.status).toBe('killed');
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'killed' })
+    );
   }, 90000);
 
   test('should stream process logs in real-time', async () => {
@@ -364,10 +370,12 @@ console.log("Line 3");
       });
 
       expect(exposeResponse.status).toBeGreaterThanOrEqual(400);
-      const errorData = (await exposeResponse.json()) as { error: string };
-      expect(errorData.error).toBeTruthy();
-      expect(errorData.error).toMatch(
-        /reserved|not allowed|forbidden|invalid port/i
+      await expect(exposeResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          error: expect.stringMatching(
+            /reserved|not allowed|forbidden|invalid port/i
+          )
+        })
       );
     },
     90000
@@ -386,9 +394,11 @@ console.log("Line 3");
       );
 
       expect(unexposeResponse.status).toBe(404);
-      const errorData = (await unexposeResponse.json()) as { error: string };
-      expect(errorData.error).toBeTruthy();
-      expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
+      await expect(unexposeResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          error: expect.stringMatching(/not found|not exposed|does not exist/i)
+        })
+      );
     },
     90000
   );
@@ -641,9 +651,9 @@ while :; do :; done`;
       { method: 'GET', headers, signal: AbortSignal.timeout(5000) }
     );
     expect(statusResponse.ok).toBe(true);
-    const record = (await statusResponse.json()) as Process;
-    expect(record.status).toBe('killed');
-    expect(record.exitCode).toBe(137);
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'killed', exitCode: 137 })
+    );
   }, 90000);
 
   test('should kill background processes when their session is destroyed', async () => {

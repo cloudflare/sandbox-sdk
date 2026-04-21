@@ -44,8 +44,11 @@ describe('KeepAlive Feature', () => {
       signal: AbortSignal.timeout(5000)
     });
     expect(response1.status).toBe(200);
-    const data1 = (await response1.json()) as ExecResult;
-    expect(data1.stdout).toContain('keepAlive command 1');
+    await expect(response1.json()).resolves.toEqual(
+      expect.objectContaining({
+        stdout: expect.stringContaining('keepAlive command 1')
+      })
+    );
 
     // Second command immediately after
     const response2 = await fetch(`${workerUrl}/api/execute`, {
@@ -55,8 +58,11 @@ describe('KeepAlive Feature', () => {
       signal: AbortSignal.timeout(5000)
     });
     expect(response2.status).toBe(200);
-    const data2 = (await response2.json()) as ExecResult;
-    expect(data2.stdout).toContain('keepAlive command 2');
+    await expect(response2.json()).resolves.toEqual(
+      expect.objectContaining({
+        stdout: expect.stringContaining('keepAlive command 2')
+      })
+    );
   }, 30000);
 
   test('should support background processes with keepAlive', async () => {
@@ -83,8 +89,9 @@ describe('KeepAlive Feature', () => {
       }
     );
     expect(statusResponse.status).toBe(200);
-    const statusData = (await statusResponse.json()) as Process;
-    expect(statusData.status).toBe('running');
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'running' })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processData.id}`, {
@@ -118,8 +125,9 @@ describe('KeepAlive Feature', () => {
       signal: AbortSignal.timeout(5000)
     });
     expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readData.content).toBe('keepAlive file content');
+    await expect(readResponse.json()).resolves.toEqual(
+      expect.objectContaining({ content: 'keepAlive file content' })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/file/delete`, {

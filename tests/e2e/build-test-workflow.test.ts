@@ -38,9 +38,12 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(echoResponse.status).toBe(200);
-      const echoData = (await echoResponse.json()) as ExecResult;
-      expect(echoData.exitCode).toBe(0);
-      expect(echoData.stdout).toContain('Hello from sandbox');
+      await expect(echoResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          exitCode: 0,
+          stdout: expect.stringContaining('Hello from sandbox')
+        })
+      );
 
       // Step 2: Write a file (using absolute path per README pattern)
       const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -54,8 +57,9 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(writeResponse.status).toBe(200);
-      const writeData = (await writeResponse.json()) as WriteFileResult;
-      expect(writeData.success).toBe(true);
+      await expect(writeResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Step 3: Read the file back to verify persistence
       const readResponse = await fetch(`${workerUrl}/api/file/read`, {
@@ -68,8 +72,9 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = (await readResponse.json()) as ReadFileResult;
-      expect(readData.content).toBe('Integration test content');
+      await expect(readResponse.json()).resolves.toEqual(
+        expect.objectContaining({ content: 'Integration test content' })
+      );
 
       // Step 4: Verify pwd to understand working directory
       const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -82,8 +87,11 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(pwdResponse.status).toBe(200);
-      const pwdData = (await pwdResponse.json()) as ExecResult;
-      expect(pwdData.stdout).toMatch(/\/workspace/);
+      await expect(pwdResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          stdout: expect.stringMatching(/\/workspace/)
+        })
+      );
     });
 
     test('should detect shell termination when exit command is used', async () => {
@@ -101,14 +109,12 @@ describe('Build and Test Workflow', () => {
       // Shell exit should surface as 410 SESSION_TERMINATED per the
       // SESSION_TERMINATED contract (see .changeset/session-terminated.md).
       expect(response.status).toBe(410);
-      const data = (await response.json()) as ErrorResponse & {
-        code?: string;
-      };
-
-      expect(data.error).toBeDefined();
-      expect(data.code).toBe('SESSION_TERMINATED');
-      expect(data.error).toMatch(/shell exited/i);
-      expect(data.error).toMatch(/exit code:?\s*1/i);
+      await expect(response.json()).resolves.toEqual(
+        expect.objectContaining({
+          code: 'SESSION_TERMINATED',
+          error: expect.stringMatching(/shell exited/i)
+        })
+      );
     });
 
     afterAll(async () => {

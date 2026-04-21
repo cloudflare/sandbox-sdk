@@ -45,10 +45,12 @@ describe('Git Clone Error Handling', () => {
     });
 
     expect(cloneResponse.status).toBe(500);
-    const errorData = (await cloneResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(
-      /not found|does not exist|repository|fatal/i
+    await expect(cloneResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(
+          /not found|does not exist|repository|fatal/i
+        )
+      })
     );
   }, 90000);
 
@@ -64,10 +66,12 @@ describe('Git Clone Error Handling', () => {
     });
 
     expect(cloneResponse.status).toBe(500);
-    const errorData = (await cloneResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(
-      /authentication|permission|access|denied|fatal|not found/i
+    await expect(cloneResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(
+          /authentication|permission|access|denied|fatal|not found/i
+        )
+      })
     );
   }, 90000);
 
@@ -83,11 +87,14 @@ describe('Git Clone Error Handling', () => {
     });
 
     expect(cloneResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = (await cloneResponse.json()) as ErrorResponse;
     // "Invalid timeout value" comes from the HTTP handler's validation;
     // "Invalid clone timeout" comes from the git service itself.
-    expect(errorData.error).toMatch(
-      /Invalid (timeout value|clone timeout).*0/i
+    await expect(cloneResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(
+          /Invalid (timeout value|clone timeout).*0/i
+        )
+      })
     );
   });
 });
@@ -136,8 +143,9 @@ describe('Git Shallow Clone', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-      expect(cloneData.success).toBe(true);
+      await expect(cloneResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Verify shallow clone by counting commits
       // A shallow clone with depth: 1 should have exactly 1 commit
@@ -194,8 +202,9 @@ describe('Git Shallow Clone', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-      expect(cloneData.success).toBe(true);
+      await expect(cloneResponse.json()).resolves.toEqual(
+        expect.objectContaining({ success: true })
+      );
 
       // Verify shallow clone
       const shallowResponse = await fetch(`${workerUrl}/api/execute`, {

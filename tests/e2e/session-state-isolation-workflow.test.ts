@@ -484,8 +484,9 @@ describe('Session State Isolation Workflow', () => {
       }
     );
     expect(waitExitResponse.status).toBe(200);
-    const exitResult = (await waitExitResponse.json()) as WaitForExitResult;
-    expect(exitResult.exitCode).toBeDefined();
+    await expect(waitExitResponse.json()).resolves.toEqual(
+      expect.objectContaining({ exitCode: expect.anything() })
+    );
   }, 90000);
 
   test('should share file system between sessions (by design)', async () => {
@@ -534,8 +535,9 @@ describe('Session State Isolation Workflow', () => {
     });
 
     expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readData.content).toBe('Written by session1');
+    await expect(readResponse.json()).resolves.toEqual(
+      expect.objectContaining({ content: 'Written by session1' })
+    );
 
     // Modify the file from session2
     const modifyResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -560,8 +562,9 @@ describe('Session State Isolation Workflow', () => {
       signal: AbortSignal.timeout(5000)
     });
 
-    const verifyData = (await verifyResponse.json()) as ReadFileResult;
-    expect(verifyData.content).toBe('Modified by session2');
+    await expect(verifyResponse.json()).resolves.toEqual(
+      expect.objectContaining({ content: 'Modified by session2' })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/file/delete`, {

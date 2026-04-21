@@ -88,8 +88,11 @@ await Bun.sleep(60000); // Keep running
     );
 
     expect(waitResponse.status).toBe(200);
-    const waitData = (await waitResponse.json()) as WaitForLogResult;
-    expect(waitData.line).toContain('Server ready on port 8080');
+    await expect(waitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        line: expect.stringContaining('Server ready on port 8080')
+      })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
@@ -161,11 +164,13 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'curl -s http://localhost:9090'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
-    const verifyData = (await verifyResponse.json()) as { stdout: string };
-    expect(verifyData.stdout).toBe('OK');
+    await expect(verifyResponse.json()).resolves.toEqual(
+      expect.objectContaining({ stdout: 'OK' })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
@@ -296,14 +301,18 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           pattern: 'Server ready',
           timeout: 2000
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       }
     );
 
     // Should fail with timeout (408 Request Timeout)
     expect(waitResponse.status).toBe(408);
-    const errorData = (await waitResponse.json()) as { error: string };
-    expect(errorData.error).toMatch(/timeout|did not become ready/i);
+    await expect(waitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/timeout|did not become ready/i)
+      })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
@@ -345,9 +354,12 @@ await Bun.sleep(60000);
 
     // Should fail because process exits before pattern appears
     expect(waitResponse.status).toBe(500);
-    const errorData = (await waitResponse.json()) as { error: string };
-    expect(errorData.error).toMatch(
-      /exited|exit|timeout|did not become ready/i
+    await expect(waitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(
+          /exited|exit|timeout|did not become ready/i
+        )
+      })
     );
   }, 60000);
 
@@ -399,8 +411,11 @@ await Bun.sleep(60000);
     );
 
     expect(waitResponse.status).toBe(200);
-    const waitData = (await waitResponse.json()) as WaitForLogResult;
-    expect(waitData.line).toContain('Ready (stderr)');
+    await expect(waitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        line: expect.stringContaining('Ready (stderr)')
+      })
+    );
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
@@ -485,13 +500,15 @@ console.log("Server listening on port 9092");
         signal: AbortSignal.timeout(5000)
       });
       expect(apiResponse.status).toBe(200);
-      const apiData = (await apiResponse.json()) as { message: string };
-      expect(apiData.message).toBe('Hello!');
+      await expect(apiResponse.json()).resolves.toEqual(
+        expect.objectContaining({ message: 'Hello!' })
+      );
 
       // Cleanup
       await fetch(`${workerUrl}/api/exposed-ports/9092`, {
         method: 'DELETE',
-        headers: portHeaders
+        headers: portHeaders,
+        signal: AbortSignal.timeout(5000)
       });
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
