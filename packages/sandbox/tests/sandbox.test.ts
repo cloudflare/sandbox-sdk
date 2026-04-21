@@ -1171,6 +1171,75 @@ describe('Sandbox - Automatic Session Management', () => {
         '8080': { token: 'friendlytok', name: 'my-api' }
       });
     });
+
+    it('onStart() swallows restoreExposedPorts() errors so startup succeeds', async () => {
+      // Simulate a saved port whose restore will fail — getExposedPorts
+      // returning something unparseable forces the inner logic to throw.
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': { token: 'tok8080' } } : null
+      );
+      vi.spyOn(sandbox as any, 'restoreExposedPorts').mockRejectedValue(
+        new Error('restore boom')
+      );
+      const errorSpy = vi.spyOn((sandbox as any).logger, 'error');
+
+      // onStart must not throw; the base class wraps this in
+      // blockConcurrencyWhile, and an unhandled rejection there would
+      // reset the DO. Instead, onStart catches, logs, and returns.
+      await expect((sandbox as any).onStart()).resolves.toBeUndefined();
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Failed to restore exposed ports after container start',
+        expect.any(Error)
+      );
+    });
+
+    it('fetches the exposed-port snapshot once per restore', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens'
+          ? {
+              '8080': { token: 'tok8080' },
+              '9000': { token: 'tok9000' },
+              '9100': { token: 'tok9100' }
+            }
+          : null
+      );
+
+      await (sandbox as any).restoreExposedPorts();
+
+      expect(sandbox.client.ports.getExposedPorts).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to attempting exposePort for all ports when getExposedPorts rejects', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
+        key === 'portTokens'
+          ? {
+              '8080': { token: 'tok8080' },
+              '9000': { token: 'tok9000' }
+            }
+          : null
+      );
+      vi.mocked(sandbox.client.ports.getExposedPorts as any).mockRejectedValue(
+        new Error('snapshot unavailable')
+      );
+
+      await (sandbox as any).restoreExposedPorts();
+
+      // With no snapshot, every saved port is attempted — the per-port
+      // failure path catches individual errors, and this preserves the
+      // prior "best-effort restore" semantics.
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledTimes(2);
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledWith(
+        8080,
+        expect.any(String),
+        undefined
+      );
+      expect(sandbox.client.ports.exposePort).toHaveBeenCalledWith(
+        9000,
+        expect.any(String),
+        undefined
+      );
+    });
   });
 
   describe('sleepAfter configuration', () => {
