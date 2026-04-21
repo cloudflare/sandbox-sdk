@@ -42,6 +42,10 @@ vi.mock('@cloudflare/containers', () => {
       // Mock implementation for HTTP path
       return new Response('Mock Container HTTP fetch');
     }
+    async destroy(): Promise<void> {
+      // No-op: real container destroy is not needed in tests; individual
+      // tests that want to simulate destroy behavior use vi.spyOn.
+    }
     async getState() {
       // Mock implementation - return healthy state
       return { status: 'healthy' };
@@ -1136,21 +1140,29 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(deletedKeys).not.toContain('portTokens');
     });
 
-    it('destroy() clears portTokens from storage', async () => {
-      // Stub the parent Container.destroy() path so the test does not try to
-      // tear down a real container runtime.
-      (
-        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)) as {
-          destroy: () => Promise<void>;
-        }
-      ).destroy = vi.fn().mockResolvedValue(undefined);
+    it('destroy() deletes portTokens before calling super.destroy()', async () => {
+      const callOrder: string[] = [];
+
+      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
+        callOrder.push(`delete:${String(key)}`);
+      });
+
+      vi.spyOn(Container.prototype, 'destroy').mockImplementation(async () => {
+        callOrder.push('super.destroy');
+      });
 
       await sandbox.destroy();
 
-      const deletedKeys = vi
-        .mocked(mockCtx.storage!.delete)
-        .mock.calls.map((call) => call[0]);
-      expect(deletedKeys).toContain('portTokens');
+      // super.destroy() is not serialized by blockConcurrencyWhile, so a
+      // concurrent validatePortToken() or start path can run during the
+      // await. This test pins the ordering that keeps stale reads out of
+      // that window: portTokens deletion before super.destroy().
+      const deleteIdx = callOrder.indexOf('delete:portTokens');
+      const superIdx = callOrder.indexOf('super.destroy');
+
+      expect(deleteIdx).toBeGreaterThanOrEqual(0);
+      expect(superIdx).toBeGreaterThanOrEqual(0);
+      expect(deleteIdx).toBeLessThan(superIdx);
     });
 
     it('exposePort() persists the friendly name alongside the token', async () => {

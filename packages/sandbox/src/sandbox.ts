@@ -1389,11 +1389,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // Clear port tokens on full sandbox teardown. onStop() intentionally
-      // preserves them so preview URLs survive transient container restarts;
-      // destroy() is the explicit teardown path where that guarantee no
-      // longer applies and leftover tokens would be restored by
-      // restoreExposedPorts() if the same DO ID is reused.
+      // portTokens is cleared while still inside destroy()'s try block:
+      // super.destroy() is not serialized by blockConcurrencyWhile, so
+      // other DO RPCs run during the await. With storage already cleared,
+      // a concurrent validatePortToken() from the preview URL proxy sees
+      // no token and returns unauthorized, and a concurrent startup path
+      // finds nothing to rehydrate via restoreExposedPorts(). Teardown is
+      // still not atomic against concurrent writers, but the preview URL
+      // authorization path is race-free.
       await this.ctx.storage.delete('portTokens');
 
       outcome = 'success';
