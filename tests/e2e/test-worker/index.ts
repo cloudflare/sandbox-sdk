@@ -208,9 +208,11 @@ export default {
     // Suffix sandbox ID with transport so each transport gets its own DO instance
     const sandboxId = `${baseSandboxId}-${transport}`;
 
-    // Check if keepAlive is requested
+    // Only pass keepAlive / sleepAfter when the caller explicitly set them.
+    // Passing keepAlive: false on every request triggers setKeepAlive(false)
+    // which calls renewActivityTimeout(), resetting the sleepAfter countdown
+    // whenever the Worker isolate recycles and the configuration cache is cold.
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
-    const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
 
     // Select sandbox type based on X-Sandbox-Type header
@@ -231,7 +233,9 @@ export default {
     }
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
-      keepAlive,
+      ...(keepAliveHeader !== null && {
+        keepAlive: keepAliveHeader === 'true'
+      }),
       transport,
       ...(sleepAfter !== null && { sleepAfter })
     });
