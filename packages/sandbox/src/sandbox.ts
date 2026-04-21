@@ -1601,11 +1601,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.activeMounts.clear();
 
     // Persist cleanup to storage so state is clean on next container start.
-    // Port tokens are intentionally preserved so preview URLs survive container
-    // restarts. Tokens are only removed on explicit unexposePort() or full
-    // sandbox destroy(). If a port isn't actually exposed on the container
-    // after restart, validatePortToken()'s isPortExposed() check rejects the
-    // request regardless of what's in storage.
+    // Port tokens are intentionally preserved so preview URLs survive
+    // container restarts. Tokens are only removed on explicit
+    // unexposePort() or full sandbox destroy(). onStart's
+    // restoreExposedPorts() replays storage into the container on the
+    // next start, so auth can trust storage without asking the container.
     await this.ctx.storage.delete('defaultSession');
   }
 
@@ -3363,21 +3363,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async validatePortToken(port: number, token: string): Promise<boolean> {
-    // First check if port is exposed
-    const isExposed = await this.isPortExposed(port);
-    if (!isExposed) {
-      return false;
-    }
-
-    // Read stored token from storage (protected by input gates)
+    // Preview-URL auth answers from DO storage alone. onStart's
+    // restoreExposedPorts() replays storage into the container on restart,
+    // and destroy() clears portTokens before super.destroy() runs, so a
+    // storage read gives the right answer for the interleavings this
+    // method can race.
     const tokens = await this.readPortTokens();
     const entry = tokens[port.toString()];
     if (!entry) {
-      this.logger.error(
-        'Port is exposed but has no token - bug detected',
-        undefined,
-        { port }
-      );
       return false;
     }
 
