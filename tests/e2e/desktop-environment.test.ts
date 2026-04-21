@@ -43,7 +43,8 @@ describe('Desktop Environment', () => {
     try {
       await fetch(`${workerUrl}/api/desktop/stop`, {
         method: 'POST',
-        headers
+        headers,
+        signal: AbortSignal.timeout(10000)
       });
     } catch {}
     await cleanupTestSandbox(sandbox);
@@ -53,7 +54,8 @@ describe('Desktop Environment', () => {
     const startResponse = await fetch(`${workerUrl}/api/desktop/start`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -64,7 +66,8 @@ describe('Desktop Environment', () => {
 
     const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(statusResponse.status).toBe(200);
@@ -78,7 +81,8 @@ describe('Desktop Environment', () => {
     const response = await fetch(`${workerUrl}/api/desktop/screenshot`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
@@ -168,7 +172,8 @@ describe('Desktop Environment', () => {
       const response = await fetch(`${workerUrl}/api/desktop/stream-url`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({})
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10000)
       });
 
       expect(response.status).toBe(200);

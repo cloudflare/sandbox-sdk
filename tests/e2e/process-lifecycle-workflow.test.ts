@@ -47,7 +47,8 @@ describe('Process Lifecycle Error Handling', () => {
       headers,
       body: JSON.stringify({
         command
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
@@ -81,7 +82,9 @@ describe('Process Lifecycle Error Handling', () => {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ timeout: timeoutMs })
+        body: JSON.stringify({ timeout: timeoutMs }),
+        // Must exceed server-side timeout (timeoutMs) to avoid client-side abort
+        signal: AbortSignal.timeout(timeoutMs + 5000)
       }
     );
 
@@ -94,7 +97,8 @@ describe('Process Lifecycle Error Handling', () => {
       headers,
       body: JSON.stringify({
         command: `if ! kill -0 ${pid} 2>/dev/null; then echo dead; elif [ -r /proc/${pid}/status ] && grep -q '^State:[[:space:]]*Z' /proc/${pid}/status; then echo dead; else echo alive; fi`
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(response.status).toBe(200);
     const result = (await response.json()) as ExecResult;
@@ -129,7 +133,8 @@ describe('Process Lifecycle Error Handling', () => {
       headers,
       body: JSON.stringify({
         command: 'echo "Hello from process"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -179,7 +184,8 @@ wait`;
         body: JSON.stringify({
           path: scriptPath,
           content: scriptCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
@@ -187,7 +193,8 @@ wait`;
         headers,
         body: JSON.stringify({
           command: `bash '${scriptPath}'`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(startResponse.status).toBe(200);
@@ -203,7 +210,8 @@ wait`;
         `${workerUrl}/api/process/${processId}`,
         {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }
       );
       expect(killResponse.status).toBe(200);
@@ -222,7 +230,8 @@ wait`;
       if (processId) {
         await fetch(`${workerUrl}/api/process/${processId}`, {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
       }
 
@@ -269,7 +278,8 @@ console.log("Line 3");
       body: JSON.stringify({
         path: '/workspace/script.js',
         content: scriptCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the script
@@ -278,7 +288,8 @@ console.log("Line 3");
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/script.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const startData = (await startResponse.json()) as Process;
@@ -289,7 +300,8 @@ console.log("Line 3");
       `${workerUrl}/api/process/${processId}/stream`,
       {
         method: 'GET',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       }
     );
 
@@ -421,7 +433,8 @@ console.log("Line 3");
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+        body: JSON.stringify({ command: `bash '${scriptPath}'` }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(startResponse.status).toBe(200);
       const processData = (await startResponse.json()) as Process;
@@ -437,7 +450,7 @@ console.log("Line 3");
 
       const killResponse = await fetch(
         `${workerUrl}/api/process/${processId}`,
-        { method: 'DELETE', headers }
+        { method: 'DELETE', headers, signal: AbortSignal.timeout(5000) }
       );
       expect(killResponse.status).toBe(200);
 
@@ -454,7 +467,8 @@ console.log("Line 3");
       if (processId) {
         await fetch(`${workerUrl}/api/process/${processId}`, {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
       }
       for (const f of [
@@ -490,13 +504,15 @@ console.log("Line 3");
         await fetch(`${workerUrl}/api/file/write`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ path: scriptPaths[i], content: scriptCode })
+          body: JSON.stringify({ path: scriptPaths[i], content: scriptCode }),
+          signal: AbortSignal.timeout(5000)
         });
 
         const startResponse = await fetch(`${workerUrl}/api/process/start`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ command: `bash '${scriptPaths[i]}'` })
+          body: JSON.stringify({ command: `bash '${scriptPaths[i]}'` }),
+          signal: AbortSignal.timeout(5000)
         });
         expect(startResponse.status).toBe(200);
         const processData = (await startResponse.json()) as Process;
@@ -509,7 +525,8 @@ console.log("Line 3");
 
       const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
       expect(killAllResponse.status).toBe(200);
 
@@ -524,7 +541,8 @@ console.log("Line 3");
       for (let i = 0; i < 3; i++) {
         await fetch(`${workerUrl}/api/process/${processIds[i]}`, {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
         await readExecStdout(
           `rm -f '${pidFiles[i]}' '${scriptPaths[i]}'`
@@ -557,13 +575,15 @@ while :; do :; done`;
       await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ path: scriptPath, content: scriptCode })
+        body: JSON.stringify({ path: scriptPath, content: scriptCode }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+        body: JSON.stringify({ command: `bash '${scriptPath}'` }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(startResponse.status).toBe(200);
       const processData = (await startResponse.json()) as Process;
@@ -574,7 +594,8 @@ while :; do :; done`;
       const killStart = Date.now();
       const killResponse = await fetch(
         `${workerUrl}/api/process/${processId}`,
-        { method: 'DELETE', headers }
+        // SIGTERM grace period is ~5s before SIGKILL escalation
+        { method: 'DELETE', headers, signal: AbortSignal.timeout(15000) }
       );
       expect(killResponse.status).toBe(200);
 
@@ -593,7 +614,8 @@ while :; do :; done`;
       if (processId) {
         await fetch(`${workerUrl}/api/process/${processId}`, {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
       }
       if (pid) {
@@ -635,13 +657,15 @@ while :; do :; done`;
       await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
         headers: sessionHeaders,
-        body: JSON.stringify({ path: scriptPath, content: scriptCode })
+        body: JSON.stringify({ path: scriptPath, content: scriptCode }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers: sessionHeaders,
-        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+        body: JSON.stringify({ command: `bash '${scriptPath}'` }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(startResponse.status).toBe(200);
 
@@ -652,7 +676,8 @@ while :; do :; done`;
       const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {
         method: 'POST',
         headers: sessionHeaders,
-        body: JSON.stringify({ sessionId })
+        body: JSON.stringify({ sessionId }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(deleteResponse.status).toBe(200);
 
@@ -677,7 +702,8 @@ while :; do :; done`;
       headers,
       body: JSON.stringify({
         command: 'sleep 60'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const startData = (await startResponse.json()) as Process;
@@ -690,7 +716,8 @@ while :; do :; done`;
       headers,
       body: JSON.stringify({
         command: 'echo "test"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     const execDuration = Date.now() - execStart;
 
@@ -700,7 +727,8 @@ while :; do :; done`;
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 90000);
 });

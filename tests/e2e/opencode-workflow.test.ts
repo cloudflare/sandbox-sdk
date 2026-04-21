@@ -54,7 +54,8 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
       while (Date.now() < deadline) {
         res = await fetch(healthUrl, {
           method: 'GET',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         });
 
         if (res.status === 200) {
@@ -88,7 +89,8 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
         headers,
         body: JSON.stringify({
           command: `opencode serve --port ${testPort} --hostname 0.0.0.0`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       if (startRes.status !== 200) {
@@ -118,7 +120,9 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
                 timeout: 180000,
                 interval: 1000
               }
-            })
+            }),
+            // Must exceed server-side timeout (180s) to avoid client-side abort
+            signal: AbortSignal.timeout(190000)
           }
         );
 
@@ -153,7 +157,8 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
 
         const listRes = await fetch(`${workerUrl}/api/process/list`, {
           method: 'GET',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         });
         expect(listRes.status).toBe(200);
         const processes = (await listRes.json()) as Array<{
@@ -167,7 +172,8 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
       } finally {
         const killRes = await fetch(`${workerUrl}/api/process/${processId}`, {
           method: 'DELETE',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         });
 
         // Process might already be gone if it crashed after readiness.

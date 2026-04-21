@@ -77,7 +77,8 @@ describe('Bucket Mounting E2E', () => {
             key: PRE_EXISTING_FILE,
             content: PRE_EXISTING_CONTENT,
             contentType: 'text/plain'
-          })
+          }),
+          signal: AbortSignal.timeout(5000)
         });
         expect(putResponse.ok).toBe(true);
 
@@ -105,7 +106,8 @@ describe('Bucket Mounting E2E', () => {
             headers,
             body: JSON.stringify({
               command: `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
-            })
+            }),
+            signal: AbortSignal.timeout(5000)
           }
         );
         const readPreExistingResult =
@@ -141,7 +143,8 @@ describe('Bucket Mounting E2E', () => {
         const unmountResponse = await fetch(`${workerUrl}/api/bucket/unmount`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ mountPath: MOUNT_PATH })
+          body: JSON.stringify({ mountPath: MOUNT_PATH }),
+          signal: AbortSignal.timeout(5000)
         });
         expect(unmountResponse.ok).toBe(true);
         const unmountResult =
@@ -154,7 +157,8 @@ describe('Bucket Mounting E2E', () => {
           headers,
           body: JSON.stringify({
             command: `mountpoint -q ${MOUNT_PATH}`
-          })
+          }),
+          signal: AbortSignal.timeout(5000)
         });
         const mountCheckResult = (await mountCheck.json()) as ExecResult;
         expect(mountCheckResult.exitCode).not.toBe(0);
@@ -165,7 +169,8 @@ describe('Bucket Mounting E2E', () => {
           headers,
           body: JSON.stringify({
             command: `test -d ${MOUNT_PATH}`
-          })
+          }),
+          signal: AbortSignal.timeout(5000)
         });
         const dirCheckResult = (await dirCheck.json()) as ExecResult;
         expect(dirCheckResult.exitCode).not.toBe(0);
@@ -174,26 +179,30 @@ describe('Bucket Mounting E2E', () => {
         await fetch(`${workerUrl}/api/bucket/delete`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ key: PRE_EXISTING_FILE })
+          body: JSON.stringify({ key: PRE_EXISTING_FILE }),
+          signal: AbortSignal.timeout(5000)
         });
 
         await fetch(`${workerUrl}/api/bucket/delete`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ key: TEST_FILE })
+          body: JSON.stringify({ key: TEST_FILE }),
+          signal: AbortSignal.timeout(5000)
         });
       } catch (error) {
         // Cleanup on error
         await fetch(`${workerUrl}/api/bucket/delete`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ key: PRE_EXISTING_FILE })
+          body: JSON.stringify({ key: PRE_EXISTING_FILE }),
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
 
         await fetch(`${workerUrl}/api/bucket/delete`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ key: TEST_FILE })
+          body: JSON.stringify({ key: TEST_FILE }),
+          signal: AbortSignal.timeout(5000)
         }).catch(() => {});
 
         throw error;

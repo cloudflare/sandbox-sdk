@@ -155,7 +155,8 @@ describe('File Watch Workflow', () => {
     const response = await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path, content })
+      body: JSON.stringify({ path, content }),
+      signal: AbortSignal.timeout(5000)
     });
     await expectOk(response, `createFile(${path})`);
   }
@@ -167,7 +168,8 @@ describe('File Watch Workflow', () => {
     const response = await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path, recursive: true })
+      body: JSON.stringify({ path, recursive: true }),
+      signal: AbortSignal.timeout(5000)
     });
     await expectOk(response, `createDir(${path})`);
   }
@@ -179,7 +181,8 @@ describe('File Watch Workflow', () => {
     const response = await fetch(`${workerUrl}/api/file/delete`, {
       method: 'DELETE',
       headers,
-      body: JSON.stringify({ path })
+      body: JSON.stringify({ path }),
+      signal: AbortSignal.timeout(5000)
     });
     await expectOk(response, `deleteFile(${path})`);
   }
@@ -202,7 +205,8 @@ describe('File Watch Workflow', () => {
         include: options.include,
         exclude: options.exclude,
         since: options.since
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     await expectOk(response, `checkChanges(${path})`);
@@ -375,7 +379,8 @@ describe('File Watch Workflow', () => {
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testDir })
+      body: JSON.stringify({ path: testDir }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.body).toBeTruthy();
@@ -394,7 +399,8 @@ describe('File Watch Workflow', () => {
     const secondResponse = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testDir })
+      body: JSON.stringify({ path: testDir }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(secondResponse.ok).toBe(true);
     await secondResponse.body?.cancel();
@@ -406,7 +412,8 @@ describe('File Watch Workflow', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/nonexistent/path/that/does/not/exist'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // watch() throws when the watcher fails to establish, so the test

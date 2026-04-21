@@ -64,7 +64,8 @@ describe('KeepAlive Feature', () => {
     const startResponse = await fetch(`${workerUrl}/api/process/start`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'sleep 10' })
+      body: JSON.stringify({ command: 'sleep 10' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(startResponse.status).toBe(200);
     const processData = (await startResponse.json()) as Process;
@@ -97,7 +98,8 @@ describe('KeepAlive Feature', () => {
       body: JSON.stringify({
         path: testPath,
         content: 'keepAlive file content'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(writeResponse.status).toBe(200);
 

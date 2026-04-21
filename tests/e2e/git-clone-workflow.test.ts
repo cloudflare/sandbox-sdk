@@ -138,7 +138,8 @@ describe('Git Shallow Clone', () => {
         headers,
         body: JSON.stringify({
           command: `cd ${testDir} && git rev-list --count HEAD`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(countResponse.status).toBe(200);
@@ -154,7 +155,8 @@ describe('Git Shallow Clone', () => {
         headers,
         body: JSON.stringify({
           command: `cd ${testDir} && git rev-parse --is-shallow-repository`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(shallowResponse.status).toBe(200);
@@ -192,7 +194,8 @@ describe('Git Shallow Clone', () => {
         headers,
         body: JSON.stringify({
           command: `cd ${testDir} && git rev-parse --is-shallow-repository`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(shallowResponse.status).toBe(200);
@@ -205,7 +208,8 @@ describe('Git Shallow Clone', () => {
         headers,
         body: JSON.stringify({
           command: `cd ${testDir} && git branch --show-current`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(branchResponse.status).toBe(200);
@@ -218,7 +222,8 @@ describe('Git Shallow Clone', () => {
         headers,
         body: JSON.stringify({
           command: `cd ${testDir} && git rev-list --count HEAD`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(countResponse.status).toBe(200);

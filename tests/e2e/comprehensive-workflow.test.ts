@@ -58,7 +58,8 @@ describe('Comprehensive Workflow', () => {
           BUILD_ENV: 'test',
           API_KEY: 'test-key-123'
         }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     if (!setEnvResponse.ok) {
@@ -134,7 +135,8 @@ describe('Comprehensive Workflow', () => {
         body: JSON.stringify({
           path: `${testDir}/src/utils`,
           recursive: true
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(mkdirResponse.status).toBe(200);
@@ -156,7 +158,8 @@ describe('Comprehensive Workflow', () => {
         body: JSON.stringify({
           path: `${testDir}/config.json`,
           content: configContent
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(writeConfigResponse.status).toBe(200);
@@ -175,7 +178,8 @@ export function greet(name) {
         body: JSON.stringify({
           path: `${testDir}/src/utils/greet.js`,
           content: sourceCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Rename the file
@@ -185,7 +189,8 @@ export function greet(name) {
         body: JSON.stringify({
           oldPath: `${testDir}/src/utils/greet.js`,
           newPath: `${testDir}/src/utils/greeter.js`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(renameResponse.status).toBe(200);
@@ -212,7 +217,8 @@ export function greet(name) {
         body: JSON.stringify({
           command: `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`,
           cwd: testDir
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(buildResponse.status).toBe(200);
@@ -227,7 +233,8 @@ export function greet(name) {
         body: JSON.stringify({
           command: 'git status --porcelain',
           cwd: testDir
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(gitStatusResponse.status).toBe(200);
@@ -263,7 +270,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           path: `${testDir}/server.js`,
           content: serverScript
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Start the background process
@@ -272,7 +280,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           command: `bun run ${testDir}/server.js`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(startResponse.status).toBe(200);
@@ -290,7 +299,9 @@ const interval = setInterval(() => {
           body: JSON.stringify({
             pattern: 'Done',
             timeout: 10000
-          })
+          }),
+          // Must exceed server-side timeout (10s) to avoid client-side abort
+          signal: AbortSignal.timeout(15000)
         }
       );
       expect(waitResponse.status).toBe(200);
@@ -300,7 +311,8 @@ const interval = setInterval(() => {
         `${workerUrl}/api/process/${processId}/logs`,
         {
           method: 'GET',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         }
       );
 
@@ -322,7 +334,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           path: `${testDir}/backup`,
           recursive: true
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
@@ -331,7 +344,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           sourcePath: `${testDir}/config.json`,
           destinationPath: `${testDir}/backup/config.json`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(moveResponse.status).toBe(200);
@@ -342,7 +356,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           path: `${testDir}/server.js`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(deleteResponse.status).toBe(200);
@@ -354,7 +369,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           path: testDir,
           options: { recursive: true }
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(finalListResponse.status).toBe(200);
@@ -424,7 +440,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           command:
             'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(streamResponse.status).toBe(200);
@@ -472,7 +489,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           command: 'echo "TEMP=$TEMP_VAR, PROJECT=$PROJECT_NAME"',
           env: { TEMP_VAR: 'temporary-value' }
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(cmdEnvResponse.status).toBe(200);
@@ -488,7 +506,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           command: 'echo "TEMP=$TEMP_VAR"'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const verifyEnvData = (await verifyEnvResponse.json()) as ExecResult;
@@ -501,7 +520,8 @@ const interval = setInterval(() => {
         body: JSON.stringify({
           command: 'pwd',
           cwd: '/tmp'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(cmdCwdResponse.status).toBe(200);
@@ -514,7 +534,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           command: 'pwd'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const verifyCwdData = (await verifyCwdResponse.json()) as ExecResult;
@@ -540,7 +561,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           command: `echo '${pngBase64}' | base64 -d > /workspace/test-image.png`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Read the binary file
@@ -549,7 +571,8 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({
           path: '/workspace/test-image.png'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(readBinaryResponse.status).toBe(200);
@@ -564,7 +587,8 @@ const interval = setInterval(() => {
       await fetch(`${workerUrl}/api/file/delete`, {
         method: 'DELETE',
         headers,
-        body: JSON.stringify({ path: '/workspace/test-image.png' })
+        body: JSON.stringify({ path: '/workspace/test-image.png' }),
+        signal: AbortSignal.timeout(5000)
       });
     }
   );
@@ -582,21 +606,24 @@ const interval = setInterval(() => {
       const process1Response = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: 'sleep 30' })
+        body: JSON.stringify({ command: 'sleep 30' }),
+        signal: AbortSignal.timeout(5000)
       });
       const process1 = (await process1Response.json()) as Process;
 
       const process2Response = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: 'sleep 30' })
+        body: JSON.stringify({ command: 'sleep 30' }),
+        signal: AbortSignal.timeout(5000)
       });
       const process2 = (await process2Response.json()) as Process;
 
       // List processes - startProcess returns after registration, so they're immediately visible
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
       expect(listResponse.status).toBe(200);
       const processList = (await listResponse.json()) as Process[];
@@ -610,7 +637,8 @@ const interval = setInterval(() => {
       const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({})
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(killAllResponse.status).toBe(200);
@@ -621,7 +649,8 @@ const interval = setInterval(() => {
         await new Promise((resolve) => setTimeout(resolve, 500));
         const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
           method: 'GET',
-          headers
+          headers,
+          signal: AbortSignal.timeout(5000)
         });
         const processesAfter = (await listAfterResponse.json()) as Process[];
         running = processesAfter.filter((p) => p.status === 'running');

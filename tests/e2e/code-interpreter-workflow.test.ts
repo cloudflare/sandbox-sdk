@@ -46,7 +46,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const res = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language })
+      body: JSON.stringify({ language }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as CodeContext;
@@ -57,7 +58,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const res = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ code, options: { context } })
+      body: JSON.stringify({ code, options: { context } }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as ExecutionResult;
@@ -90,7 +92,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     // List all contexts - should contain both
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
     expect(listResponse.status).toBe(200);
     const contexts = (await listResponse.json()) as CodeContext[];
@@ -295,7 +298,8 @@ for i in range(3):
     time.sleep(0.1)
 `.trim(),
         options: { context: streamCtx }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(streamResponse.status).toBe(200);
@@ -442,7 +446,8 @@ for i in range(3):
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ language: 'invalid-lang' })
+        body: JSON.stringify({ language: 'invalid-lang' }),
+        signal: AbortSignal.timeout(10000)
       }
     );
     expect(invalidLangResponse.status).toBeGreaterThanOrEqual(400);
@@ -487,7 +492,8 @@ for i in range(3):
       {
         method: 'POST',
         headers: baseImageHeaders,
-        body: JSON.stringify({ language: 'python' })
+        body: JSON.stringify({ language: 'python' }),
+        signal: AbortSignal.timeout(10000)
       }
     );
     expect(pythonUnavailableResponse.status).toBe(500);

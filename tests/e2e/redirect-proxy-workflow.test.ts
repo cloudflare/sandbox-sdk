@@ -69,7 +69,8 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           path: '/workspace/redirect-server.ts',
           content: serverCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Start the server process
@@ -78,7 +79,8 @@ await Bun.sleep(60000);
         headers,
         body: JSON.stringify({
           command: `bun run /workspace/redirect-server.ts`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(startResponse.status).toBe(200);
       const { id: processId } = (await startResponse.json()) as Process;
@@ -92,7 +94,9 @@ await Bun.sleep(60000);
             port: REDIRECT_TEST_PORT,
             timeout: 15000,
             mode: 'tcp'
-          })
+          }),
+          // Must exceed server-side timeout (15s) to avoid client-side abort
+          signal: AbortSignal.timeout(20000)
         }
       );
       expect(waitPortResponse.status).toBe(200);
@@ -104,14 +108,18 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           port: REDIRECT_TEST_PORT,
           name: 'redirect-test'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(exposeResponse.status).toBe(200);
       const { url: exposedUrl } =
         (await exposeResponse.json()) as PortExposeResult;
 
       // Fetch the exposed URL
-      const proxyResponse = await fetch(exposedUrl, { redirect: 'manual' });
+      const proxyResponse = await fetch(exposedUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5000)
+      });
 
       // The proxy should return the 307
       expect(proxyResponse.status).toBe(307);
@@ -125,11 +133,13 @@ await Bun.sleep(60000);
       // Cleanup
       await fetch(`${workerUrl}/api/exposed-ports/${REDIRECT_TEST_PORT}`, {
         method: 'DELETE',
-        headers: portHeaders
+        headers: portHeaders,
+        signal: AbortSignal.timeout(5000)
       });
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
     },
     90000

@@ -193,7 +193,9 @@ describe('PTY', () => {
 
   describe('Error Handling', () => {
     test('returns 426 for non-WebSocket request', async () => {
-      const response = await fetch(`${workerUrl}/terminal`);
+      const response = await fetch(`${workerUrl}/terminal`, {
+        signal: AbortSignal.timeout(5000)
+      });
       expect(response.status).toBe(426);
     }, 10000);
   });

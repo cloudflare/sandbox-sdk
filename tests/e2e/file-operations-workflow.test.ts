@@ -60,7 +60,8 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: dirPath,
         recursive: true
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Try to delete directory with deleteFile - should fail
@@ -131,7 +132,8 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: filePath,
         content: 'test'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const fileAsDir = await fetch(`${workerUrl}/api/list-files`, {
@@ -156,7 +158,8 @@ describe('File Operations Error Handling', () => {
     await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true })
+      body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Write visible files in hidden directory
@@ -166,7 +169,8 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: `${hiddenDir}/visible1.txt`,
         content: 'Visible 1'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -174,7 +178,8 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: `${hiddenDir}/visible2.txt`,
         content: 'Visible 2'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Write hidden file in hidden directory
@@ -184,14 +189,16 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: `${hiddenDir}/.hiddenfile.txt`,
         content: 'Hidden'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // List WITHOUT includeHidden - should NOT show .hiddenfile.txt
     const listResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: hiddenDir })
+      body: JSON.stringify({ path: hiddenDir }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(listResponse.status).toBe(200);
@@ -215,7 +222,8 @@ describe('File Operations Error Handling', () => {
       body: JSON.stringify({
         path: hiddenDir,
         options: { includeHidden: true }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(listWithHiddenResponse.status).toBe(200);
@@ -285,7 +293,8 @@ describe('File Operations Error Handling', () => {
         path: pngPath,
         content: pngBase64,
         encoding: 'base64'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(writeResponse.status).toBe(200);
@@ -294,7 +303,8 @@ describe('File Operations Error Handling', () => {
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: `${testDir}/test.png` })
+      body: JSON.stringify({ path: `${testDir}/test.png` }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(readResponse.status).toBe(200);

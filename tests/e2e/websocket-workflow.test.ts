@@ -55,7 +55,8 @@ describe('WebSocket Port Exposure', () => {
         body: JSON.stringify({
           path: '/workspace/ws-server.ts',
           content: serverCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Start server on dedicated port
@@ -65,7 +66,8 @@ describe('WebSocket Port Exposure', () => {
         headers,
         body: JSON.stringify({
           command: `bun run /workspace/ws-server.ts ${port}`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(startResponse.status).toBe(200);
       const processData = (await startResponse.json()) as Process;
@@ -80,7 +82,9 @@ describe('WebSocket Port Exposure', () => {
             port,
             mode: 'tcp',
             timeout: 10000
-          })
+          }),
+          // Must exceed server-side timeout (10s) to avoid client-side abort
+          signal: AbortSignal.timeout(15000)
         }
       );
       expect(waitPortResponse.status).toBe(200);
@@ -89,7 +93,8 @@ describe('WebSocket Port Exposure', () => {
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ port, name: 'ws-test' })
+        body: JSON.stringify({ port, name: 'ws-test' }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(exposeResponse.status).toBe(200);
       const exposeData = (await exposeResponse.json()) as PortExposeResult;
@@ -117,11 +122,13 @@ describe('WebSocket Port Exposure', () => {
       ws.close();
       await fetch(`${workerUrl}/api/process/${processData.id}`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
       await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
     },
     30000

@@ -38,7 +38,8 @@ describe('Parallel Context Creation (issue #276)', () => {
     const res = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language })
+      body: JSON.stringify({ language }),
+      signal: AbortSignal.timeout(5000)
     });
     const elapsed = Date.now() - start;
     const body = await res.json();
@@ -48,7 +49,8 @@ describe('Parallel Context Creation (issue #276)', () => {
   async function deleteContext(contextId: string): Promise<void> {
     await fetch(`${workerUrl}/api/code/context/${contextId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }
 

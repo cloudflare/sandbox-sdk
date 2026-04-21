@@ -234,14 +234,16 @@ describe('Streaming Operations Edge Cases', () => {
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath, content: testContent })
+      body: JSON.stringify({ path: testPath, content: testContent }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Stream the file back
     const streamResponse = await fetch(`${workerUrl}/api/read/stream`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(streamResponse.status).toBe(200);
@@ -281,7 +283,64 @@ describe('Streaming Operations Edge Cases', () => {
     await fetch(`${workerUrl}/api/file/delete`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
   }, 30000);
+});
+
+describe('Streaming Operations - sleep after', () => {
+  test('should keep sandbox alive during execStream beyond sleepAfter value', async () => {
+    const sandbox = await createTestSandbox({ sleepAfter: '3s' });
+    try {
+      const { workerUrl, headers } = sandbox;
+
+      const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({
+          command: "bash -c 'sleep 5; printf done'"
+        })
+      });
+
+      expect(streamResponse.status).toBe(200);
+
+      const startTime = Date.now();
+      const events = await collectSSEEvents(streamResponse, 20);
+      const duration = Date.now() - startTime;
+
+      expect(duration).toBeGreaterThan(4500);
+
+      const stdout = events
+        .filter((event) => event.type === 'stdout')
+        .map((event) => event.data)
+        .join('');
+      const completeEvent = events.find((event) => event.type === 'complete');
+
+      expect(stdout.trimEnd()).toBe('done');
+      expect(completeEvent?.exitCode).toBe(0);
+
+      // Poll until the sandbox reaches a stopped state (sleepAfter is 3s)
+      const deadline = Date.now() + 30_000;
+      let status: string | undefined;
+      while (Date.now() < deadline) {
+        const stateResponse = await fetch(`${workerUrl}/api/state`, {
+          method: 'GET',
+          headers: headers(),
+          signal: AbortSignal.timeout(5000)
+        });
+        expect(stateResponse.status).toBe(200);
+        const state = (await stateResponse.json()) as { status: string };
+        status = state.status;
+        if (status === 'stopped' || status === 'stopped_with_code') {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      expect(status).toMatch(/^(stopped|stopped_with_code)$/);
+    } finally {
+      await cleanupTestSandbox(sandbox);
+    }
+  }, 60_000);
 });
