@@ -2,8 +2,10 @@
 '@cloudflare/sandbox': patch
 ---
 
-Speed up preview URL authorization by skipping a container round-trip.
-The Durable Object now answers preview-URL auth checks from its own
-storage instead of asking the container runtime. Pages that fetch many
-assets through a single preview URL see less latency under load and use
-less of the sandbox's per-request capacity.
+Speed up preview URL authorization and close a race in `unexposePort()`.
+Preview URL auth checks no longer make an extra round-trip to the
+container runtime, so pages that fetch many assets through a single
+preview URL do less work per request. `unexposePort()` now revokes
+the preview token before signaling the container, so a preview
+request that races an `unexposePort()` call can no longer reach the
+process running inside the sandbox after the token has been revoked.
