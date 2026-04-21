@@ -53,56 +53,52 @@ export class GitClient extends BaseHttpClient {
       timeoutMs?: number;
     }
   ): Promise<GitCheckoutResult> {
-    try {
-      const timeoutMs = options?.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
 
-      // Determine target directory - use provided path or generate from repo name
-      let targetDir = options?.targetDir;
-      if (!targetDir) {
-        targetDir = `/workspace/${extractRepoName(repoUrl)}`;
-      }
+    // Determine target directory - use provided path or generate from repo name
+    let targetDir = options?.targetDir;
+    if (!targetDir) {
+      targetDir = `/workspace/${extractRepoName(repoUrl)}`;
+    }
 
-      const data: GitCheckoutRequest = {
-        repoUrl,
-        sessionId,
-        targetDir
-      };
+    const data: GitCheckoutRequest = {
+      repoUrl,
+      sessionId,
+      targetDir
+    };
 
-      // Only include branch if explicitly specified
-      // This allows Git to use the repository's default branch
-      if (options?.branch) {
-        data.branch = options.branch;
-      }
+    // Only include branch if explicitly specified
+    // This allows Git to use the repository's default branch
+    if (options?.branch) {
+      data.branch = options.branch;
+    }
 
-      if (options?.depth !== undefined) {
-        if (!Number.isInteger(options.depth) || options.depth <= 0) {
-          throw new Error(
-            `Invalid depth value: ${options.depth}. Must be a positive integer (e.g., 1, 5, 10).`
-          );
-        }
-        data.depth = options.depth;
-      }
-
-      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    if (options?.depth !== undefined) {
+      if (!Number.isInteger(options.depth) || options.depth <= 0) {
         throw new Error(
-          `Invalid timeout value: ${timeoutMs}. Must be a positive integer number of milliseconds.`
+          `Invalid depth value: ${options.depth}. Must be a positive integer (e.g., 1, 5, 10).`
         );
       }
-
-      data.timeoutMs = timeoutMs;
-
-      const response = await this.post<GitCheckoutResult>(
-        '/api/git/checkout',
-        data,
-        undefined,
-        {
-          requestTimeoutMs: timeoutMs + GitClient.REQUEST_TIMEOUT_BUFFER_MS
-        }
-      );
-
-      return response;
-    } catch (error) {
-      throw error;
+      data.depth = options.depth;
     }
+
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(
+        `Invalid timeout value: ${timeoutMs}. Must be a positive integer number of milliseconds.`
+      );
+    }
+
+    data.timeoutMs = timeoutMs;
+
+    const response = await this.post<GitCheckoutResult>(
+      '/api/git/checkout',
+      data,
+      undefined,
+      {
+        requestTimeoutMs: timeoutMs + GitClient.REQUEST_TIMEOUT_BUFFER_MS
+      }
+    );
+
+    return response;
   }
 }

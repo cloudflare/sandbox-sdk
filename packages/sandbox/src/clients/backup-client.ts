@@ -27,24 +27,20 @@ export class BackupClient extends BaseHttpClient {
     gitignore = false,
     excludes: string[] = []
   ): Promise<CreateBackupResponse> {
-    try {
-      const data: CreateBackupRequest = {
-        dir,
-        archivePath,
-        gitignore,
-        excludes,
-        sessionId
-      };
+    const data: CreateBackupRequest = {
+      dir,
+      archivePath,
+      gitignore,
+      excludes,
+      sessionId
+    };
 
-      const response = await this.post<CreateBackupResponse>(
-        '/api/backup/create',
-        data
-      );
+    const response = await this.post<CreateBackupResponse>(
+      '/api/backup/create',
+      data
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -58,21 +54,17 @@ export class BackupClient extends BaseHttpClient {
     archivePath: string,
     sessionId: string
   ): Promise<RestoreBackupResponse> {
-    try {
-      const data: RestoreBackupRequest = {
-        dir,
-        archivePath,
-        sessionId
-      };
+    const data: RestoreBackupRequest = {
+      dir,
+      archivePath,
+      sessionId
+    };
 
-      const response = await this.post<RestoreBackupResponse>(
-        '/api/backup/restore',
-        data
-      );
+    const response = await this.post<RestoreBackupResponse>(
+      '/api/backup/restore',
+      data
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 }

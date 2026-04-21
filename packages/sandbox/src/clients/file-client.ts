@@ -60,19 +60,15 @@ export class FileClient extends BaseHttpClient {
     sessionId: string,
     options?: { recursive?: boolean }
   ): Promise<MkdirResult> {
-    try {
-      const data = {
-        path,
-        sessionId,
-        recursive: options?.recursive ?? false
-      };
+    const data = {
+      path,
+      sessionId,
+      recursive: options?.recursive ?? false
+    };
 
-      const response = await this.post<MkdirResult>('/api/mkdir', data);
+    const response = await this.post<MkdirResult>('/api/mkdir', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -88,20 +84,16 @@ export class FileClient extends BaseHttpClient {
     sessionId: string,
     options?: { encoding?: string }
   ): Promise<WriteFileResult> {
-    try {
-      const data = {
-        path,
-        content,
-        sessionId,
-        encoding: options?.encoding
-      };
+    const data = {
+      path,
+      content,
+      sessionId,
+      encoding: options?.encoding
+    };
 
-      const response = await this.post<WriteFileResult>('/api/write', data);
+    const response = await this.post<WriteFileResult>('/api/write', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -115,19 +107,15 @@ export class FileClient extends BaseHttpClient {
     sessionId: string,
     options?: { encoding?: string }
   ): Promise<ReadFileResult> {
-    try {
-      const data = {
-        path,
-        sessionId,
-        encoding: options?.encoding
-      };
+    const data = {
+      path,
+      sessionId,
+      encoding: options?.encoding
+    };
 
-      const response = await this.post<ReadFileResult>('/api/read', data);
+    const response = await this.post<ReadFileResult>('/api/read', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -140,18 +128,14 @@ export class FileClient extends BaseHttpClient {
     path: string,
     sessionId: string
   ): Promise<ReadableStream<Uint8Array>> {
-    try {
-      const data = {
-        path,
-        sessionId
-      };
+    const data = {
+      path,
+      sessionId
+    };
 
-      // Use doStreamFetch which handles both WebSocket and HTTP streaming
-      const stream = await this.doStreamFetch('/api/read/stream', data);
-      return stream;
-    } catch (error) {
-      throw error;
-    }
+    // Use doStreamFetch which handles both WebSocket and HTTP streaming
+    const stream = await this.doStreamFetch('/api/read/stream', data);
+    return stream;
   }
 
   /**
@@ -160,15 +144,11 @@ export class FileClient extends BaseHttpClient {
    * @param sessionId - The session ID for this operation
    */
   async deleteFile(path: string, sessionId: string): Promise<DeleteFileResult> {
-    try {
-      const data = { path, sessionId };
+    const data = { path, sessionId };
 
-      const response = await this.post<DeleteFileResult>('/api/delete', data);
+    const response = await this.post<DeleteFileResult>('/api/delete', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -182,15 +162,11 @@ export class FileClient extends BaseHttpClient {
     newPath: string,
     sessionId: string
   ): Promise<RenameFileResult> {
-    try {
-      const data = { oldPath: path, newPath, sessionId };
+    const data = { oldPath: path, newPath, sessionId };
 
-      const response = await this.post<RenameFileResult>('/api/rename', data);
+    const response = await this.post<RenameFileResult>('/api/rename', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -204,15 +180,11 @@ export class FileClient extends BaseHttpClient {
     newPath: string,
     sessionId: string
   ): Promise<MoveFileResult> {
-    try {
-      const data = { sourcePath: path, destinationPath: newPath, sessionId };
+    const data = { sourcePath: path, destinationPath: newPath, sessionId };
 
-      const response = await this.post<MoveFileResult>('/api/move', data);
+    const response = await this.post<MoveFileResult>('/api/move', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -226,22 +198,15 @@ export class FileClient extends BaseHttpClient {
     sessionId: string,
     options?: ListFilesOptions
   ): Promise<ListFilesResult> {
-    try {
-      const data = {
-        path,
-        sessionId,
-        options: options || {}
-      };
+    const data = {
+      path,
+      sessionId,
+      options: options || {}
+    };
 
-      const response = await this.post<ListFilesResult>(
-        '/api/list-files',
-        data
-      );
+    const response = await this.post<ListFilesResult>('/api/list-files', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -250,17 +215,13 @@ export class FileClient extends BaseHttpClient {
    * @param sessionId - The session ID for this operation
    */
   async exists(path: string, sessionId: string): Promise<FileExistsResult> {
-    try {
-      const data = {
-        path,
-        sessionId
-      };
+    const data = {
+      path,
+      sessionId
+    };
 
-      const response = await this.post<FileExistsResult>('/api/exists', data);
+    const response = await this.post<FileExistsResult>('/api/exists', data);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 }

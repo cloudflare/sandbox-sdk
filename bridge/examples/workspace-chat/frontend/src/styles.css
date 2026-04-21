@@ -1,5 +1,5 @@
-@import "@cloudflare/kumo/styles/tailwind";
-@import "tailwindcss";
+@import '@cloudflare/kumo/styles/tailwind';
+@import 'tailwindcss';
 
 /* Scan Kumo and Streamdown for Tailwind class names */
 @source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
@@ -44,8 +44,8 @@
   margin: 0.5rem 0;
   background: none;
 }
-.sd-theme .rounded-xl:has(pre) > :not(:has(pre)):not(pre) {
-  display: none !important;
+.sd-theme.sd-theme .rounded-xl:has(pre) > :not(:has(pre)):not(pre) {
+  display: none;
 }
 .sd-theme pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -60,10 +60,10 @@
   border: none;
   margin: 0;
 }
-.sd-theme [data-streamdown="code-block-body"] {
-  border: none !important;
-  background: none !important;
-  padding: 0 !important;
+.sd-theme.sd-theme [data-streamdown='code-block-body'] {
+  border: none;
+  background: none;
+  padding: 0;
 }
 .sd-theme ol,
 .sd-theme ul {

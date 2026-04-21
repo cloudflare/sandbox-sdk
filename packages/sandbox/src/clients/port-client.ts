@@ -37,18 +37,14 @@ export class PortClient extends BaseHttpClient {
     sessionId: string,
     name?: string
   ): Promise<PortExposeResult> {
-    try {
-      const data = { port, sessionId, name };
+    const data = { port, sessionId, name };
 
-      const response = await this.post<PortExposeResult>(
-        '/api/expose-port',
-        data
-      );
+    const response = await this.post<PortExposeResult>(
+      '/api/expose-port',
+      data
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -60,16 +56,12 @@ export class PortClient extends BaseHttpClient {
     port: number,
     sessionId: string
   ): Promise<PortCloseResult> {
-    try {
-      const url = `/api/exposed-ports/${port}?session=${encodeURIComponent(
-        sessionId
-      )}`;
-      const response = await this.delete<PortCloseResult>(url);
+    const url = `/api/exposed-ports/${port}?session=${encodeURIComponent(
+      sessionId
+    )}`;
+    const response = await this.delete<PortCloseResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -77,14 +69,10 @@ export class PortClient extends BaseHttpClient {
    * @param sessionId - The session ID for this operation
    */
   async getExposedPorts(sessionId: string): Promise<PortListResult> {
-    try {
-      const url = `/api/exposed-ports?session=${encodeURIComponent(sessionId)}`;
-      const response = await this.get<PortListResult>(url);
+    const url = `/api/exposed-ports?session=${encodeURIComponent(sessionId)}`;
+    const response = await this.get<PortListResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -95,11 +83,7 @@ export class PortClient extends BaseHttpClient {
   async watchPort(
     request: PortWatchRequest
   ): Promise<ReadableStream<Uint8Array>> {
-    try {
-      const stream = await this.doStreamFetch('/api/port-watch', request);
-      return stream;
-    } catch (error) {
-      throw error;
-    }
+    const stream = await this.doStreamFetch('/api/port-watch', request);
+    return stream;
   }
 }

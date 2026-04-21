@@ -1,6 +1,6 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { WarmPool } from '../../../../packages/sandbox/src/bridge/warm-pool';
+import type { WarmPool } from '../../../../packages/sandbox/src/bridge/warm-pool';
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -44,48 +44,40 @@ export class ProcessClient extends BaseHttpClient {
       origin?: 'user' | 'internal';
     }
   ): Promise<ProcessStartResult> {
-    try {
-      const data: StartProcessRequest = {
-        command,
-        sessionId,
-        ...(options?.origin !== undefined && { origin: options.origin }),
-        ...(options?.processId !== undefined && {
-          processId: options.processId
-        }),
-        ...(options?.timeoutMs !== undefined && {
-          timeoutMs: options.timeoutMs
-        }),
-        ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
-        ...(options?.encoding !== undefined && { encoding: options.encoding }),
-        ...(options?.autoCleanup !== undefined && {
-          autoCleanup: options.autoCleanup
-        })
-      };
+    const data: StartProcessRequest = {
+      command,
+      sessionId,
+      ...(options?.origin !== undefined && { origin: options.origin }),
+      ...(options?.processId !== undefined && {
+        processId: options.processId
+      }),
+      ...(options?.timeoutMs !== undefined && {
+        timeoutMs: options.timeoutMs
+      }),
+      ...(options?.env !== undefined && { env: options.env }),
+      ...(options?.cwd !== undefined && { cwd: options.cwd }),
+      ...(options?.encoding !== undefined && { encoding: options.encoding }),
+      ...(options?.autoCleanup !== undefined && {
+        autoCleanup: options.autoCleanup
+      })
+    };
 
-      const response = await this.post<ProcessStartResult>(
-        '/api/process/start',
-        data
-      );
+    const response = await this.post<ProcessStartResult>(
+      '/api/process/start',
+      data
+    );
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
    * List all processes (sandbox-scoped, not session-scoped)
    */
   async listProcesses(): Promise<ProcessListResult> {
-    try {
-      const url = `/api/process/list`;
-      const response = await this.get<ProcessListResult>(url);
+    const url = `/api/process/list`;
+    const response = await this.get<ProcessListResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -93,14 +85,10 @@ export class ProcessClient extends BaseHttpClient {
    * @param processId - ID of the process to retrieve
    */
   async getProcess(processId: string): Promise<ProcessInfoResult> {
-    try {
-      const url = `/api/process/${processId}`;
-      const response = await this.get<ProcessInfoResult>(url);
+    const url = `/api/process/${processId}`;
+    const response = await this.get<ProcessInfoResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -108,28 +96,20 @@ export class ProcessClient extends BaseHttpClient {
    * @param processId - ID of the process to kill
    */
   async killProcess(processId: string): Promise<ProcessKillResult> {
-    try {
-      const url = `/api/process/${processId}`;
-      const response = await this.delete<ProcessKillResult>(url);
+    const url = `/api/process/${processId}`;
+    const response = await this.delete<ProcessKillResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
    * Kill all running processes (sandbox-scoped, not session-scoped)
    */
   async killAllProcesses(): Promise<ProcessCleanupResult> {
-    try {
-      const url = `/api/process/kill-all`;
-      const response = await this.delete<ProcessCleanupResult>(url);
+    const url = `/api/process/kill-all`;
+    const response = await this.delete<ProcessCleanupResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -137,14 +117,10 @@ export class ProcessClient extends BaseHttpClient {
    * @param processId - ID of the process to get logs from
    */
   async getProcessLogs(processId: string): Promise<ProcessLogsResult> {
-    try {
-      const url = `/api/process/${processId}/logs`;
-      const response = await this.get<ProcessLogsResult>(url);
+    const url = `/api/process/${processId}/logs`;
+    const response = await this.get<ProcessLogsResult>(url);
 
-      return response;
-    } catch (error) {
-      throw error;
-    }
+    return response;
   }
 
   /**
@@ -154,14 +130,10 @@ export class ProcessClient extends BaseHttpClient {
   async streamProcessLogs(
     processId: string
   ): Promise<ReadableStream<Uint8Array>> {
-    try {
-      const url = `/api/process/${processId}/stream`;
-      // Use doStreamFetch with GET method (process log streaming is GET)
-      const stream = await this.doStreamFetch(url, undefined, 'GET');
+    const url = `/api/process/${processId}/stream`;
+    // Use doStreamFetch with GET method (process log streaming is GET)
+    const stream = await this.doStreamFetch(url, undefined, 'GET');
 
-      return stream;
-    } catch (error) {
-      throw error;
-    }
+    return stream;
   }
 }

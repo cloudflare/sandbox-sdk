@@ -100,7 +100,7 @@ describe('buildMessage', () => {
   });
 
   it('truncates long commands', () => {
-    const longCmd = 'echo ' + 'a'.repeat(200);
+    const longCmd = `echo ${'a'.repeat(200)}`;
     const msg = buildMessage({
       event: 'sandbox.exec',
       outcome: 'success',
@@ -202,7 +202,7 @@ describe('logCanonicalEvent', () => {
 
   it('sets commandTruncated when command is long', () => {
     const logger = createMockLogger();
-    const longCmd = 'echo ' + 'x'.repeat(200);
+    const longCmd = `echo ${'x'.repeat(200)}`;
     logCanonicalEvent(logger, {
       event: 'sandbox.exec',
       outcome: 'success',

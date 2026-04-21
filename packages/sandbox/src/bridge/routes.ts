@@ -341,7 +341,7 @@ export function createBridgeApp(
     }
 
     // Prepend / to make it absolute before validation
-    const resolvedPath = resolveWorkspacePath('/' + relativePath);
+    const resolvedPath = resolveWorkspacePath(`/${relativePath}`);
     if (!resolvedPath) {
       return errorJson(
         'path must resolve to a location within /workspace',
@@ -399,7 +399,7 @@ export function createBridgeApp(
     }
 
     // Prepend / to make it absolute before validation
-    const resolvedPath = resolveWorkspacePath('/' + relativePath);
+    const resolvedPath = resolveWorkspacePath(`/${relativePath}`);
     if (!resolvedPath) {
       return errorJson(
         'path must resolve to a location within /workspace',
@@ -545,7 +545,7 @@ export function createBridgeApp(
 
     const tmpPath = `/tmp/sandbox-persist-${Date.now()}.tar`;
     const excludeArgs = excludes
-      .map((rel) => `--exclude ${shellQuote('./' + rel.replace(/^\.\//, ''))}`)
+      .map((rel) => `--exclude ${shellQuote(`./${rel.replace(/^\.\//, '')}`)}`)
       .join(' ');
     const tarCmd = excludeArgs
       ? `tar cf ${shellQuote(tmpPath)} ${excludeArgs} -C ${shellQuote(root)} .`
