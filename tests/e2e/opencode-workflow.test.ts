@@ -6,7 +6,6 @@
  * - Server startup and lifecycle via process API
  */
 
-import type { ExecResult } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

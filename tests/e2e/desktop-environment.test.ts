@@ -19,11 +19,8 @@ type DesktopScreenshotResult = {
   width: number;
   height: number;
 };
-type SuccessResult = { success: boolean };
-type ScreenSizeResult = { success: boolean; width: number; height: number };
 type CursorPositionResult = { success: boolean; x: number; y: number };
 type StreamUrlResult = { url: string };
-type ErrorResult = { error: string };
 
 const skipPortExposureTests =
   process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;

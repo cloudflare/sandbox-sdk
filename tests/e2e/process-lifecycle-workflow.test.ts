@@ -1,4 +1,4 @@
-import type { ExecResult, Process, ProcessLogsResult } from '@repo/shared';
+import type { ExecResult, Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

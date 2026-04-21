@@ -10,7 +10,6 @@
  * - File operations work on Alpine filesystem
  */
 
-import type { ExecResult, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

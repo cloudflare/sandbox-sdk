@@ -1,10 +1,8 @@
 import type {
   ExecResult,
   Process,
-  ReadFileResult,
   SessionCreateResult,
-  SessionDeleteResult,
-  WaitForExitResult
+  SessionDeleteResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {

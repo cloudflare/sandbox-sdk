@@ -1,4 +1,4 @@
-import type { ExecResult, GitCheckoutResult } from '@repo/shared';
+import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
@@ -6,7 +6,6 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-import type { ErrorResponse } from './test-worker/types';
 
 /**
  * Git Clone Workflow Tests
