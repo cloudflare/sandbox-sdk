@@ -24,7 +24,9 @@ describe('WebSocket Connections', () => {
     // Initialize sandbox (container echo server is built-in)
     const initRes = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
-      headers: { 'X-Sandbox-Id': sandboxId }
+      headers: { 'X-Sandbox-Id': sandboxId },
+      // Wait for port uses 30s timeout per port.
+      signal: AbortSignal.timeout(60000)
     });
     expect(initRes.status).toBe(200);
   }, 120000);

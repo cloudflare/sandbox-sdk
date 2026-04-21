@@ -48,7 +48,8 @@ describe('Session State Isolation Workflow', () => {
       headers: baseHeaders,
       body: JSON.stringify({
         command: 'echo "Session isolation sandbox ready"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
   }, 120000);
 
@@ -68,7 +69,8 @@ describe('Session State Isolation Workflow', () => {
           API_KEY: 'prod-key-123',
           DB_HOST: 'prod.example.com'
         }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(session1Response.status).toBe(200);
@@ -87,7 +89,8 @@ describe('Session State Isolation Workflow', () => {
           API_KEY: 'test-key-456',
           DB_HOST: 'test.example.com'
         }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(session2Response.status).toBe(200);
@@ -101,7 +104,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'echo "$NODE_ENV|$API_KEY|$DB_HOST"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(exec1Response.status).toBe(200);
@@ -117,7 +121,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'echo "$NODE_ENV|$API_KEY|$DB_HOST"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(exec2Response.status).toBe(200);
@@ -131,7 +136,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         envVars: { NEW_VAR: 'session1-only' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(setEnv1Response.status).toBe(200);
@@ -142,7 +148,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'echo $NEW_VAR'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const check1Data = (await check1Response.json()) as ExecResult;
@@ -154,7 +161,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'echo "VALUE:$NEW_VAR:END"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const check2Data = (await check2Response.json()) as ExecResult;
@@ -169,7 +177,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/app',
         recursive: true
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -178,7 +187,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/test',
         recursive: true
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -187,7 +197,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/app/src',
         recursive: true
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -196,7 +207,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/test/unit',
         recursive: true
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Create session1 with cwd: /workspace/app
@@ -205,7 +217,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         cwd: '/workspace/app'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session1Data = (await session1Response.json()) as SessionCreateResult;
@@ -217,7 +230,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         cwd: '/workspace/test'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session2Data = (await session2Response.json()) as SessionCreateResult;
@@ -229,7 +243,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'pwd'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const pwd1Data = (await pwd1Response.json()) as ExecResult;
@@ -241,7 +256,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'pwd'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const pwd2Data = (await pwd2Response.json()) as ExecResult;
@@ -253,7 +269,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'cd src'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Change directory in session2
@@ -262,7 +279,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'cd unit'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Verify session1 is in /workspace/app/src
@@ -271,7 +289,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'pwd'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const newPwd1Data = (await newPwd1Response.json()) as ExecResult;
@@ -283,7 +302,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'pwd'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const newPwd2Data = (await newPwd2Response.json()) as ExecResult;
@@ -295,7 +315,8 @@ describe('Session State Isolation Workflow', () => {
     const session1Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session1Data = (await session1Response.json()) as SessionCreateResult;
@@ -304,7 +325,8 @@ describe('Session State Isolation Workflow', () => {
     const session2Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session2Data = (await session2Response.json()) as SessionCreateResult;
@@ -316,7 +338,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'greet() { echo "Hello from Production"; }'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(defineFunc1Response.status).toBe(200);
@@ -327,7 +350,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'greet'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const call1Data = (await call1Response.json()) as ExecResult;
@@ -340,7 +364,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'greet'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const call2Data = (await call2Response.json()) as ExecResult;
@@ -353,7 +378,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'greet() { echo "Hello from Test"; }'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Call greet() in session2 - should use session2's definition
@@ -362,7 +388,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'greet'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const call3Data = (await call3Response.json()) as ExecResult;
@@ -375,7 +402,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'greet'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const call4Data = (await call4Response.json()) as ExecResult;
@@ -387,7 +415,8 @@ describe('Session State Isolation Workflow', () => {
     const session1Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session1Data = (await session1Response.json()) as SessionCreateResult;
@@ -396,7 +425,8 @@ describe('Session State Isolation Workflow', () => {
     const session2Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session2Data = (await session2Response.json()) as SessionCreateResult;
@@ -408,7 +438,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'sleep 120'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -419,7 +450,8 @@ describe('Session State Isolation Workflow', () => {
     // so process is immediately visible (shared process table)
     const listResponse = await fetch(`${workerUrl}/api/process/list`, {
       method: 'GET',
-      headers: createTestHeaders(sandboxId, session2Id)
+      headers: createTestHeaders(sandboxId, session2Id),
+      signal: AbortSignal.timeout(5000)
     });
     expect(listResponse.status).toBe(200);
     const processes = (await listResponse.json()) as Process[];
@@ -434,7 +466,8 @@ describe('Session State Isolation Workflow', () => {
     // Kill the process from session2 - should work (shared process table)
     const killResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers: createTestHeaders(sandboxId, session2Id)
+      headers: createTestHeaders(sandboxId, session2Id),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(killResponse.status).toBe(200);
@@ -445,7 +478,9 @@ describe('Session State Isolation Workflow', () => {
       {
         method: 'POST',
         headers: createTestHeaders(sandboxId, session1Id),
-        body: JSON.stringify({ timeout: 5000 })
+        body: JSON.stringify({ timeout: 5000 }),
+        // Must exceed server-side timeout (5s) to avoid client-side abort
+        signal: AbortSignal.timeout(10000)
       }
     );
     expect(waitExitResponse.status).toBe(200);
@@ -458,7 +493,8 @@ describe('Session State Isolation Workflow', () => {
     const session1Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session1Data = (await session1Response.json()) as SessionCreateResult;
@@ -467,7 +503,8 @@ describe('Session State Isolation Workflow', () => {
     const session2Response = await fetch(`${workerUrl}/api/session/create`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session2Data = (await session2Response.json()) as SessionCreateResult;
@@ -480,7 +517,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/shared.txt',
         content: 'Written by session1'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(writeResponse.status).toBe(200);
@@ -491,7 +529,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         path: '/workspace/shared.txt'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(readResponse.status).toBe(200);
@@ -505,7 +544,8 @@ describe('Session State Isolation Workflow', () => {
       body: JSON.stringify({
         path: '/workspace/shared.txt',
         content: 'Modified by session2'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(modifyResponse.status).toBe(200);
@@ -516,7 +556,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         path: '/workspace/shared.txt'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const verifyData = (await verifyResponse.json()) as ReadFileResult;
@@ -528,7 +569,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         path: '/workspace/shared.txt'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
   }, 90000);
 
@@ -539,7 +581,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         env: { SESSION_NAME: 'session1' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session1Data = (await session1Response.json()) as SessionCreateResult;
@@ -550,7 +593,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         env: { SESSION_NAME: 'session2' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     const session2Data = (await session2Response.json()) as SessionCreateResult;
@@ -562,7 +606,9 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session1Id),
       body: JSON.stringify({
         command: 'sleep 2 && echo "Completed in $SESSION_NAME"'
-      })
+      }),
+      // Must exceed the 2s sleep in the command
+      signal: AbortSignal.timeout(10000)
     });
 
     const exec2Promise = fetch(`${workerUrl}/api/execute`, {
@@ -570,7 +616,9 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, session2Id),
       body: JSON.stringify({
         command: 'sleep 2 && echo "Completed in $SESSION_NAME"'
-      })
+      }),
+      // Must exceed the 2s sleep in the command
+      signal: AbortSignal.timeout(10000)
     });
 
     // Wait for both to complete
@@ -635,7 +683,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         env: { SESSION_VAR: 'test-value' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(sessionResponse.status).toBe(200);
@@ -648,7 +697,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, sessionId),
       body: JSON.stringify({
         command: 'echo $SESSION_VAR'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(execBeforeResponse.status).toBe(200);
@@ -661,7 +711,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         sessionId: sessionId
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(deleteResponse.status).toBe(200);
@@ -678,7 +729,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId, sessionId), // Use same session ID
       body: JSON.stringify({
         command: 'echo $SESSION_VAR'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(useDeletedSessionResponse.status).toBe(200);
@@ -694,7 +746,8 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!), // Use default session
       body: JSON.stringify({
         command: 'echo "sandbox-alive"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(sandboxStillAliveResponse.status).toBe(200);

@@ -42,7 +42,8 @@ describe('Standalone Binary Workflow', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "ok"' })
+      body: JSON.stringify({ command: 'echo "ok"' }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
@@ -55,7 +56,8 @@ describe('Standalone Binary Workflow', () => {
     const response = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: '/tmp/startup-marker.txt' })
+      body: JSON.stringify({ path: '/tmp/startup-marker.txt' }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);

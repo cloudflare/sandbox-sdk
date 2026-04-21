@@ -54,7 +54,8 @@ await Bun.sleep(60000); // Keep running
       body: JSON.stringify({
         path: '/workspace/server.js',
         content: scriptCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the process
@@ -63,7 +64,8 @@ await Bun.sleep(60000); // Keep running
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/server.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -79,7 +81,9 @@ await Bun.sleep(60000); // Keep running
         body: JSON.stringify({
           pattern: 'Server ready on port 8080',
           timeout: 10000
-        })
+        }),
+        // Must exceed server-side timeout (10s) to avoid client-side abort
+        signal: AbortSignal.timeout(15000)
       }
     );
 
@@ -90,7 +94,8 @@ await Bun.sleep(60000); // Keep running
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 60000);
 
@@ -115,7 +120,8 @@ await Bun.sleep(60000);
       body: JSON.stringify({
         path: '/workspace/portserver.js',
         content: serverCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the process
@@ -124,7 +130,8 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/portserver.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -140,7 +147,9 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           port: 9090,
           timeout: 15000
-        })
+        }),
+        // Must exceed server-side timeout (15s) to avoid client-side abort
+        signal: AbortSignal.timeout(20000)
       }
     );
 
@@ -161,7 +170,8 @@ await Bun.sleep(60000);
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 60000);
 
@@ -187,7 +197,8 @@ await Bun.sleep(60000);
       body: JSON.stringify({
         path: '/workspace/app.js',
         content: scriptCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the process
@@ -196,7 +207,8 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/app.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -212,7 +224,9 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           pattern: 'Database connected',
           timeout: 10000
-        })
+        }),
+        // Must exceed server-side timeout (10s) to avoid client-side abort
+        signal: AbortSignal.timeout(15000)
       }
     );
     expect(waitLogResponse.status).toBe(200);
@@ -226,7 +240,9 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           port: 9091,
           timeout: 10000
-        })
+        }),
+        // Must exceed server-side timeout (10s) to avoid client-side abort
+        signal: AbortSignal.timeout(15000)
       }
     );
     expect(waitPortResponse.status).toBe(200);
@@ -234,7 +250,8 @@ await Bun.sleep(60000);
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 60000);
 
@@ -252,7 +269,8 @@ await Bun.sleep(60000);
       body: JSON.stringify({
         path: '/workspace/slow.js',
         content: scriptCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the process
@@ -261,7 +279,8 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/slow.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -289,7 +308,8 @@ await Bun.sleep(60000);
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 60000);
 
@@ -300,7 +320,8 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'echo "quick exit"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -316,7 +337,9 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           pattern: 'Server ready',
           timeout: 10000
-        })
+        }),
+        // Must exceed server-side timeout (10s) to avoid client-side abort
+        signal: AbortSignal.timeout(15000)
       }
     );
 
@@ -342,7 +365,8 @@ await Bun.sleep(60000);
       body: JSON.stringify({
         path: '/workspace/stderr.js',
         content: scriptCode
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Start the process
@@ -351,7 +375,8 @@ await Bun.sleep(60000);
       headers,
       body: JSON.stringify({
         command: 'bun run /workspace/stderr.js'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -367,7 +392,9 @@ await Bun.sleep(60000);
         body: JSON.stringify({
           pattern: 'Ready (stderr)',
           timeout: 30000
-        })
+        }),
+        // Must exceed server-side timeout (30s) to avoid client-side abort
+        signal: AbortSignal.timeout(35000)
       }
     );
 
@@ -378,7 +405,8 @@ await Bun.sleep(60000);
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
   }, 60000);
 
@@ -404,7 +432,8 @@ console.log("Server listening on port 9092");
         body: JSON.stringify({
           path: '/workspace/http-server.js',
           content: serverCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Start the process
@@ -413,7 +442,8 @@ console.log("Server listening on port 9092");
         headers,
         body: JSON.stringify({
           command: 'bun run /workspace/http-server.js'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(startResponse.status).toBe(200);
@@ -429,7 +459,9 @@ console.log("Server listening on port 9092");
           body: JSON.stringify({
             port: 9092,
             timeout: 30000
-          })
+          }),
+          // Must exceed server-side timeout (30s) to avoid client-side abort
+          signal: AbortSignal.timeout(35000)
         }
       );
       expect(waitPortResponse.status).toBe(200);
@@ -440,7 +472,8 @@ console.log("Server listening on port 9092");
         headers: portHeaders,
         body: JSON.stringify({
           port: 9092
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(exposeResponse.status).toBe(200);
@@ -448,7 +481,9 @@ console.log("Server listening on port 9092");
       expect(exposeData.url).toBeTruthy();
 
       // Make a request to the exposed URL
-      const apiResponse = await fetch(exposeData.url);
+      const apiResponse = await fetch(exposeData.url, {
+        signal: AbortSignal.timeout(5000)
+      });
       expect(apiResponse.status).toBe(200);
       const apiData = (await apiResponse.json()) as { message: string };
       expect(apiData.message).toBe('Hello!');
@@ -460,7 +495,8 @@ console.log("Server listening on port 9092");
       });
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
     },
     90000
@@ -484,43 +520,52 @@ Bun.serve({
         body: JSON.stringify({
           path: '/workspace/token-server.js',
           content: serverCode
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: 'bun run /workspace/token-server.js' })
+        body: JSON.stringify({ command: 'bun run /workspace/token-server.js' }),
+        signal: AbortSignal.timeout(5000)
       });
       const { id: processId } = (await startResponse.json()) as Process;
 
       await fetch(`${workerUrl}/api/process/${processId}/waitForPort`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ port: 9093, timeout: 30000 })
+        body: JSON.stringify({ port: 9093, timeout: 30000 }),
+        // Must exceed server-side timeout (30s) to avoid client-side abort
+        signal: AbortSignal.timeout(35000)
       });
 
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
         method: 'POST',
         headers: portHeaders,
-        body: JSON.stringify({ port: 9093, token: 'my_stable_token' })
+        body: JSON.stringify({ port: 9093, token: 'my_stable_token' }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(exposeResponse.status).toBe(200);
       const { url } = (await exposeResponse.json()) as PortExposeResult;
       expect(url).toContain('my_stable_token');
 
-      const apiResponse = await fetch(url);
+      const apiResponse = await fetch(url, {
+        signal: AbortSignal.timeout(5000)
+      });
       expect(apiResponse.status).toBe(200);
       expect(await apiResponse.text()).toBe('token-test-ok');
 
       await fetch(`${workerUrl}/api/exposed-ports/9093`, {
         method: 'DELETE',
-        headers: portHeaders
+        headers: portHeaders,
+        signal: AbortSignal.timeout(5000)
       });
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
-        headers
+        headers,
+        signal: AbortSignal.timeout(5000)
       });
     },
     90000

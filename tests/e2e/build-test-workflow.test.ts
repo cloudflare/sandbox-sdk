@@ -33,7 +33,8 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'echo "Hello from sandbox"'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(echoResponse.status).toBe(200);
@@ -48,7 +49,8 @@ describe('Build and Test Workflow', () => {
         body: JSON.stringify({
           path: '/test-file.txt',
           content: 'Integration test content'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(writeResponse.status).toBe(200);
@@ -61,7 +63,8 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           path: '/test-file.txt'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(readResponse.status).toBe(200);
@@ -74,7 +77,8 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'pwd'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       expect(pwdResponse.status).toBe(200);
@@ -90,7 +94,8 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           command: 'exit 1'
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Shell exit should surface as 410 SESSION_TERMINATED per the

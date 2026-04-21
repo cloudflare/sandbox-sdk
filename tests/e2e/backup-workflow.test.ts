@@ -41,7 +41,8 @@ async function cleanupDir(
     headers,
     body: JSON.stringify({
       command: `fusermount3 -u ${dir} 2>/dev/null || true; rm -rf ${dir}`
-    })
+    }),
+    signal: AbortSignal.timeout(5000)
   });
 }
 
@@ -81,7 +82,8 @@ describe('Backup Workflow E2E', () => {
     const probeResponse = await fetch(`${workerUrl}/api/backup/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ dir: '/nonexistent-probe-dir' })
+      body: JSON.stringify({ dir: '/nonexistent-probe-dir' }),
+      signal: AbortSignal.timeout(10000)
     });
     const probeText = await probeResponse.text();
     if (
@@ -115,7 +117,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${TEST_DIR} && echo "${TEST_CONTENT}" > ${TEST_DIR}/${TEST_FILE}`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(mkdirResponse.ok).toBe(true);
 
@@ -127,7 +130,8 @@ describe('Backup Workflow E2E', () => {
           dir: TEST_DIR,
           name: 'e2e-test-backup',
           ttl: 3600 // 1 hour
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       if (!backupResponse.ok) {
@@ -145,7 +149,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${TEST_DIR}/*`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(deleteResponse.ok).toBe(true);
 
@@ -155,7 +160,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `test -f ${TEST_DIR}/${TEST_FILE} && echo "exists" || echo "deleted"`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const checkDeletedResult =
         (await checkDeletedResponse.json()) as ExecuteResponse;
@@ -168,7 +174,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           id: backup.id,
           dir: TEST_DIR
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -181,7 +188,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `cat ${TEST_DIR}/${TEST_FILE}`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -210,7 +218,8 @@ describe('Backup Workflow E2E', () => {
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "exclude-me" > ${TEST_DIR}/node_modules/a.txt`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(setupResponse.ok).toBe(true);
 
@@ -219,7 +228,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           dir: TEST_DIR
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -229,13 +239,15 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -247,7 +259,8 @@ describe('Backup Workflow E2E', () => {
             `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
             `test -e ${TEST_DIR}/node_modules/a.txt && echo excluded:no || echo excluded:yes`
           ].join('; ')
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -274,7 +287,8 @@ describe('Backup Workflow E2E', () => {
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(setupResponse.ok).toBe(true);
 
@@ -284,7 +298,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           dir: TEST_DIR,
           gitignore: false
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -294,13 +309,15 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -312,7 +329,8 @@ describe('Backup Workflow E2E', () => {
             `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
             `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
           ].join('; ')
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -336,14 +354,16 @@ describe('Backup Workflow E2E', () => {
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(setupResponse.ok).toBe(true);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR })
+        body: JSON.stringify({ dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -353,13 +373,15 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -371,7 +393,8 @@ describe('Backup Workflow E2E', () => {
             `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
             `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
           ].join('; ')
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -400,14 +423,16 @@ describe('Backup Workflow E2E', () => {
             `echo "bundle" > ${TEST_DIR}/dist/app.js`,
             `echo "ignored" > ${TEST_DIR}/server.log`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(setupResponse.ok).toBe(true);
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR, gitignore: true })
+        body: JSON.stringify({ dir: TEST_DIR, gitignore: true }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -417,13 +442,15 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -436,7 +463,8 @@ describe('Backup Workflow E2E', () => {
             `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`,
             `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`
           ].join('; ')
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -465,7 +493,8 @@ describe('Backup Workflow E2E', () => {
             `echo 'export const VERSION = "1.0.0"' > ${PROJECT_DIR}/src/utils/version.js`,
             `echo '{"port": 3000}' > ${PROJECT_DIR}/config/settings.json`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(setupResponse.ok).toBe(true);
 
@@ -475,7 +504,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const checksumBeforeResult =
         (await checksumBeforeResponse.json()) as ExecuteResponse;
@@ -490,7 +520,8 @@ describe('Backup Workflow E2E', () => {
           dir: PROJECT_DIR,
           name: 'nested-tree-backup',
           ttl: 3600
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       if (!backupResponse.ok) {
@@ -507,7 +538,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${PROJECT_DIR}/*`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       expect(deleteResponse.ok).toBe(true);
 
@@ -517,7 +549,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `find ${PROJECT_DIR} -type f | wc -l`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const verifyDeletedResult =
         (await verifyDeletedResponse.json()) as ExecuteResponse;
@@ -530,7 +563,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           id: backup.id,
           dir: PROJECT_DIR
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -540,7 +574,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const checksumAfterResult =
         (await checksumAfterResponse.json()) as ExecuteResponse;
@@ -562,14 +597,16 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `mkdir -p ${EMPTY_DIR}` })
+        body: JSON.stringify({ command: `mkdir -p ${EMPTY_DIR}` }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Create backup
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: EMPTY_DIR })
+        body: JSON.stringify({ dir: EMPTY_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
 
       expect(backupResponse.ok).toBe(true);
@@ -579,13 +616,15 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${EMPTY_DIR}` })
+        body: JSON.stringify({ command: `rm -rf ${EMPTY_DIR}` }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: EMPTY_DIR })
+        body: JSON.stringify({ id: backup.id, dir: EMPTY_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -595,7 +634,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `test -d ${EMPTY_DIR} && echo "exists" || echo "missing"`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.stdout?.trim()).toBe('exists');
@@ -617,7 +657,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Create backup with very short TTL (1 second)
@@ -627,7 +668,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           dir: TEST_DIR,
           ttl: 1 // 1 second TTL
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       expect(backupResponse.ok).toBe(true);
@@ -641,7 +683,8 @@ describe('Backup Workflow E2E', () => {
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 400 (BACKUP_EXPIRED)
@@ -666,7 +709,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           id: fakeBackupId,
           dir: '/workspace/test'
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 404 (BACKUP_NOT_FOUND)
@@ -684,7 +728,8 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           id: 'not-a-valid-uuid',
           dir: '/workspace/test'
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 400 (INVALID_BACKUP_CONFIG or validation error)
@@ -701,7 +746,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           dir: 'relative/path' // Not absolute
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 400 (validation error)
@@ -716,7 +762,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           dir: '/workspace/../../../etc/passwd'
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Should fail with 400 (validation error)
@@ -737,7 +784,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${DIR_A} ${DIR_B} && echo "content-a" > ${DIR_A}/file.txt && echo "content-b" > ${DIR_B}/file.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Start both backups concurrently
@@ -769,7 +817,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `rm -rf ${DIR_A}/* ${DIR_B}/*`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Restore both backups
@@ -795,7 +844,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `cat ${DIR_A}/file.txt && echo "---" && cat ${DIR_B}/file.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       const [contentA, , contentB] = (verifyResult.stdout || '').split('\n');
@@ -825,14 +875,16 @@ describe('Backup Workflow E2E', () => {
             `echo "emoji content" > "${TEST_DIR}/emoji-🎉-file.txt"`,
             `echo "unicode content" > "${TEST_DIR}/日本語ファイル.txt"`
           ].join(' && ')
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Create backup
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR })
+        body: JSON.stringify({ dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
 
       if (!backupResponse.ok) {
@@ -846,14 +898,16 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf "${TEST_DIR}"/*` })
+        body: JSON.stringify({ command: `rm -rf "${TEST_DIR}"/*` }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Restore
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -863,7 +917,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `cat "${TEST_DIR}/file with spaces.txt" && cat "${TEST_DIR}/emoji-🎉-file.txt" && cat "${TEST_DIR}/日本語ファイル.txt"`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -889,14 +944,16 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${ORIGINAL_DIR}/subdir && echo "original" > ${ORIGINAL_DIR}/file.txt && echo "nested" > ${ORIGINAL_DIR}/subdir/nested.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Create backup of original
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: ORIGINAL_DIR })
+        body: JSON.stringify({ dir: ORIGINAL_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
 
       expect(backupResponse.ok).toBe(true);
@@ -906,7 +963,8 @@ describe('Backup Workflow E2E', () => {
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: RESTORE_DIR })
+        body: JSON.stringify({ id: backup.id, dir: RESTORE_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -916,7 +974,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `cat ${RESTORE_DIR}/file.txt && cat ${RESTORE_DIR}/subdir/nested.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
@@ -927,7 +986,8 @@ describe('Backup Workflow E2E', () => {
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${ORIGINAL_DIR}/file.txt` })
+        body: JSON.stringify({ command: `cat ${ORIGINAL_DIR}/file.txt` }),
+        signal: AbortSignal.timeout(5000)
       });
       const originalResult = (await originalCheck.json()) as ExecuteResponse;
       expect(originalResult.stdout?.trim()).toBe('original');
@@ -950,14 +1010,16 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${TEST_DIR} && echo "original" > ${TEST_DIR}/file.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       // Create backup
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR })
+        body: JSON.stringify({ dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -966,13 +1028,15 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}/*` })
+        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}/*` }),
+        signal: AbortSignal.timeout(10000)
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restoreResponse.ok).toBe(true);
 
@@ -982,7 +1046,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `echo "modified" > ${TEST_DIR}/file.txt && echo "new file" > ${TEST_DIR}/new.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Verify modified content
@@ -991,7 +1056,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `cat ${TEST_DIR}/file.txt && cat ${TEST_DIR}/new.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const modifiedResult = (await modifiedCheck.json()) as ExecuteResponse;
       expect(modifiedResult.stdout).toContain('modified');
@@ -1003,7 +1069,8 @@ describe('Backup Workflow E2E', () => {
       const restore2Response = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(restore2Response.ok).toBe(true);
 
@@ -1011,7 +1078,8 @@ describe('Backup Workflow E2E', () => {
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` })
+        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` }),
+        signal: AbortSignal.timeout(10000)
       });
       const originalResult = (await originalCheck.json()) as ExecuteResponse;
       expect(originalResult.stdout?.trim()).toBe('original');
@@ -1022,7 +1090,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `test -f ${TEST_DIR}/new.txt && echo "exists" || echo "missing"`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
       const newFileResult = (await newFileCheck.json()) as ExecuteResponse;
       expect(newFileResult.stdout?.trim()).toBe('missing');
@@ -1044,13 +1113,15 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR })
+        body: JSON.stringify({ dir: TEST_DIR }),
+        signal: AbortSignal.timeout(10000)
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
@@ -1059,7 +1130,8 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}` })
+        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}` }),
+        signal: AbortSignal.timeout(10000)
       });
 
       // Try to restore to an invalid path (should fail)
@@ -1068,7 +1140,8 @@ describe('Backup Workflow E2E', () => {
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({ id: backup.id, dir: '/proc/invalid-restore' })
+          body: JSON.stringify({ id: backup.id, dir: '/proc/invalid-restore' }),
+          signal: AbortSignal.timeout(10000)
         }
       );
 
@@ -1081,7 +1154,8 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: `mount | grep -c "overlay.*${backup.id}" 2>/dev/null || true`
-        })
+        }),
+        signal: AbortSignal.timeout(10000)
       });
       const mountResult = (await mountCheck.json()) as ExecuteResponse;
       // Should be 0 (no orphan mounts) - grep -c returns "0" when no matches
@@ -1091,7 +1165,8 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `mkdir -p ${TEST_DIR}` })
+        body: JSON.stringify({ command: `mkdir -p ${TEST_DIR}` }),
+        signal: AbortSignal.timeout(5000)
       });
 
       const validRestoreResponse = await fetch(
@@ -1099,7 +1174,8 @@ describe('Backup Workflow E2E', () => {
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+          body: JSON.stringify({ id: backup.id, dir: TEST_DIR }),
+          signal: AbortSignal.timeout(10000)
         }
       );
       expect(validRestoreResponse.ok).toBe(true);
@@ -1108,7 +1184,8 @@ describe('Backup Workflow E2E', () => {
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` })
+        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` }),
+        signal: AbortSignal.timeout(10000)
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.stdout?.trim()).toBe('test');

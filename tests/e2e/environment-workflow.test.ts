@@ -43,7 +43,8 @@ describe('Environment Variables', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo $SANDBOX_VERSION' })
+      body: JSON.stringify({ command: 'echo $SANDBOX_VERSION' }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
@@ -64,7 +65,8 @@ describe('Environment Variables', () => {
           MY_SESSION_VAR: 'session-value',
           ANOTHER_VAR: 'another-value'
         }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(setResponse.status).toBe(200);
@@ -75,7 +77,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'echo "$MY_SESSION_VAR:$ANOTHER_VAR"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(readResponse.status).toBe(200);
@@ -90,7 +93,8 @@ describe('Environment Variables', () => {
       body: JSON.stringify({
         command: 'echo "$CMD_VAR"',
         env: { CMD_VAR: 'command-specific-value' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
@@ -105,7 +109,8 @@ describe('Environment Variables', () => {
       body: JSON.stringify({
         command: 'echo "$STREAM_VAR"',
         env: { STREAM_VAR: 'stream-env-value' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(response.status).toBe(200);
@@ -135,14 +140,16 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         envVars: { OVERRIDE_TEST: 'session-level' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Verify session value
     const sessionResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' })
+      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' }),
+      signal: AbortSignal.timeout(5000)
     });
     const sessionData = (await sessionResponse.json()) as ExecResult;
     expect(sessionData.stdout.trim()).toBe('session-level');
@@ -154,7 +161,8 @@ describe('Environment Variables', () => {
       body: JSON.stringify({
         command: 'echo "$OVERRIDE_TEST"',
         env: { OVERRIDE_TEST: 'command-level' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     const overrideData = (await overrideResponse.json()) as ExecResult;
     expect(overrideData.stdout.trim()).toBe('command-level');
@@ -163,7 +171,8 @@ describe('Environment Variables', () => {
     const afterResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' })
+      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' }),
+      signal: AbortSignal.timeout(5000)
     });
     const afterData = (await afterResponse.json()) as ExecResult;
     expect(afterData.stdout.trim()).toBe('session-level');
@@ -177,7 +186,8 @@ describe('Environment Variables', () => {
     const beforeResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: freshHeaders,
-      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' })
+      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' }),
+      signal: AbortSignal.timeout(5000)
     });
     const beforeData = (await beforeResponse.json()) as ExecResult;
     const dockerValue = beforeData.stdout.trim();
@@ -189,14 +199,16 @@ describe('Environment Variables', () => {
       headers: freshHeaders,
       body: JSON.stringify({
         envVars: { SANDBOX_VERSION: 'overridden-version' }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Verify override
     const afterResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: freshHeaders,
-      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' })
+      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' }),
+      signal: AbortSignal.timeout(5000)
     });
     const afterData = (await afterResponse.json()) as ExecResult;
     expect(afterData.stdout.trim()).toBe('overridden-version');
@@ -209,7 +221,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'cat'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(catResponse.status).toBe(200);
@@ -223,7 +236,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'read -t 1 INPUT_VAR || echo "read returned"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(readResponse.status).toBe(200);
@@ -237,7 +251,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'grep "test" || true'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(grepResponse.status).toBe(200);
@@ -255,7 +270,8 @@ describe('Environment Variables', () => {
           UNSET_NULL: null,
           UNSET_EMPTY: ''
         }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(setResponse.status).toBe(200);
@@ -263,7 +279,8 @@ describe('Environment Variables', () => {
     const definedResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo $UNSET_DEFINED' })
+      body: JSON.stringify({ command: 'echo $UNSET_DEFINED' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(definedResponse.status).toBe(200);
     const definedData = (await definedResponse.json()) as ExecResult;
@@ -274,7 +291,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'printenv UNSET_NULL || echo "not set"'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(nullResponse.status).toBe(200);
     const nullData = (await nullResponse.json()) as ExecResult;
@@ -283,7 +301,8 @@ describe('Environment Variables', () => {
     const emptyResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "[$UNSET_EMPTY]"' })
+      body: JSON.stringify({ command: 'echo "[$UNSET_EMPTY]"' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(emptyResponse.status).toBe(200);
     const emptyData = (await emptyResponse.json()) as ExecResult;
@@ -294,14 +313,16 @@ describe('Environment Variables', () => {
     const setResponse = await fetch(`${workerUrl}/api/env/set`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ envVars: { TO_REMOVE: 'initial-value' } })
+      body: JSON.stringify({ envVars: { TO_REMOVE: 'initial-value' } }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(setResponse.status).toBe(200);
 
     const beforeResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo $TO_REMOVE' })
+      body: JSON.stringify({ command: 'echo $TO_REMOVE' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(beforeResponse.status).toBe(200);
     const beforeData = (await beforeResponse.json()) as ExecResult;
@@ -310,14 +331,16 @@ describe('Environment Variables', () => {
     const unsetResponse = await fetch(`${workerUrl}/api/env/set`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ envVars: { TO_REMOVE: null } })
+      body: JSON.stringify({ envVars: { TO_REMOVE: null } }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(unsetResponse.status).toBe(200);
 
     const afterResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'printenv TO_REMOVE || echo "not set"' })
+      body: JSON.stringify({ command: 'printenv TO_REMOVE || echo "not set"' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(afterResponse.status).toBe(200);
     const afterData = (await afterResponse.json()) as ExecResult;
@@ -331,7 +354,8 @@ describe('Environment Variables', () => {
       body: JSON.stringify({
         command: 'echo $CMD_VALID',
         env: { CMD_VALID: 'valid-value', CMD_INVALID: null }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(validResponse.status).toBe(200);
     const validData = (await validResponse.json()) as ExecResult;
@@ -343,7 +367,8 @@ describe('Environment Variables', () => {
       body: JSON.stringify({
         command: 'printenv CMD_INVALID || echo "not set"',
         env: { CMD_VALID: 'valid-value', CMD_INVALID: null }
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(invalidResponse.status).toBe(200);
     const invalidData = (await invalidResponse.json()) as ExecResult;

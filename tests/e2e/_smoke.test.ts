@@ -31,10 +31,13 @@ describe('Integration Infrastructure Smoke Test', () => {
 
   test('should verify worker is running with health check', async () => {
     // Verify worker is running with health check
-    const response = await fetch(`${workerUrl}/health`);
+    const response = await fetch(`${workerUrl}/health`, {
+      signal: AbortSignal.timeout(1000)
+    });
     expect(response.status).toBe(200);
 
-    const data = (await response.json()) as HealthResponse;
-    expect(data.status).toBe('ok');
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'ok' })
+    );
   });
 });

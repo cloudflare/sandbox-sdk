@@ -41,7 +41,7 @@ describe('Desktop Environment', () => {
       await fetch(`${workerUrl}/api/desktop/stop`, {
         method: 'POST',
         headers,
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(10000)
       });
       await cleanupTestSandbox(sandbox);
     } catch {

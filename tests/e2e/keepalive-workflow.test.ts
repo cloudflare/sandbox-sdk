@@ -40,7 +40,8 @@ describe('KeepAlive Feature', () => {
     const response1 = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 1"' })
+      body: JSON.stringify({ command: 'echo "keepAlive command 1"' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(response1.status).toBe(200);
     const data1 = (await response1.json()) as ExecResult;
@@ -50,7 +51,8 @@ describe('KeepAlive Feature', () => {
     const response2 = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 2"' })
+      body: JSON.stringify({ command: 'echo "keepAlive command 2"' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(response2.status).toBe(200);
     const data2 = (await response2.json()) as ExecResult;
@@ -64,7 +66,8 @@ describe('KeepAlive Feature', () => {
     const startResponse = await fetch(`${workerUrl}/api/process/start`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'sleep 10' })
+      body: JSON.stringify({ command: 'sleep 10' }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(startResponse.status).toBe(200);
     const processData = (await startResponse.json()) as Process;
@@ -73,7 +76,11 @@ describe('KeepAlive Feature', () => {
     // Verify process is running
     const statusResponse = await fetch(
       `${workerUrl}/api/process/${processData.id}`,
-      { method: 'GET', headers: keepAliveHeaders }
+      {
+        method: 'GET',
+        headers: keepAliveHeaders,
+        signal: AbortSignal.timeout(5000)
+      }
     );
     expect(statusResponse.status).toBe(200);
     const statusData = (await statusResponse.json()) as Process;
@@ -82,7 +89,8 @@ describe('KeepAlive Feature', () => {
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processData.id}`, {
       method: 'DELETE',
-      headers: keepAliveHeaders
+      headers: keepAliveHeaders,
+      signal: AbortSignal.timeout(5000)
     });
   }, 30000);
 
@@ -97,7 +105,8 @@ describe('KeepAlive Feature', () => {
       body: JSON.stringify({
         path: testPath,
         content: 'keepAlive file content'
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(writeResponse.status).toBe(200);
 
@@ -105,7 +114,8 @@ describe('KeepAlive Feature', () => {
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
     expect(readResponse.status).toBe(200);
     const readData = (await readResponse.json()) as ReadFileResult;
@@ -115,7 +125,8 @@ describe('KeepAlive Feature', () => {
     await fetch(`${workerUrl}/api/file/delete`, {
       method: 'DELETE',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
   }, 30000);
 });
