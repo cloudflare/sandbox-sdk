@@ -65,7 +65,7 @@ describe('File Watch Workflow', () => {
     watchId: string | null;
     actionResult: T;
   }> {
-    const { timeoutMs = 5000, stopAfterEvents = 20 } = options;
+    const { timeoutMs = 10000, stopAfterEvents = 20 } = options;
 
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',

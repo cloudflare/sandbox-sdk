@@ -13,6 +13,40 @@ interface SandboxStateResponse {
   lastChange: number;
   exitCode?: number;
 }
+async function collectSSEEvents(
+  response: Response,
+  maxEvents: number = 50
+): Promise<ExecEvent[]> {
+  if (!response.body) {
+    throw new Error('No readable stream in response');
+  }
+
+  const events: ExecEvent[] = [];
+  const abortController = new AbortController();
+
+  try {
+    for await (const event of parseSSEStream<ExecEvent>(
+      response.body,
+      abortController.signal
+    )) {
+      events.push(event);
+      if (event.type === 'complete' || event.type === 'error') {
+        abortController.abort();
+        break;
+      }
+      if (events.length >= maxEvents) {
+        abortController.abort();
+        break;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'Operation was aborted') {
+      throw error;
+    }
+  }
+
+  return events;
+}
 
 /**
  * Streaming Operations Edge Case Tests
@@ -41,41 +75,6 @@ describe('Streaming Operations Edge Cases', () => {
     await cleanupTestSandbox(sandbox);
     sandbox = null;
   }, 120000);
-
-  async function collectSSEEvents(
-    response: Response,
-    maxEvents: number = 50
-  ): Promise<ExecEvent[]> {
-    if (!response.body) {
-      throw new Error('No readable stream in response');
-    }
-
-    const events: ExecEvent[] = [];
-    const abortController = new AbortController();
-
-    try {
-      for await (const event of parseSSEStream<ExecEvent>(
-        response.body,
-        abortController.signal
-      )) {
-        events.push(event);
-        if (event.type === 'complete' || event.type === 'error') {
-          abortController.abort();
-          break;
-        }
-        if (events.length >= maxEvents) {
-          abortController.abort();
-          break;
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message !== 'Operation was aborted') {
-        throw error;
-      }
-    }
-
-    return events;
-  }
 
   test('should handle command failures with non-zero exit code', async () => {
     const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
