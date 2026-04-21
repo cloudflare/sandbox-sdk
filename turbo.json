@@ -99,7 +99,8 @@
         "GITHUB_SHA",
         "GITHUB_REF_NAME",
         "GITHUB_EVENT_NAME",
-        "CI"
+        "CI",
+        "PERF_RUN_ID"
       ]
     },
     "test:e2e:browser": {

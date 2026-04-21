@@ -218,8 +218,15 @@ jobs:
 
       - name: Call notifier webhook
         if: always()
+        env:
+          WEBHOOK_URL: ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.PERF_NOTIFIER_API_SECRET }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.PERF_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.PERF_CF_ACCESS_CLIENT_SECRET }}
         run: |
-          curl -X POST ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}/api/notify \
-            -H "Authorization: Bearer ${{ secrets.PERF_NOTIFIER_API_SECRET }}" \
+          curl -X POST $WEBHOOK_URL/api/notify \
+            -H "Authorization: Bearer $WEBHOOK_SECRET" \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
             -H "Content-Type: application/json" \
             -d '{"run_id": "perf-${{ github.run_id }}"}'
