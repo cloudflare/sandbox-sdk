@@ -1246,6 +1246,71 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('validatePortToken', () => {
+    beforeEach(() => {
+      // Mock getExposedPorts so the current implementation's
+      // isPortExposed() round-trip finds port 8080 and produces the
+      // correct booleans. The new tests assert this mock is NOT called
+      // once the round-trip is removed.
+      vi.spyOn(sandbox.client.ports, 'getExposedPorts').mockResolvedValue({
+        success: true,
+        ports: [
+          {
+            port: 8080,
+            exposedAt: new Date().toISOString()
+          }
+        ],
+        count: 1,
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Default: storage has a token for port 8080. Tests that want a
+      // different state override this.
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': { token: 'correcttoken' } } : null
+      );
+    });
+
+    it('returns true for a matching token without calling the container', async () => {
+      const result = await sandbox.validatePortToken(8080, 'correcttoken');
+
+      expect(result).toBe(true);
+      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
+    });
+
+    it('returns false for a mismatched token without calling the container', async () => {
+      const result = await sandbox.validatePortToken(8080, 'wrongtoken');
+
+      expect(result).toBe(false);
+      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
+    });
+
+    it('returns false when no token is stored for the port', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? {} : null
+      );
+
+      const result = await sandbox.validatePortToken(8080, 'anytoken');
+
+      expect(result).toBe(false);
+      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
+    });
+
+    it('reads legacy string-valued tokens via readPortTokens normalization', async () => {
+      // readPortTokens normalizes the legacy { port: string } shape to
+      // { port: { token: string } }. validatePortToken must still accept
+      // legacy storage entries after the round-trip removal.
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': 'legacytoken' } : null
+      );
+
+      const result = await sandbox.validatePortToken(8080, 'legacytoken');
+
+      expect(result).toBe(true);
+      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
+    });
+  });
+
   describe('sleepAfter configuration', () => {
     it('should call renewActivityTimeout when setSleepAfter is called', async () => {
       // Spy on renewActivityTimeout (inherited from Container)
