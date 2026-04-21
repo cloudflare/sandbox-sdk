@@ -56,6 +56,7 @@ import {
   CustomDomainRequiredError,
   ErrorCode,
   InvalidBackupConfigError,
+  PortNotExposedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
   SessionAlreadyExistsError
@@ -3287,14 +3288,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
         );
       }
-      const sessionId = await this.ensureDefaultSession();
-      await this.client.ports.unexposePort(port, sessionId);
 
-      // Clean up token for this port (storage is protected by input gates)
+      // Revoke the token from storage before calling the container so
+      // validatePortToken stops honoring it during the container RPC.
+      // Otherwise a preview request arriving between the two awaits
+      // would authorize against storage and reach the backend process
+      // via containerFetch, which does not consult the container's
+      // exposed-port registry.
       const tokens = await this.readPortTokens();
       if (tokens[port.toString()]) {
         delete tokens[port.toString()];
         await this.ctx.storage.put('portTokens', tokens);
+      }
+
+      const sessionId = await this.ensureDefaultSession();
+      try {
+        await this.client.ports.unexposePort(port, sessionId);
+      } catch (error) {
+        // A container that was asleep when we entered wakes with an
+        // empty exposed-port registry; restoreExposedPorts() has
+        // nothing to replay because we just cleared the token. The
+        // container then reports the port was never exposed, which is
+        // the state we wanted.
+        if (!(error instanceof PortNotExposedError)) {
+          throw error;
+        }
       }
 
       outcome = 'success';

@@ -1,5 +1,6 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PortNotExposedError } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -1316,6 +1317,61 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.validatePortToken(8080, 'correcttoken');
 
       expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unexposePort ordering', () => {
+    beforeEach(() => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '8080': { token: 'sometoken' } } : null
+      );
+      vi.spyOn(sandbox.client.ports, 'unexposePort').mockResolvedValue(
+        undefined as any
+      );
+    });
+
+    it('revokes the token from storage before the container RPC', async () => {
+      const calls: string[] = [];
+      vi.mocked(mockCtx.storage.put).mockImplementation(async (key) => {
+        if (key === 'portTokens') {
+          calls.push('storage');
+        }
+      });
+      vi.mocked(sandbox.client.ports.unexposePort).mockImplementation(
+        async () => {
+          calls.push('container');
+        }
+      );
+
+      await sandbox.unexposePort(8080);
+
+      expect(calls).toEqual(['storage', 'container']);
+    });
+
+    it('treats PortNotExposedError from the container as success', async () => {
+      vi.mocked(sandbox.client.ports.unexposePort).mockRejectedValue(
+        new PortNotExposedError({
+          error: 'Port not exposed: 8080',
+          code: 'PORT_NOT_EXPOSED',
+          context: { port: 8080 }
+        } as any)
+      );
+
+      await expect(sandbox.unexposePort(8080)).resolves.toBeUndefined();
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'portTokens',
+        expect.not.objectContaining({ '8080': expect.anything() })
+      );
+    });
+
+    it('rethrows non-PortNotExposedError failures from the container', async () => {
+      vi.mocked(sandbox.client.ports.unexposePort).mockRejectedValue(
+        new Error('network failure')
+      );
+
+      await expect(sandbox.unexposePort(8080)).rejects.toThrow(
+        'network failure'
+      );
     });
   });
 
