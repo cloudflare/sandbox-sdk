@@ -217,14 +217,14 @@ jobs:
         run: npx tsx tests/perf/scripts/ingest-to-d1.ts perf-results/latest.json
 
       - name: Call notifier webhook
-        if: always()
+        if: always() && secrets.PERF_NOTIFIER_WEBHOOK_URL != ''
         env:
           WEBHOOK_URL: ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.PERF_NOTIFIER_API_SECRET }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.PERF_CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.PERF_CF_ACCESS_CLIENT_SECRET }}
         run: |
-          curl -X POST $WEBHOOK_URL/api/notify \
+          curl -sf -X POST "$WEBHOOK_URL/api/notify" \
             -H "Authorization: Bearer $WEBHOOK_SECRET" \
             -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
             -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
