@@ -57,7 +57,7 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
 1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.8.12`). Update the tag to match the SDK version.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.8.13`). Update the tag to match the SDK version.
 
 Both versions should match — the SDK and container image are released together. After updating:
 

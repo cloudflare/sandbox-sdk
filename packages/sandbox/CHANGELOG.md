@@ -1,5 +1,25 @@
 # @cloudflare/sandbox
 
+## 0.8.13
+
+### Patch Changes
+
+- [#600](https://github.com/cloudflare/sandbox-sdk/pull/600) [`63e6a89`](https://github.com/cloudflare/sandbox-sdk/commit/63e6a898ce293629b4265e781f9b2792177b9606) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix preview URLs returning 404 after a container restart. Tokens and names
+  passed to `exposePort()` now persist across restarts, so URLs issued by
+  `exposePort()` keep working without re-exposing the port. Tokens are still
+  cleared when you call `unexposePort()` or `destroy()`.
+
+- [#611](https://github.com/cloudflare/sandbox-sdk/pull/611) [`5754416`](https://github.com/cloudflare/sandbox-sdk/commit/5754416f67c5bd0f530ff9db06e2b1a975b2a94e) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Speed up preview URL authorization and close a race in `unexposePort()`.
+  Preview URL auth checks no longer make an extra round-trip to the
+  container runtime, so pages that fetch many assets through a single
+  preview URL do less work per request. `unexposePort()` now revokes
+  the preview token before signaling the container, so a preview
+  request that races an `unexposePort()` call can no longer reach the
+  process running inside the sandbox after the token has been revoked.
+  `getExposedPorts()` also no longer throws when it encounters a port
+  left in an inconsistent state by a failed `unexposePort()`; such
+  ports are omitted from the result and logged as a warning.
+
 ## 0.8.12
 
 ### Patch Changes
