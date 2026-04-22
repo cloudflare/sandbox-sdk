@@ -276,6 +276,30 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           DEPLOY_HASH: ${{ inputs.deploy_hash }}
 
+      - name: Warm container pool
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        run: |
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null)
+          for TRANSPORT in http websocket; do
+            WORKER="${{ inputs.worker_name_prefix }}-${TRANSPORT}"
+            APP_IDS=$(echo "$CONTAINERS" | jq -r --arg w "$WORKER" \
+              '[.[] | select(.name | startswith($w))] | .[].id')
+            if [ -z "$APP_IDS" ]; then
+              echo "::warning::No container apps found for ${WORKER} — skipping warm pool"
+              continue
+            fi
+            for APP_ID in $APP_IDS; do
+              echo "Setting warm pool for ${WORKER} (app $APP_ID)"
+              curl -sf -X PATCH \
+                "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/containers/applications/${APP_ID}" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d '{"configuration":{"durable_object_offset_instances": 75}}' || echo "::warning::Failed to set warm pool for app ${APP_ID}"
+            done
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       # Always set URLs (deterministic, needed by test jobs)
       - name: Set worker URLs
         id: urls
