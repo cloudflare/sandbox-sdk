@@ -531,6 +531,24 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
+
+  /**
+   * Transport protocol for communication between the Sandbox DO and the container runtime.
+   *
+   * - `"http"` (default): Standard HTTP request/response. Works everywhere.
+   * - `"websocket"`: Multiplexes requests over a single WebSocket connection,
+   *   avoiding sub-request limits in Workers and Durable Objects.
+   *
+   * When set via `getSandbox()` options, this overrides the `SANDBOX_TRANSPORT` env var.
+   *
+   * **Important:** Set this once at creation time and pass the same value on every
+   * subsequent `getSandbox()` call for a given sandbox ID. Changing the transport after
+   * the sandbox is in use disconnects the active client, which drops any in-flight
+   * requests and resets WebSocket connections.
+   *
+   * @default "http"
+   */
+  transport?: 'http' | 'websocket';
 }
 
 /**

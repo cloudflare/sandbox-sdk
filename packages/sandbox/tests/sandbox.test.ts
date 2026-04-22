@@ -1933,4 +1933,214 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(createArchiveSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('transport configuration', () => {
+    it('defaults to http transport', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      expect((sandbox as any).transport).toBe('http');
+      expect(sandbox.client.getTransportMode()).toBe('http');
+    });
+
+    it('reads websocket transport from SANDBOX_TRANSPORT env var', async () => {
+      const wsCtx = {
+        ...mockCtx,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        storage: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any
+      };
+
+      const instance = new Sandbox(
+        wsCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        { SANDBOX_TRANSPORT: 'websocket' }
+      );
+
+      await vi.waitFor(() => {
+        expect(wsCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      expect((instance as any).transport).toBe('websocket');
+      expect(instance.client.getTransportMode()).toBe('websocket');
+    });
+
+    it('setTransport switches from http to websocket', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      expect((sandbox as any).transport).toBe('http');
+
+      await sandbox.setTransport('websocket');
+
+      expect((sandbox as any).transport).toBe('websocket');
+      expect(sandbox.client.getTransportMode()).toBe('websocket');
+    });
+
+    it('setTransport switches from websocket to http', async () => {
+      const wsCtx = {
+        ...mockCtx,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        storage: {
+          get: vi.fn().mockResolvedValue(null),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any
+      };
+
+      const instance = new Sandbox(
+        wsCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        { SANDBOX_TRANSPORT: 'websocket' }
+      );
+
+      await vi.waitFor(() => {
+        expect(wsCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      expect((instance as any).transport).toBe('websocket');
+
+      await instance.setTransport('http');
+
+      expect((instance as any).transport).toBe('http');
+      expect(instance.client.getTransportMode()).toBe('http');
+    });
+
+    it('setTransport is a no-op when transport has been stored and value is unchanged', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      // First call persists (hasStoredTransport is false)
+      await sandbox.setTransport('http');
+      const putCallsAfterFirst = mockCtx.storage.put.mock.calls.length;
+      const clientBefore = sandbox.client;
+
+      // Second identical call is a no-op
+      await sandbox.setTransport('http');
+
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsAfterFirst);
+      expect(sandbox.client).toBe(clientBefore);
+    });
+
+    it('setTransport recreates the client with new transport', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      const clientBefore = sandbox.client;
+
+      await sandbox.setTransport('websocket');
+
+      // Client should be a new instance
+      expect(sandbox.client).not.toBe(clientBefore);
+    });
+
+    it('setTransport recreates the CodeInterpreter so it uses the new client', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      const interpreterBefore = (sandbox as any).codeInterpreter;
+
+      await sandbox.setTransport('websocket');
+
+      const interpreterAfter = (sandbox as any).codeInterpreter;
+      expect(interpreterAfter).not.toBe(interpreterBefore);
+    });
+
+    it('setTransport disconnects the previous client', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      const previousClient = sandbox.client;
+      const disconnectSpy = vi.spyOn(previousClient, 'disconnect');
+
+      await sandbox.setTransport('websocket');
+
+      expect(disconnectSpy).toHaveBeenCalledOnce();
+    });
+
+    it('persists transport to storage before updating in-memory state', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      await sandbox.setTransport('websocket');
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'transport',
+        'websocket'
+      );
+    });
+
+    it('persists on first explicit call even when value matches env-derived default', async () => {
+      await vi.waitFor(() => {
+        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      // Default transport is 'http'; calling setTransport('http') must still persist
+      await sandbox.setTransport('http');
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('transport', 'http');
+
+      // Second identical call is a no-op
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      await sandbox.setTransport('http');
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+    });
+
+    it('restores transport from storage on cold start, overriding env var', async () => {
+      const coldCtx = {
+        ...mockCtx,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        storage: {
+          get: vi.fn().mockImplementation(async (key: string) => {
+            if (key === 'transport') return 'websocket';
+            return null;
+          }),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any
+      };
+
+      // Env says 'http' but storage says 'websocket'
+      const instance = new Sandbox(
+        coldCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        {}
+      );
+
+      await vi.waitFor(() => {
+        expect(coldCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+      await Promise.all(
+        (coldCtx.blockConcurrencyWhile as any).mock.results.map(
+          (r: { value: unknown }) => r.value
+        )
+      );
+
+      expect((instance as any).transport).toBe('websocket');
+      expect((instance as any).hasStoredTransport).toBe(true);
+      expect(instance.client.getTransportMode()).toBe('websocket');
+    });
+  });
 });

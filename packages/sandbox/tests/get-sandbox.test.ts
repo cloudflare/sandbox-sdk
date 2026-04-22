@@ -214,6 +214,92 @@ describe('getSandbox', () => {
     });
   });
 
+  it('should apply transport option when set to websocket', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox', {
+      transport: 'websocket'
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      transport: 'websocket'
+    });
+  });
+
+  it('should apply transport option when set to http', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox', {
+      transport: 'http'
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      transport: 'http'
+    });
+  });
+
+  it('should not include transport when option is not provided', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox');
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      }
+    });
+  });
+
+  it('should apply transport alongside other options', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox', {
+      sleepAfter: '5m',
+      transport: 'websocket',
+      keepAlive: true
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      sleepAfter: '5m',
+      keepAlive: true,
+      transport: 'websocket'
+    });
+  });
+
+  it('should skip repeated transport configuration for the same sandbox', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', { transport: 'websocket' });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { transport: 'websocket' });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reconfigure when transport changes', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', { transport: 'http' });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { transport: 'websocket' });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(2);
+    expect(mockStub.configure).toHaveBeenNthCalledWith(2, {
+      transport: 'websocket'
+    });
+  });
+
   describe('proxy method routing', () => {
     it('should preserve this binding for fetch()', async () => {
       // fetch() is a native DurableObjectStub method that requires correct
