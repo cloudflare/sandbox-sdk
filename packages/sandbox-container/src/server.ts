@@ -27,8 +27,10 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason) => {
   const error = reason instanceof Error ? reason : new Error(String(reason));
-  logger.error('Unhandled rejection', error);
-  process.exit(1);
+  logger.warn('Unhandled rejection', {
+    error: error.message,
+    stack: error.stack
+  });
 });
 
 export interface ServerInstance {
