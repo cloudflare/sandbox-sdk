@@ -2,9 +2,9 @@
  * Backup & Restore Performance Test
  *
  * Measures backup creation and restore latencies across multiple directory sizes:
- * - Small (10 files, ~10 KB total)
- * - Medium (50 files, ~500 KB total)
- * - Large (100 files, ~5 MB total)
+ * - 10kb (10 files, ~10 KB total)
+ * - 500kb (50 files, ~500 KB total)
+ * - 5mb (100 files, ~5 MB total)
  *
  * Also measures post-restore read/write latency to verify the restored
  * filesystem is fully functional.
@@ -36,9 +36,9 @@ describe('Backup & Restore', () => {
     fileCount: number;
     fileSizeBytes: number;
   }> = [
-    { label: 'small', fileCount: 10, fileSizeBytes: 1_024 },
-    { label: 'medium', fileCount: 50, fileSizeBytes: 10_240 },
-    { label: 'large', fileCount: 100, fileSizeBytes: 51_200 }
+    { label: '10kb', fileCount: 10, fileSizeBytes: 1_024 },
+    { label: '500kb', fileCount: 50, fileSizeBytes: 10_240 },
+    { label: '5mb', fileCount: 100, fileSizeBytes: 51_200 }
   ];
 
   beforeAll(async () => {
@@ -132,7 +132,7 @@ describe('Backup & Restore', () => {
     }
 
     const smallRate = ctx.collector.getSuccessRate(
-      `${METRICS.BACKUP_CREATE_LATENCY}-small`
+      `${METRICS.BACKUP_CREATE_LATENCY}-10kb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
   }, 600000);
@@ -219,7 +219,7 @@ describe('Backup & Restore', () => {
     }
 
     const smallRate = ctx.collector.getSuccessRate(
-      `${METRICS.BACKUP_RESTORE_LATENCY}-small`
+      `${METRICS.BACKUP_RESTORE_LATENCY}-10kb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
   }, 600000);
