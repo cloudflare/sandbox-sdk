@@ -64,6 +64,9 @@ echo "    Standalone: $IMAGE_STANDALONE"
 echo "    Musl: $IMAGE_MUSL"
 echo "    Desktop: $IMAGE_DESKTOP"
 
+# Write transport into file and pull it in in vite config.
+echo "$TRANSPORT" > TEST_TRANSPORT;
+
 # Read template and replace placeholders
 # Using | as delimiter since image URLs contain /
 sed -e "s|{{WORKER_NAME}}|$WORKER_NAME|g" \

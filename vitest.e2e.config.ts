@@ -1,7 +1,22 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { config } from 'dotenv';
 import { defineConfig } from 'vitest/config';
 
 config();
+
+if (!process.env.TEST_TRANSPORT) {
+  try {
+    // Temporary workaround so existing CI still works with new format. The generate_config script will
+    // write this file instead of setting the SANDBOX_TRANSPORT var in the worker config.
+    process.env.TEST_TRANSPORT = readFileSync(
+      join(__dirname, './tests/e2e/test-worker/TEST_TRANSPORT'),
+      'utf-8'
+    ).trim();
+  } catch (err) {
+    throw new Error('Missing TEST_TRANSPORT environment variable');
+  }
+}
 
 /**
  * E2E tests with per-file sandbox isolation - runs in parallel.
