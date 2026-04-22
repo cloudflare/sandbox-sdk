@@ -77,7 +77,7 @@ jobs:
       # --- Capacity guard (only when deploy is needed) ---
       # Ensures enough container app headroom before deploying. Each PR
       # creates 12 container apps (2 workers × 6 classes). The account
-      # has a ~600 app limit. We keep a budget of 500 (leaving 100 headroom)
+      # has a ~100 app limit. We keep a budget of 84 (leaving 16 headroom)
       # and evict the least-recently-active PR's resources when over budget.
       # Protects: current PR, main workers, and PRs with in-progress CI.
       - uses: actions/setup-node@v6
@@ -92,7 +92,7 @@ jobs:
       - name: Ensure container app capacity
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
-          SAFE_BUDGET=500
+          SAFE_BUDGET=84
           EXPECTED_PR_APPS=12
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
