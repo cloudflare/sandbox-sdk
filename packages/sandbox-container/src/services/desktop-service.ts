@@ -60,17 +60,20 @@ export class DesktopService {
 
   async stop(): Promise<ServiceResult<DesktopStopResult>> {
     try {
-      if (this.worker) {
-        this.worker.terminate();
-        this.worker = null;
-      }
+      // Kill X11 processes first so any in-flight FFI call against the
+      // display fails fast instead of blocking on a dying server.
+      await this.manager.stop();
+
+      // Terminate the worker thread with a timeout. If a synchronous FFI
+      // call is blocked (e.g. robotgo waiting on X11), terminate() may not
+      // return promptly. The process group kill above will reclaim it.
+      await this.terminateWorker();
 
       for (const [, handler] of this.pending) {
         handler.reject(new Error('Desktop service stopped'));
       }
       this.pending.clear();
 
-      await this.manager.stop();
       return serviceSuccess<DesktopStopResult>({ success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -372,6 +375,9 @@ export class DesktopService {
     }
   }
 
+  private static readonly WORKER_OP_TIMEOUT_MS = 10_000;
+  private static readonly WORKER_TERMINATE_TIMEOUT_MS = 2_000;
+
   private async sendToWorker(
     op: string,
     args?: Record<string, unknown>
@@ -379,7 +385,25 @@ export class DesktopService {
     this.ensureWorkerRunning();
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(
+          new Error(
+            `Worker operation '${op}' timed out after ${DesktopService.WORKER_OP_TIMEOUT_MS}ms`
+          )
+        );
+      }, DesktopService.WORKER_OP_TIMEOUT_MS);
+
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (reason) => {
+          clearTimeout(timer);
+          reject(reason);
+        }
+      });
       this.worker?.postMessage({ id, op, ...args });
     });
   }
@@ -418,14 +442,42 @@ export class DesktopService {
   }
 
   async destroy(): Promise<void> {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
     await this.manager.stop();
+    await this.terminateWorker();
     for (const [, handler] of this.pending) {
       handler.reject(new Error('Desktop service destroyed'));
     }
     this.pending.clear();
+  }
+
+  /**
+   * Terminate the worker thread with a bounded timeout.
+   * If terminate() blocks (e.g. stuck in a synchronous FFI call),
+   * null out the reference and move on — the process group kill
+   * in the manager will reclaim the thread.
+   */
+  private async terminateWorker(): Promise<void> {
+    if (!this.worker) return;
+    const worker = this.worker;
+    this.worker = null;
+
+    try {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          worker.terminate();
+          resolve();
+        }),
+        new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Worker.terminate() timed out')),
+            DesktopService.WORKER_TERMINATE_TIMEOUT_MS
+          )
+        )
+      ]);
+    } catch (error) {
+      this.logger.warn('Worker termination timed out, abandoning reference', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }

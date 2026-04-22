@@ -3,14 +3,17 @@ import type {
   DesktopStartRequest,
   Logger
 } from '@repo/shared';
+import type { Subprocess } from 'bun';
 
 interface DesktopProcess {
   name: string;
   command: string;
   args: string[];
   priority: number;
-  proc: import('bun').Subprocess | null;
+  proc: Subprocess<'ignore', 'pipe', 'pipe'> | null;
   pid: number | undefined;
+  /** PGID for group-kill. Equals the child PID when spawned with `detached`. */
+  pgid: number | undefined;
   startTime: Date | null;
 }
 
@@ -18,13 +21,18 @@ const DEFAULT_RESOLUTION: [number, number] = [1024, 768];
 const DEFAULT_DPI = 96;
 const READINESS_TIMEOUT_MS = 15000;
 const READINESS_POLL_INTERVAL_MS = 200;
-const PROCESS_KILL_TIMEOUT_MS = 5000;
+/** Overall deadline for the entire stop sequence (SIGTERM + wait + SIGKILL). */
+const STOP_DEADLINE_MS = 3000;
+/** Grace period after SIGKILL before clearing state. */
+const SIGKILL_GRACE_MS = 500;
 
 export class DesktopManager {
   private processes = new Map<string, DesktopProcess>();
   private state: 'inactive' | 'starting' | 'active' | 'stopping' = 'inactive';
   private resolution: [number, number] = DEFAULT_RESOLUTION;
   private dpi: number = DEFAULT_DPI;
+  /** Coalesces concurrent stop() calls onto a single teardown. */
+  private stopPromise: Promise<void> | null = null;
 
   constructor(private logger: Logger) {}
 
@@ -44,64 +52,62 @@ export class DesktopManager {
     const [width, height] = this.resolution;
 
     try {
-      const processDefs: Omit<DesktopProcess, 'proc' | 'pid' | 'startTime'>[] =
-        [
-          {
-            name: 'xvfb',
-            command: 'Xvfb',
-            args: [
-              ':99',
-              '-screen',
-              '0',
-              `${width}x${height}x24`,
-              '-dpi',
-              String(this.dpi),
-              '-ac'
-            ],
-            priority: 100
-          },
-          {
-            name: 'xfce4',
-            command: 'startxfce4',
-            args: [],
-            priority: 200
-          },
-          {
-            name: 'x11vnc',
-            command: 'x11vnc',
-            args: [
-              '-display',
-              ':99',
-              '-nopw',
-              '-forever',
-              '-shared',
-              '-rfbport',
-              '5900'
-            ],
-            priority: 300
-          },
-          {
-            name: 'novnc',
-            command: 'websockify',
-            args: [
-              '--web',
-              '/usr/share/novnc',
-              '0.0.0.0:6080',
-              'localhost:5900'
-            ],
-            priority: 400
-          }
-        ];
+      const processDefs: Omit<
+        DesktopProcess,
+        'proc' | 'pid' | 'pgid' | 'startTime'
+      >[] = [
+        {
+          name: 'xvfb',
+          command: 'Xvfb',
+          args: [
+            ':99',
+            '-screen',
+            '0',
+            `${width}x${height}x24`,
+            '-dpi',
+            String(this.dpi),
+            '-ac'
+          ],
+          priority: 100
+        },
+        {
+          name: 'xfce4',
+          command: 'startxfce4',
+          args: [],
+          priority: 200
+        },
+        {
+          name: 'x11vnc',
+          command: 'x11vnc',
+          args: [
+            '-display',
+            ':99',
+            '-nopw',
+            '-forever',
+            '-shared',
+            '-rfbport',
+            '5900'
+          ],
+          priority: 300
+        },
+        {
+          name: 'novnc',
+          command: 'websockify',
+          args: ['--web', '/usr/share/novnc', '0.0.0.0:6080', 'localhost:5900'],
+          priority: 400
+        }
+      ];
 
       for (const def of processDefs) {
-        const process: DesktopProcess = {
+        const desktopProcess: DesktopProcess = {
           ...def,
           proc: null,
           pid: undefined,
+          pgid: undefined,
           startTime: null
         };
-        this.processes.set(def.name, process);
-        await this.startProcess(process);
+        this.processes.set(def.name, desktopProcess);
+        await this.startProcess(desktopProcess);
       }
 
       await this.waitForHttp('http://localhost:6080', READINESS_TIMEOUT_MS);
@@ -129,15 +135,60 @@ export class DesktopManager {
 
   async stop(): Promise<void> {
     if (this.state === 'inactive') return;
+
+    // Coalesce concurrent stop() calls onto the same teardown promise.
+    if (this.stopPromise) return this.stopPromise;
+
+    this.stopPromise = this.doStop();
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
+  }
+
+  private async doStop(): Promise<void> {
     this.state = 'stopping';
 
-    const sorted = [...this.processes.values()].sort(
-      (a, b) => b.priority - a.priority
-    );
-    for (const process of sorted) {
-      await this.killProcess(process);
+    const allProcs = [...this.processes.values()];
+
+    // 1. SIGTERM every process group at once.
+    for (const p of allProcs) {
+      this.signalProcessGroup(p, 'SIGTERM');
     }
 
+    // 2. Wait for all to exit, bounded by STOP_DEADLINE_MS.
+    const exitPromises = allProcs
+      .filter((p) => p.proc && !p.proc.killed)
+      .map((p) => p.proc!.exited);
+
+    const allExited = Promise.all(exitPromises);
+    const deadline = new Promise<'timeout'>((resolve) =>
+      setTimeout(() => resolve('timeout'), STOP_DEADLINE_MS)
+    );
+
+    const result = await Promise.race([
+      allExited.then(() => 'exited' as const),
+      deadline
+    ]);
+
+    if (result === 'timeout') {
+      // 3. SIGKILL survivors.
+      this.logger.warn(
+        'Desktop processes did not exit after SIGTERM, sending SIGKILL'
+      );
+      for (const p of allProcs) {
+        this.signalProcessGroup(p, 'SIGKILL');
+      }
+      await new Promise((resolve) => setTimeout(resolve, SIGKILL_GRACE_MS));
+    }
+
+    // 4. Clear state.
+    for (const p of allProcs) {
+      p.proc = null;
+      p.pid = undefined;
+      p.pgid = undefined;
+    }
     this.processes.clear();
     this.state = 'inactive';
     this.logger.info('Desktop environment stopped');
@@ -155,15 +206,15 @@ export class DesktopManager {
     let allRunning = true;
     let anyRunning = false;
 
-    for (const [name, process] of this.processes) {
-      const running = process.proc !== null && !process.proc.killed;
-      const uptime = process.startTime
-        ? Math.floor((Date.now() - process.startTime.getTime()) / 1000)
+    for (const [name, p] of this.processes) {
+      const running = p.proc !== null && !p.proc.killed;
+      const uptime = p.startTime
+        ? Math.floor((Date.now() - p.startTime.getTime()) / 1000)
         : undefined;
 
       processes[name] = {
         running,
-        pid: process.pid,
+        pid: p.pid,
         uptime
       };
 
@@ -183,26 +234,31 @@ export class DesktopManager {
     return this.state === 'active' ? this.dpi : null;
   }
 
-  private async startProcess(process: DesktopProcess): Promise<void> {
-    const childLogger = this.logger.child({ process: process.name });
+  private async startProcess(desktopProcess: DesktopProcess): Promise<void> {
+    const childLogger = this.logger.child({ process: desktopProcess.name });
     childLogger.info('Starting desktop process', {
-      command: process.command,
-      args: process.args
+      command: desktopProcess.command,
+      args: desktopProcess.args
     });
 
     const env: Record<string, string> = {
-      ...(process.name !== 'xvfb' ? { DISPLAY: ':99' } : {})
+      ...(desktopProcess.name !== 'xvfb' ? { DISPLAY: ':99' } : {})
     };
 
-    const proc = Bun.spawn([process.command, ...process.args], {
+    // `detached: true` calls setsid(2), making the child a process group
+    // leader. Its PGID equals its PID, so `kill(-pid, sig)` reaches the
+    // entire subtree (e.g. xfce4's panel, xfwm4, thunar, etc.).
+    const proc = Bun.spawn([desktopProcess.command, ...desktopProcess.args], {
       env: { ...Bun.env, ...env },
       stdout: 'pipe',
-      stderr: 'pipe'
+      stderr: 'pipe',
+      detached: true
     });
 
-    process.proc = proc;
-    process.pid = proc.pid;
-    process.startTime = new Date();
+    desktopProcess.proc = proc;
+    desktopProcess.pid = proc.pid;
+    desktopProcess.pgid = proc.pid; // group leader ⇒ pgid == pid
+    desktopProcess.startTime = new Date();
 
     this.pipeOutput(proc.stdout, childLogger, 'debug');
     this.pipeOutput(proc.stderr, childLogger, 'debug');
@@ -210,12 +266,15 @@ export class DesktopManager {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     if (proc.killed) {
-      throw new Error(`Desktop process ${process.name} exited immediately`);
+      throw new Error(
+        `Desktop process ${desktopProcess.name} exited immediately`
+      );
     }
 
     childLogger.info('Desktop process started', { pid: proc.pid });
   }
 
+  /** Drain a ReadableStream through the logger. Fire-and-forget. */
   private async pipeOutput(
     stream: ReadableStream<Uint8Array> | null,
     logger: Logger,
@@ -233,36 +292,24 @@ export class DesktopManager {
           logger[level](text);
         }
       }
-    } catch {}
+    } catch {
+      // Stream cancelled or errored — expected during stop.
+    }
   }
 
-  private async killProcess(process: DesktopProcess): Promise<void> {
-    if (!process.proc || process.proc.killed) return;
-
-    const childLogger = this.logger.child({ process: process.name });
-    childLogger.info('Stopping desktop process', { pid: process.pid });
-
+  /** Send a signal to the entire process group via kill(-pgid, sig). */
+  private signalProcessGroup(
+    desktopProcess: DesktopProcess,
+    signal: NodeJS.Signals
+  ): void {
+    const pgid = desktopProcess.pgid;
+    if (!pgid) return;
     try {
-      process.proc.kill('SIGTERM');
-
-      const exitPromise = process.proc.exited;
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Kill timeout')),
-          PROCESS_KILL_TIMEOUT_MS
-        )
-      );
-
-      await Promise.race([exitPromise, timeoutPromise]).catch(() => {
-        childLogger.warn('Process did not exit gracefully, sending SIGKILL');
-        process.proc?.kill('SIGKILL');
-      });
-    } catch (error) {
-      childLogger.warn('Error killing process', { error });
+      // Negative PID targets the process group.
+      process.kill(-pgid, signal);
+    } catch {
+      // ESRCH: process group already exited.
     }
-
-    process.proc = null;
-    process.pid = undefined;
   }
 
   private async waitForHttp(url: string, timeoutMs: number): Promise<void> {
