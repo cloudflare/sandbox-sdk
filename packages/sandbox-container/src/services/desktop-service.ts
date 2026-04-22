@@ -463,18 +463,20 @@ export class DesktopService {
     this.worker = null;
 
     try {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         new Promise<void>((resolve) => {
           worker.terminate();
           resolve();
         }),
-        new Promise<void>((_, reject) =>
-          setTimeout(
+        new Promise<void>((_, reject) => {
+          timer = setTimeout(
             () => reject(new Error('Worker.terminate() timed out')),
             DesktopService.WORKER_TERMINATE_TIMEOUT_MS
-          )
-        )
+          );
+        })
       ]);
+      clearTimeout(timer);
     } catch (error) {
       this.logger.warn('Worker termination timed out, abandoning reference', {
         error: error instanceof Error ? error.message : String(error)
