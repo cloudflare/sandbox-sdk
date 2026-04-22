@@ -8,17 +8,9 @@ import { anthropicHandler, githubHandler, r2Handler } from './services';
 
 export { ContainerProxy };
 
-declare global {
-  interface Env {
-    ANTHROPIC_API_KEY?: string;
-    GITHUB_TOKEN?: string;
-    R2_ACCESS_KEY_ID?: string;
-    R2_SECRET_ACCESS_KEY?: string;
-    R2_ENDPOINT?: string;
-  }
+export class Sandbox extends BaseSandbox {
+  interceptHttps = true;
 }
-
-export class Sandbox extends BaseSandbox {}
 
 Sandbox.outboundByHost = {
   'api.anthropic.com': anthropicHandler,
