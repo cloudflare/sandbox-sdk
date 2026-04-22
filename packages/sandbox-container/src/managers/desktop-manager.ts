@@ -158,17 +158,19 @@ export class DesktopManager {
     }
 
     // 2. Wait for all to exit, bounded by STOP_DEADLINE_MS.
+    // allSettled never rejects — a single process crashing won't
+    // short-circuit the wait or skip the SIGKILL escalation.
     const exitPromises = allProcs
       .filter((p) => p.proc && !p.proc.killed)
       .map((p) => p.proc!.exited);
 
-    const allExited = Promise.all(exitPromises);
+    const allSettled = Promise.allSettled(exitPromises);
     const deadline = new Promise<'timeout'>((resolve) =>
       setTimeout(() => resolve('timeout'), STOP_DEADLINE_MS)
     );
 
     const result = await Promise.race([
-      allExited.then(() => 'exited' as const),
+      allSettled.then(() => 'exited' as const),
       deadline
     ]);
 
