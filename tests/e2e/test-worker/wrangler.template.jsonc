@@ -11,7 +11,11 @@
     "BACKUP_BUCKET_NAME": "sandbox-e2e-test"
   },
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
   },
 
   "containers": [
