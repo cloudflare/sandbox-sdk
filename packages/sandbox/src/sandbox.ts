@@ -1603,10 +1603,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Persist cleanup to storage so state is clean on next container start.
     // Port tokens are intentionally preserved so preview URLs survive
-    // container restarts. Tokens are only removed on explicit
+    // container restarts; they are only removed on explicit
     // unexposePort() or full sandbox destroy(). onStart's
-    // restoreExposedPorts() replays storage into the container on the
-    // next start, so auth can trust storage without asking the container.
+    // restoreExposedPorts() replays those tokens into the container on
+    // the next start, which is what lets validatePortToken() answer from
+    // storage alone.
     await this.ctx.storage.delete('defaultSession');
   }
 
@@ -3289,12 +3290,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      // Revoke the token from storage before calling the container so
-      // validatePortToken stops honoring it during the container RPC.
-      // Otherwise a preview request arriving between the two awaits
-      // would authorize against storage and reach the backend process
-      // via containerFetch, which does not consult the container's
-      // exposed-port registry.
+      // Storage is the source of truth for preview-URL auth, so clear
+      // the token before the container RPC. A preview request that
+      // arrives during the container call sees no token, fails auth,
+      // and is rejected before containerFetch() can route it to the
+      // process running inside the sandbox. (containerFetch() does not
+      // gate on the container's exposed-port registry; it connects to
+      // the port number directly.)
       const tokens = await this.readPortTokens();
       if (tokens[port.toString()]) {
         delete tokens[port.toString()];
