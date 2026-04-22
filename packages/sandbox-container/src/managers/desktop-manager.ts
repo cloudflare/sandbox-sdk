@@ -198,7 +198,11 @@ export class DesktopManager {
     status: 'active' | 'partial' | 'inactive';
     processes: Record<string, DesktopProcessHealth>;
   } {
-    if (this.state === 'inactive' || this.processes.size === 0) {
+    if (
+      this.state === 'inactive' ||
+      this.state === 'stopping' ||
+      this.processes.size === 0
+    ) {
       return { status: 'inactive', processes: {} };
     }
 
