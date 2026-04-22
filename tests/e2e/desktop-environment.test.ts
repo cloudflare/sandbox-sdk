@@ -19,11 +19,8 @@ type DesktopScreenshotResult = {
   width: number;
   height: number;
 };
-type SuccessResult = { success: boolean };
-type ScreenSizeResult = { success: boolean; width: number; height: number };
 type CursorPositionResult = { success: boolean; x: number; y: number };
 type StreamUrlResult = { url: string };
-type ErrorResult = { error: string };
 
 const skipPortExposureTests =
   process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
@@ -43,17 +40,21 @@ describe('Desktop Environment', () => {
     try {
       await fetch(`${workerUrl}/api/desktop/stop`, {
         method: 'POST',
-        headers
+        headers,
+        signal: AbortSignal.timeout(2000)
       });
-    } catch {}
-    await cleanupTestSandbox(sandbox);
+      await cleanupTestSandbox(sandbox);
+    } catch {
+      console.warn('Failed to cleanup sandbox in good time.');
+    }
   }, 30000);
 
   test('should start desktop and report active status', async () => {
     const startResponse = await fetch(`${workerUrl}/api/desktop/start`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(startResponse.status).toBe(200);
@@ -64,7 +65,8 @@ describe('Desktop Environment', () => {
 
     const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(statusResponse.status).toBe(200);
@@ -78,7 +80,8 @@ describe('Desktop Environment', () => {
     const response = await fetch(`${workerUrl}/api/desktop/screenshot`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
@@ -100,57 +103,62 @@ describe('Desktop Environment', () => {
     const response = await fetch(`${workerUrl}/api/desktop/click`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ x: 500, y: 300 })
+      body: JSON.stringify({ x: 500, y: 300 }),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
-    const data = (await response.json()) as SuccessResult;
-    expect(data.success).toBe(true);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
   }, 15000);
 
   test('should type text', async () => {
     const response = await fetch(`${workerUrl}/api/desktop/type`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ text: 'hello desktop' })
+      body: JSON.stringify({ text: 'hello desktop' }),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
-    const data = (await response.json()) as SuccessResult;
-    expect(data.success).toBe(true);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
   }, 15000);
 
   test('should press key combination', async () => {
     const response = await fetch(`${workerUrl}/api/desktop/press`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ key: 'ctrl+a' })
+      body: JSON.stringify({ key: 'ctrl+a' }),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
-    const data = (await response.json()) as SuccessResult;
-    expect(data.success).toBe(true);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
   }, 15000);
 
   test('should return screen size matching configured resolution', async () => {
     const response = await fetch(`${workerUrl}/api/desktop/screen/size`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
-    const data = (await response.json()) as ScreenSizeResult;
-    expect(data.success).toBe(true);
-    expect(data.width).toBeGreaterThan(0);
-    expect(data.height).toBeGreaterThan(0);
-    expect(data.width).toBe(1024);
-    expect(data.height).toBe(768);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true, width: 1024, height: 768 })
+    );
   }, 15000);
 
   test('should return valid cursor coordinates', async () => {
     const response = await fetch(`${workerUrl}/api/desktop/cursor/position`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
@@ -168,7 +176,8 @@ describe('Desktop Environment', () => {
       const response = await fetch(`${workerUrl}/api/desktop/stream-url`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({})
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10000)
       });
 
       expect(response.status).toBe(200);
@@ -184,18 +193,21 @@ describe('Desktop Environment', () => {
     const response = await fetch(`${workerUrl}/api/desktop/mouse/move`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ x: 200, y: 150 })
+      body: JSON.stringify({ x: 200, y: 150 }),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBe(200);
-    const data = (await response.json()) as SuccessResult;
-    expect(data.success).toBe(true);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
 
     const posResponse = await fetch(
       `${workerUrl}/api/desktop/cursor/position`,
       {
         method: 'GET',
-        headers
+        headers,
+        signal: AbortSignal.timeout(10000)
       }
     );
 
@@ -204,64 +216,60 @@ describe('Desktop Environment', () => {
     expect(posData.y).toBeGreaterThanOrEqual(0);
   }, 15000);
 
+  test('should handle idempotent start', async () => {
+    const start = await fetch(`${workerUrl}/api/desktop/start`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
+    });
+    expect(start.status).toBe(200);
+
+    const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(10000)
+    });
+
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'active' })
+    );
+  }, 15000);
+
   test('should stop desktop and report inactive status', async () => {
     const stopResponse = await fetch(`${workerUrl}/api/desktop/stop`, {
       method: 'POST',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(stopResponse.status).toBe(200);
-    const stopData = (await stopResponse.json()) as SuccessResult;
-    expect(stopData.success).toBe(true);
+    await expect(stopResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
 
     const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(statusResponse.status).toBe(200);
-    const statusData = (await statusResponse.json()) as DesktopStatusResult;
-    expect(statusData.status).toBe('inactive');
-  }, 30000);
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'inactive' })
+    );
 
-  test('should throw error when operating on stopped desktop', async () => {
+    // Assert that attempting to make a request to a stopped instance fails.
     const response = await fetch(`${workerUrl}/api/desktop/screenshot`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
     });
 
     expect(response.status).toBeGreaterThanOrEqual(400);
-    const data = (await response.json()) as ErrorResult;
-    expect(data.error).toBeDefined();
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ error: expect.anything() })
+    );
   }, 15000);
-
-  test('should handle idempotent start', async () => {
-    const start1 = await fetch(`${workerUrl}/api/desktop/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({})
-    });
-    expect(start1.status).toBe(200);
-
-    const start2 = await fetch(`${workerUrl}/api/desktop/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({})
-    });
-    expect(start2.status).toBe(200);
-
-    const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
-      method: 'GET',
-      headers
-    });
-
-    const statusData = (await statusResponse.json()) as DesktopStatusResult;
-    expect(statusData.status).toBe('active');
-
-    await fetch(`${workerUrl}/api/desktop/stop`, {
-      method: 'POST',
-      headers
-    });
-  }, 90000);
 });
