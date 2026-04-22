@@ -382,6 +382,7 @@ export class DesktopService {
     op: string,
     args?: Record<string, unknown>
   ): Promise<unknown> {
+    this.ensureDesktopActive();
     this.ensureWorkerRunning();
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
