@@ -49,7 +49,8 @@ export function createTestHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Sandbox-Id': sandboxId
+    'X-Sandbox-Id': sandboxId,
+    'X-Sandbox-Transport': process.env.TEST_TRANSPORT ?? 'http'
   };
 
   if (sessionId) {

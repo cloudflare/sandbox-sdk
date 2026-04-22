@@ -7,7 +7,6 @@
 
   "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
-    "SANDBOX_TRANSPORT": "{{TRANSPORT}}",
     "BACKUP_BUCKET_NAME": "sandbox-e2e-test"
   },
   "observability": {

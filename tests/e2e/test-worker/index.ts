@@ -187,10 +187,18 @@ export default {
 
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
-    const sandboxId =
+    const baseSandboxId =
       request.headers.get('X-Sandbox-Id') ||
       url.searchParams.get('sandboxId') ||
       'default-test-sandbox';
+
+    const transport: 'http' | 'websocket' =
+      request.headers.get('X-Sandbox-Transport') === 'websocket'
+        ? 'websocket'
+        : 'http';
+
+    // Suffix sandbox ID with transport so each transport gets its own DO instance
+    const sandboxId = `${baseSandboxId}-${transport}`;
 
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
@@ -216,6 +224,7 @@ export default {
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
+      transport,
       ...(sleepAfter !== null && { sleepAfter })
     });
 
