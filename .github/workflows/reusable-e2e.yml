@@ -46,37 +46,26 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     outputs:
-      http-url: ${{ steps.urls.outputs.http_url }}
-      ws-url: ${{ steps.urls.outputs.ws_url }}
+      worker-url: ${{ steps.urls.outputs.worker_url }}
     steps:
       - name: Check if deploy can be skipped
         if: ${{ inputs.deploy_hash != '' }}
         id: deploy-check
         run: |
           EXPECTED="${{ inputs.deploy_hash }}"
-
-          # Check all workers — all must match to skip
-          ALL_MATCH=true
-          for TRANSPORT in http websocket; do
-            URL="https://${{ inputs.worker_name_prefix }}-${TRANSPORT}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
-            HASH=$(curl -sf --max-time 10 "$URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
-            if [[ "$HASH" != "$EXPECTED" ]]; then
-              ALL_MATCH=false
-              echo "::notice::${TRANSPORT} deploy_hash=$HASH (expected $EXPECTED)"
-            fi
-          done
-
-          if [[ "$ALL_MATCH" == "true" ]]; then
+          URL="https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
+          HASH=$(curl -sf --max-time 10 "$URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
+          if [[ "$HASH" == "$EXPECTED" ]]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "::notice::All workers report deploy_hash=$EXPECTED — skipping deploy"
+            echo "::notice::Worker reports deploy_hash=$EXPECTED — skipping deploy"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
-            echo "::notice::Deploy hash mismatch — deploying"
+            echo "::notice::Deploy hash mismatch ($HASH vs $EXPECTED) — deploying"
           fi
 
       # --- Capacity guard (only when deploy is needed) ---
       # Ensures enough container app headroom before deploying. Each PR
-      # creates 12 container apps (2 workers × 6 classes). The account
+      # creates 6 container apps (1 worker × 6 classes). The account
       # has a ~100 app limit. We keep a budget of 84 (leaving 16 headroom)
       # and evict the least-recently-active PR's resources when over budget.
       # Protects: current PR, main workers, and PRs with in-progress CI.
@@ -93,7 +82,7 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           SAFE_BUDGET=84
-          EXPECTED_PR_APPS=12
+          EXPECTED_PR_APPS=6
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
           if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then
@@ -108,8 +97,8 @@ jobs:
           # Use exact prefix match with trailing dash or end-of-name to
           # avoid pr-1 matching pr-10, pr-100, etc.
           CURRENT_PR="${{ inputs.worker_name_prefix }}"
-          OWN_APPS=$(echo "$CONTAINERS" | jq --arg prefix "${CURRENT_PR}-" \
-            '[.[] | select(.name | startswith($prefix) or . == $prefix)] | length')
+          OWN_APPS=$(echo "$CONTAINERS" | jq --arg prefix "${CURRENT_PR}" \
+            '[.[] | select(.name | startswith($prefix + "-") or . == $prefix)] | length')
           NEEDED=$((EXPECTED_PR_APPS - OWN_APPS))
           if [ "$NEEDED" -lt 0 ]; then NEEDED=0; fi
 
@@ -169,16 +158,14 @@ jobs:
             # Re-read live state to avoid double-counting with concurrent evictions
             LIVE_CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
             EVICTED=0
-            for suffix in "-http" "-websocket"; do
-              WORKER="sandbox-e2e-test-worker-pr-${PR_NUM}${suffix}"
-              IDS=$(echo "$LIVE_CONTAINERS" | jq -r --arg w "$WORKER" \
-                '.[] | select(.name | startswith($w)) | .id' 2>/dev/null)
-              wrangler delete --name "$WORKER" 2>/dev/null || true
-              for id in $IDS; do
-                if wrangler containers delete "$id" 2>/dev/null; then
-                  EVICTED=$((EVICTED + 1))
-                fi
-              done
+            WORKER="sandbox-e2e-test-worker-pr-${PR_NUM}"
+            IDS=$(echo "$LIVE_CONTAINERS" | jq -r --arg w "$WORKER" \
+              '.[] | select(.name | startswith($w + "-") or . == $w) | .id' 2>/dev/null)
+            wrangler delete --name "$WORKER" 2>/dev/null || true
+            for id in $IDS; do
+              if wrangler containers delete "$id" 2>/dev/null; then
+                EVICTED=$((EVICTED + 1))
+              fi
             done
             TOTAL_APPS=$((TOTAL_APPS - EVICTED))
             echo "  Evicted $EVICTED apps (total now: $TOTAL_APPS)"
@@ -237,36 +224,33 @@ jobs:
           name: build-${{ github.sha }}
           path: packages
 
-      - name: Deploy and configure workers
+      - name: Deploy and configure worker
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
-          for TRANSPORT in http websocket; do
-            WORKER="${{ inputs.worker_name_prefix }}-${TRANSPORT}"
-            echo "::group::Deploy ${TRANSPORT} worker"
-            cd tests/e2e/test-worker
-            ./generate-config.sh \
-              "${WORKER}" \
-              "${WORKER}" \
-              "${TRANSPORT}" \
-              "registry:${{ inputs.image_tag }}"
-            npx wrangler deploy \
-              --name "${WORKER}" \
-              ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
-            cd "$GITHUB_WORKSPACE"
-            echo "::endgroup::"
+          WORKER="${{ inputs.worker_name_prefix }}"
+          echo "::group::Deploy worker"
+          cd tests/e2e/test-worker
+          ./generate-config.sh \
+            "${WORKER}" \
+            "${WORKER}" \
+            "registry:${{ inputs.image_tag }}"
+          npx wrangler deploy \
+            --name "${WORKER}" \
+            ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
+          cd "$GITHUB_WORKSPACE"
+          echo "::endgroup::"
 
-            echo "::group::Inject ${TRANSPORT} worker secrets"
-            jq -n \
-              --arg a "$AWS_ACCESS_KEY_ID" \
-              --arg b "$AWS_SECRET_ACCESS_KEY" \
-              --arg c "$CLOUDFLARE_ACCOUNT_ID" \
-              --arg d "$R2_ACCESS_KEY_ID" \
-              --arg e "$R2_SECRET_ACCESS_KEY" \
-              --arg f "$DEPLOY_HASH" \
-              '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
-            | npx wrangler secret bulk --name "${WORKER}"
-            echo "::endgroup::"
-          done
+          echo "::group::Inject worker secrets"
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg d "$R2_ACCESS_KEY_ID" \
+            --arg e "$R2_SECRET_ACCESS_KEY" \
+            --arg f "$DEPLOY_HASH" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
+          | npx wrangler secret bulk --name "${WORKER}"
+          echo "::endgroup::"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -280,33 +264,30 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
-
-          for TRANSPORT in http websocket; do
-            WORKER="${{ inputs.worker_name_prefix }}-${TRANSPORT}"
-            APP_IDS=$(echo "$CONTAINERS" | jq -r --arg w "$WORKER" \
-              '[.[] | select(.name | startswith($w))] | .[].id')
-            if [ -z "$APP_IDS" ]; then
-              echo "::warning::No container apps found for ${WORKER} — skipping warm pool"
-              continue
-            fi
+          WORKER="${{ inputs.worker_name_prefix }}"
+          APP_IDS=$(echo "$CONTAINERS" | jq -r --arg w "$WORKER" \
+            '[.[] | select(.name | startswith($w + "-") or . == $w)] | .[].id')
+          if [ -z "$APP_IDS" ]; then
+            echo "::warning::No container apps found for ${WORKER} — skipping warm pool"
+          else
             for APP_ID in $APP_IDS; do
               echo "Setting warm pool for ${WORKER} (app $APP_ID)"
               curl -sf -X PATCH \
                 "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/containers/applications/${APP_ID}" \
                 -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d '{"configuration":{"durable_object_offset_instances": 10}}' || echo "::warning::Failed to set warm pool for app ${APP_ID}"
+                -d '{"configuration":{"durable_object_offset_instances": 25}}' || echo "::warning::Failed to set warm pool for app ${APP_ID}"
             done
-          done
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      # Always set URLs (deterministic, needed by test jobs)
-      - name: Set worker URLs
+
+      # Always set URL (deterministic, needed by test jobs)
+      - name: Set worker URL
         id: urls
         run: |
-          echo "http_url=https://${{ inputs.worker_name_prefix }}-http.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
-          echo "ws_url=https://${{ inputs.worker_name_prefix }}-websocket.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+          echo "worker_url=https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
   test-vitest:
     permissions:
@@ -319,11 +300,7 @@ jobs:
       matrix:
         include:
           - transport: http
-            worker_url: http-url
-            sandbox_id: e2e-http
           - transport: websocket
-            worker_url: ws-url
-            sandbox_id: e2e-ws
     steps:
       - uses: actions/checkout@v6
         with:
@@ -364,8 +341,9 @@ jobs:
       - name: E2E tests (${{ matrix.transport }} transport)
         run: npx vitest run --config vitest.e2e.config.ts
         env:
-          TEST_WORKER_URL: ${{ needs.deploy.outputs[matrix.worker_url] }}
-          TEST_SANDBOX_ID: ${{ matrix.sandbox_id }}-${{ github.run_id }}
+          TEST_WORKER_URL: ${{ needs.deploy.outputs.worker-url }}
+          TEST_SANDBOX_ID: e2e-test-${{ github.run_id }}
+          TEST_TRANSPORT: ${{ matrix.transport }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -434,7 +412,8 @@ jobs:
       - name: E2E tests (browser)
         run: npx playwright test --config tests/e2e/browser/playwright.config.ts
         env:
-          TEST_WORKER_URL: ${{ needs.deploy.outputs.http-url }}
+          TEST_WORKER_URL: ${{ needs.deploy.outputs.worker-url }}
+          TEST_TRANSPORT: http
           TEST_SANDBOX_ID: browser-test-${{ github.run_id }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
