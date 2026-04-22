@@ -1,9 +1,11 @@
 # Authentication Example
 
-A zero-trust proxy that lets sandboxes access external APIs without exposing credentials.
+Demonstrates secure credential injection using outbound traffic interception.
+Secrets live in the Worker environment and are injected transparently — the
+sandbox never sees them and requires no configuration.
 
 ```
-Sandbox (JWT token) → Worker Proxy (validates, injects credentials) → External API
+Sandbox (plain request) → outboundByHost handler (injects credentials) → External API
 ```
 
 ## Quick Start
@@ -18,15 +20,12 @@ npm run dev
 
 ```
 src/
-├── index.ts              # Worker entry point
-├── proxy/                # Proxy framework (copy as-is)
+├── index.ts              # Worker entry point + Sandbox class with outbound handlers
 └── services/
-    ├── anthropic/        # Claude Code / Anthropic SDK
-    ├── github/           # Git operations with OAuth lookup
-    └── r2/               # R2 bucket access via S3 proxy
+    ├── anthropic/        # Handler for api.anthropic.com
+    ├── github/           # Handler for github.com
+    └── r2/               # Handler for virtual r2.worker hostname
 ```
-
-Each service has its own README with setup and usage instructions.
 
 ## Services
 
@@ -36,30 +35,51 @@ Each service has its own README with setup and usage instructions.
 | [github](src/services/github/)       | Git clone/push                | `GITHUB_TOKEN`                                            |
 | [r2](src/services/r2/)               | R2 bucket access              | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` |
 
-## Adding a Service
+## How It Works
 
-Create `src/services/myapi/index.ts`:
+Each service defines an outbound handler function. The `Sandbox` class registers
+them on `outboundByHost`:
 
 ```typescript
-import type { ServiceConfig } from '../../proxy';
-
-export const myapi: ServiceConfig<Env> = {
-  target: 'https://api.example.com',
-  validate: (req) =>
-    req.headers.get('Authorization')?.replace('Bearer ', '') ?? null,
-  transform: async (req, ctx) => {
-    req.headers.set('Authorization', `Bearer ${ctx.env.MY_API_KEY}`);
-    return req;
-  }
+Sandbox.outboundByHost = {
+  'api.anthropic.com': anthropicHandler,
+  'github.com': githubHandler,
+  'r2.worker': r2Handler
 };
 ```
 
-Add to `src/services/index.ts` and `src/index.ts`.
+When the sandbox makes an HTTP/HTTPS request to one of those hosts, the
+corresponding handler runs in the Worker runtime (outside the sandbox), injects
+the real credentials from `env`, and forwards the request.
+
+For R2, the sandbox uses the virtual hostname `http://r2.worker/<bucket>/<key>`.
+The handler re-signs the request with real AWS credentials before forwarding to
+the actual R2 endpoint.
+
+## Adding a Service
+
+Add an outbound handler in `src/services/myapi/index.ts`:
+
+```typescript
+export function myapiHandler(request: Request, env: Env): Promise<Response> {
+  const req = new Request(request);
+  req.headers.set('Authorization', `Bearer ${env.MY_API_KEY}`);
+  return fetch(req);
+}
+```
+
+Register it in `src/index.ts`:
+
+```typescript
+Sandbox.outboundByHost = {
+  'api.example.com': myapiHandler
+};
+```
 
 ## Production
 
 ```bash
-wrangler secret put PROXY_JWT_SECRET
+wrangler secret put ANTHROPIC_API_KEY
 # Add secrets for each service you use
 npm run deploy
 ```

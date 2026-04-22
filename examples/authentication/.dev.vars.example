@@ -1,11 +1,8 @@
-# Required
-PROXY_JWT_SECRET=your-secret-key-here  # openssl rand -base64 32
-
 # Service credentials (add as needed)
 ANTHROPIC_API_KEY=sk-ant-...
 GITHUB_TOKEN=github_pat_...  # Fine-grained PAT with 'Contents' read/write
 
-# R2 bucket access (for s3fs mounting without exposing credentials)
+# R2 bucket access
 # Get these from Cloudflare dashboard: R2 > Manage R2 API Tokens
 R2_ACCESS_KEY_ID=your-r2-access-key-id
 R2_SECRET_ACCESS_KEY=your-r2-secret-access-key

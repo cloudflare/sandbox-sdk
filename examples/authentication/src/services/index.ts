@@ -1,3 +1,3 @@
-export { anthropic, configureAnthropic } from './anthropic';
-export { configureGithub, github } from './github';
-export { configureR2, r2 } from './r2';
+export { anthropicHandler } from './anthropic';
+export { githubHandler } from './github';
+export { r2Handler } from './r2';

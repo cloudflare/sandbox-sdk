@@ -1,61 +1,21 @@
-import type { Sandbox } from '@cloudflare/sandbox';
-
-import type { ServiceConfig } from '../../proxy';
-
 /**
- * GitHub git operations (clone/push) proxy.
+ * Outbound handler for github.com.
  *
- * Rewrites git URLs to go through the proxy, which injects a GitHub token.
- * Sandbox code uses normal git commands without any credentials.
+ * Intercepts git HTTPS requests from the sandbox and injects the real GitHub
+ * token. The sandbox runs plain `git clone https://github.com/...` with no
+ * credential configuration — the token is added transparently here.
  */
-
-// Git smart HTTP protocol paths - .git suffix is optional
-const ALLOWED_GIT_PATHS =
-  /^\/.+\/.+(\.git)?\/(info\/refs|git-upload-pack|git-receive-pack)$/;
-
-export const github: ServiceConfig<Env> = {
-  target: 'https://github.com',
-
-  validate: (req) =>
-    req.headers.get('Authorization')?.replace('Bearer ', '') ?? null,
-
-  transform: async (req, ctx) => {
-    if (!ctx.env.GITHUB_TOKEN) {
-      return new Response('GITHUB_TOKEN not configured', { status: 500 });
-    }
-
-    const url = new URL(req.url);
-
-    // Only allow git-specific paths (info/refs, git-upload-pack, git-receive-pack)
-    if (!ALLOWED_GIT_PATHS.test(url.pathname)) {
-      return new Response('Invalid git path', { status: 400 });
-    }
-
-    // Use Basic auth with x-access-token (GitHub's preferred method for tokens)
-    req.headers.set(
-      'Authorization',
-      `Basic ${btoa(`x-access-token:${ctx.env.GITHUB_TOKEN}`)}`
+export function githubHandler(request: Request, env: Env): Promise<Response> {
+  if (!env.GITHUB_TOKEN) {
+    return Promise.resolve(
+      new Response('GITHUB_TOKEN not configured', { status: 500 })
     );
-    req.headers.set('User-Agent', 'Sandbox-Git-Proxy');
-
-    return req;
   }
-};
-
-export async function configureGithub(
-  sandbox: Sandbox,
-  proxyBase: string,
-  token: string
-) {
-  const gitProxy = `${proxyBase}/proxy/github`;
-
-  // Rewrite github.com URLs to go through the proxy
-  await sandbox.exec(
-    `git config --global url."${gitProxy}/".insteadOf "https://github.com/"`
+  const req = new Request(request);
+  req.headers.set(
+    'Authorization',
+    `Basic ${btoa(`x-access-token:${env.GITHUB_TOKEN}`)}`
   );
-
-  // Add JWT token for proxy authentication
-  await sandbox.exec(
-    `git config --global http.${gitProxy}/.extraheader "Authorization: Bearer ${token}"`
-  );
+  req.headers.set('User-Agent', 'git/sandbox');
+  return fetch(req);
 }

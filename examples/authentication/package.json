@@ -12,8 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "aws4fetch": "^1.0.20",
-    "jose": "^5.2.0"
+    "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",

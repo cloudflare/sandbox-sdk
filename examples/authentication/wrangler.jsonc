@@ -8,11 +8,6 @@
     "enabled": true
   },
 
-  // Environment variables
-  "vars": {
-    "PROXY_JWT_SECRET": "dev-secret-change-in-production"
-  },
-
   // Container configuration
   "containers": [
     {
