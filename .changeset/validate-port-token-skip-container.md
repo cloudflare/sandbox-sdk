@@ -9,3 +9,6 @@ preview URL do less work per request. `unexposePort()` now revokes
 the preview token before signaling the container, so a preview
 request that races an `unexposePort()` call can no longer reach the
 process running inside the sandbox after the token has been revoked.
+`getExposedPorts()` also no longer throws when it encounters a port
+left in an inconsistent state by a failed `unexposePort()`; such
+ports are omitted from the result and logged as a warning.

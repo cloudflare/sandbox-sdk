@@ -1368,6 +1368,43 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('getExposedPorts orphan handling', () => {
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox');
+
+      vi.spyOn(sandbox.client.ports, 'getExposedPorts').mockResolvedValue({
+        success: true,
+        ports: [
+          { port: 8080, exposedAt: new Date().toISOString() },
+          { port: 9090, exposedAt: new Date().toISOString() }
+        ],
+        count: 2,
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Storage has a token for 9090 but not for 8080, so 8080 is an
+      // orphan from getExposedPorts()'s perspective.
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'portTokens') return { '9090': { token: 'token9090' } };
+        if (key === 'sandboxName') return 'test-sandbox';
+        return null;
+      });
+    });
+
+    it('omits ports with no token from the result', async () => {
+      const warnSpy = vi.spyOn((sandbox as any).logger, 'warn');
+
+      const result = await sandbox.getExposedPorts('example.com');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].port).toBe(9090);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('no token in storage'),
+        expect.objectContaining({ port: 8080 })
+      );
+    });
+  });
+
   describe('sleepAfter configuration', () => {
     it('should call renewActivityTimeout when setSleepAfter is called', async () => {
       // Spy on renewActivityTimeout (inherited from Container)

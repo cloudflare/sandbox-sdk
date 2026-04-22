@@ -3346,24 +3346,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Read all tokens from storage (protected by input gates)
     const tokens = await this.readPortTokens();
 
-    return response.ports.map((port) => {
+    // A port reported by the container with no corresponding token in
+    // storage is an orphan. It cannot produce a valid preview URL (the
+    // token is what the URL binds to), so it is omitted from the
+    // result. The next container restart reconciles the inconsistency
+    // because restoreExposedPorts() rebuilds the container registry
+    // from storage.
+    return response.ports.flatMap((port) => {
       const entry = tokens[port.port.toString()];
       if (!entry) {
-        throw new Error(
-          `Port ${port.port} is exposed but has no token. This should not happen.`
+        this.logger.warn(
+          'Port exposed on container but no token in storage; omitting from preview URL list',
+          { port: port.port }
         );
+        return [];
       }
 
-      return {
-        url: this.constructPreviewUrl(
-          port.port,
-          this.sandboxName!,
-          hostname,
-          entry.token
-        ),
-        port: port.port,
-        status: port.status
-      };
+      return [
+        {
+          url: this.constructPreviewUrl(
+            port.port,
+            this.sandboxName!,
+            hostname,
+            entry.token
+          ),
+          port: port.port,
+          status: port.status
+        }
+      ];
     });
   }
 
