@@ -279,7 +279,8 @@ jobs:
       - name: Warm container pool
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
-          CONTAINERS=$(wrangler containers list --json 2>/dev/null)
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
+
           for TRANSPORT in http websocket; do
             WORKER="${{ inputs.worker_name_prefix }}-${TRANSPORT}"
             APP_IDS=$(echo "$CONTAINERS" | jq -r --arg w "$WORKER" \
