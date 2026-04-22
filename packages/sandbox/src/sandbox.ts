@@ -106,6 +106,7 @@ type SandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+  transport?: 'http' | 'websocket';
 };
 
 type CachedSandboxConfiguration = {
@@ -115,6 +116,7 @@ type CachedSandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+  transport?: 'http' | 'websocket';
 };
 
 type ConfigurableSandboxStub = {
@@ -126,6 +128,7 @@ type ConfigurableSandboxStub = {
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
+  setTransport?: (transport: 'http' | 'websocket') => Promise<void>;
 };
 
 const sandboxConfigurationCache = new WeakMap<
@@ -199,6 +202,13 @@ function buildSandboxConfiguration(
     configuration.containerTimeouts = options.containerTimeouts;
   }
 
+  if (
+    options?.transport !== undefined &&
+    cached?.transport !== options.transport
+  ) {
+    configuration.transport = options.transport;
+  }
+
   return configuration;
 }
 
@@ -208,7 +218,8 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.baseUrl !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
-    configuration.containerTimeouts !== undefined
+    configuration.containerTimeouts !== undefined ||
+    configuration.transport !== undefined
   );
 }
 
@@ -233,6 +244,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
+    }),
+    ...(configuration.transport !== undefined && {
+      transport: configuration.transport
     })
   };
 }
@@ -278,6 +292,12 @@ function applySandboxConfiguration(
     operations.push(
       stub.setContainerTimeouts?.(configuration.containerTimeouts) ??
         Promise.resolve()
+    );
+  }
+
+  if (configuration.transport !== undefined) {
+    operations.push(
+      stub.setTransport?.(configuration.transport) ?? Promise.resolve()
     );
   }
 
@@ -697,6 +717,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
+
+    if (configuration.transport !== undefined) {
+      await this.setTransport(configuration.transport);
+    }
   }
 
   // RPC method to set the base URL
@@ -819,6 +843,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
 
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
+  }
+
+  /**
+   * RPC method to set the transport protocol.
+   * Recreates the internal HTTP client to use the specified transport.
+   */
+  async setTransport(transport: 'http' | 'websocket'): Promise<void> {
+    if (transport !== 'http' && transport !== 'websocket') {
+      this.logger.warn(
+        `Invalid transport value: "${transport}". Must be "http" or "websocket". Ignoring.`
+      );
+      return;
+    }
+
+    if (this.transport === transport) {
+      return;
+    }
+
+    const previousClient = this.client;
+    this.transport = transport;
+    this.client = this.createSandboxClient();
+    this.codeInterpreter = new CodeInterpreter(this);
+    previousClient.disconnect();
+    this.logger.debug('Transport updated', { transport });
   }
 
   /**
