@@ -236,54 +236,40 @@ describe('Desktop Environment', () => {
     );
   }, 15000);
 
-  // Known flaky: desktop stop can crash the container's Bun process,
-  // causing the subsequent status call to time out. Run but don't fail CI.
-  test('should stop desktop and report inactive status', async ({
-    annotate
-  }) => {
-    try {
-      const stopResponse = await fetch(`${workerUrl}/api/desktop/stop`, {
-        method: 'POST',
-        headers,
-        signal: AbortSignal.timeout(10000)
-      });
+  test('should stop desktop and report inactive status', async () => {
+    const stopResponse = await fetch(`${workerUrl}/api/desktop/stop`, {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(10000)
+    });
 
-      expect(stopResponse.status).toBe(200);
-      await expect(stopResponse.json()).resolves.toEqual(
-        expect.objectContaining({ success: true })
-      );
+    expect(stopResponse.status).toBe(200);
+    await expect(stopResponse.json()).resolves.toEqual(
+      expect.objectContaining({ success: true })
+    );
 
-      const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
-        method: 'GET',
-        headers,
-        signal: AbortSignal.timeout(10000)
-      });
+    const statusResponse = await fetch(`${workerUrl}/api/desktop/status`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(10000)
+    });
 
-      expect(statusResponse.status).toBe(200);
-      await expect(statusResponse.json()).resolves.toEqual(
-        expect.objectContaining({ status: 'inactive' })
-      );
-      // Assert that attempting to make a request to a stopped instance fails.
-      const response = await fetch(`${workerUrl}/api/desktop/screenshot`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(10000)
-      });
+    expect(statusResponse.status).toBe(200);
+    await expect(statusResponse.json()).resolves.toEqual(
+      expect.objectContaining({ status: 'inactive' })
+    );
 
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      await expect(response.json()).resolves.toEqual(
-        expect.objectContaining({ error: expect.anything() })
-      );
-    } catch (error) {
-      if (error instanceof Error && error.name === 'TimeoutError') {
-        await annotate(
-          `Known flakey test — desktop stop crashed container: ${error.message}`,
-          'flake'
-        );
-        return;
-      }
-      throw error;
-    }
+    // Assert that attempting to make a request to a stopped instance fails.
+    const response = await fetch(`${workerUrl}/api/desktop/screenshot`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ error: expect.anything() })
+    );
   }, 15000);
 });
