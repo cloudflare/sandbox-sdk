@@ -45,7 +45,8 @@ export function createSessionId(): string {
  */
 export function createTestHeaders(
   sandboxId: string,
-  sessionId?: string
+  sessionId?: string,
+  transport?: string
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -54,6 +55,10 @@ export function createTestHeaders(
 
   if (sessionId) {
     headers['X-Session-Id'] = sessionId;
+  }
+
+  if (transport) {
+    headers['X-Sandbox-Transport'] = transport;
   }
 
   return headers;

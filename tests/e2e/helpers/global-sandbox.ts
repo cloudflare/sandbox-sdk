@@ -21,7 +21,9 @@ export interface TestSandbox {
   sandboxId: string;
   /** Sandbox image type used for routing. */
   type: SandboxType;
-  /** Create headers with optional session ID. Includes sandbox type. */
+  /** Transport protocol used for this sandbox. */
+  transport: string;
+  /** Create headers with optional session ID. Includes sandbox type and transport. */
   headers: (sessionId?: string) => Record<string, string>;
   /** Generate a unique path for test isolation within this sandbox. */
   uniquePath: (prefix: string) => string;
@@ -30,6 +32,8 @@ export interface TestSandbox {
 export interface CreateTestSandboxOptions {
   /** Container image type. Defaults to 'default' (base image). */
   type?: SandboxType;
+  /** Transport protocol. Defaults to TEST_TRANSPORT env var, then 'http'. */
+  transport?: string;
   /** Command to run for initialization. Defaults to 'echo ready'. */
   initCommand?: string;
   /** sleepAfter value applied to the sandbox for every request in this helper. */
@@ -43,13 +47,24 @@ export interface CreateTestSandboxOptions {
 export async function createTestSandbox(
   options: CreateTestSandboxOptions = {}
 ): Promise<TestSandbox> {
-  const { type = 'default', initCommand = 'echo ready', sleepAfter } = options;
+  const {
+    type = 'default',
+    transport = process.env.TEST_TRANSPORT,
+    initCommand = 'echo ready',
+    sleepAfter
+  } = options;
   const workerUrl = await getWorkerUrl();
   const sandboxId = createSandboxId();
 
+  if (!transport) {
+    throw new Error(
+      'Transport must be provided either as an argument or via TEST_TRANSPORT env'
+    );
+  }
+
   const makeHeaders = (sessionId?: string): Record<string, string> => {
     const h: Record<string, string> = {
-      ...createTestHeaders(sandboxId, sessionId)
+      ...createTestHeaders(sandboxId, sessionId, transport)
     };
     if (type !== 'default') {
       h['X-Sandbox-Type'] = type;
@@ -78,6 +93,7 @@ export async function createTestSandbox(
     workerUrl,
     sandboxId,
     type,
+    transport,
     headers: makeHeaders,
     uniquePath: (prefix: string) =>
       `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`

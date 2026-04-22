@@ -62,6 +62,7 @@ interface Env {
   R2_SECRET_ACCESS_KEY?: string;
   BACKUP_BUCKET_NAME?: string;
   DEPLOY_HASH?: string;
+  SANDBOX_TRANSPORT?: string;
 }
 
 /**
@@ -187,10 +188,19 @@ export default {
 
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
-    const sandboxId =
+    const baseSandboxId =
       request.headers.get('X-Sandbox-Id') ||
       url.searchParams.get('sandboxId') ||
       'default-test-sandbox';
+
+    // Transport resolution: X-Sandbox-Transport header > SANDBOX_TRANSPORT env var > 'http'
+    const transportHeader = request.headers.get('X-Sandbox-Transport');
+    const transportRaw = transportHeader || env.SANDBOX_TRANSPORT || 'http';
+    const transport: 'http' | 'websocket' =
+      transportRaw === 'websocket' ? 'websocket' : 'http';
+
+    // Suffix sandbox ID with transport so each transport gets its own DO instance
+    const sandboxId = `${baseSandboxId}-${transport}`;
 
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
@@ -216,6 +226,7 @@ export default {
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
+      transport,
       ...(sleepAfter !== null && { sleepAfter })
     });
 
