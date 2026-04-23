@@ -127,6 +127,18 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     }
 
     const process = processResult.data;
+    const logger = this.logger;
+
+    // Hoist listener references so cancel() can remove them
+    let outputListener:
+      | ((stream: 'stdout' | 'stderr', data: string) => void)
+      | undefined;
+    let statusListener: ((status: string) => void) | undefined;
+
+    const cleanup = () => {
+      if (outputListener) process.outputListeners.delete(outputListener);
+      if (statusListener) process.statusListeners.delete(statusListener);
+    };
 
     // Create SSE stream
     const stream = new ReadableStream({
@@ -159,7 +171,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         }
 
         // Set up output listeners for future output
-        const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+        outputListener = (stream: 'stdout' | 'stderr', data: string) => {
           try {
             const eventData = `data: ${JSON.stringify({
               type: stream, // 'stdout' or 'stderr' directly
@@ -169,14 +181,20 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
             controller.enqueue(new TextEncoder().encode(eventData));
           } catch (err) {
             if (err instanceof TypeError) {
-              // Stream was closed or cancelled — just cleanup
-              process.outputListeners.delete(outputListener);
-              process.statusListeners.delete(statusListener);
+              // Stream was closed or cancelled — remove self to stop further writes
+              cleanup();
+            } else {
+              logger.error(
+                'Unexpected error in output listener',
+                err instanceof Error ? err : new Error(String(err))
+              );
+              controller.error(err);
+              cleanup();
             }
           }
         };
 
-        const statusListener = (status: string) => {
+        statusListener = (status: string) => {
           // Close stream when process completes
           if (['completed', 'failed', 'killed', 'error'].includes(status)) {
             try {
@@ -189,10 +207,16 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
               controller.close();
             } catch (err) {
               if (err instanceof TypeError) {
-                // Stream already closed — just cleanup
-                process.outputListeners.delete(outputListener);
-                process.statusListeners.delete(statusListener);
+                // Stream already closed — just clean up listeners
+              } else {
+                logger.error(
+                  'Unexpected error in status listener',
+                  err instanceof Error ? err : new Error(String(err))
+                );
+                controller.error(err);
               }
+            } finally {
+              cleanup();
             }
           }
         };
@@ -215,18 +239,21 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
             controller.close();
           } catch (err) {
             if (err instanceof TypeError) {
-              // Stream already closed — just cleanup
-              process.outputListeners.delete(outputListener);
-              process.statusListeners.delete(statusListener);
+              // Stream already closed — just clean up listeners
+            } else {
+              logger.error(
+                'Unexpected error sending final event',
+                err instanceof Error ? err : new Error(String(err))
+              );
+              controller.error(err);
             }
+          } finally {
+            cleanup();
           }
         }
-
-        // Cleanup when stream is cancelled
-        return () => {
-          process.outputListeners.delete(outputListener);
-          process.statusListeners.delete(statusListener);
-        };
+      },
+      cancel() {
+        cleanup();
       }
     });
 
