@@ -1774,6 +1774,49 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('configure() idempotency', () => {
+    it('should only renew activity timeout once across repeated identical configure({ sleepAfter }) calls', async () => {
+      // Regression test for the config-reapply bug: the SDK-side getSandbox()
+      // path re-invokes configure() on every cold-isolate cache miss. The DO
+      // must treat identical reapply as a no-op so sandbox lifetimes are not
+      // silently extended.
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.configure({ sleepAfter: '3s' });
+      const renewCallsAfterFirst = renewSpy.mock.calls.length;
+
+      // Sanity check: the first configure actually exercised the setter path.
+      expect(renewCallsAfterFirst).toBeGreaterThan(0);
+
+      await sandbox.configure({ sleepAfter: '3s' });
+
+      // The second configure with identical values must not trigger another
+      // renewal.
+      expect(renewSpy.mock.calls.length).toBe(renewCallsAfterFirst);
+    });
+
+    it('should not write storage on repeated identical configure() calls', async () => {
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+
+      await sandbox.configure({
+        sleepAfter: '3s',
+        keepAlive: true
+      });
+      const putCallsAfterFirst = mockCtx.storage.put.mock.calls.length;
+
+      // Sanity check: the first configure actually wrote something.
+      expect(putCallsAfterFirst).toBeGreaterThan(putCallsBefore);
+
+      await sandbox.configure({
+        sleepAfter: '3s',
+        keepAlive: true
+      });
+
+      // Second call with identical values must not persist anything new.
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsAfterFirst);
+    });
+  });
+
   describe('backup path allowlist', () => {
     function createBackupBucket() {
       return {
