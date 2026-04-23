@@ -5,14 +5,12 @@
  * real API key. The sandbox never sees the credential — it can send any
  * placeholder value (or omit the header entirely).
  */
-export function anthropicHandler(
+export async function anthropicHandler(
   request: Request,
   env: Env
 ): Promise<Response> {
   if (!env.ANTHROPIC_API_KEY) {
-    return Promise.resolve(
-      new Response('ANTHROPIC_API_KEY not configured', { status: 500 })
-    );
+    return new Response('ANTHROPIC_API_KEY not configured', { status: 500 });
   }
   const req = new Request(request);
   req.headers.set('x-api-key', env.ANTHROPIC_API_KEY);
