@@ -175,16 +175,14 @@ jobs:
 
       - name: Login to registries
         run: |
-          CREDS=$(curl -sf -X POST \
-            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"expiration_minutes": 30, "permissions": ["pull", "push", "library_push"]}')
-          CF_USER=$(echo "$CREDS" | jq -r '.result.username')
-          CF_PASS=$(echo "$CREDS" | jq -r '.result.password')
-          echo "$CF_PASS" | docker login registry.cloudflare.com -u "$CF_USER" --password-stdin
-          echo "$CF_PASS" | crane auth login registry.cloudflare.com --password-stdin -u "$CF_USER"
-          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
+          source .github/cf-registry-login.sh
+          cf_registry_credentials 30 '["pull", "push", "library_push"]'
+          echo "$CF_REGISTRY_PASSWORD" | docker login registry.cloudflare.com \
+            -u "$CF_REGISTRY_USERNAME" --password-stdin
+          echo "$CF_REGISTRY_PASSWORD" | crane auth login registry.cloudflare.com \
+            --password-stdin -u "$CF_REGISTRY_USERNAME"
+          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io \
+            --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
