@@ -751,7 +751,9 @@
       let turnActive = false;
       let activeAgentMsg = null; // index into messages[]
       const messages = []; // [{role, text, streaming, items[]}] or [{role, text, ts}]
-      const items = {}; // itemId → {id, type, ...metadata}
+      // Null-prototype map; keys come straight from server payloads
+      // (`item.id`) and are looked up without traversing Object.prototype.
+      const items = Object.create(null); // itemId → {id, type, ...metadata}
 
       // --- DOM refs ---
 
