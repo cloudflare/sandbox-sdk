@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 export { Sandbox } from '@cloudflare/sandbox';
 
 export interface ArtifactsRepoInfo {
+  id: string;
   name: string;
   remote: string;
   defaultBranch: string;
@@ -11,26 +12,30 @@ export interface ArtifactsRepoInfo {
 }
 
 export interface ArtifactsTokenResult {
+  id: string;
   expiresAt: string;
   plaintext: string;
+  scope: 'write' | 'read';
 }
 
-export interface ArtifactsRepo {
-  info(): Promise<ArtifactsRepoInfo | null>;
+export interface ArtifactsRepo extends ArtifactsRepoInfo {
   createToken(
     scope?: 'write' | 'read',
     ttl?: number
   ): Promise<ArtifactsTokenResult>;
 }
 
+export interface ArtifactsCreateRepoResult {
+  id: string;
+  name: string;
+  defaultBranch: string;
+  remote: string;
+  token: string;
+}
+
 export interface Artifacts {
-  get(name: string): Promise<ArtifactsRepo | null>;
-  create(name: string): Promise<{
-    defaultBranch: string;
-    expiresAt: string;
-    remote: string;
-    token: string;
-  }>;
+  get(name: string): Promise<ArtifactsRepo>;
+  create(name: string): Promise<ArtifactsCreateRepoResult>;
 }
 
 interface Env {
@@ -47,7 +52,6 @@ interface SandboxRepoState {
   remote: string;
   repoExisted: boolean;
   sandbox: Sandbox;
-  tokenExpiresAt: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -62,31 +66,24 @@ app.post('/sandboxes/:id/setup', async (c) => {
     repoExisted: state.repoExisted,
     remote: state.remote,
     defaultBranch: state.defaultBranch,
-    tokenExpiresAt: state.tokenExpiresAt,
     message: 'Sandbox is ready to use ARTIFACTS_GIT_REMOTE.'
   });
 });
 
 app.get('/sandboxes/:id/repo', async (c) => {
   const sandboxId = c.req.param('id');
-  const repo = await c.env.ARTIFACTS.get(sandboxId);
+  const repo = await getRepoOrNull(c.env, sandboxId);
 
   if (!repo) {
     return c.json({ error: 'Repo not found for this sandbox ID.' }, 404);
   }
 
-  const info = await repo.info();
-
-  if (!info) {
-    return c.json({ error: 'Repo metadata not found.' }, 404);
-  }
-
   return c.json({
     sandboxId,
-    repo: info.name,
-    remote: info.remote,
-    defaultBranch: info.defaultBranch,
-    lastPushAt: info.lastPushAt
+    repo: repo.name,
+    remote: repo.remote,
+    defaultBranch: repo.defaultBranch,
+    lastPushAt: repo.lastPushAt
   });
 });
 
@@ -160,35 +157,25 @@ function getFilename(filename?: string) {
 
 async function ensureSandboxRepo(env: Env, sandboxId: string) {
   const sandbox = getSandbox(env.Sandbox, sandboxId);
-  // Mirror the current binding methods the example uses so the Worker code stays explicit.
-  const existingRepo = await env.ARTIFACTS.get(sandboxId);
+  const existingRepo = await getRepoOrNull(env, sandboxId);
 
   let defaultBranch: string;
   let remote: string;
   let token: string;
-  let tokenExpiresAt: string;
   let repoExisted = false;
 
   if (existingRepo) {
-    const info = await existingRepo.info();
-
-    if (!info) {
-      throw new Error('Repo metadata not found');
-    }
-
     repoExisted = true;
-    defaultBranch = info.defaultBranch;
-    remote = info.remote;
+    defaultBranch = existingRepo.defaultBranch;
+    remote = existingRepo.remote;
     const createdToken = await existingRepo.createToken('write', 3600);
     token = createdToken.plaintext;
-    tokenExpiresAt = createdToken.expiresAt;
   } else {
     const created = await env.ARTIFACTS.create(sandboxId);
 
     defaultBranch = created.defaultBranch;
     remote = created.remote;
     token = created.token;
-    tokenExpiresAt = created.expiresAt;
   }
 
   // The sandbox gets a normal authenticated Git remote it can reuse across commands.
@@ -200,9 +187,27 @@ async function ensureSandboxRepo(env: Env, sandboxId: string) {
     sandbox,
     defaultBranch,
     remote,
-    repoExisted,
-    tokenExpiresAt
+    repoExisted
   } satisfies SandboxRepoState;
+}
+
+async function getRepoOrNull(env: Env, sandboxId: string) {
+  try {
+    return await env.ARTIFACTS.get(sandboxId);
+  } catch (error) {
+    if (isMissingRepoError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function isMissingRepoError(error: unknown) {
+  return (
+    error instanceof Error &&
+    /not found|does not exist|missing/i.test(error.message)
+  );
 }
 
 const COMMIT_SCRIPT = [

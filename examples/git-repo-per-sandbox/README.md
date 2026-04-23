@@ -16,7 +16,6 @@ This example uses the same ID for the sandbox and the Artifacts repo. It creates
 - `POST /sandboxes/:id/setup`
   - Creates or reuses the sandbox and repo
   - Stores `ARTIFACTS_GIT_REMOTE` inside the sandbox
-  - Returns the write token expiration time used for the sandbox remote
 - `GET /sandboxes/:id/repo`
   - Returns the existing repo metadata for that sandbox ID
 - `POST /sandboxes/:id/commit`
@@ -79,3 +78,4 @@ If you omit `filename`, the example creates a unique file name for you.
 - The sandbox receives an authenticated Git remote through `ARTIFACTS_GIT_REMOTE`.
 - The Worker mints a short-lived write token and does not return that secret in API responses.
 - The example returns the public repo remote in JSON responses, not the authenticated one.
+- When repo lookup fails, the example only falls back to `create()` for missing repos. Other binding errors still surface.
