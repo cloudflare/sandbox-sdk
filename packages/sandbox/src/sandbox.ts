@@ -419,8 +419,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
+  // Incremented whenever the container stops. Used to invalidate
+  // in-flight default-session initialization that started against a
+  // now-dead container.
+  private containerGeneration = 0;
   private defaultSessionInit: {
     sessionId: string;
+    generation: number;
     promise: Promise<string>;
   } | null = null;
   envVars: Record<string, string> = {};
@@ -1615,22 +1620,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    // Stop local sync managers before clearing the map to avoid leaking timers
+    // Invalidate default-session state before the first await. Bumping
+    // containerGeneration signals any in-flight initializeDefaultSession
+    // that a new container generation begins next; it observes the
+    // mismatch at its post-createSession check and fails. Clearing the
+    // slot means later callers start a new init against the next
+    // container.
+    this.containerGeneration++;
+    this.defaultSession = null;
+    this.defaultSessionInit = null;
+
+    // Stop local sync managers before clearing the map.
     for (const [, m] of this.activeMounts) {
       if (m.mountType === 'local-sync')
         await m.syncManager.stop().catch(() => {});
     }
 
-    this.defaultSession = null;
     this.activeMounts.clear();
 
     // Persist cleanup to storage so state is clean on next container start.
-    // Port tokens are intentionally preserved so preview URLs survive
-    // container restarts; they are only removed on explicit
-    // unexposePort() or full sandbox destroy(). onStart's
-    // restoreExposedPorts() replays those tokens into the container on
-    // the next start, which is what lets validatePortToken() answer from
-    // storage alone.
+    // Port tokens are preserved so preview URLs survive container restarts;
+    // they are only removed on explicit unexposePort() or full sandbox
+    // destroy(). onStart's restoreExposedPorts() replays those tokens into
+    // the container on the next start, which lets validatePortToken()
+    // answer from storage alone.
     await this.ctx.storage.delete('defaultSession');
   }
 
@@ -2038,30 +2051,36 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return this.defaultSession;
     }
 
-    // The in-flight slot is keyed by sessionId. A caller whose sessionId
-    // matches the current slot awaits that shared promise. A caller with
-    // a different sessionId (sandboxName changed mid-flight) starts its
-    // own init and takes over the slot.
+    // The in-flight slot is keyed by (sessionId, generation). A caller
+    // whose sessionId matches the current slot AND runs against the same
+    // container generation awaits that shared promise. sandboxName
+    // changing mid-flight yields a sessionId mismatch; a container stop
+    // advances the generation and an older slot becomes non-joinable.
+    const generation = this.containerGeneration;
     const pending = this.defaultSessionInit;
-    if (pending?.sessionId === sessionId) {
+    if (pending?.sessionId === sessionId && pending.generation === generation) {
       return pending.promise;
     }
 
-    const promise = this.initializeDefaultSession(sessionId);
-    const init = { sessionId, promise };
+    const promise = this.initializeDefaultSession(sessionId, generation);
+    const init = { sessionId, generation, promise };
     this.defaultSessionInit = init;
     try {
       return await promise;
     } finally {
       // Identity guard: only clear the slot if it still holds this
-      // attempt. A newer mismatching caller may have taken the slot.
+      // attempt. A newer mismatching caller or an onStop may have
+      // taken the slot.
       if (this.defaultSessionInit === init) {
         this.defaultSessionInit = null;
       }
     }
   }
 
-  private async initializeDefaultSession(sessionId: string): Promise<string> {
+  private async initializeDefaultSession(
+    sessionId: string,
+    generation: number
+  ): Promise<string> {
     try {
       await this.client.utils.createSession({
         id: sessionId,
@@ -2077,6 +2096,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.logger.debug(
         'Session exists in container but not in DO state, syncing',
         { sessionId }
+      );
+    }
+
+    // Generation check before writing state: if onStop ran while the
+    // container RPC was in flight, this init targets a dead container.
+    // Fail the attempt so the next caller starts fresh against the new
+    // container.
+    if (generation !== this.containerGeneration) {
+      throw new Error(
+        'Default session initialization was invalidated by a container stop'
       );
     }
 

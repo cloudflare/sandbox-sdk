@@ -408,6 +408,51 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(calls[1][1]).toBe('sandbox-renamed');
       expect(calls[2][1]).toBe('sandbox-renamed');
     });
+
+    it('invalidates an in-flight init when onStop runs mid-flight', async () => {
+      let resolveCreate!: (value: unknown) => void;
+      vi.mocked(sandbox.client.utils.createSession).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }) as any
+      );
+
+      const inflight = sandbox.exec('echo one');
+      await (sandbox as any).onStop();
+
+      resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
+      await expect(inflight).rejects.toThrow();
+
+      const defaultSessionPuts = vi
+        .mocked(mockCtx.storage.put)
+        .mock.calls.filter((call) => call[0] === 'defaultSession');
+      expect(defaultSessionPuts).toHaveLength(0);
+    });
+
+    it('does not join a stale init promise after onStop clears it', async () => {
+      let resolveFirst!: (value: unknown) => void;
+      vi.mocked(sandbox.client.utils.createSession)
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }) as any
+        )
+        .mockResolvedValueOnce({
+          success: true,
+          id: 'sandbox-default',
+          message: 'ok'
+        } as any);
+
+      const first = sandbox.exec('echo one');
+      await (sandbox as any).onStop();
+      const second = sandbox.exec('echo two');
+
+      resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
+      await expect(first).rejects.toThrow();
+      await second;
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('explicit session creation', () => {
