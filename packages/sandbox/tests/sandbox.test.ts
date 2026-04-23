@@ -1676,6 +1676,33 @@ describe('Sandbox - Automatic Session Management', () => {
       );
       expect(setRetrySpy).toHaveBeenCalled();
     });
+
+    it('should persist on first explicit call even when values match current in-memory defaults', async () => {
+      // On a fresh DO, this.containerTimeouts holds env-derived / SDK defaults,
+      // but nothing has been persisted yet. A user explicitly setting values
+      // that happen to equal the current defaults must still persist so the
+      // intent survives eviction, even if env defaults later change.
+      const current = { ...(sandbox as any).containerTimeouts };
+
+      await sandbox.setContainerTimeouts(current);
+
+      // Storage must have been written with the explicit intent.
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'containerTimeouts',
+        expect.objectContaining({
+          instanceGetTimeoutMS: current.instanceGetTimeoutMS,
+          portReadyTimeoutMS: current.portReadyTimeoutMS,
+          waitIntervalMS: current.waitIntervalMS
+        })
+      );
+
+      // A subsequent identical call should now be a true no-op.
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
+      await sandbox.setContainerTimeouts(current);
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+      expect(setRetrySpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('baseUrl configuration', () => {

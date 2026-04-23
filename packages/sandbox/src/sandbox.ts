@@ -488,6 +488,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   /**
+   * Whether the current containerTimeouts have been durably persisted to
+   * storage via setContainerTimeouts. Used to gate the idempotency check
+   * so the first explicit call by a user still persists even when the
+   * requested values happen to equal the env/default-derived in-memory
+   * values — otherwise the caller's intent would be silently lost on
+   * Durable Object eviction if env defaults later change.
+   */
+  private hasStoredContainerTimeouts = false;
+
+  /**
    * Desktop environment operations.
    * Within the DO, this getter provides direct access to DesktopClient.
    * Over RPC, the getSandbox() proxy intercepts this property and routes
@@ -655,6 +665,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...this.containerTimeouts,
           ...storedTimeouts
         };
+        this.hasStoredContainerTimeouts = true;
         // Update the transport retry budget to reflect stored timeouts
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
@@ -853,10 +864,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Idempotency check — field-by-field comparison against current state.
-    // `validated` always has all three fields populated (spread from
-    // this.containerTimeouts), so this matches whenever the caller's effective
-    // resolved state equals current state.
+    // Only treat a matching call as a no-op once the values have been
+    // durably persisted; the first explicit call on a fresh DO must still
+    // write storage even when the requested values equal the env/default
+    // in-memory values, so the caller's intent survives eviction.
     if (
+      this.hasStoredContainerTimeouts &&
       validated.instanceGetTimeoutMS ===
         this.containerTimeouts.instanceGetTimeoutMS &&
       validated.portReadyTimeoutMS ===
@@ -869,6 +882,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Persist first, then update in-memory mirror and derived state.
     await this.ctx.storage.put('containerTimeouts', validated);
     this.containerTimeouts = validated;
+    this.hasStoredContainerTimeouts = true;
 
     // Update the transport retry budget to reflect new timeouts
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
