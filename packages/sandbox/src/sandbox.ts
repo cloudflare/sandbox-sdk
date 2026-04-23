@@ -734,10 +734,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.renewActivityTimeout();
   }
 
-  // RPC method to enable keepAlive mode
+  // RPC method to enable keepAlive mode.
+  // Idempotent — applying the same value is a no-op. When disabling (going
+  // from true to false), the activity timer is renewed so the inactivity
+  // window starts counting from now rather than from whenever keepAlive was
+  // first enabled.
   async setKeepAlive(keepAlive: boolean): Promise<void> {
-    this.keepAliveEnabled = keepAlive;
+    if (this.keepAliveEnabled === keepAlive) return;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+    this.keepAliveEnabled = keepAlive;
 
     if (!keepAlive) {
       this.renewActivityTimeout();

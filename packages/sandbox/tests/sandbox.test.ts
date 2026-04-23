@@ -1590,6 +1590,47 @@ describe('Sandbox - Automatic Session Management', () => {
       );
       expect(renewSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('should be a no-op when keepAlive matches current value', async () => {
+      // Arrange: default is false; set to true first
+      await sandbox.setKeepAlive(true);
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      // Act: set true again
+      await sandbox.setKeepAlive(true);
+
+      // Assert: no new storage write, no renewal
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+      expect(renewSpy).not.toHaveBeenCalled();
+    });
+
+    it('should be a no-op when setKeepAlive(false) called twice', async () => {
+      // Arrange: enable then disable (this triggers one renewal)
+      await sandbox.setKeepAlive(true);
+      await sandbox.setKeepAlive(false);
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      // Act: disable again (already disabled)
+      await sandbox.setKeepAlive(false);
+
+      // Assert: no new storage write, no additional renewal
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+      expect(renewSpy).not.toHaveBeenCalled();
+    });
+
+    it('should persist to storage before updating in-memory state', async () => {
+      const before = (sandbox as any).keepAliveEnabled;
+      const putError = new Error('simulated storage failure');
+      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
+
+      await expect(sandbox.setKeepAlive(true)).rejects.toThrow(
+        'simulated storage failure'
+      );
+
+      expect((sandbox as any).keepAliveEnabled).toBe(before);
+    });
   });
 
   describe('baseUrl configuration', () => {
