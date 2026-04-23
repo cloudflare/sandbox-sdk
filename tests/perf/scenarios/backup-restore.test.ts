@@ -2,9 +2,12 @@
  * Backup & Restore Performance Test
  *
  * Measures backup creation and restore latencies across multiple directory sizes:
- * - 10kb (10 files, ~10 KB total)
- * - 500kb (50 files, ~500 KB total)
- * - 5mb (100 files, ~5 MB total)
+ * - 100mb
+ * - 500mb
+ * - 1gb
+ *
+ * Data is generated from /dev/urandom so it is effectively incompressible —
+ * this prevents squashfs compression from masking real I/O / transfer costs.
  *
  * Also measures post-restore read/write latency to verify the restored
  * filesystem is fully functional.
@@ -29,17 +32,36 @@ describe('Backup & Restore', () => {
   let manager: PerfSandboxManager;
   let shouldRun = false;
 
-  const ITERATIONS = 5;
+  const ITERATIONS = 3;
 
   const DIR_SIZES: Array<{
     label: string;
     fileCount: number;
-    fileSizeBytes: number;
+    fileSizeMB: number;
   }> = [
-    { label: '10kb', fileCount: 10, fileSizeBytes: 1_024 },
-    { label: '500kb', fileCount: 50, fileSizeBytes: 10_240 },
-    { label: '5mb', fileCount: 100, fileSizeBytes: 51_200 }
+    { label: '100mb', fileCount: 4, fileSizeMB: 25 },
+    { label: '500mb', fileCount: 5, fileSizeMB: 100 },
+    { label: '1gb', fileCount: 8, fileSizeMB: 128 }
   ];
+
+  /**
+   * Build a shell command that populates `dir` with `fileCount` files of
+   * `fileSizeMB` each, sourced from /dev/urandom so the data is
+   * pseudorandom (and therefore near-incompressible by squashfs).
+   */
+  function populateDirCmd(
+    dir: string,
+    fileCount: number,
+    fileSizeMB: number
+  ): string {
+    const cmds = [`mkdir -p ${dir}`];
+    for (let f = 0; f < fileCount; f++) {
+      cmds.push(
+        `dd if=/dev/urandom of=${dir}/file-${f}.bin bs=1M count=${fileSizeMB} status=none`
+      );
+    }
+    return cmds.join(' && ');
+  }
 
   beforeAll(async () => {
     const deployedUrl = process.env.PERF_DEPLOYED_WORKER_URL;
@@ -79,28 +101,19 @@ describe('Backup & Restore', () => {
       return;
     }
 
-    for (const { label, fileCount, fileSizeBytes } of DIR_SIZES) {
+    for (const { label, fileCount, fileSizeMB } of DIR_SIZES) {
       console.log(
-        `\n  Backup create ${label} (${fileCount} files × ${(fileSizeBytes / 1024).toFixed(0)} KB, ${ITERATIONS} iterations):`
+        `\n  Backup create ${label} (${fileCount} files × ${fileSizeMB} MB urandom, ${ITERATIONS} iterations):`
       );
 
       for (let i = 0; i < ITERATIONS; i++) {
         const dir = `/tmp/perf-backup-${label}-${i}`;
 
-        // Populate directory
-        const chunk = 'abcdefghijklmnopqrstuvwxyz0123456789\n';
-        const fileContent = chunk
-          .repeat(Math.ceil(fileSizeBytes / chunk.length))
-          .slice(0, fileSizeBytes);
-        const cmds = [`mkdir -p ${dir}`];
-        for (let f = 0; f < fileCount; f++) {
-          cmds.push(
-            `printf '%s' '${fileContent.replace(/'/g, "'\\''")}' > ${dir}/file-${f}.txt`
-          );
-        }
-        await manager.executeCommand(sandbox, cmds.join(' && '), {
-          timeout: 60000
-        });
+        await manager.executeCommand(
+          sandbox,
+          populateDirCmd(dir, fileCount, fileSizeMB),
+          { timeout: 600000 }
+        );
 
         const result = await manager.createBackup(sandbox, dir, {
           name: `perf-${label}-${i}`,
@@ -132,10 +145,10 @@ describe('Backup & Restore', () => {
     }
 
     const smallRate = ctx.collector.getSuccessRate(
-      `${METRICS.BACKUP_CREATE_LATENCY}-10kb`
+      `${METRICS.BACKUP_CREATE_LATENCY}-100mb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
-  }, 600000);
+  }, 3_600_000);
 
   test('should measure backup restore latency by directory size', async () => {
     if (!shouldRun) {
@@ -143,28 +156,19 @@ describe('Backup & Restore', () => {
       return;
     }
 
-    for (const { label, fileCount, fileSizeBytes } of DIR_SIZES) {
+    for (const { label, fileCount, fileSizeMB } of DIR_SIZES) {
       console.log(
-        `\n  Backup restore ${label} (${fileCount} files × ${(fileSizeBytes / 1024).toFixed(0)} KB, ${ITERATIONS} iterations):`
+        `\n  Backup restore ${label} (${fileCount} files × ${fileSizeMB} MB urandom, ${ITERATIONS} iterations):`
       );
 
       for (let i = 0; i < ITERATIONS; i++) {
         const dir = `/tmp/perf-restore-${label}-${i}`;
 
-        // Create source directory and backup it
-        const chunk = 'abcdefghijklmnopqrstuvwxyz0123456789\n';
-        const fileContent = chunk
-          .repeat(Math.ceil(fileSizeBytes / chunk.length))
-          .slice(0, fileSizeBytes);
-        const cmds = [`mkdir -p ${dir}`];
-        for (let f = 0; f < fileCount; f++) {
-          cmds.push(
-            `printf '%s' '${fileContent.replace(/'/g, "'\\''")}' > ${dir}/file-${f}.txt`
-          );
-        }
-        await manager.executeCommand(sandbox, cmds.join(' && '), {
-          timeout: 60000
-        });
+        await manager.executeCommand(
+          sandbox,
+          populateDirCmd(dir, fileCount, fileSizeMB),
+          { timeout: 600000 }
+        );
 
         const backup = await manager.createBackup(sandbox, dir, {
           name: `perf-restore-${label}-${i}`,
@@ -219,10 +223,10 @@ describe('Backup & Restore', () => {
     }
 
     const smallRate = ctx.collector.getSuccessRate(
-      `${METRICS.BACKUP_RESTORE_LATENCY}-10kb`
+      `${METRICS.BACKUP_RESTORE_LATENCY}-100mb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
-  }, 600000);
+  }, 3_600_000);
 
   test('should measure post-restore read and write latency', async () => {
     if (!shouldRun) {
