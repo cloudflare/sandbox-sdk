@@ -722,11 +722,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  // RPC method to set the sleep timeout
+  // RPC method to set the sleep timeout.
+  // Idempotent — applying the same value is a no-op, so callers (including
+  // getSandbox cache-miss paths) can re-specify sleepAfter on every request
+  // without resetting the activity timer.
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
-    this.sleepAfter = sleepAfter;
+    if (this.sleepAfter === sleepAfter) return;
     await this.ctx.storage.put('sleepAfter', sleepAfter);
-    // Reschedule activity timeout to apply the new sleepAfter value immediately
+    this.sleepAfter = sleepAfter;
+    // Reschedule activity timeout because the sleep window length changed.
     this.renewActivityTimeout();
   }
 

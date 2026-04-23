@@ -1470,6 +1470,35 @@ describe('Sandbox - Automatic Session Management', () => {
         expect((restored as any).sleepAfter).toBe('30m');
       });
     });
+
+    it('should be a no-op when sleepAfter matches current value', async () => {
+      // Arrange: set an initial value
+      await sandbox.setSleepAfter('30m');
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      // Act: set the same value again
+      await sandbox.setSleepAfter('30m');
+
+      // Assert: no additional storage write, no additional renewal
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+      expect(renewSpy).not.toHaveBeenCalled();
+    });
+
+    it('should persist to storage before updating in-memory state', async () => {
+      // Arrange: capture the current in-memory value, then make storage.put throw
+      const before = (sandbox as any).sleepAfter;
+      const putError = new Error('simulated storage failure');
+      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
+
+      // Act
+      await expect(sandbox.setSleepAfter('45m')).rejects.toThrow(
+        'simulated storage failure'
+      );
+
+      // Assert: in-memory state is unchanged (not updated by the failed write)
+      expect((sandbox as any).sleepAfter).toBe(before);
+    });
   });
 
   describe('constructor - interceptHttps env injection', () => {
