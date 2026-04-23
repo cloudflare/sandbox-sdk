@@ -148,6 +148,8 @@ jobs:
     needs: setup
     runs-on: ubuntu-24.04-8core
     timeout-minutes: 60
+    env:
+      PERF_NOTIFIER_WEBHOOK_URL: ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -222,7 +224,7 @@ jobs:
         run: npx tsx tests/perf/scripts/ingest-to-d1.ts perf-results/latest.json
 
       - name: Call notifier webhook
-        if: always() && secrets.PERF_NOTIFIER_WEBHOOK_URL != ''
+        if: always() && env.PERF_NOTIFIER_WEBHOOK_URL != ''
         env:
           WEBHOOK_URL: ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.PERF_NOTIFIER_API_SECRET }}
