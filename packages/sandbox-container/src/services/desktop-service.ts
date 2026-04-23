@@ -422,22 +422,23 @@ export class DesktopService {
         ? compiledWorkerPath
         : new URL('../workers/desktop-worker.ts', import.meta.url).pathname;
 
-      this.worker = Bun.spawn(['bun', 'run', workerPath], {
+      const worker = Bun.spawn(['bun', 'run', workerPath], {
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
         env: { ...Bun.env, DISPLAY: ':99' }
       });
+      this.worker = worker;
 
-      // Stream readers run for the lifetime of the worker. Attaching
-      // catch handlers surfaces unexpected failures through the logger
-      // instead of becoming unhandled promise rejections.
-      this.readWorkerOutput().catch((error) => {
+      // Stream readers run for the lifetime of this worker instance.
+      // Passing the instance explicitly avoids a race where the reader's
+      // cleanup nulls a reference that already points at a newer worker.
+      this.readWorkerOutput(worker).catch((error) => {
         this.logger.error('Desktop worker stdout reader failed', undefined, {
           error: error instanceof Error ? error.message : String(error)
         });
       });
-      this.pipeStderr().catch((error) => {
+      this.pipeStderr(worker).catch((error) => {
         this.logger.warn('Desktop worker stderr reader failed', {
           error: error instanceof Error ? error.message : String(error)
         });
@@ -445,9 +446,11 @@ export class DesktopService {
     }
   }
 
-  private async readWorkerOutput(): Promise<void> {
-    if (!this.worker?.stdout) return;
-    const reader = this.worker.stdout.getReader();
+  private async readWorkerOutput(
+    worker: import('bun').Subprocess<'pipe', 'pipe', 'pipe'>
+  ): Promise<void> {
+    if (!worker.stdout) return;
+    const reader = worker.stdout.getReader();
     const decoder = new TextDecoder();
     try {
       while (true) {
@@ -479,17 +482,23 @@ export class DesktopService {
     } catch {
       // Stream closed — expected during shutdown
     }
-    // Worker exited — reject all pending operations
-    for (const [id, handler] of this.pending) {
-      handler.reject(new Error('Worker process exited'));
-      this.pending.delete(id);
+    // Only clean up if this reader still owns the active worker. If a
+    // newer worker has already been spawned (for example via start()
+    // racing with the exit of the previous one), leave its state intact.
+    if (this.worker === worker) {
+      for (const [id, handler] of this.pending) {
+        handler.reject(new Error('Worker process exited'));
+        this.pending.delete(id);
+      }
+      this.worker = null;
     }
-    this.worker = null;
   }
 
-  private async pipeStderr(): Promise<void> {
-    if (!this.worker?.stderr) return;
-    const reader = this.worker.stderr.getReader();
+  private async pipeStderr(
+    worker: import('bun').Subprocess<'pipe', 'pipe', 'pipe'>
+  ): Promise<void> {
+    if (!worker.stderr) return;
+    const reader = worker.stderr.getReader();
     const decoder = new TextDecoder();
     try {
       while (true) {
