@@ -1621,39 +1621,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('baseUrl configuration', () => {
-    it('restores baseUrl from storage on DO restart', async () => {
-      const restartCtx = {
-        ...mockCtx,
-        storage: {
-          ...mockCtx.storage,
-          get: vi.fn().mockImplementation((key: string) => {
-            if (key === 'baseUrl')
-              return Promise.resolve('https://example.com');
-            return Promise.resolve(null);
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          )
-      };
-
-      const restored = new Sandbox(
-        restartCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        mockEnv
-      );
-
-      await vi.waitFor(() => {
-        expect((restored as any).baseUrl).toBe('https://example.com');
-      });
-    });
-  });
-
   describe('setSandboxName atomicity', () => {
     // sandboxName and normalizeId are written together; if the second write
     // rejects, in-memory state must match storage (both unchanged).

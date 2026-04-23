@@ -103,7 +103,6 @@ type SandboxConfiguration = {
     name: string;
     normalizeId?: boolean;
   };
-  baseUrl?: string;
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
@@ -112,7 +111,6 @@ type SandboxConfiguration = {
 type CachedSandboxConfiguration = {
   sandboxName?: string;
   normalizeId?: boolean;
-  baseUrl?: string;
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
@@ -121,7 +119,6 @@ type CachedSandboxConfiguration = {
 type ConfigurableSandboxStub = {
   configure?: (configuration: SandboxConfiguration) => Promise<void>;
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
-  setBaseUrl?: (baseUrl: string) => Promise<void>;
   setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
   setKeepAlive?: (keepAlive: boolean) => Promise<void>;
   setContainerTimeouts?: (
@@ -182,10 +179,6 @@ function buildSandboxConfiguration(
     };
   }
 
-  if (options?.baseUrl !== undefined && cached?.baseUrl !== options.baseUrl) {
-    configuration.baseUrl = options.baseUrl;
-  }
-
   if (
     options?.sleepAfter !== undefined &&
     cached?.sleepAfter !== options.sleepAfter
@@ -213,7 +206,6 @@ function buildSandboxConfiguration(
 function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
   return (
     configuration.sandboxName !== undefined ||
-    configuration.baseUrl !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
     configuration.containerTimeouts !== undefined
@@ -229,9 +221,6 @@ function mergeSandboxConfiguration(
     ...(configuration.sandboxName && {
       sandboxName: configuration.sandboxName.name,
       normalizeId: configuration.sandboxName.normalizeId
-    }),
-    ...(configuration.baseUrl !== undefined && {
-      baseUrl: configuration.baseUrl
     }),
     ...(configuration.sleepAfter !== undefined && {
       sleepAfter: configuration.sleepAfter
@@ -261,12 +250,6 @@ function applySandboxConfiguration(
         configuration.sandboxName.name,
         configuration.sandboxName.normalizeId
       ) ?? Promise.resolve()
-    );
-  }
-
-  if (configuration.baseUrl !== undefined) {
-    operations.push(
-      stub.setBaseUrl?.(configuration.baseUrl) ?? Promise.resolve()
     );
   }
 
@@ -435,7 +418,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
-  private baseUrl: string | null = null;
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
@@ -653,7 +635,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
-      this.baseUrl = (await this.ctx.storage.get<string>('baseUrl')) ?? null;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -689,9 +670,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // subsequent call is a no-op.
   //
   // sandboxName and normalizeId are one logical unit. Both storage.put
-  // calls are dispatched synchronously inside Promise.all, which coalesces
-  // them into a single atomic commit on SQLite-backed Durable Objects.
-  // In-memory state is updated only after both writes commit.
+  // calls run without an intervening await, so they land in the same
+  // in-memory write buffer and flush as a single atomic transaction on
+  // SQLite-backed Durable Objects. In-memory state is updated only after
+  // both writes commit.
   async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
     if (this.sandboxName !== null) return;
     const effectiveNormalizeId = normalizeId ?? false;
@@ -713,10 +695,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    if (configuration.baseUrl !== undefined) {
-      await this.setBaseUrl(configuration.baseUrl);
-    }
-
     if (configuration.sleepAfter !== undefined) {
       await this.setSleepAfter(configuration.sleepAfter);
     }
@@ -728,21 +706,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
-  }
-
-  // RPC method to set the base URL. Set-once — subsequent calls with the
-  // same value are no-ops; subsequent calls with a different value throw.
-  // Storage is written before the in-memory assignment so the immutability
-  // guard reflects durable state.
-  async setBaseUrl(baseUrl: string): Promise<void> {
-    if (this.baseUrl === baseUrl) return;
-    if (this.baseUrl !== null) {
-      throw new Error(
-        'Base URL already set and different from one previously provided'
-      );
-    }
-    await this.ctx.storage.put('baseUrl', baseUrl);
-    this.baseUrl = baseUrl;
   }
 
   // RPC method to set the sleep timeout. Idempotent: re-applying the same

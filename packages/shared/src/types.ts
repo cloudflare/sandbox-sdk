@@ -452,11 +452,6 @@ export interface SandboxOptions {
   sleepAfter?: string | number;
 
   /**
-   * Base URL for the sandbox API
-   */
-  baseUrl?: string;
-
-  /**
    * Keep the container alive indefinitely by preventing automatic shutdown
    * When true, the container will never auto-timeout and must be explicitly destroyed
    * - Any scenario where activity can't be automatically detected

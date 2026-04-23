@@ -37,7 +37,6 @@ describe('getSandbox', () => {
         }
       ),
       setSandboxName: vi.fn(),
-      setBaseUrl: vi.fn(),
       setSleepAfter: vi.fn((value: string | number) => {
         mockStub.sleepAfter = value;
       }),
@@ -79,39 +78,6 @@ describe('getSandbox', () => {
     });
 
     expect(sandbox.sleepAfter).toBe(300);
-  });
-
-  it('should apply baseUrl option when provided', () => {
-    const mockNamespace = {} as any;
-    getSandbox(mockNamespace, 'test-sandbox', {
-      baseUrl: 'https://example.com'
-    });
-
-    expect(mockStub.configure).toHaveBeenCalledWith({
-      sandboxName: {
-        name: 'test-sandbox',
-        normalizeId: undefined
-      },
-      baseUrl: 'https://example.com'
-    });
-  });
-
-  it('should apply both sleepAfter and baseUrl options together', () => {
-    const mockNamespace = {} as any;
-    const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      sleepAfter: '10m',
-      baseUrl: 'https://example.com'
-    });
-
-    expect(sandbox.sleepAfter).toBe('10m');
-    expect(mockStub.configure).toHaveBeenCalledWith({
-      sandboxName: {
-        name: 'test-sandbox',
-        normalizeId: undefined
-      },
-      sleepAfter: '10m',
-      baseUrl: 'https://example.com'
-    });
   });
 
   it('should not apply sleepAfter when not provided', () => {
@@ -184,7 +150,6 @@ describe('getSandbox', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
       sleepAfter: '5m',
-      baseUrl: 'https://example.com',
       keepAlive: true
     });
 
@@ -195,7 +160,6 @@ describe('getSandbox', () => {
         normalizeId: undefined
       },
       sleepAfter: '5m',
-      baseUrl: 'https://example.com',
       keepAlive: true
     });
   });
