@@ -226,7 +226,7 @@ jobs:
       - name: Call notifier webhook
         if: always() && env.PERF_NOTIFIER_WEBHOOK_URL != ''
         env:
-          WEBHOOK_URL: ${{ secrets.PERF_NOTIFIER_WEBHOOK_URL }}
+          WEBHOOK_URL: ${{ env.PERF_NOTIFIER_WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.PERF_NOTIFIER_API_SECRET }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.PERF_CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.PERF_CF_ACCESS_CLIENT_SECRET }}
