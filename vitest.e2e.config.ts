@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import assert from 'node:assert';
 import { config } from 'dotenv';
 import { defineConfig } from 'vitest/config';
 
@@ -7,12 +6,14 @@ config();
 
 if (!process.env.TEST_TRANSPORT) {
   try {
-    // Temporary workaround so existing CI still works with new format. The generate_config script will
-    // write this file instead of setting the SANDBOX_TRANSPORT var in the worker config.
-    process.env.TEST_TRANSPORT = readFileSync(
-      join(__dirname, './tests/e2e/test-worker/TEST_TRANSPORT'),
-      'utf-8'
-    ).trim();
+    // Attempt to extract the transport from the worker URL for backwards
+    const workerURL = new URL(process.env.TEST_WORKER_URL ?? '');
+    const transportRegexp =
+      /sandbox-e2e-test-worker-(?:.+)-(?<transport>http|websocket).(?:[^.]+)[.]workers[.]dev/;
+    process.env.TEST_TRANSPORT = transportRegexp.exec(
+      workerURL.host
+    )?.groups?.transport;
+    assert(['http', 'websocket'].includes(process.env.TEST_TRANSPORT ?? ''));
   } catch (err) {
     throw new Error('Missing TEST_TRANSPORT environment variable');
   }
