@@ -429,11 +429,19 @@ export class DesktopService {
         env: { ...Bun.env, DISPLAY: ':99' }
       });
 
-      // Read newline-delimited JSON responses from stdout
-      this.readWorkerOutput();
-
-      // Log stderr for diagnostics
-      this.pipeStderr();
+      // Stream readers run for the lifetime of the worker. Attaching
+      // catch handlers surfaces unexpected failures through the logger
+      // instead of becoming unhandled promise rejections.
+      this.readWorkerOutput().catch((error) => {
+        this.logger.error('Desktop worker stdout reader failed', undefined, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+      this.pipeStderr().catch((error) => {
+        this.logger.warn('Desktop worker stderr reader failed', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
     }
   }
 
