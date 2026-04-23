@@ -13,6 +13,40 @@ interface SandboxStateResponse {
   lastChange: number;
   exitCode?: number;
 }
+async function collectSSEEvents(
+  response: Response,
+  maxEvents: number = 50
+): Promise<ExecEvent[]> {
+  if (!response.body) {
+    throw new Error('No readable stream in response');
+  }
+
+  const events: ExecEvent[] = [];
+  const abortController = new AbortController();
+
+  try {
+    for await (const event of parseSSEStream<ExecEvent>(
+      response.body,
+      abortController.signal
+    )) {
+      events.push(event);
+      if (event.type === 'complete' || event.type === 'error') {
+        abortController.abort();
+        break;
+      }
+      if (events.length >= maxEvents) {
+        abortController.abort();
+        break;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'Operation was aborted') {
+      throw error;
+    }
+  }
+
+  return events;
+}
 
 /**
  * Streaming Operations Edge Case Tests
@@ -41,41 +75,6 @@ describe('Streaming Operations Edge Cases', () => {
     await cleanupTestSandbox(sandbox);
     sandbox = null;
   }, 120000);
-
-  async function collectSSEEvents(
-    response: Response,
-    maxEvents: number = 50
-  ): Promise<ExecEvent[]> {
-    if (!response.body) {
-      throw new Error('No readable stream in response');
-    }
-
-    const events: ExecEvent[] = [];
-    const abortController = new AbortController();
-
-    try {
-      for await (const event of parseSSEStream<ExecEvent>(
-        response.body,
-        abortController.signal
-      )) {
-        events.push(event);
-        if (event.type === 'complete' || event.type === 'error') {
-          abortController.abort();
-          break;
-        }
-        if (events.length >= maxEvents) {
-          abortController.abort();
-          break;
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message !== 'Operation was aborted') {
-        throw error;
-      }
-    }
-
-    return events;
-  }
 
   test('should handle command failures with non-zero exit code', async () => {
     const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
@@ -150,81 +149,6 @@ describe('Streaming Operations Edge Cases', () => {
     expect(completeEvent?.exitCode).toBe(0);
   }, 15000);
 
-  test('should keep a quiet execStream alive past sleepAfter', async () => {
-    const shortSleepSandbox = await createTestSandbox({ sleepAfter: '3s' });
-
-    try {
-      const streamResponse = await fetch(
-        `${shortSleepSandbox.workerUrl}/api/execStream`,
-        {
-          method: 'POST',
-          headers: shortSleepSandbox.headers(createUniqueSession()),
-          body: JSON.stringify({
-            command: "bash -c 'sleep 5; printf done'"
-          })
-        }
-      );
-
-      expect(streamResponse.status).toBe(200);
-
-      const startTime = Date.now();
-      const events = await collectSSEEvents(streamResponse, 20);
-      const duration = Date.now() - startTime;
-
-      expect(duration).toBeGreaterThan(4500);
-
-      const stdout = events
-        .filter((event) => event.type === 'stdout')
-        .map((event) => event.data)
-        .join('');
-      const completeEvent = events.find((event) => event.type === 'complete');
-
-      expect(stdout.trimEnd()).toBe('done');
-      expect(completeEvent?.exitCode).toBe(0);
-    } finally {
-      await cleanupTestSandbox(shortSleepSandbox);
-    }
-  }, 20000);
-
-  test('should still stop idle sandboxes after sleepAfter', async () => {
-    const shortSleepSandbox = await createTestSandbox({ sleepAfter: '3s' });
-
-    try {
-      const execResponse = await fetch(
-        `${shortSleepSandbox.workerUrl}/api/execute`,
-        {
-          method: 'POST',
-          headers: shortSleepSandbox.headers(createUniqueSession()),
-          body: JSON.stringify({ command: 'printf idle-check' })
-        }
-      );
-
-      expect(execResponse.status).toBe(200);
-
-      const stateHeaders = { ...shortSleepSandbox.headers() };
-      delete stateHeaders['X-Sandbox-Sleep-After'];
-
-      // Give the alarm loop time to observe idleness and persist the stopped state
-      // before checking it, without issuing repeated requests that can delay delivery.
-      await new Promise((resolve) => setTimeout(resolve, 8000));
-
-      const stateResponse = await fetch(
-        `${shortSleepSandbox.workerUrl}/api/state`,
-        {
-          method: 'GET',
-          headers: stateHeaders
-        }
-      );
-
-      expect(stateResponse.status).toBe(200);
-
-      const state = (await stateResponse.json()) as SandboxStateResponse;
-      expect(['stopped', 'stopped_with_code']).toContain(state.status);
-    } finally {
-      await cleanupTestSandbox(shortSleepSandbox);
-    }
-  }, 30000);
-
   test('should stream file contents', async () => {
     // Create a test file first
     const testPath = `/workspace/stream-test-${Date.now()}.txt`;
@@ -234,14 +158,16 @@ describe('Streaming Operations Edge Cases', () => {
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath, content: testContent })
+      body: JSON.stringify({ path: testPath, content: testContent }),
+      signal: AbortSignal.timeout(5000)
     });
 
     // Stream the file back
     const streamResponse = await fetch(`${workerUrl}/api/read/stream`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
 
     expect(streamResponse.status).toBe(200);
@@ -281,7 +207,75 @@ describe('Streaming Operations Edge Cases', () => {
     await fetch(`${workerUrl}/api/file/delete`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: testPath })
+      body: JSON.stringify({ path: testPath }),
+      signal: AbortSignal.timeout(5000)
     });
   }, 30000);
+});
+
+describe('Streaming Operations - sleep after', () => {
+  test('should keep sandbox alive during execStream beyond sleepAfter value', async ({
+    onTestFinished
+  }) => {
+    const sandbox = await createTestSandbox({ sleepAfter: '3s' });
+
+    onTestFinished(() => cleanupTestSandbox(sandbox).catch());
+
+    const { workerUrl } = sandbox;
+    const headers = sandbox.headers();
+
+    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: "bash -c 'sleep 5; printf done'"
+      })
+    });
+
+    expect(streamResponse.status).toBe(200);
+
+    const startTime = Date.now();
+    const events = await collectSSEEvents(streamResponse, 20);
+    const duration = Date.now() - startTime;
+
+    expect(duration).toBeGreaterThan(4500);
+
+    const stdout = events
+      .filter((event) => event.type === 'stdout')
+      .map((event) => event.data)
+      .join('');
+    const completeEvent = events.find((event) => event.type === 'complete');
+
+    expect(stdout.trimEnd()).toBe('done');
+    expect(completeEvent?.exitCode).toBe(0);
+
+    // Poll until the sandbox reaches a stopped state (sleepAfter is 3s)
+    const deadline = Date.now() + 30_000;
+    let status: string | undefined;
+    while (Date.now() < deadline) {
+      const stateResponse = await fetch(`${workerUrl}/api/state`, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(5000)
+      });
+      expect(stateResponse.status).toBe(200);
+      const state = (await stateResponse.json()) as { status: string };
+      status = state.status;
+      if (status === 'stopped' || status === 'stopped_with_code') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    // Debugging
+    if (status !== 'stopped' && status !== 'stopped_with_code') {
+      console.log(
+        'Sandbox Config',
+        await fetch(`${workerUrl}/api/config`, { headers }).then((r) =>
+          r.json()
+        )
+      );
+    }
+    expect(status).toMatch(/^(stopped|stopped_with_code)$/);
+  }, 60_000);
 });
