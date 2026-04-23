@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 /**
  * Generate unique sandbox ID for test isolation
@@ -10,7 +10,11 @@ import { randomUUID } from 'node:crypto';
  * - **Same sandbox**: Multiple operations in one test share a sandbox to test state persistence
  */
 export function createSandboxId(): string {
-  return randomUUID();
+  // Generate a short readable id with unique suffix e.g. sandbox-ebdm
+  const id = randomBytes(4).toString('hex');
+  return process.env.TEST_SANDBOX_ID
+    ? `${process.env.TEST_SANDBOX_ID}-${id}`
+    : `sandbox-${id}`;
 }
 
 /**
@@ -24,7 +28,9 @@ export function createSandboxId(): string {
  * - Testing session-specific environment variables
  */
 export function createSessionId(): string {
-  return `session-${randomUUID()}`;
+  // Generate a short readable id with unique suffix e.g. session-281e3c60
+  const id = randomBytes(4).toString('hex');
+  return `session-${id}`;
 }
 
 /**
