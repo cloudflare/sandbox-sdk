@@ -688,21 +688,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sandbox name and normalizeId. Set-once — a
   // subsequent call is a no-op.
   //
-  // sandboxName and normalizeId are one logical unit. Issuing both
-  // storage.put calls before awaiting either coalesces them into a single
-  // atomic commit on SQLite-backed Durable Objects. In-memory state is
-  // updated only after both writes commit.
+  // sandboxName and normalizeId are one logical unit. Both storage.put
+  // calls are dispatched synchronously inside Promise.all, which coalesces
+  // them into a single atomic commit on SQLite-backed Durable Objects.
+  // In-memory state is updated only after both writes commit.
   async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
     if (this.sandboxName !== null) return;
     const effectiveNormalizeId = normalizeId ?? false;
 
-    const sandboxNamePromise = this.ctx.storage.put('sandboxName', name);
-    const normalizeIdPromise = this.ctx.storage.put(
-      'normalizeId',
-      effectiveNormalizeId
-    );
-    await sandboxNamePromise;
-    await normalizeIdPromise;
+    await Promise.all([
+      this.ctx.storage.put('sandboxName', name),
+      this.ctx.storage.put('normalizeId', effectiveNormalizeId)
+    ]);
 
     this.sandboxName = name;
     this.normalizeId = effectiveNormalizeId;
