@@ -4,8 +4,6 @@
 
 Fix sandboxes staying alive past their configured `sleepAfter` value.
 
-Workers that passed configuration options such as `sleepAfter` to `getSandbox()` on every request could unintentionally extend sandbox lifetimes. Each cold Worker isolate rebuilt its configuration cache from scratch and re-applied the same options to the Sandbox Durable Object, which treated the no-op reapply as activity and reset the sleep timer. With enough traffic, the sandbox never slept.
+Workers that passed configuration options to `getSandbox()` on every request — `sleepAfter`, `keepAlive`, or `containerTimeouts` — could unintentionally extend sandbox lifetimes. The SDK's internal reapply path treated identical reapplied values as activity, resetting the sleep timer each time. Under sustained traffic, sandboxes would never sleep at all.
 
-Re-applying identical configuration values (`sleepAfter`, `keepAlive`, container startup timeouts) is now a no-op with no timer reset. A related issue is fixed for `baseUrl`: it now survives Durable Object restart correctly (previously it could be silently overwritten after eviction). Multi-field configuration is applied atomically so a partial write failure cannot leave inconsistent state.
-
-No API changes. `getSandbox(ns, id, { sleepAfter: '10m' })` and other option patterns behave the same from the caller's perspective; they just no longer accumulate silent side effects as Worker isolates recycle.
+After updating, reapplying the same configuration value is a true no-op. Your `getSandbox()` calls continue to work exactly as before; sandboxes now respect their configured sleep timers regardless of how often configuration is reapplied. `baseUrl` also now survives Durable Object restart correctly — previously it could be lost after eviction.
