@@ -1,5 +1,49 @@
 # @cloudflare/sandbox
 
+## 0.8.14
+
+### Patch Changes
+
+- [#613](https://github.com/cloudflare/sandbox-sdk/pull/613) [`174313f`](https://github.com/cloudflare/sandbox-sdk/commit/174313fa061be7604df5b3cfd4c1770454b727a6) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Avoid duplicate session-create calls when parallel operations hit a
+  fresh sandbox. Parallel callers now share one setup call instead of
+  each issuing their own. Sequential operations are unaffected.
+
+  Session setup also now retries cleanly on the next operation if it is
+  interrupted partway through — including by a container stop during
+  first use — instead of leaving the sandbox in a state that looks
+  initialized but references a session the container no longer has.
+
+- [#624](https://github.com/cloudflare/sandbox-sdk/pull/624) [`bbdfd95`](https://github.com/cloudflare/sandbox-sdk/commit/bbdfd95f70bd73a1c18b49dde139662041143d72) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix sandboxes staying alive past their configured `sleepAfter` value.
+
+  Workers that passed configuration options to `getSandbox()` on every request (`sleepAfter`, `keepAlive`, or `containerTimeouts`) could unintentionally extend sandbox lifetimes. The SDK's internal reapply path treated identical reapplied values as activity, resetting the sleep timer each time. Under sustained traffic, sandboxes would never sleep at all.
+
+  After updating, reapplying the same configuration value is a true no-op. Your `getSandbox()` calls continue to work exactly as before; sandboxes now respect their configured sleep timers regardless of how often configuration is reapplied.
+
+  This release also removes the unused `baseUrl` option from `SandboxOptions`, along with the `setBaseUrl` RPC method on the Sandbox Durable Object. The option had no effect on runtime behavior; preview URLs are driven by the `hostname` passed to preview-URL APIs. If you were setting `baseUrl` on `getSandbox()`, you can safely remove it. Directly invoking the undocumented `setBaseUrl` RPC method will now error.
+
+- [#629](https://github.com/cloudflare/sandbox-sdk/pull/629) [`34e3a96`](https://github.com/cloudflare/sandbox-sdk/commit/34e3a968abe2eb5efe0d9461c0a90930ca0e0338) Thanks [@aron-cf](https://github.com/aron-cf)! - Improve reliability of `desktop.stop()` as well as general isolation of the desktop processes by
+  running them in a subprocess. This should ensure that processes are cleaned up when calling
+  `desktop.stop()` and crashes should not impact the sandbox container service.
+
+- [#576](https://github.com/cloudflare/sandbox-sdk/pull/576) [`9222fd0`](https://github.com/cloudflare/sandbox-sdk/commit/9222fd0c408c9dd51b3f262e203b7c5754d650fb) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix stream controller race condition causing "Invalid state: Controller is already closed" errors
+
+  Resolves an issue where client disconnections during streaming operations could cause unhandled TypeError exceptions, potentially corrupting the SDK bridge state. The fix adds defensive error handling in the execute streaming handler to gracefully handle callbacks firing after stream cancellation.
+
+- [#614](https://github.com/cloudflare/sandbox-sdk/pull/614) [`74a58e9`](https://github.com/cloudflare/sandbox-sdk/commit/74a58e9692534d1c6faee1757a9eba1380335d07) Thanks [@aron-cf](https://github.com/aron-cf)! - Adds a new `transport: 'http' | 'websocket'` field to the `getSandbox()` options. This can be
+  used to dynamically select transport on a per-sandbox basis.
+
+  > [!NOTE]
+  > Changing transport on an already existing sandbox may result in dropped connections, it is
+  > recommended to keep the same transport for the lifetime of the sandbox instance.
+
+  ```ts
+  const sandbox = getSandbox(env.Sandbox, 'my-sandbox', {
+    transport: 'websocket'
+  });
+  ```
+
+- [#567](https://github.com/cloudflare/sandbox-sdk/pull/567) [`1c7337a`](https://github.com/cloudflare/sandbox-sdk/commit/1c7337a3dfa414b9dd07e2188fec79cb3136977f) Thanks [@scuffi](https://github.com/scuffi)! - Adds support for local backup and restore through the `BACKUP_BUCKET` R2 binding in local development when `localBucket: true` is set.
+
 ## 0.8.13
 
 ### Patch Changes

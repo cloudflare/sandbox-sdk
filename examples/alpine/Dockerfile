@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.8.13-musl
+FROM docker.io/cloudflare/sandbox:0.8.14-musl
 
 # Documents the ports this application uses (standard Docker convention)
 EXPOSE 8080
