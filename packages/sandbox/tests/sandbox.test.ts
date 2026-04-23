@@ -1633,6 +1633,51 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('containerTimeouts configuration', () => {
+    it('should be a no-op when timeouts match current values', async () => {
+      const timeouts = {
+        instanceGetTimeoutMS: 60_000,
+        portReadyTimeoutMS: 120_000,
+        waitIntervalMS: 500
+      };
+      await sandbox.setContainerTimeouts(timeouts);
+      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
+      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
+
+      await sandbox.setContainerTimeouts(timeouts);
+
+      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
+      expect(setRetrySpy).not.toHaveBeenCalled();
+    });
+
+    it('should persist to storage before updating in-memory state', async () => {
+      const before = { ...(sandbox as any).containerTimeouts };
+      const putError = new Error('simulated storage failure');
+      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
+
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 60_000 })
+      ).rejects.toThrow('simulated storage failure');
+
+      expect((sandbox as any).containerTimeouts).toEqual(before);
+    });
+
+    it('should apply and persist when timeouts change', async () => {
+      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
+
+      await sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 90_000 });
+
+      expect((sandbox as any).containerTimeouts.instanceGetTimeoutMS).toBe(
+        90_000
+      );
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'containerTimeouts',
+        expect.objectContaining({ instanceGetTimeoutMS: 90_000 })
+      );
+      expect(setRetrySpy).toHaveBeenCalled();
+    });
+  });
+
   describe('baseUrl configuration', () => {
     it('should restore baseUrl from storage on DO restart', async () => {
       const restartCtx = {

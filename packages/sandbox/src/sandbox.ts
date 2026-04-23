@@ -793,7 +793,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * RPC method to configure container startup timeouts
+   * RPC method to configure container startup timeouts.
+   * Idempotent — applying the same timeout set is a no-op; the transport
+   * retry budget is only recomputed when at least one timeout actually
+   * changes. Storage is written before the in-memory mirror is updated.
    */
   async setContainerTimeouts(
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
@@ -828,10 +831,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    this.containerTimeouts = validated;
+    // Idempotency check — field-by-field comparison against current state.
+    // `validated` always has all three fields populated (spread from
+    // this.containerTimeouts), so this matches whenever the caller's effective
+    // resolved state equals current state.
+    if (
+      validated.instanceGetTimeoutMS ===
+        this.containerTimeouts.instanceGetTimeoutMS &&
+      validated.portReadyTimeoutMS ===
+        this.containerTimeouts.portReadyTimeoutMS &&
+      validated.waitIntervalMS === this.containerTimeouts.waitIntervalMS
+    ) {
+      return;
+    }
 
-    // Persist to storage
-    await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+    // Persist first, then update in-memory mirror and derived state.
+    await this.ctx.storage.put('containerTimeouts', validated);
+    this.containerTimeouts = validated;
 
     // Update the transport retry budget to reflect new timeouts
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
