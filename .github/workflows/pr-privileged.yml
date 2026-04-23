@@ -265,7 +265,7 @@ jobs:
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
-      image_tag: pr-${{ github.event.pull_request.number }}
+      image_tag: ci-${{ needs.detect-changes.outputs.docker-hash }}
       images_changed: ${{ needs.detect-changes.outputs.docker-changed }}
       deploy_hash: ${{ needs.detect-changes.outputs.deploy-hash }}
       checkout_ref: ${{ github.event.pull_request.head.sha }}
