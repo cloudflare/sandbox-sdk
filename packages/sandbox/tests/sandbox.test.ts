@@ -1709,6 +1709,18 @@ describe('Sandbox - Automatic Session Management', () => {
         expect((restored as any).baseUrl).toBe('https://example.com');
       });
     });
+
+    it('should persist to storage before updating in-memory state', async () => {
+      const before = (sandbox as any).baseUrl;
+      const putError = new Error('simulated storage failure');
+      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
+
+      await expect(sandbox.setBaseUrl('https://example.com')).rejects.toThrow(
+        'simulated storage failure'
+      );
+
+      expect((sandbox as any).baseUrl).toBe(before);
+    });
   });
 
   describe('backup path allowlist', () => {

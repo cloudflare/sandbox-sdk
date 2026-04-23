@@ -708,18 +708,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  // RPC method to set the base URL
+  // RPC method to set the base URL. Set-once — subsequent calls with the
+  // same value are no-ops; subsequent calls with a different value throw.
+  //
+  // A failed storage write must not poison the in-memory immutability
+  // guard, so storage.put runs before the in-memory assignment. On the
+  // next retry from the same hot DO, this.baseUrl is still null and the
+  // guard will allow the write.
   async setBaseUrl(baseUrl: string): Promise<void> {
-    if (!this.baseUrl) {
-      this.baseUrl = baseUrl;
-      await this.ctx.storage.put('baseUrl', baseUrl);
-    } else {
-      if (this.baseUrl !== baseUrl) {
-        throw new Error(
-          'Base URL already set and different from one previously provided'
-        );
-      }
+    if (this.baseUrl === baseUrl) return;
+    if (this.baseUrl !== null) {
+      throw new Error(
+        'Base URL already set and different from one previously provided'
+      );
     }
+    await this.ctx.storage.put('baseUrl', baseUrl);
+    this.baseUrl = baseUrl;
   }
 
   // RPC method to set the sleep timeout.
