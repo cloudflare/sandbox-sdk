@@ -11,21 +11,10 @@ set -e
 #                    "local"         - Use local Dockerfiles (for local dev)
 #                    "registry:<tag>" - Use Cloudflare registry images (for CI)
 #                                      Requires CLOUDFLARE_ACCOUNT_ID env var
-#
-# Backward compatibility: the old 4-arg form passed a transport value
-# (http|websocket) as $3 with image-mode as $4. Transport is no longer used,
-# but the script still accepts it so older workflow versions keep working.
 
 WORKER_NAME="${1:-sandbox-e2e-test-worker-local}"
 CONTAINER_NAME="${2:-$WORKER_NAME}"
-
-# Detect legacy 4-arg invocation: if $3 looks like a transport value, skip
-# it and take image-mode from $4.
-if [[ "$3" == "http" || "$3" == "websocket" ]]; then
-  IMAGE_MODE="${4:-local}"
-else
-  IMAGE_MODE="${3:-local}"
-fi
+IMAGE_MODE="${3:-local}"
 
 if [ -z "$WORKER_NAME" ]; then
   echo "Error: WORKER_NAME is required"
