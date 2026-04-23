@@ -295,7 +295,7 @@ jobs:
                 "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/containers/applications/${APP_ID}" \
                 -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d '{"configuration":{"durable_object_offset_instances": 75}}' || echo "::warning::Failed to set warm pool for app ${APP_ID}"
+                -d '{"configuration":{"durable_object_offset_instances": 10}}' || echo "::warning::Failed to set warm pool for app ${APP_ID}"
             done
           done
         env:
