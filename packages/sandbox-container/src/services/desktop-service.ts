@@ -426,7 +426,7 @@ export class DesktopService {
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
-        env: { ...Bun.env, DISPLAY: ':99' }
+        env: { ...Bun.env, DISPLAY: Bun.env.DISPLAY ?? ':99' }
       });
       this.worker = worker;
 
@@ -510,7 +510,9 @@ export class DesktopService {
         const { done, value } = await reader.read();
         if (done) break;
         const text = decoder.decode(value).trim();
-        if (text) this.logger.debug('desktop-worker stderr', { text });
+        // Logged at warn since the worker only writes to stderr when
+        // something went wrong (FFI load failures, robotgo errors).
+        if (text) this.logger.warn('desktop-worker stderr', { text });
       }
     } catch {
       // Expected during shutdown
