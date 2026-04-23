@@ -20,6 +20,7 @@ import type {
   DesktopStopResult,
   DesktopTypeRequest,
   DesktopWorkerRequest,
+  DesktopWorkerResponse,
   Logger
 } from '@repo/shared';
 import type { ServiceResult } from '../core/types';
@@ -30,7 +31,6 @@ export class DesktopService {
   private manager: DesktopManager;
   private worker: import('bun').Subprocess<'pipe', 'pipe', 'pipe'> | null =
     null;
-  private workerBuffer = '';
   private pending = new Map<
     string,
     { resolve: (value: unknown) => void; reject: (reason: Error) => void }
@@ -452,31 +452,18 @@ export class DesktopService {
     if (!worker.stdout) return;
     const reader = worker.stdout.getReader();
     const decoder = new TextDecoder();
+    let buffer = '';
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        this.workerBuffer += decoder.decode(value);
-        let newlineIdx: number = this.workerBuffer.indexOf('\n');
+        buffer += decoder.decode(value);
+        let newlineIdx = buffer.indexOf('\n');
         while (newlineIdx !== -1) {
-          const line = this.workerBuffer.slice(0, newlineIdx);
-          this.workerBuffer = this.workerBuffer.slice(newlineIdx + 1);
-          if (!line) continue;
-          try {
-            const { id, result, error } = JSON.parse(line);
-            const handler = this.pending.get(id);
-            if (handler) {
-              this.pending.delete(id);
-              if (error) {
-                handler.reject(new Error(error));
-              } else {
-                handler.resolve(result);
-              }
-            }
-          } catch {
-            this.logger.warn('Failed to parse worker output', { line });
-          }
-          newlineIdx = this.workerBuffer.indexOf('\n');
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
+          if (line) this.handleWorkerLine(line);
+          newlineIdx = buffer.indexOf('\n');
         }
       }
     } catch {
@@ -491,6 +478,24 @@ export class DesktopService {
         this.pending.delete(id);
       }
       this.worker = null;
+    }
+  }
+
+  private handleWorkerLine(line: string): void {
+    let parsed: DesktopWorkerResponse;
+    try {
+      parsed = JSON.parse(line) as DesktopWorkerResponse;
+    } catch {
+      this.logger.warn('Failed to parse worker output', { line });
+      return;
+    }
+    const handler = this.pending.get(parsed.id);
+    if (!handler) return;
+    this.pending.delete(parsed.id);
+    if ('error' in parsed) {
+      handler.reject(new Error(parsed.error));
+    } else {
+      handler.resolve(parsed.result);
     }
   }
 
