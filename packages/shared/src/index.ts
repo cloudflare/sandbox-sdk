@@ -29,6 +29,12 @@ export type {
   DesktopStopResult,
   DesktopTypeRequest
 } from './desktop-types.js';
+export type {
+  DesktopWorkerOp,
+  DesktopWorkerRequest,
+  DesktopWorkerResponse,
+  DesktopWorkerResultMap
+} from './desktop-worker-protocol.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities

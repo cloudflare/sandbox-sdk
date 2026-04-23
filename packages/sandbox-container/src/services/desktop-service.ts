@@ -19,6 +19,7 @@ import type {
   DesktopStatusResult,
   DesktopStopResult,
   DesktopTypeRequest,
+  DesktopWorkerRequest,
   Logger
 } from '@repo/shared';
 import type { ServiceResult } from '../core/types';
@@ -381,7 +382,7 @@ export class DesktopService {
   private static readonly WORKER_TERMINATE_TIMEOUT_MS = 2_000;
 
   private async sendToWorker(
-    op: string,
+    op: DesktopWorkerRequest['op'],
     args?: Record<string, unknown>
   ): Promise<unknown> {
     this.ensureDesktopActive();
@@ -408,7 +409,8 @@ export class DesktopService {
         }
       });
       if (this.worker?.stdin) {
-        this.worker.stdin.write(`${JSON.stringify({ id, op, ...args })}\n`);
+        const request = { id, op, ...args } as unknown as DesktopWorkerRequest;
+        this.worker.stdin.write(`${JSON.stringify(request)}\n`);
       }
     });
   }
