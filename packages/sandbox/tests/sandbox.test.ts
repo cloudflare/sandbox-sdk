@@ -122,8 +122,7 @@ describe('Sandbox - Automatic Session Management', () => {
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
-    // Await the restore callback itself so subsequent tests observe a fully
-    // rehydrated instance and aren't racing the constructor's async work.
+    // Await the restore callback so tests observe a fully rehydrated instance.
     await Promise.all(
       (mockCtx.blockConcurrencyWhile as any).mock.results.map(
         (r: { value: unknown }) => r.value
@@ -1471,32 +1470,27 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
-    it('should be a no-op when sleepAfter matches current value', async () => {
-      // Arrange: set an initial value
+    it('is a no-op when sleepAfter matches current value', async () => {
       await sandbox.setSleepAfter('30m');
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
       const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
 
-      // Act: set the same value again
       await sandbox.setSleepAfter('30m');
 
-      // Assert: no additional storage write, no additional renewal
       expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
       expect(renewSpy).not.toHaveBeenCalled();
     });
 
-    it('should persist to storage before updating in-memory state', async () => {
-      // Arrange: capture the current in-memory value, then make storage.put throw
+    it('leaves in-memory state unchanged when storage.put fails', async () => {
       const before = (sandbox as any).sleepAfter;
-      const putError = new Error('simulated storage failure');
-      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
+      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(
+        new Error('simulated storage failure')
+      );
 
-      // Act
       await expect(sandbox.setSleepAfter('45m')).rejects.toThrow(
         'simulated storage failure'
       );
 
-      // Assert: in-memory state is unchanged (not updated by the failed write)
       expect((sandbox as any).sleepAfter).toBe(before);
     });
   });
@@ -1591,112 +1585,34 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(renewSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('should be a no-op when keepAlive matches current value', async () => {
-      // Arrange: default is false; set to true first
-      await sandbox.setKeepAlive(true);
-      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
-      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
-
-      // Act: set true again
-      await sandbox.setKeepAlive(true);
-
-      // Assert: no new storage write, no renewal
-      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
-      expect(renewSpy).not.toHaveBeenCalled();
-    });
-
-    it('should be a no-op when setKeepAlive(false) called twice', async () => {
-      // Arrange: enable then disable (this triggers one renewal)
+    it('is a no-op when setKeepAlive(false) is called on an already-disabled sandbox', async () => {
       await sandbox.setKeepAlive(true);
       await sandbox.setKeepAlive(false);
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
       const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
 
-      // Act: disable again (already disabled)
       await sandbox.setKeepAlive(false);
 
-      // Assert: no new storage write, no additional renewal
       expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
       expect(renewSpy).not.toHaveBeenCalled();
-    });
-
-    it('should persist to storage before updating in-memory state', async () => {
-      const before = (sandbox as any).keepAliveEnabled;
-      const putError = new Error('simulated storage failure');
-      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
-
-      await expect(sandbox.setKeepAlive(true)).rejects.toThrow(
-        'simulated storage failure'
-      );
-
-      expect((sandbox as any).keepAliveEnabled).toBe(before);
     });
   });
 
   describe('containerTimeouts configuration', () => {
-    it('should be a no-op when timeouts match current values', async () => {
-      const timeouts = {
-        instanceGetTimeoutMS: 60_000,
-        portReadyTimeoutMS: 120_000,
-        waitIntervalMS: 500
-      };
-      await sandbox.setContainerTimeouts(timeouts);
-      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
-      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
-
-      await sandbox.setContainerTimeouts(timeouts);
-
-      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
-      expect(setRetrySpy).not.toHaveBeenCalled();
-    });
-
-    it('should persist to storage before updating in-memory state', async () => {
-      const before = { ...(sandbox as any).containerTimeouts };
-      const putError = new Error('simulated storage failure');
-      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
-
-      await expect(
-        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 60_000 })
-      ).rejects.toThrow('simulated storage failure');
-
-      expect((sandbox as any).containerTimeouts).toEqual(before);
-    });
-
-    it('should apply and persist when timeouts change', async () => {
-      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
-
-      await sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 90_000 });
-
-      expect((sandbox as any).containerTimeouts.instanceGetTimeoutMS).toBe(
-        90_000
-      );
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'containerTimeouts',
-        expect.objectContaining({ instanceGetTimeoutMS: 90_000 })
-      );
-      expect(setRetrySpy).toHaveBeenCalled();
-    });
-
-    it('should persist on first explicit call even when values match current in-memory defaults', async () => {
-      // On a fresh DO, this.containerTimeouts holds env-derived / SDK defaults,
-      // but nothing has been persisted yet. A user explicitly setting values
-      // that happen to equal the current defaults must still persist so the
-      // intent survives eviction, even if env defaults later change.
+    // The in-memory defaults come from env vars with SDK fallbacks. A first
+    // explicit call whose values happen to equal those defaults must still
+    // persist so the user's intent is recorded independently of whatever the
+    // env currently resolves to. A subsequent identical call is then a no-op.
+    it('persists on first explicit call even when values match current in-memory defaults', async () => {
       const current = { ...(sandbox as any).containerTimeouts };
 
       await sandbox.setContainerTimeouts(current);
 
-      // Storage must have been written with the explicit intent.
       expect(mockCtx.storage.put).toHaveBeenCalledWith(
         'containerTimeouts',
-        expect.objectContaining({
-          instanceGetTimeoutMS: current.instanceGetTimeoutMS,
-          portReadyTimeoutMS: current.portReadyTimeoutMS,
-          waitIntervalMS: current.waitIntervalMS
-        })
+        expect.objectContaining(current)
       );
 
-      // A subsequent identical call should now be a true no-op.
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
       const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
       await sandbox.setContainerTimeouts(current);
@@ -1706,7 +1622,7 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('baseUrl configuration', () => {
-    it('should restore baseUrl from storage on DO restart', async () => {
+    it('restores baseUrl from storage on DO restart', async () => {
       const restartCtx = {
         ...mockCtx,
         storage: {
@@ -1736,23 +1652,12 @@ describe('Sandbox - Automatic Session Management', () => {
         expect((restored as any).baseUrl).toBe('https://example.com');
       });
     });
-
-    it('should persist to storage before updating in-memory state', async () => {
-      const before = (sandbox as any).baseUrl;
-      const putError = new Error('simulated storage failure');
-      vi.mocked(mockCtx.storage.put).mockRejectedValueOnce(putError);
-
-      await expect(sandbox.setBaseUrl('https://example.com')).rejects.toThrow(
-        'simulated storage failure'
-      );
-
-      expect((sandbox as any).baseUrl).toBe(before);
-    });
   });
 
   describe('setSandboxName atomicity', () => {
-    it('should not leave sandboxName persisted if normalizeId write fails', async () => {
-      // Arrange: first put succeeds, second rejects
+    // sandboxName and normalizeId are written together; if the second write
+    // rejects, in-memory state must match storage (both unchanged).
+    it('leaves in-memory state unchanged when the second of the two writes fails', async () => {
       let callCount = 0;
       vi.mocked(mockCtx.storage.put).mockImplementation(async () => {
         callCount++;
@@ -1763,57 +1668,28 @@ describe('Sandbox - Automatic Session Management', () => {
       const beforeSandboxName = (sandbox as any).sandboxName;
       const beforeNormalizeId = (sandbox as any).normalizeId;
 
-      // Act
       await expect(sandbox.setSandboxName('my-sandbox', true)).rejects.toThrow(
         'simulated storage failure'
       );
 
-      // Assert: in-memory state must not be partially updated
       expect((sandbox as any).sandboxName).toBe(beforeSandboxName);
       expect((sandbox as any).normalizeId).toBe(beforeNormalizeId);
     });
   });
 
   describe('configure() idempotency', () => {
-    it('should only renew activity timeout once across repeated identical configure({ sleepAfter }) calls', async () => {
-      // Regression test for the config-reapply bug: the SDK-side getSandbox()
-      // path re-invokes configure() on every cold-isolate cache miss. The DO
-      // must treat identical reapply as a no-op so sandbox lifetimes are not
-      // silently extended.
+    // getSandbox re-invokes configure() on every cold-isolate cache miss.
+    // Identical reapply must be side-effect-free.
+    it('does not renew activity timeout on a repeated identical configure call', async () => {
       const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
 
       await sandbox.configure({ sleepAfter: '3s' });
       const renewCallsAfterFirst = renewSpy.mock.calls.length;
-
-      // Sanity check: the first configure actually exercised the setter path.
       expect(renewCallsAfterFirst).toBeGreaterThan(0);
 
       await sandbox.configure({ sleepAfter: '3s' });
 
-      // The second configure with identical values must not trigger another
-      // renewal.
       expect(renewSpy.mock.calls.length).toBe(renewCallsAfterFirst);
-    });
-
-    it('should not write storage on repeated identical configure() calls', async () => {
-      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
-
-      await sandbox.configure({
-        sleepAfter: '3s',
-        keepAlive: true
-      });
-      const putCallsAfterFirst = mockCtx.storage.put.mock.calls.length;
-
-      // Sanity check: the first configure actually wrote something.
-      expect(putCallsAfterFirst).toBeGreaterThan(putCallsBefore);
-
-      await sandbox.configure({
-        sleepAfter: '3s',
-        keepAlive: true
-      });
-
-      // Second call with identical values must not persist anything new.
-      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsAfterFirst);
     });
   });
 

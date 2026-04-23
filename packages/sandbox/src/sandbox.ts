@@ -488,12 +488,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   /**
-   * Whether the current containerTimeouts have been durably persisted to
-   * storage via setContainerTimeouts. Used to gate the idempotency check
-   * so the first explicit call by a user still persists even when the
-   * requested values happen to equal the env/default-derived in-memory
-   * values — otherwise the caller's intent would be silently lost on
-   * Durable Object eviction if env defaults later change.
+   * True once containerTimeouts has been written to storage at least once
+   * (either via setContainerTimeouts or restored on cold start). Gates the
+   * idempotency check in setContainerTimeouts so a first explicit call
+   * persists even when the requested values already equal the in-memory
+   * defaults, distinguishing "user intent recorded" from "running on
+   * env/SDK defaults".
    */
   private hasStoredContainerTimeouts = false;
 
@@ -688,17 +688,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sandbox name and normalizeId. Set-once — a
   // subsequent call is a no-op.
   //
-  // sandboxName and normalizeId are one logical unit. On SQLite-backed
-  // Durable Objects, multiple storage.put calls with no intervening await
-  // commit atomically, so issuing both puts together and awaiting them
-  // afterward ensures either both persist or neither does. In-memory state
-  // is updated only after storage durably commits.
+  // sandboxName and normalizeId are one logical unit. Issuing both
+  // storage.put calls before awaiting either coalesces them into a single
+  // atomic commit on SQLite-backed Durable Objects. In-memory state is
+  // updated only after both writes commit.
   async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
     if (this.sandboxName !== null) return;
     const effectiveNormalizeId = normalizeId ?? false;
 
-    // Coalesced writes (no intervening await) — both commit atomically on
-    // SQLite-backed DOs.
     const sandboxNamePromise = this.ctx.storage.put('sandboxName', name);
     const normalizeIdPromise = this.ctx.storage.put(
       'normalizeId',
@@ -738,11 +735,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // RPC method to set the base URL. Set-once — subsequent calls with the
   // same value are no-ops; subsequent calls with a different value throw.
-  //
-  // A failed storage write must not poison the in-memory immutability
-  // guard, so storage.put runs before the in-memory assignment. On the
-  // next retry from the same hot DO, this.baseUrl is still null and the
-  // guard will allow the write.
+  // Storage is written before the in-memory assignment so the immutability
+  // guard reflects durable state.
   async setBaseUrl(baseUrl: string): Promise<void> {
     if (this.baseUrl === baseUrl) return;
     if (this.baseUrl !== null) {
@@ -754,23 +748,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.baseUrl = baseUrl;
   }
 
-  // RPC method to set the sleep timeout.
-  // Idempotent — applying the same value is a no-op, so callers (including
-  // getSandbox cache-miss paths) can re-specify sleepAfter on every request
-  // without resetting the activity timer.
+  // RPC method to set the sleep timeout. Idempotent: re-applying the same
+  // value returns early with no storage write and no timer reset. A real
+  // change persists, then reschedules the activity timer against the new
+  // window length.
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     if (this.sleepAfter === sleepAfter) return;
     await this.ctx.storage.put('sleepAfter', sleepAfter);
     this.sleepAfter = sleepAfter;
-    // Reschedule activity timeout because the sleep window length changed.
     this.renewActivityTimeout();
   }
 
-  // RPC method to enable keepAlive mode.
-  // Idempotent — applying the same value is a no-op. When disabling (going
-  // from true to false), the activity timer is renewed so the inactivity
-  // window starts counting from now rather than from whenever keepAlive was
-  // first enabled.
+  // RPC method to enable keepAlive mode. Idempotent: re-applying the same
+  // value returns early. When disabling (true to false), the activity
+  // timer is renewed so the inactivity window counts from now.
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     if (this.keepAliveEnabled === keepAlive) return;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
@@ -825,10 +816,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * RPC method to configure container startup timeouts.
-   * Idempotent — applying the same timeout set is a no-op; the transport
-   * retry budget is only recomputed when at least one timeout actually
-   * changes. Storage is written before the in-memory mirror is updated.
+   * RPC method to configure container startup timeouts. Idempotent once
+   * the values have been persisted: re-applying the same timeout set is a
+   * no-op. The transport retry budget is recomputed only when at least
+   * one timeout actually changes. Storage is written before the in-memory
+   * mirror and derived state are updated.
    */
   async setContainerTimeouts(
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
@@ -863,11 +855,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Idempotency check — field-by-field comparison against current state.
-    // Only treat a matching call as a no-op once the values have been
-    // durably persisted; the first explicit call on a fresh DO must still
-    // write storage even when the requested values equal the env/default
-    // in-memory values, so the caller's intent survives eviction.
+    // No-op only once the values have been written to storage. A first
+    // explicit call persists even when the values match the env/default-
+    // derived in-memory state so user intent is recorded independently of
+    // how those defaults resolve later.
     if (
       this.hasStoredContainerTimeouts &&
       validated.instanceGetTimeoutMS ===
@@ -879,7 +870,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return;
     }
 
-    // Persist first, then update in-memory mirror and derived state.
     await this.ctx.storage.put('containerTimeouts', validated);
     this.containerTimeouts = validated;
     this.hasStoredContainerTimeouts = true;
