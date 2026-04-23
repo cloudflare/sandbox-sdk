@@ -1723,6 +1723,30 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('setSandboxName atomicity', () => {
+    it('should not leave sandboxName persisted if normalizeId write fails', async () => {
+      // Arrange: first put succeeds, second rejects
+      let callCount = 0;
+      vi.mocked(mockCtx.storage.put).mockImplementation(async () => {
+        callCount++;
+        if (callCount === 2) throw new Error('simulated storage failure');
+        return undefined;
+      });
+
+      const beforeSandboxName = (sandbox as any).sandboxName;
+      const beforeNormalizeId = (sandbox as any).normalizeId;
+
+      // Act
+      await expect(sandbox.setSandboxName('my-sandbox', true)).rejects.toThrow(
+        'simulated storage failure'
+      );
+
+      // Assert: in-memory state must not be partially updated
+      expect((sandbox as any).sandboxName).toBe(beforeSandboxName);
+      expect((sandbox as any).normalizeId).toBe(beforeNormalizeId);
+    });
+  });
+
   describe('backup path allowlist', () => {
     function createBackupBucket() {
       return {
