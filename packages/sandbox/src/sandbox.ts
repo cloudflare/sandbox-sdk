@@ -636,13 +636,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
-        (await this.ctx.storage.get<string>('sandboxName')) || null;
+        (await this.ctx.storage.get<string>('sandboxName')) ?? null;
       this.normalizeId =
-        (await this.ctx.storage.get<boolean>('normalizeId')) || false;
+        (await this.ctx.storage.get<boolean>('normalizeId')) ?? false;
       this.defaultSession =
-        (await this.ctx.storage.get<string>('defaultSession')) || null;
+        (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
-        (await this.ctx.storage.get<boolean>('keepAliveEnabled')) || false;
+        (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
+      this.baseUrl = (await this.ctx.storage.get<string>('baseUrl')) ?? null;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =

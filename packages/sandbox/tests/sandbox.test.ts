@@ -122,6 +122,13 @@ describe('Sandbox - Automatic Session Management', () => {
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
+    // Await the restore callback itself so subsequent tests observe a fully
+    // rehydrated instance and aren't racing the constructor's async work.
+    await Promise.all(
+      (mockCtx.blockConcurrencyWhile as any).mock.results.map(
+        (r: { value: unknown }) => r.value
+      )
+    );
 
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
@@ -1553,6 +1560,39 @@ describe('Sandbox - Automatic Session Management', () => {
         false
       );
       expect(renewSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('baseUrl configuration', () => {
+    it('should restore baseUrl from storage on DO restart', async () => {
+      const restartCtx = {
+        ...mockCtx,
+        storage: {
+          ...mockCtx.storage,
+          get: vi.fn().mockImplementation((key: string) => {
+            if (key === 'baseUrl')
+              return Promise.resolve('https://example.com');
+            return Promise.resolve(null);
+          }),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          )
+      };
+
+      const restored = new Sandbox(
+        restartCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await vi.waitFor(() => {
+        expect((restored as any).baseUrl).toBe('https://example.com');
+      });
     });
   });
 
