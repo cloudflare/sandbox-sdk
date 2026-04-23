@@ -95,7 +95,8 @@ export async function cleanupTestSandbox(
   try {
     const response = await fetch(`${sandbox.workerUrl}/cleanup`, {
       method: 'POST',
-      headers: sandbox.headers()
+      headers: sandbox.headers(),
+      signal: AbortSignal.timeout(1000)
     });
     if (!response.ok) {
       console.warn(
