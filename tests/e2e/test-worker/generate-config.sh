@@ -2,32 +2,40 @@
 set -e
 
 # Generate wrangler.jsonc from template
-# Usage: ./generate-config.sh <worker-name> [container-name] [transport] [image-mode]
+# Usage: ./generate-config.sh <worker-name> [container-name] [image-mode]
 #
 # Arguments:
 #   worker-name    - Name of the worker (required)
 #   container-name - Name prefix for containers (defaults to worker-name)
-#   transport      - Transport mode: http or websocket (defaults to http)
 #   image-mode     - Image source mode (defaults to local):
 #                    "local"         - Use local Dockerfiles (for local dev)
 #                    "registry:<tag>" - Use Cloudflare registry images (for CI)
 #                                      Requires CLOUDFLARE_ACCOUNT_ID env var
+#
+# Backward compatibility: the old 4-arg form passed a transport value
+# (http|websocket) as $3 with image-mode as $4. Transport is no longer used,
+# but the script still accepts it so older workflow versions keep working.
 
 WORKER_NAME="${1:-sandbox-e2e-test-worker-local}"
 CONTAINER_NAME="${2:-$WORKER_NAME}"
-TRANSPORT="${3:-http}"
-IMAGE_MODE="${4:-local}"
+
+# Detect legacy 4-arg invocation: if $3 looks like a transport value, skip
+# it and take image-mode from $4.
+if [[ "$3" == "http" || "$3" == "websocket" ]]; then
+  IMAGE_MODE="${4:-local}"
+else
+  IMAGE_MODE="${3:-local}"
+fi
 
 if [ -z "$WORKER_NAME" ]; then
   echo "Error: WORKER_NAME is required"
-  echo "Usage: ./generate-config.sh <worker-name> [container-name] [transport] [image-mode]"
+  echo "Usage: ./generate-config.sh <worker-name> [container-name] [image-mode]"
   exit 1
 fi
 
 echo "Generating wrangler.jsonc..."
 echo "  Worker name: $WORKER_NAME"
 echo "  Container name: $CONTAINER_NAME"
-echo "  Transport: $TRANSPORT"
 echo "  Image mode: $IMAGE_MODE"
 
 # Determine image references based on mode
@@ -68,7 +76,6 @@ echo "    Desktop: $IMAGE_DESKTOP"
 # Using | as delimiter since image URLs contain /
 sed -e "s|{{WORKER_NAME}}|$WORKER_NAME|g" \
     -e "s|{{CONTAINER_NAME}}|$CONTAINER_NAME|g" \
-    -e "s|{{TRANSPORT}}|$TRANSPORT|g" \
     -e "s|{{IMAGE_SANDBOX}}|$IMAGE_SANDBOX|g" \
     -e "s|{{IMAGE_PYTHON}}|$IMAGE_PYTHON|g" \
     -e "s|{{IMAGE_OPENCODE}}|$IMAGE_OPENCODE|g" \
