@@ -37,7 +37,6 @@ import {
   createLogger,
   filterEnvVars,
   getEnvString,
-  isTerminalStatus,
   logCanonicalEvent,
   partitionEnvVars,
   type SessionDeleteResult,
@@ -47,6 +46,7 @@ import {
 import { BACKUP_ALLOWED_PREFIXES } from '@repo/shared/backup';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import { RPCSandboxClient } from './clients/rpc-sandbox-client';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -66,7 +66,11 @@ import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { proxyTerminal } from './pty';
 import { isLocalhostPattern } from './request-handler';
-import { SecurityError, sanitizeSandboxId, validatePort } from './security';
+import {
+  SandboxSecurityError,
+  sanitizeSandboxId,
+  validatePort
+} from './security';
 import { parseSSEStream } from './sse-parser';
 import {
   buildS3fsSource,
@@ -106,7 +110,7 @@ type SandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: 'http' | 'websocket';
+  transport?: 'http' | 'websocket' | 'rpc';
 };
 
 type CachedSandboxConfiguration = {
@@ -115,7 +119,7 @@ type CachedSandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: 'http' | 'websocket';
+  transport?: 'http' | 'websocket' | 'rpc';
 };
 
 type ConfigurableSandboxStub = {
@@ -126,7 +130,7 @@ type ConfigurableSandboxStub = {
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
-  setTransport?: (transport: 'http' | 'websocket') => Promise<void>;
+  setTransport?: (transport: 'http' | 'websocket' | 'rpc') => Promise<void>;
 };
 
 const sandboxConfigurationCache = new WeakMap<
@@ -402,7 +406,7 @@ export function connect(stub: {
 }) {
   return async (request: Request, port: number) => {
     if (!validatePort(port)) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
@@ -434,7 +438,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: SandboxClient;
+  client: SandboxClient | RPCSandboxClient;
+
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
@@ -452,7 +457,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
-  private transport: 'http' | 'websocket' = 'http';
+  private transport: 'http' | 'websocket' | 'rpc' = 'http';
 
   /**
    * True once transport has been written to storage at least once (either
@@ -607,6 +612,50 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /**
+   * Create the appropriate client for a given transport protocol.
+   */
+  private createClientForTransport(
+    transport: 'http' | 'websocket' | 'rpc'
+  ): SandboxClient | RPCSandboxClient {
+    if (transport === 'rpc') {
+      // Access the base Container's private inflightRequests counter so
+      // the alarm loop's isActivityExpired() check sees active work and
+      // skips the sleepAfterMs comparison while RPC calls are in flight.
+      const self = this as unknown as { inflightRequests: number };
+      return new RPCSandboxClient({
+        stub: this,
+        port: 3000,
+        logger: this.logger,
+        // Mirrors containerFetch()'s request lifecycle for the RPC transport.
+        // The HTTP transport increments inflightRequests at the start of each
+        // containerFetch() call and renews the activity timeout so the alarm
+        // loop sees active work and pushes sleepAfter forward. The RPC
+        // transport bypasses containerFetch() entirely (all calls multiplex
+        // over a single WebSocket), so we replicate the same bookkeeping here.
+        onActivity: () => {
+          // Called at the start of each RPC method invocation.
+          // Equivalent to the top of containerFetch(): mark the DO as busy
+          // so isActivityExpired() returns false, and push the sleepAfter
+          // deadline forward.
+          self.inflightRequests++;
+          this.renewActivityTimeout();
+        },
+        onIdle: () => {
+          // Called when an RPC method promise settles.
+          // Equivalent to containerFetch()'s finally block: decrement the
+          // inflight counter, and when it reaches zero restart the inactivity
+          // window from now — the same behavior as decrementInflight().
+          self.inflightRequests = Math.max(0, self.inflightRequests - 1);
+          if (self.inflightRequests === 0) {
+            this.renewActivityTimeout();
+          }
+        }
+      });
+    }
+    return this.createSandboxClient();
+  }
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -628,13 +677,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
-    if (transportEnv === 'websocket') {
-      this.transport = 'websocket';
+    if (transportEnv === 'websocket' || transportEnv === 'rpc') {
+      this.transport = transportEnv;
     } else if (transportEnv != null && transportEnv !== 'http') {
       this.logger.warn(
-        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http", "websocket", or "rpc". Defaulting to "http".`
       );
     }
+
+    this.logger.info(`Using ${this.transport} transport`);
 
     // Read R2 backup bucket binding if configured
     const backupBucket = envObj?.BACKUP_BUCKET;
@@ -656,12 +707,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Create client with transport based on env var (may be updated from storage)
-    this.client = this.createSandboxClient();
+    this.client = this.createClientForTransport(this.transport);
 
-    // Initialize code interpreter - pass 'this' after client is ready
-    // The CodeInterpreter extracts client.interpreter from the sandbox
-    this.codeInterpreter = new CodeInterpreter(this);
+    this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
 
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
@@ -698,14 +746,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Restore transport setting from storage (overrides env var default)
-      const storedTransport = await this.ctx.storage.get<'http' | 'websocket'>(
-        'transport'
-      );
+      const storedTransport = await this.ctx.storage.get<
+        'http' | 'websocket' | 'rpc'
+      >('transport');
       if (storedTransport && storedTransport !== this.transport) {
         this.transport = storedTransport;
         const previousClient = this.client;
-        this.client = this.createSandboxClient();
-        this.codeInterpreter = new CodeInterpreter(this);
+        this.client = this.createClientForTransport(storedTransport);
+        this.codeInterpreter = new CodeInterpreter(
+          () => this.client.interpreter
+        );
         previousClient.disconnect();
       }
       if (storedTransport) {
@@ -901,10 +951,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * has been persisted: re-applying the same transport is a no-op.
    * Storage is written before the in-memory state and client are updated.
    */
-  async setTransport(transport: 'http' | 'websocket'): Promise<void> {
-    if (transport !== 'http' && transport !== 'websocket') {
+  async setTransport(transport: 'http' | 'websocket' | 'rpc'): Promise<void> {
+    if (
+      transport !== 'http' &&
+      transport !== 'websocket' &&
+      transport !== 'rpc'
+    ) {
       this.logger.warn(
-        `Invalid transport value: "${transport}". Must be "http" or "websocket". Ignoring.`
+        `Invalid transport value: "${transport}". Must be "http", "websocket", or "rpc". Ignoring.`
       );
       return;
     }
@@ -918,9 +972,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const previousClient = this.client;
     this.transport = transport;
     this.hasStoredTransport = true;
-    this.client = this.createSandboxClient();
-    this.codeInterpreter = new CodeInterpreter(this);
+    this.client = this.createClientForTransport(transport);
+    this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
     previousClient.disconnect();
+    this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
   }
 
@@ -1450,10 +1505,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // Disconnect WebSocket transport if active
-      this.client.disconnect();
-
-      // Unmount all mounted buckets and cleanup
+      // Unmount all mounted buckets and cleanup (requires an active connection
+      // for execInternal calls, so this runs before disconnecting the transport)
       for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
         mountsProcessed++;
         if (mountInfo.mountType === 'local-sync') {
@@ -1502,6 +1555,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // still not atomic against concurrent writers, but the preview URL
       // authorization path is race-free.
       await this.ctx.storage.delete('portTokens');
+
+      // Disconnect transport after all cleanup commands have completed
+      this.client.disconnect();
 
       outcome = 'success';
       await super.destroy();
@@ -1704,6 +1760,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.containerGeneration++;
     this.defaultSession = null;
     this.defaultSessionInit = null;
+
+    // Disconnect capnweb transport so the WebSocket doesn't hold the DO alive
+    this.client.disconnect();
 
     // Stop local sync managers before clearing the map.
     for (const [, m] of this.activeMounts) {
@@ -3124,10 +3183,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
+
+    if (content instanceof ReadableStream) {
+      return this.client.writeFileStream(path, content, session);
+    }
+
     return this.client.files.writeFile(path, content, session, {
       encoding: options.encoding
     });
@@ -3348,7 +3412,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let caughtError: Error | undefined;
     try {
       if (!validatePort(port)) {
-        throw new SecurityError(
+        throw new SandboxSecurityError(
           `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
         );
       }
@@ -3386,7 +3450,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ([p, entry]) => entry.token === token && p !== port.toString()
       );
       if (existingPort) {
-        throw new SecurityError(
+        throw new SandboxSecurityError(
           `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
         );
       }
@@ -3432,7 +3496,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let caughtError: Error | undefined;
     try {
       if (!validatePort(port)) {
-        throw new SecurityError(
+        throw new SandboxSecurityError(
           `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
         );
       }
@@ -3569,17 +3633,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private validateCustomToken(token: string): void {
     if (token.length === 0) {
-      throw new SecurityError(`Custom token cannot be empty.`);
+      throw new SandboxSecurityError(`Custom token cannot be empty.`);
     }
 
     if (token.length > 16) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Custom token too long. Maximum 16 characters allowed. Received: ${token.length} characters.`
       );
     }
 
     if (!/^[a-z0-9_]+$/.test(token)) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Custom token must contain only lowercase letters (a-z), numbers (0-9), and underscores (_). Invalid token provided.`
       );
     }
@@ -3606,7 +3670,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     token: string
   ): string {
     if (!validatePort(port)) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
@@ -3615,7 +3679,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const effectiveId = this.sandboxName || sandboxId;
     const hasUppercase = /[A-Z]/.test(effectiveId);
     if (!this.normalizeId && hasUppercase) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Preview URLs require lowercase sandbox IDs. Your ID "${effectiveId}" contains uppercase letters.\n\n` +
           `To fix this:\n` +
           `1. Create a new sandbox with: getSandbox(ns, "${effectiveId}", { normalizeId: true })\n` +
@@ -3639,7 +3703,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         return baseUrl.toString();
       } catch (error) {
-        throw new SecurityError(
+        throw new SandboxSecurityError(
           `Failed to construct preview URL: ${
             error instanceof Error ? error.message : 'Unknown error'
           }`
@@ -3654,7 +3718,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return baseUrl.toString();
     } catch (error) {
-      throw new SecurityError(
+      throw new SandboxSecurityError(
         `Failed to construct preview URL: ${
           error instanceof Error ? error.message : 'Unknown error'
         }`
