@@ -148,6 +148,8 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   CodeExecutionError: { status: 500, code: 'CODE_EXECUTION_ERROR' },
   // Session errors
   SessionAlreadyExistsError: { status: 409, code: 'SESSION_ALREADY_EXISTS' },
+  SessionTerminatedError: { status: 410, code: 'SESSION_TERMINATED' },
+  SessionDestroyedError: { status: 410, code: 'SESSION_DESTROYED' },
   // Port errors (generic)
   PortError: { status: 500, code: 'PORT_OPERATION_ERROR' },
   // Git errors (generic)

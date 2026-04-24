@@ -93,14 +93,17 @@ describe('Build and Test Workflow', () => {
         })
       });
 
-      // Should return 500 error since shell terminated unexpectedly
-      expect(response.status).toBe(500);
-      const data = (await response.json()) as ErrorResponse;
+      // Shell exit should surface as 410 SESSION_TERMINATED per the
+      // SESSION_TERMINATED contract (see .changeset/session-terminated.md).
+      expect(response.status).toBe(410);
+      const data = (await response.json()) as ErrorResponse & {
+        code?: string;
+      };
 
-      // Should have an error object (500 responses may not have success field)
       expect(data.error).toBeDefined();
-      expect(data.error).toMatch(/shell terminated unexpectedly/i);
-      expect(data.error).toMatch(/exit code.*1/i);
+      expect(data.code).toBe('SESSION_TERMINATED');
+      expect(data.error).toMatch(/shell exited/i);
+      expect(data.error).toMatch(/exit code:?\s*1/i);
     });
 
     afterAll(async () => {
