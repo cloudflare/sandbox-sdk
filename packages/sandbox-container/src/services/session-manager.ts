@@ -507,9 +507,9 @@ export class SessionManager {
           // Shell exited during the command. Evict the dead handle under
           // the lock we already hold, so the next call on this sessionId
           // creates a fresh session instead of hitting the stale handle.
-          const dead = this.sessions.get(sessionId);
-          if (dead && !dead.isReady()) {
-            await this.evictDeadSession(sessionId, dead);
+          const session = this.sessions.get(sessionId);
+          if (session && !session.isReady()) {
+            await this.evictTerminatedSession(sessionId, session);
           }
           return {
             success: false,
