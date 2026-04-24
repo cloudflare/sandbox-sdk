@@ -144,7 +144,8 @@ export {
   DesktopUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
-  ProcessReadyTimeoutError
+  ProcessReadyTimeoutError,
+  SessionTerminatedError
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
