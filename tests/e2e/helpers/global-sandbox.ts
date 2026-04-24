@@ -14,7 +14,8 @@ export type SandboxType =
   | 'opencode'
   | 'standalone'
   | 'musl'
-  | 'desktop';
+  | 'desktop'
+  | 'intercepthttps';
 
 export interface TestSandbox {
   workerUrl: string;

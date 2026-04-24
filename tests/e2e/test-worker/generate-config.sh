@@ -47,9 +47,17 @@ elif [[ "$IMAGE_MODE" == registry:* ]]; then
   IMAGE_STANDALONE="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-standalone:$TAG"
   IMAGE_MUSL="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-musl:$TAG"
   IMAGE_DESKTOP="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-desktop:$TAG"
+elif [[ "$IMAGE_MODE" == prebuilt:* ]]; then
+  TAG="${IMAGE_MODE#prebuilt:}"
+  IMAGE_SANDBOX="cloudflare/sandbox-test:$TAG"
+  IMAGE_PYTHON="cloudflare/sandbox-test:$TAG-python"
+  IMAGE_OPENCODE="cloudflare/sandbox-test:$TAG-opencode"
+  IMAGE_STANDALONE="cloudflare/sandbox-test:$TAG-standalone"
+  IMAGE_MUSL="cloudflare/sandbox-test:$TAG-musl"
+  IMAGE_DESKTOP="cloudflare/sandbox-test:$TAG-desktop"
 else
   echo "Error: Unknown image mode: $IMAGE_MODE"
-  echo "Use 'local' or 'registry:<tag>'"
+  echo "Use 'local', 'prebuilt:<version>', or 'registry:<tag>'"
   exit 1
 fi
 

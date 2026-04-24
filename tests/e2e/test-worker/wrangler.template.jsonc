@@ -53,6 +53,12 @@
       "image": "{{IMAGE_DESKTOP}}",
       "name": "{{CONTAINER_NAME}}-desktop",
       "instance_type": "standard-4"
+    },
+    {
+      "class_name": "SandboxInterceptHttps",
+      "image": "{{IMAGE_SANDBOX}}",
+      "name": "{{CONTAINER_NAME}}-intercepthttps",
+      "instance_type": "standard-4"
     }
   ],
 
@@ -81,6 +87,10 @@
       {
         "class_name": "SandboxDesktop",
         "name": "SandboxDesktop"
+      },
+      {
+        "class_name": "SandboxInterceptHttps",
+        "name": "SandboxInterceptHttps"
       }
     ]
   },
@@ -105,6 +115,10 @@
     {
       "new_sqlite_classes": ["SandboxDesktop"],
       "tag": "v6"
+    },
+    {
+      "new_sqlite_classes": ["SandboxInterceptHttps"],
+      "tag": "v7"
     }
   ],
 

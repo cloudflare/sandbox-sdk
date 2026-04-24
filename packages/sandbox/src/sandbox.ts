@@ -4750,6 +4750,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Step 4: Mount the backup archive from R2 and restore directly from it.
       await this.mountBackupR2(r2MountPath, `backups/${id}/`, backupSession);
 
+      // Diagnostic: read the first bytes of the archive through the s3fs mount.
+      // Logged at warn level so it appears in production logs when restore fails.
+      // Squashfs magic is 73 71 73 68 ("sqsh") at offset 0.
+      try {
+        const hexResult = await this.execWithSession(
+          `xxd ${shellEscape(archivePath)} 2>&1 | head -4 || echo '(xxd unavailable)'`,
+          backupSession,
+          { origin: 'internal' }
+        );
+        const statResult = await this.execWithSession(
+          `stat --printf='size=%s bytes' ${shellEscape(archivePath)} 2>&1`,
+          backupSession,
+          { origin: 'internal' }
+        );
+        this.logger.warn('Backup archive pre-restore diagnostic', {
+          archivePath,
+          interceptHttps: this.interceptHttps,
+          hexDump: (hexResult.stdout || hexResult.stderr || '(empty)').trim(),
+          fileStat: (statResult.stdout || statResult.stderr || '(empty)').trim()
+        });
+      } catch {
+        // Non-fatal — proceed with restore regardless
+      }
+
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,

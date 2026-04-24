@@ -44,6 +44,13 @@ export { Sandbox as SandboxStandalone };
 export { Sandbox as SandboxMusl };
 export { Sandbox as SandboxDesktop };
 
+// Sandbox with interceptHttps=true and a catch-all passthrough outbound handler.
+// Reproduces the failure mode from https://github.com/cloudflare/sandbox-sdk/issues/619.
+export class SandboxInterceptHttps extends Sandbox {
+  override interceptHttps = true;
+}
+SandboxInterceptHttps.outbound = (request: Request) => fetch(request);
+
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
@@ -51,6 +58,7 @@ interface Env {
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
   SandboxMusl: DurableObjectNamespace<Sandbox>;
   SandboxDesktop: DurableObjectNamespace<Sandbox>;
+  SandboxInterceptHttps: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   BACKUP_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
@@ -218,6 +226,8 @@ export default {
       sandboxNamespace = env.SandboxMusl;
     } else if (sandboxType === 'desktop') {
       sandboxNamespace = env.SandboxDesktop;
+    } else if (sandboxType === 'intercepthttps') {
+      sandboxNamespace = env.SandboxInterceptHttps;
     } else {
       sandboxNamespace = env.Sandbox;
     }
