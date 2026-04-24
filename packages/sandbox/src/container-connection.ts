@@ -189,6 +189,7 @@ export class ContainerConnection {
     } catch (error) {
       clearTimeout(timeout);
       this.connected = false;
+      this.transport.abort(error);
       this.logger.error(
         'ContainerConnection failed',
         error instanceof Error ? error : new Error(String(error))
@@ -264,6 +265,7 @@ class DeferredTransport implements RpcTransport {
   }
 
   abort(reason: unknown): void {
+    this.#fail(reason instanceof Error ? reason : new Error(String(reason)));
     if (this.#ws) {
       const message = reason instanceof Error ? reason.message : String(reason);
       this.#ws.close(3000, message);

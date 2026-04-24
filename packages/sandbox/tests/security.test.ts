@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  SecurityError,
+  SandboxSecurityError,
   sanitizeSandboxId,
   validatePort
 } from '../src/security';
@@ -44,17 +44,19 @@ describe('sanitizeSandboxId', () => {
   });
 
   it('rejects invalid lengths', () => {
-    expect(() => sanitizeSandboxId('')).toThrow(SecurityError);
-    expect(() => sanitizeSandboxId('a'.repeat(64))).toThrow(SecurityError);
+    expect(() => sanitizeSandboxId('')).toThrow(SandboxSecurityError);
+    expect(() => sanitizeSandboxId('a'.repeat(64))).toThrow(
+      SandboxSecurityError
+    );
   });
 
   it('rejects leading/trailing hyphens (DNS requirement)', () => {
-    expect(() => sanitizeSandboxId('-myproject')).toThrow(SecurityError);
-    expect(() => sanitizeSandboxId('myproject-')).toThrow(SecurityError);
+    expect(() => sanitizeSandboxId('-myproject')).toThrow(SandboxSecurityError);
+    expect(() => sanitizeSandboxId('myproject-')).toThrow(SandboxSecurityError);
   });
 
   it('rejects reserved names case-insensitively', () => {
-    expect(() => sanitizeSandboxId('www')).toThrow(SecurityError);
-    expect(() => sanitizeSandboxId('API')).toThrow(SecurityError);
+    expect(() => sanitizeSandboxId('www')).toThrow(SandboxSecurityError);
+    expect(() => sanitizeSandboxId('API')).toThrow(SandboxSecurityError);
   });
 });
