@@ -6,10 +6,10 @@
  * Default: 60 seconds
  * Environment variable: INTERPRETER_SPAWN_TIMEOUT_MS
  */
-const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
-  process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
-  10
-);
+const INTERPRETER_SPAWN_TIMEOUT_MS = (() => {
+  const val = parseInt(process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000', 10);
+  return Number.isFinite(val) ? val : 60000;
+})();
 
 /**
  * Timeout for interpreter code execution (Python/JS/TS).
@@ -21,7 +21,7 @@ const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
  */
 const INTERPRETER_EXECUTION_TIMEOUT_MS = (() => {
   const val = parseInt(process.env.INTERPRETER_EXECUTION_TIMEOUT_MS || '0', 10);
-  return val === 0 ? undefined : val;
+  return !Number.isFinite(val) || val === 0 ? undefined : val;
 })();
 
 /**
@@ -34,7 +34,7 @@ const INTERPRETER_EXECUTION_TIMEOUT_MS = (() => {
  */
 const COMMAND_TIMEOUT_MS = (() => {
   const val = parseInt(process.env.COMMAND_TIMEOUT_MS || '0', 10);
-  return val === 0 ? undefined : val;
+  return !Number.isFinite(val) || val === 0 ? undefined : val;
 })();
 
 /**
