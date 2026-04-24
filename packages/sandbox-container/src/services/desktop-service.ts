@@ -88,6 +88,7 @@ export class DesktopService {
   async status(): Promise<ServiceResult<DesktopStatusResult>> {
     const managerStatus = this.manager.getStatus();
     return serviceSuccess<DesktopStatusResult>({
+      success: true,
       status: managerStatus.status,
       processes: managerStatus.processes,
       resolution: this.manager.getResolution(),
@@ -121,6 +122,7 @@ export class DesktopService {
       } catch {}
 
       return serviceSuccess<DesktopScreenshotResult>({
+        success: true,
         data,
         imageFormat,
         width: resolution[0],
@@ -152,6 +154,7 @@ export class DesktopService {
       } catch {}
 
       return serviceSuccess<DesktopScreenshotResult>({
+        success: true,
         data,
         imageFormat,
         width: w,
@@ -282,6 +285,7 @@ export class DesktopService {
         y: number;
       };
       return serviceSuccess<DesktopCursorPosition>({
+        success: true,
         x: result.x,
         y: result.y
       });
@@ -348,6 +352,7 @@ export class DesktopService {
         height: number;
       };
       return serviceSuccess<DesktopScreenSize>({
+        success: true,
         width: result.width,
         height: result.height
       });

@@ -16,6 +16,7 @@ import { InterpreterHandler } from '@sandbox-container/handlers/interpreter-hand
 import type {
   Context,
   CreateContextRequest,
+  ExecutionEvent,
   HealthStatus,
   InterpreterService
 } from '@sandbox-container/services/interpreter-service';
@@ -27,7 +28,7 @@ const mockInterpreterService = {
   createContext: vi.fn(),
   listContexts: vi.fn(),
   deleteContext: vi.fn(),
-  executeCode: vi.fn()
+  executeCodeEvents: vi.fn()
 } as unknown as InterpreterService;
 
 const mockLogger = {
@@ -406,33 +407,15 @@ describe('InterpreterHandler', () => {
 
   describe('handle - Execute Code', () => {
     it('should execute code and return streaming response', async () => {
-      // Mock streaming response from service
-      const mockStream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(
-            'data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\n\n'
-          );
-          controller.enqueue(
-            'data: {"type":"stdout","data":"Hello World\\n","timestamp":"2023-01-01T00:00:01Z"}\n\n'
-          );
-          controller.enqueue(
-            'data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\n\n'
-          );
-          controller.close();
-        }
-      });
+      const mockEvents: ExecutionEvent[] = [
+        { type: 'stdout', text: 'Hello World\n' },
+        { type: 'execution_complete', execution_count: 1 }
+      ];
 
-      const mockStreamResponse = new Response(mockStream, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache'
-        }
+      mocked(mockInterpreterService.executeCodeEvents).mockResolvedValue({
+        success: true,
+        data: mockEvents
       });
-
-      mocked(mockInterpreterService.executeCode).mockResolvedValue(
-        mockStreamResponse
-      );
 
       const executeRequest = {
         context_id: 'ctx-123',
@@ -448,14 +431,12 @@ describe('InterpreterHandler', () => {
 
       const response = await interpreterHandler.handle(request, mockContext);
 
-      // Verify streaming response
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toBe('text/event-stream');
       expect(response.headers.get('Cache-Control')).toBe('no-cache');
       expect(response.body).toBeDefined();
 
-      // Verify service was called correctly
-      expect(mockInterpreterService.executeCode).toHaveBeenCalledWith(
+      expect(mockInterpreterService.executeCodeEvents).toHaveBeenCalledWith(
         'ctx-123',
         'print("Hello World")',
         'python'
@@ -463,24 +444,14 @@ describe('InterpreterHandler', () => {
     });
 
     it('should handle execute code errors', async () => {
-      // Mock error response from service
-      const mockErrorResponse = new Response(
-        JSON.stringify({
-          code: ErrorCode.CONTEXT_NOT_FOUND,
+      mocked(mockInterpreterService.executeCodeEvents).mockResolvedValue({
+        success: false,
+        error: {
           message: 'Context not found',
-          context: { contextId: 'ctx-invalid' },
-          httpStatus: 404,
-          timestamp: new Date().toISOString()
-        }),
-        {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
+          code: ErrorCode.CONTEXT_NOT_FOUND,
+          details: { contextId: 'ctx-invalid' }
         }
-      );
-
-      mocked(mockInterpreterService.executeCode).mockResolvedValue(
-        mockErrorResponse
-      );
+      });
 
       const executeRequest = {
         context_id: 'ctx-invalid',
@@ -496,14 +467,15 @@ describe('InterpreterHandler', () => {
 
       const response = await interpreterHandler.handle(request, mockContext);
 
-      // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBe(404);
-      const responseData = (await response.json()) as ErrorResponse;
+      const responseData = (await response.json()) as {
+        error: string;
+        code: string;
+        details: { contextId: string };
+      };
       expect(responseData.code).toBe(ErrorCode.CONTEXT_NOT_FOUND);
-      expect(responseData.message).toBe('Context not found');
-      expect(responseData.context).toMatchObject({ contextId: 'ctx-invalid' });
-      expect(responseData.httpStatus).toBe(404);
-      expect(responseData.timestamp).toBeDefined();
+      expect(responseData.error).toBe('Context not found');
+      expect(responseData.details).toMatchObject({ contextId: 'ctx-invalid' });
     });
   });
 

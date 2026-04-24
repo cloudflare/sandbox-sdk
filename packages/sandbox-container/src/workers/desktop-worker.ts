@@ -192,8 +192,8 @@ const handlers: { [Op in DesktopWorkerOp]: Handler<Op> } = {
     checkError(bindings.keyTap!(msg.key, msg.modifiers ?? ''), 'KeyTap');
     return { success: true };
   },
-  getScreenSize: () => bindings.getScreenSize!(),
-  getMousePos: () => bindings.getMousePos!(),
+  getScreenSize: () => ({ success: true, ...bindings.getScreenSize!() }),
+  getMousePos: () => ({ success: true, ...bindings.getMousePos!() }),
   mouseDown: (msg) => {
     if (msg.x !== undefined && msg.y !== undefined) {
       checkError(bindings.move!(Math.trunc(msg.x), Math.trunc(msg.y)), 'Move');

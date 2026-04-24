@@ -24,6 +24,7 @@ export interface DesktopStopResult {
 }
 
 export interface DesktopStatusResult {
+  success: boolean;
   status: 'active' | 'partial' | 'inactive';
   processes: Record<string, DesktopProcessHealth>;
   resolution: [number, number] | null;
@@ -47,8 +48,7 @@ export interface DesktopScreenshotRequest {
   showCursor?: boolean;
 }
 
-export interface DesktopScreenshotRegionRequest
-  extends DesktopScreenshotRequest {
+export interface DesktopScreenshotRegionRequest extends DesktopScreenshotRequest {
   region: DesktopScreenshotRegion;
 }
 
@@ -60,6 +60,7 @@ export interface DesktopScreenshotRegion {
 }
 
 export interface DesktopScreenshotResult {
+  success: boolean;
   data: string;
   imageFormat: DesktopImageFormat;
   width: number;
@@ -111,6 +112,7 @@ export interface DesktopMouseScrollRequest {
 }
 
 export interface DesktopCursorPosition {
+  success: boolean;
   x: number;
   y: number;
 }
@@ -142,6 +144,7 @@ export interface DesktopTypeRequest {
 // === Screen Info ===
 
 export interface DesktopScreenSize {
+  success: boolean;
   width: number;
   height: number;
 }

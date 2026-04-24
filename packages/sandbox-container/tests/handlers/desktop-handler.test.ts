@@ -58,6 +58,7 @@ describe('DesktopHandler', () => {
         Promise.resolve({
           success: true,
           data: {
+            success: true,
             status: 'active',
             processes: {},
             resolution: [1920, 1080],
@@ -69,6 +70,7 @@ describe('DesktopHandler', () => {
         Promise.resolve({
           success: true,
           data: {
+            success: true,
             data: 'base64-image',
             imageFormat: 'png',
             width: 1920,
@@ -80,6 +82,7 @@ describe('DesktopHandler', () => {
         Promise.resolve({
           success: true,
           data: {
+            success: true,
             data: 'base64-image',
             imageFormat: 'png',
             width: 400,
@@ -94,14 +97,20 @@ describe('DesktopHandler', () => {
       drag: mock(() => Promise.resolve({ success: true })),
       scroll: mock(() => Promise.resolve({ success: true })),
       getCursorPosition: mock(() =>
-        Promise.resolve({ success: true, data: { x: 120, y: 300 } })
+        Promise.resolve({
+          success: true,
+          data: { success: true, x: 120, y: 300 }
+        })
       ),
       typeText: mock(() => Promise.resolve({ success: true })),
       keyPress: mock(() => Promise.resolve({ success: true })),
       keyDown: mock(() => Promise.resolve({ success: true })),
       keyUp: mock(() => Promise.resolve({ success: true })),
       getScreenSize: mock(() =>
-        Promise.resolve({ success: true, data: { width: 1920, height: 1080 } })
+        Promise.resolve({
+          success: true,
+          data: { success: true, width: 1920, height: 1080 }
+        })
       ),
       getProcessStatus: mock(() =>
         Promise.resolve({

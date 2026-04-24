@@ -329,64 +329,45 @@ export class Execution {
 
 // Implementation of Result
 export class ResultImpl implements Result {
-  constructor(private raw: any) {}
+  text?: string;
+  html?: string;
+  png?: string;
+  jpeg?: string;
+  svg?: string;
+  latex?: string;
+  markdown?: string;
+  javascript?: string;
+  json?: any;
+  chart?: ChartData;
+  data?: any;
 
-  get text(): string | undefined {
-    return this.raw.text || this.raw.data?.['text/plain'];
-  }
-
-  get html(): string | undefined {
-    return this.raw.html || this.raw.data?.['text/html'];
-  }
-
-  get png(): string | undefined {
-    return this.raw.png || this.raw.data?.['image/png'];
-  }
-
-  get jpeg(): string | undefined {
-    return this.raw.jpeg || this.raw.data?.['image/jpeg'];
-  }
-
-  get svg(): string | undefined {
-    return this.raw.svg || this.raw.data?.['image/svg+xml'];
-  }
-
-  get latex(): string | undefined {
-    return this.raw.latex || this.raw.data?.['text/latex'];
-  }
-
-  get markdown(): string | undefined {
-    return this.raw.markdown || this.raw.data?.['text/markdown'];
-  }
-
-  get javascript(): string | undefined {
-    return this.raw.javascript || this.raw.data?.['application/javascript'];
-  }
-
-  get json(): any {
-    return this.raw.json || this.raw.data?.['application/json'];
-  }
-
-  get chart(): ChartData | undefined {
-    return this.raw.chart;
-  }
-
-  get data(): any {
-    return this.raw.data;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw SSE data has dynamic shape
+  constructor(raw: any) {
+    this.text = raw.text || raw.data?.['text/plain'];
+    this.html = raw.html || raw.data?.['text/html'];
+    this.png = raw.png || raw.data?.['image/png'];
+    this.jpeg = raw.jpeg || raw.data?.['image/jpeg'];
+    this.svg = raw.svg || raw.data?.['image/svg+xml'];
+    this.latex = raw.latex || raw.data?.['text/latex'];
+    this.markdown = raw.markdown || raw.data?.['text/markdown'];
+    this.javascript = raw.javascript || raw.data?.['application/javascript'];
+    this.json = raw.json || raw.data?.['application/json'];
+    this.chart = raw.chart;
+    this.data = raw.data;
   }
 
   formats(): string[] {
-    const formats: string[] = [];
-    if (this.text) formats.push('text');
-    if (this.html) formats.push('html');
-    if (this.png) formats.push('png');
-    if (this.jpeg) formats.push('jpeg');
-    if (this.svg) formats.push('svg');
-    if (this.latex) formats.push('latex');
-    if (this.markdown) formats.push('markdown');
-    if (this.javascript) formats.push('javascript');
-    if (this.json) formats.push('json');
-    if (this.chart) formats.push('chart');
-    return formats;
+    const fmts: string[] = [];
+    if (this.text) fmts.push('text');
+    if (this.html) fmts.push('html');
+    if (this.png) fmts.push('png');
+    if (this.jpeg) fmts.push('jpeg');
+    if (this.svg) fmts.push('svg');
+    if (this.latex) fmts.push('latex');
+    if (this.markdown) fmts.push('markdown');
+    if (this.javascript) fmts.push('javascript');
+    if (this.json) fmts.push('json');
+    if (this.chart) fmts.push('chart');
+    return fmts;
   }
 }
