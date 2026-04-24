@@ -5,7 +5,7 @@ on:
     branches: [main, master]
   workflow_dispatch: {}
   schedule:
-    - cron: '0 0 1-7 * 6' # per-repo, staggered across month
+    - cron: '0 3 * * 3' # weekly, Wednesday 03:00 UTC
 concurrency:
   group: semgrep-${{ github.event_name }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v6
-
         with:
           fetch-depth: 1
       - id: cache-semgrep
