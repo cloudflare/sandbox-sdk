@@ -33,6 +33,17 @@ export interface HealthStatus {
   progress: number;
 }
 
+export type ExecutionEvent =
+  | { type: 'stdout'; text: string }
+  | { type: 'stderr'; text: string }
+  | {
+      type: 'result';
+      metadata: Record<string, unknown>;
+      [key: string]: unknown;
+    }
+  | { type: 'execution_complete'; execution_count: number }
+  | { type: 'error'; ename: string; evalue: string; traceback: string[] };
+
 export class InterpreterNotReadyError extends Error {
   progress: number;
   retryAfter: number;
@@ -258,53 +269,48 @@ export class InterpreterService {
   }
 
   /**
-   * Execute code in a context
-   * Returns a Response with streaming output (SSE format)
+   * Execute code in a context and return typed execution events.
    *
-   * Note: This method returns Response directly rather than ServiceResult<Response>
-   * because streaming responses need special handling. Error responses are still
-   * returned as Response objects with appropriate status codes.
+   * Callers decide how to serialize these events (SSE for HTTP, direct
+   * dispatch for RPC).
    */
-  async executeCode(
+  async executeCodeEvents(
     contextId: string,
     code: string,
     language?: string
-  ): Promise<Response> {
+  ): Promise<ServiceResult<ExecutionEvent[]>> {
     try {
       const context = this.contexts.get(contextId);
       if (!context) {
-        return new Response(
-          JSON.stringify({
-            error: `Context ${contextId} not found`
-          }),
-          {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
+        return {
+          success: false,
+          error: {
+            message: `Context ${contextId} not found`,
+            code: ErrorCode.CONTEXT_NOT_FOUND,
+            details: {
+              contextId
+            } satisfies ContextNotFoundContext
           }
-        );
+        };
       }
 
       context.lastUsed = new Date().toISOString();
 
-      // Check if executor is healthy
       if (!processPool.isContextExecutorHealthy(contextId)) {
-        return new Response(
-          JSON.stringify({
-            error: `Context executor has terminated. Please delete and recreate the context.`,
+        return {
+          success: false,
+          error: {
+            message:
+              'Context executor has terminated. Please delete and recreate the context.',
             code: ErrorCode.INTERNAL_ERROR,
             details: {
               contextId
-            }
-          }),
-          {
-            status: 410,
-            headers: { 'Content-Type': 'application/json' }
+            } satisfies ContextNotFoundContext
           }
-        );
+        };
       }
 
       const execLanguage = this.mapLanguage(language || context.language);
-      const self = this;
 
       const result = await processPool.execute(
         execLanguage,
@@ -313,134 +319,61 @@ export class InterpreterService {
         undefined
       );
 
-      const stream = new ReadableStream({
-        start(controller) {
-          const encoder = new TextEncoder();
+      const events: ExecutionEvent[] = [];
 
-          try {
-            if (result.stdout) {
-              controller.enqueue(
-                encoder.encode(
-                  self.formatSSE({
-                    type: 'stdout',
-                    text: result.stdout
-                  })
-                )
-              );
-            }
+      if (result.stdout) {
+        events.push({ type: 'stdout', text: result.stdout });
+      }
 
-            if (result.stderr) {
-              controller.enqueue(
-                encoder.encode(
-                  self.formatSSE({
-                    type: 'stderr',
-                    text: result.stderr
-                  })
-                )
-              );
-            }
+      if (result.stderr) {
+        events.push({ type: 'stderr', text: result.stderr });
+      }
 
-            if (result.outputs && result.outputs.length > 0) {
-              for (const output of result.outputs) {
-                const outputData = self.formatOutputData(output);
-                controller.enqueue(
-                  encoder.encode(
-                    self.formatSSE({
-                      type: 'result',
-                      ...outputData,
-                      metadata: output.metadata || {}
-                    })
-                  )
-                );
-              }
-            }
-
-            if (result.success) {
-              controller.enqueue(
-                encoder.encode(
-                  self.formatSSE({
-                    type: 'execution_complete',
-                    execution_count: 1
-                  })
-                )
-              );
-            } else if (result.error) {
-              controller.enqueue(
-                encoder.encode(
-                  self.formatSSE({
-                    type: 'error',
-                    ename: result.error.type || 'ExecutionError',
-                    evalue: result.error.message || 'Code execution failed',
-                    traceback: result.error.traceback
-                      ? result.error.traceback.split('\n')
-                      : []
-                  })
-                )
-              );
-            } else {
-              controller.enqueue(
-                encoder.encode(
-                  self.formatSSE({
-                    type: 'error',
-                    ename: 'ExecutionError',
-                    evalue: result.stderr || 'Code execution failed',
-                    traceback: []
-                  })
-                )
-              );
-            }
-
-            controller.close();
-          } catch (error) {
-            self.logger.error('Code execution failed', error as Error, {
-              contextId,
-              language: execLanguage
-            });
-
-            controller.enqueue(
-              encoder.encode(
-                self.formatSSE({
-                  type: 'error',
-                  ename: 'InternalError',
-                  evalue:
-                    error instanceof Error ? error.message : String(error),
-                  traceback: []
-                })
-              )
-            );
-
-            controller.close();
-          }
+      if (result.outputs && result.outputs.length > 0) {
+        for (const output of result.outputs) {
+          events.push({
+            type: 'result',
+            ...InterpreterService.formatOutputData(output),
+            metadata: output.metadata || {}
+          });
         }
-      });
+      }
 
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive'
-        }
-      });
+      if (result.success) {
+        events.push({ type: 'execution_complete', execution_count: 1 });
+      } else if (result.error) {
+        events.push({
+          type: 'error',
+          ename: result.error.type || 'ExecutionError',
+          evalue: result.error.message || 'Code execution failed',
+          traceback: result.error.traceback
+            ? result.error.traceback.split('\n')
+            : []
+        });
+      } else {
+        events.push({
+          type: 'error',
+          ename: 'ExecutionError',
+          evalue: result.stderr || 'Code execution failed',
+          traceback: []
+        });
+      }
+
+      return { success: true, data: events };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      // Return error as JSON response
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: `Failed to execute code in context '${contextId}': ${errorMessage}`,
-            code: ErrorCode.CODE_EXECUTION_ERROR,
-            details: {
-              contextId,
-              evalue: errorMessage
-            } satisfies CodeExecutionContext
-          }
-        }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
+      return {
+        success: false,
+        error: {
+          message: `Failed to execute code in context '${contextId}': ${errorMessage}`,
+          code: ErrorCode.CODE_EXECUTION_ERROR,
+          details: {
+            contextId,
+            evalue: errorMessage
+          } satisfies CodeExecutionContext
         }
-      );
+      };
     }
   }
 
@@ -463,7 +396,7 @@ export class InterpreterService {
     }
   }
 
-  private formatOutputData(output: RichOutput): Record<string, unknown> {
+  static formatOutputData(output: RichOutput): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
     switch (output.type) {
@@ -502,15 +435,5 @@ export class InterpreterService {
     }
 
     return result;
-  }
-
-  /**
-   * Format event as SSE (Server-Sent Events)
-   * SSE format requires "data: " prefix and double newline separator
-   * @param event - Event object to send
-   * @returns SSE-formatted string
-   */
-  private formatSSE(event: Record<string, unknown>): string {
-    return `data: ${JSON.stringify(event)}\n\n`;
   }
 }

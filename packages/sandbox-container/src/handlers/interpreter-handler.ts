@@ -6,11 +6,12 @@ import type {
   InterpreterHealthResult,
   Logger
 } from '@repo/shared';
-import { ErrorCode } from '@repo/shared/errors';
+import { ErrorCode, getHttpStatus } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
 import type {
   CreateContextRequest,
+  ExecutionEvent,
   InterpreterService
 } from '../services/interpreter-service';
 import { BaseHandler } from './base-handler';
@@ -169,14 +170,53 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
       language?: string;
     }>(request);
 
-    // The service returns a Response directly for streaming
-    // No need to wrap with ServiceResult as it's already handled
-    const response = await this.interpreterService.executeCode(
+    const result = await this.interpreterService.executeCodeEvents(
       body.context_id,
       body.code,
       body.language
     );
 
-    return response;
+    if (!result.success) {
+      const status = getHttpStatus(result.error.code as ErrorCode);
+      return new Response(
+        JSON.stringify({
+          error: result.error.message,
+          code: result.error.code,
+          details: result.error.details
+        }),
+        {
+          status,
+          headers: {
+            'Content-Type': 'application/json',
+            ...context.corsHeaders
+          }
+        }
+      );
+    }
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const event of result.data) {
+          controller.enqueue(
+            encoder.encode(InterpreterHandler.formatSSE(event))
+          );
+        }
+        controller.close();
+      }
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...context.corsHeaders
+      }
+    });
+  }
+
+  private static formatSSE(event: ExecutionEvent): string {
+    return `data: ${JSON.stringify(event)}\n\n`;
   }
 }

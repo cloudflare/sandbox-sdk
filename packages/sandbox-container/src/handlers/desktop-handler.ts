@@ -108,7 +108,7 @@ export class DesktopHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const result = await this.desktopService.status();
     if (!result.success) return this.createErrorResponse(result.error, context);
-    return this.createTypedResponse({ success: true, ...result.data }, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async handleScreenshot(
@@ -118,7 +118,7 @@ export class DesktopHandler extends BaseHandler<Request, Response> {
     const body = await this.parseRequestBody<DesktopScreenshotRequest>(request);
     const result = await this.desktopService.screenshot(body);
     if (!result.success) return this.createErrorResponse(result.error, context);
-    return this.createTypedResponse({ success: true, ...result.data }, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async handleScreenshotRegion(
@@ -129,7 +129,7 @@ export class DesktopHandler extends BaseHandler<Request, Response> {
       await this.parseRequestBody<DesktopScreenshotRegionRequest>(request);
     const result = await this.desktopService.screenshotRegion(body);
     if (!result.success) return this.createErrorResponse(result.error, context);
-    return this.createTypedResponse({ success: true, ...result.data }, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async handleMouseClick(
@@ -199,7 +199,7 @@ export class DesktopHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const result = await this.desktopService.getCursorPosition();
     if (!result.success) return this.createErrorResponse(result.error, context);
-    return this.createTypedResponse({ success: true, ...result.data }, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async handleKeyboardType(
@@ -248,7 +248,7 @@ export class DesktopHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const result = await this.desktopService.getScreenSize();
     if (!result.success) return this.createErrorResponse(result.error, context);
-    return this.createTypedResponse({ success: true, ...result.data }, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async handleProcessStatus(
