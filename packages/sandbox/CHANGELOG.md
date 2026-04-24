@@ -1,5 +1,33 @@
 # @cloudflare/sandbox
 
+## 0.9.0
+
+### Minor Changes
+
+- [#633](https://github.com/cloudflare/sandbox-sdk/pull/633) [`4e628ae`](https://github.com/cloudflare/sandbox-sdk/commit/4e628ae942a49dda06e1bf68daa669e179f7ffd9) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Handle shell exits with `SessionTerminatedError`, and let the same session id recover on the next call.
+
+  ```ts
+  import { SessionTerminatedError } from '@cloudflare/sandbox';
+
+  const session = await sandbox.createSession({ id: 'build' });
+
+  try {
+    await session.exec('exit 42');
+  } catch (error) {
+    if (error instanceof SessionTerminatedError) {
+      console.log(error.exitCode); // 42
+      await session.exec('echo fresh shell');
+    }
+  }
+  ```
+
+  If a session's shell exits, the failing call now returns `SESSION_TERMINATED`
+  (`HTTP 410`) with the observed exit code instead of a generic internal error.
+  Retrying with the same session id, or calling `createSession({ id })`, starts a
+  fresh session without destroying the whole sandbox. Session-local state such as
+  the working directory, environment variables, shell functions, and background
+  jobs is lost when the shell exits.
+
 ## 0.8.14
 
 ### Patch Changes

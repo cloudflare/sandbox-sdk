@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.8.14
+FROM docker.io/cloudflare/sandbox:0.9.0
 
 COPY server.js /app/server.js
 
