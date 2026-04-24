@@ -604,9 +604,9 @@ export class SessionManager {
         }
 
         if (error instanceof ShellTerminatedError) {
-          const dead = this.sessions.get(sessionId);
-          if (dead && !dead.isReady()) {
-            await this.evictDeadSession(sessionId, dead);
+          const session = this.sessions.get(sessionId);
+          if (session && !session.isReady()) {
+            await this.evictTerminatedSession(sessionId, session);
           }
           return serviceError<T>(
             this.sessionTerminatedError(sessionId, error.exitCode)
