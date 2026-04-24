@@ -112,7 +112,7 @@ jobs:
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-main
-      image_tag: main
+      image_tag: ci-${{ needs.hashes.outputs.docker }}
       images_changed: ${{ needs.build.outputs.images_changed }}
       deploy_hash: ${{ needs.hashes.outputs.deploy }}
     secrets: inherit
