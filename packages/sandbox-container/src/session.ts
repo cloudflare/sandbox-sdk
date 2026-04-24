@@ -219,6 +219,11 @@ export class Session {
   private shellExitedPromise: Promise<never> | null = null;
   private ready = false;
   private isDestroying = false;
+  /**
+   * Exit code reported by the shell once it has exited. Null while the
+   * shell is still running or exited without a numeric code.
+   */
+  private shellExitCode: number | null = null;
   private sessionDir: string | null = null;
   private readonly id: string;
   private readonly options: SessionOptions;
@@ -297,6 +302,7 @@ export class Session {
             }
           );
         }
+        this.shellExitCode = exitCode ?? null;
         this.ready = false;
 
         reject(
@@ -715,6 +721,14 @@ export class Session {
    */
   wasDestroyed(): boolean {
     return this.isDestroying;
+  }
+
+  /**
+   * Exit code observed when the shell exited, or null if the shell is
+   * still running or exited without a numeric code.
+   */
+  getShellExitCode(): number | null {
+    return this.shellExitCode;
   }
 
   /**

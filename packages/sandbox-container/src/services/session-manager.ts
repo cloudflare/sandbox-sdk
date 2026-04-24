@@ -13,7 +13,8 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   InternalErrorContext,
-  SessionDestroyedContext
+  SessionDestroyedContext,
+  SessionTerminatedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
@@ -78,10 +79,49 @@ export class SessionManager {
     sessionId: string,
     options: { cwd?: string; commandTimeoutMs?: number } = {}
   ): Promise<ServiceResult<Session>> {
-    // Fast path: session already exists
+    // Fast path: session already exists.
+    //
+    // A session whose shell has exited (user ran `exit`, shell crashed,
+    // etc.) lingers in the map with `ready = false`. Returning that
+    // handle makes every subsequent exec throw "Session is not ready or
+    // shell has died" with no recovery short of destroying the entire
+    // Durable Object.
+    //
+    // Instead: evict the dead handle and surface SESSION_TERMINATED to
+    // the caller. They learn their session-local state (env vars, cwd,
+    // shell functions, background jobs) is gone, rather than silently
+    // running commands against a fresh shell that pretends nothing
+    // happened. The next call on the same sessionId finds no existing
+    // session and creates a fresh one through this same method, which
+    // is the automatic recovery path.
+    //
+    // Eviction is safe because every caller (executeInSession,
+    // withSession) holds the per-session lock before invoking this
+    // method, so no concurrent command observes the transition.
     const existing = this.sessions.get(sessionId);
     if (existing) {
-      return { success: true, data: existing };
+      if (existing.isReady()) {
+        return { success: true, data: existing };
+      }
+
+      const exitCode = existing.getShellExitCode();
+      this.logger.warn('Evicting terminated session', {
+        sessionId,
+        exitCode
+      });
+      await this.evictDeadSession(sessionId, existing);
+
+      return {
+        success: false,
+        error: {
+          message: `Session '${sessionId}' shell exited (exit code: ${exitCode ?? 'unknown'})`,
+          code: ErrorCode.SESSION_TERMINATED,
+          details: {
+            sessionId,
+            exitCode
+          } satisfies SessionTerminatedContext
+        }
+      };
     }
 
     // Check if another request is already creating this session
@@ -152,21 +192,49 @@ export class SessionManager {
     let errorMessage: string | undefined;
 
     try {
-      // Check if session already exists — log as info, not error.
-      // The session is usable; this is an expected condition when
-      // ensureBackupSession or other idempotent callers retry.
-      if (this.sessions.has(options.id)) {
-        outcome = 'success';
-        return {
-          success: false,
-          error: {
-            message: `Session '${options.id}' already exists`,
-            code: ErrorCode.SESSION_ALREADY_EXISTS,
-            details: {
-              sessionId: options.id
+      // If a session with this id already exists, the answer depends on
+      // its health:
+      //
+      //   - A usable session yields SESSION_ALREADY_EXISTS. This is an
+      //     expected condition for idempotent callers like
+      //     ensureBackupSession.
+      //
+      //   - A session whose shell has exited is evicted and replaced, so
+      //     an explicit createSession() call is a deterministic recovery
+      //     path. The caller has already been told the session
+      //     terminated (via SESSION_TERMINATED from a prior exec), so
+      //     replacing it matches their stated intent.
+      //
+      // LOCKING CONTRACT: callers of createSession do not normally hold
+      // the per-session lock (the public HTTP handler calls it directly).
+      // The dead-replace branch below takes the lock itself so that any
+      // concurrent executeInSession serializes behind the recreate.
+      const existing = this.sessions.get(options.id);
+      if (existing) {
+        if (existing.isReady()) {
+          outcome = 'success';
+          return {
+            success: false,
+            error: {
+              message: `Session '${options.id}' already exists`,
+              code: ErrorCode.SESSION_ALREADY_EXISTS,
+              details: {
+                sessionId: options.id
+              }
             }
+          };
+        }
+
+        this.logger.warn('Recreating terminated session via createSession', {
+          sessionId: options.id
+        });
+        const lock = this.getSessionLock(options.id);
+        await lock.runExclusive(async () => {
+          const current = this.sessions.get(options.id);
+          if (current && !current.isReady()) {
+            await this.evictDeadSession(options.id, current);
           }
-        };
+        });
       }
 
       // Create and initialize session - pass logger with sessionId context
@@ -257,21 +325,41 @@ export class SessionManager {
   }
 
   /**
-   * Determine whether a command error stems from API-initiated session
-   * destruction or a genuine command failure. Resolves the error message,
-   * incorporating explicit exit-command detection.
+   * Classify a failure from session.exec / session.execStream into one of:
+   *   - API-initiated destruction (SESSION_DESTROYED)
+   *   - shell terminated on its own (SESSION_TERMINATED)
+   *   - a plain command execution failure (COMMAND_EXECUTION_ERROR)
+   *
+   * Also resolves a human-readable error message, with an explicit
+   * exit-command short-circuit for cases where the shell already exited
+   * before Bun produced a typed error.
    */
   private classifyCommandError(
     error: unknown,
     command: string,
     sessionId: string
-  ): { errorMessage: string; sessionDestroyed: boolean } {
+  ): {
+    errorMessage: string;
+    sessionDestroyed: boolean;
+    shellTerminated: boolean;
+    shellExitCode: number | null;
+  } {
     if (error instanceof SessionDestroyedError) {
-      return { errorMessage: error.message, sessionDestroyed: true };
+      return {
+        errorMessage: error.message,
+        sessionDestroyed: true,
+        shellTerminated: false,
+        shellExitCode: null
+      };
     }
 
     if (error instanceof ShellTerminatedError) {
-      return { errorMessage: error.message, sessionDestroyed: false };
+      return {
+        errorMessage: error.message,
+        sessionDestroyed: false,
+        shellTerminated: true,
+        shellExitCode: error.exitCode
+      };
     }
 
     // Untyped error fallback (non-shell failures like I/O errors)
@@ -286,8 +374,17 @@ export class SessionManager {
     const sessionDestroyed = !!(
       session?.wasDestroyed() && explicitExitCode === null
     );
+    // An explicit `exit <N>` that raced past ShellTerminatedError still
+    // means the session is gone; surface it as SESSION_TERMINATED so
+    // callers can distinguish it from an ordinary non-zero exit.
+    const shellTerminated = explicitExitCode !== null;
 
-    return { errorMessage, sessionDestroyed };
+    return {
+      errorMessage,
+      sessionDestroyed,
+      shellTerminated,
+      shellExitCode: explicitExitCode
+    };
   }
 
   private sessionDestroyedError(sessionId: string): ServiceError {
@@ -296,6 +393,39 @@ export class SessionManager {
       code: ErrorCode.SESSION_DESTROYED,
       details: { sessionId } satisfies SessionDestroyedContext
     };
+  }
+
+  private sessionTerminatedError(
+    sessionId: string,
+    exitCode: number | null
+  ): ServiceError {
+    return {
+      message: `Session '${sessionId}' shell exited (exit code: ${exitCode ?? 'unknown'})`,
+      code: ErrorCode.SESSION_TERMINATED,
+      details: { sessionId, exitCode } satisfies SessionTerminatedContext
+    };
+  }
+
+  /**
+   * Tear down a session whose shell has exited, and remove it from the
+   * manager's maps. Best-effort: the shell is already gone, we only care
+   * that associated resources (pty, in-flight command handles) are reaped
+   * and that the next call on this sessionId creates a fresh session.
+   */
+  private async evictDeadSession(
+    sessionId: string,
+    session: Session
+  ): Promise<void> {
+    try {
+      await session.destroy();
+    } catch (error) {
+      this.logger.debug('Dead session destroy() threw during eviction', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    this.sessions.delete(sessionId);
+    this.creatingLocks.delete(sessionId);
   }
 
   /**
@@ -336,16 +466,31 @@ export class SessionManager {
           data: result
         };
       } catch (error) {
-        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
-          error,
-          command,
-          sessionId
-        );
+        const {
+          errorMessage,
+          sessionDestroyed,
+          shellTerminated,
+          shellExitCode
+        } = this.classifyCommandError(error, command, sessionId);
 
         if (sessionDestroyed) {
           return {
             success: false,
             error: this.sessionDestroyedError(sessionId)
+          };
+        }
+
+        if (shellTerminated) {
+          // Shell exited during the command. Evict the dead handle under
+          // the lock we already hold, so the next call on this sessionId
+          // creates a fresh session instead of hitting the stale handle.
+          const dead = this.sessions.get(sessionId);
+          if (dead && !dead.isReady()) {
+            await this.evictDeadSession(sessionId, dead);
+          }
+          return {
+            success: false,
+            error: this.sessionTerminatedError(sessionId, shellExitCode)
           };
         }
 
@@ -561,16 +706,28 @@ export class SessionManager {
           data: { continueStreaming: Promise.resolve() }
         };
       } catch (error) {
-        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
-          error,
-          command,
-          sessionId
-        );
+        const {
+          errorMessage,
+          sessionDestroyed,
+          shellTerminated,
+          shellExitCode
+        } = this.classifyCommandError(error, command, sessionId);
 
         if (sessionDestroyed) {
           return {
             success: false,
             error: this.sessionDestroyedError(sessionId)
+          };
+        }
+
+        if (shellTerminated) {
+          const dead = this.sessions.get(sessionId);
+          if (dead && !dead.isReady()) {
+            await this.evictDeadSession(sessionId, dead);
+          }
+          return {
+            success: false,
+            error: this.sessionTerminatedError(sessionId, shellExitCode)
           };
         }
 
@@ -676,16 +833,28 @@ export class SessionManager {
           firstEvent: firstResult.value
         };
       } catch (error) {
-        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
-          error,
-          command,
-          sessionId
-        );
+        const {
+          errorMessage,
+          sessionDestroyed,
+          shellTerminated,
+          shellExitCode
+        } = this.classifyCommandError(error, command, sessionId);
 
         if (sessionDestroyed) {
           return {
             success: false as const,
             error: this.sessionDestroyedError(sessionId)
+          };
+        }
+
+        if (shellTerminated) {
+          const dead = this.sessions.get(sessionId);
+          if (dead && !dead.isReady()) {
+            await this.evictDeadSession(sessionId, dead);
+          }
+          return {
+            success: false as const,
+            error: this.sessionTerminatedError(sessionId, shellExitCode)
           };
         }
 

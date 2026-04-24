@@ -36,6 +36,7 @@ import type {
   ProcessNotFoundContext,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
+  SessionTerminatedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
@@ -82,6 +83,7 @@ import {
   ServiceNotRespondingError,
   SessionAlreadyExistsError,
   SessionDestroyedError,
+  SessionTerminatedError,
   ValidationFailedError
 } from './classes';
 
@@ -161,6 +163,11 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.SESSION_DESTROYED:
       return new SessionDestroyedError(
         errorResponse as unknown as ErrorResponse<SessionDestroyedContext>
+      );
+
+    case ErrorCode.SESSION_TERMINATED:
+      return new SessionTerminatedError(
+        errorResponse as unknown as ErrorResponse<SessionTerminatedContext>
       );
 
     // Port Errors

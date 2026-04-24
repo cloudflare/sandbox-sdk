@@ -63,6 +63,11 @@ export interface SessionDestroyedContext {
   sessionId: string;
 }
 
+export interface SessionTerminatedContext {
+  sessionId: string;
+  exitCode: number | null;
+}
+
 /**
  * Process readiness error contexts
  */

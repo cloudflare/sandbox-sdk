@@ -36,6 +36,9 @@ export function getSuggestion(
     case ErrorCode.SESSION_DESTROYED:
       return `Session "${context.sessionId}" was destroyed. Create a new session to continue executing commands`;
 
+    case ErrorCode.SESSION_TERMINATED:
+      return `Session "${context.sessionId}" ended because its shell exited (exit code: ${context.exitCode ?? 'unknown'}). Session-local state (env vars, cwd, shell functions) has been lost. Retry the call to start a fresh session, or call createSession() with the same id to recreate it explicitly`;
+
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;
 

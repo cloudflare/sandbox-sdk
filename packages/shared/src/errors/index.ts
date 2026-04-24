@@ -68,6 +68,7 @@ export type {
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
+  SessionTerminatedContext,
   ValidationFailedContext
 } from './contexts';
 // Export utility functions
