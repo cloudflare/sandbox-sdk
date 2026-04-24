@@ -74,7 +74,13 @@ class RPCError extends Error {
 function throwIfError(result: ServiceResult<any, any>): void {
   if (!result.success) {
     const err = result.error;
-    throw new RPCError(`[${err.code}] ${err.message}`);
+    throw new RPCError(
+      JSON.stringify({
+        code: err.code,
+        message: err.message,
+        context: err.details ?? {}
+      })
+    );
   }
 }
 

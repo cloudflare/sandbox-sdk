@@ -9,13 +9,13 @@
  * - Open redirect vulnerabilities
  */
 
-export class SecurityError extends Error {
+export class SandboxSecurityError extends Error {
   constructor(
     message: string,
     public readonly code?: string
   ) {
     super(message);
-    this.name = 'SecurityError';
+    this.name = 'SandboxSecurityError';
   }
 }
 
@@ -53,7 +53,7 @@ export function validatePort(port: number): boolean {
 export function sanitizeSandboxId(id: string): string {
   // Basic validation: not empty, reasonable length limit (DNS subdomain limit is 63 chars)
   if (!id || id.length > 63) {
-    throw new SecurityError(
+    throw new SandboxSecurityError(
       'Sandbox ID must be 1-63 characters long.',
       'INVALID_SANDBOX_ID_LENGTH'
     );
@@ -61,7 +61,7 @@ export function sanitizeSandboxId(id: string): string {
 
   // DNS compliance: cannot start or end with hyphens (RFC requirement)
   if (id.startsWith('-') || id.endsWith('-')) {
-    throw new SecurityError(
+    throw new SandboxSecurityError(
       'Sandbox ID cannot start or end with hyphens (DNS requirement).',
       'INVALID_SANDBOX_ID_HYPHENS'
     );
@@ -80,7 +80,7 @@ export function sanitizeSandboxId(id: string): string {
 
   const lowerCaseId = id.toLowerCase();
   if (reservedNames.includes(lowerCaseId)) {
-    throw new SecurityError(
+    throw new SandboxSecurityError(
       `Reserved sandbox ID '${id}' is not allowed.`,
       'RESERVED_SANDBOX_ID'
     );
@@ -110,7 +110,7 @@ export function validateLanguage(language: string | undefined): void {
   const normalized = language.toLowerCase();
 
   if (!supportedLanguages.includes(normalized)) {
-    throw new SecurityError(
+    throw new SandboxSecurityError(
       `Unsupported language '${language}'. Supported languages: python, javascript, typescript`,
       'INVALID_LANGUAGE'
     );

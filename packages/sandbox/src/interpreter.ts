@@ -6,20 +6,22 @@ import {
   type OutputMessage,
   type Result,
   ResultImpl,
-  type RunCodeOptions
+  type RunCodeOptions,
+  type SandboxInterpreterAPI
 } from '@repo/shared';
-import type { InterpreterClient } from './clients/interpreter-client.js';
-import type { Sandbox } from './sandbox.js';
 import { validateLanguage } from './security.js';
 
 export class CodeInterpreter {
-  private interpreterClient: InterpreterClient;
+  private getInterpreterClient: () => SandboxInterpreterAPI;
   private contexts = new Map<string, CodeContext>();
 
-  constructor(sandbox: Sandbox) {
-    // In init-testing architecture, client is a SandboxClient with an interpreter property
-    this.interpreterClient = (sandbox.client as any)
-      .interpreter as InterpreterClient;
+  constructor(
+    interpreterClient: SandboxInterpreterAPI | (() => SandboxInterpreterAPI)
+  ) {
+    this.getInterpreterClient =
+      typeof interpreterClient === 'function'
+        ? interpreterClient
+        : () => interpreterClient;
   }
 
   /**
@@ -31,7 +33,8 @@ export class CodeInterpreter {
     // Validate language before sending to container
     validateLanguage(options.language);
 
-    const context = await this.interpreterClient.createCodeContext(options);
+    const context =
+      await this.getInterpreterClient().createCodeContext(options);
     this.contexts.set(context.id, context);
     return context;
   }
@@ -55,7 +58,7 @@ export class CodeInterpreter {
     const execution = new Execution(code, context);
 
     // Stream execution
-    await this.interpreterClient.runCodeStream(
+    await this.getInterpreterClient().runCodeStream(
       context.id,
       code,
       options.language,
@@ -97,7 +100,7 @@ export class CodeInterpreter {
     }
 
     // Use streamCode which handles both HTTP and WebSocket streaming
-    return this.interpreterClient.streamCode(
+    return this.getInterpreterClient().streamCode(
       context.id,
       code,
       options.language
@@ -108,7 +111,7 @@ export class CodeInterpreter {
    * List all code contexts
    */
   async listCodeContexts(): Promise<CodeContext[]> {
-    const contexts = await this.interpreterClient.listCodeContexts();
+    const contexts = await this.getInterpreterClient().listCodeContexts();
 
     // Update local cache
     for (const context of contexts) {
@@ -122,7 +125,7 @@ export class CodeInterpreter {
    * Delete a code context
    */
   async deleteCodeContext(contextId: string): Promise<void> {
-    await this.interpreterClient.deleteCodeContext(contextId);
+    await this.getInterpreterClient().deleteCodeContext(contextId);
     this.contexts.delete(contextId);
   }
 

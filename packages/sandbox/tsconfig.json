@@ -3,7 +3,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "types": ["node", "@cloudflare/workers-types"],
-    "lib": ["ES2022"],
+    "lib": ["ES2024"],
     "resolveJsonModule": true,
     "paths": {
       "@repo/shared/backup": ["../shared/src/backup.ts"]

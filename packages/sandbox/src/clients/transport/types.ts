@@ -4,7 +4,7 @@ import type { ContainerStub } from '../types';
 /**
  * Transport mode for SDK communication
  */
-export type TransportMode = 'http' | 'websocket';
+export type TransportMode = 'http' | 'websocket' | 'rpc';
 
 /**
  * Configuration options for creating a transport

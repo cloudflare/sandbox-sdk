@@ -1,3 +1,4 @@
+import type { SandboxAPI } from '@repo/shared';
 import { BackupClient } from './backup-client';
 import { CommandClient } from './command-client';
 import { DesktopClient } from './desktop-client';
@@ -16,14 +17,13 @@ import { UtilityClient } from './utility-client';
 import { WatchClient } from './watch-client';
 
 /**
- * Main sandbox client that composes all domain-specific clients
- * Provides organized access to all sandbox functionality
+ * Main sandbox client that composes all domain-specific clients.
+ * Provides organized access to all sandbox functionality.
  *
  * Supports two transport modes:
  * - HTTP (default): Each request is a separate HTTP call
- * - WebSocket: All requests multiplexed over a single connection
- *
- * WebSocket mode reduces sub-request count when running inside Workers/Durable Objects.
+ * - WebSocket: All requests multiplexed over a single connection,
+ *   reducing sub-request count inside Workers/Durable Objects
  */
 export class SandboxClient {
   public readonly backup: BackupClient;
@@ -43,7 +43,7 @@ export class SandboxClient {
     // Create shared transport if WebSocket mode is enabled
     if (options.transportMode === 'websocket' && options.wsUrl) {
       this.transport = createTransport({
-        mode: 'websocket',
+        mode: options.transportMode,
         wsUrl: options.wsUrl,
         baseUrl: options.baseUrl,
         logger: options.logger,
@@ -115,6 +115,28 @@ export class SandboxClient {
   }
 
   /**
+   * Stream a file directly to the container over a binary RPC channel.
+   *
+   * Requires the capnweb transport (`useWebSocket: 'rpc'`). Calling this
+   * method with the HTTP or WebSocket transports throws an error because those
+   * transports do not support binary streaming.
+   */
+  writeFileStream(
+    _path: string,
+    _content: ReadableStream<Uint8Array>,
+    _sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }> {
+    throw new Error(
+      'writeFileStream requires the RPC transport. Enable it with transport: "rpc" in sandbox options.'
+    );
+  }
+
+  /**
    * Connect WebSocket transport (no-op in HTTP mode)
    * Called automatically on first request, but can be called explicitly
    * to establish connection upfront.
@@ -135,3 +157,9 @@ export class SandboxClient {
     }
   }
 }
+
+// Compile-time check: SandboxClient exposes every top-level field that SandboxAPI requires.
+// Deep structural compatibility is not enforced because the HTTP sub-clients
+// (e.g. FileClient) lack streaming methods only available via capnweb.
+type PublicKeys<T> = { [K in keyof T]: unknown };
+void (0 as unknown as PublicKeys<SandboxClient> satisfies PublicKeys<SandboxAPI>);
