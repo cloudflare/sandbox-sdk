@@ -892,9 +892,9 @@ export class SessionManager {
         }
 
         if (shellTerminated) {
-          const dead = this.sessions.get(sessionId);
-          if (dead && !dead.isReady()) {
-            await this.evictDeadSession(sessionId, dead);
+          const session = this.sessions.get(sessionId);
+          if (session && !session.isReady()) {
+            await this.evictTerminatedSession(sessionId, session);
           }
           return {
             success: false as const,
