@@ -107,6 +107,20 @@ export type {
   StartProcessRequest,
   WriteFileRequest
 } from './request-types.js';
+// RPC interface types (shared between SDK and container)
+export type {
+  SandboxAPI,
+  SandboxBackupAPI,
+  SandboxCommandsAPI,
+  SandboxDesktopAPI,
+  SandboxFilesAPI,
+  SandboxGitAPI,
+  SandboxInterpreterAPI,
+  SandboxPortsAPI,
+  SandboxProcessesAPI,
+  SandboxUtilsAPI,
+  SandboxWatchAPI
+} from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
 // Export SSE utilities

@@ -538,6 +538,8 @@ export interface SandboxOptions {
    * - `"http"` (default): Standard HTTP request/response. Works everywhere.
    * - `"websocket"`: Multiplexes requests over a single WebSocket connection,
    *   avoiding sub-request limits in Workers and Durable Objects.
+   * - `"capnweb"`: Direct RPC over a single WebSocket using the capnweb protocol.
+   *   Lowest latency; automatically disconnects when idle to respect `sleepAfter`.
    *
    * When set via `getSandbox()` options, this overrides the `SANDBOX_TRANSPORT` env var.
    *
@@ -548,7 +550,7 @@ export interface SandboxOptions {
    *
    * @default "http"
    */
-  transport?: 'http' | 'websocket';
+  transport?: 'http' | 'websocket' | 'rpc';
 }
 
 /**
@@ -1018,7 +1020,7 @@ export interface ExecutionSession {
   // File operations
   writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options?: { encoding?: string }
   ): Promise<WriteFileResult>;
   readFile(
@@ -1290,7 +1292,7 @@ export interface ISandbox {
   // File operations
   writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options?: { encoding?: string }
   ): Promise<WriteFileResult>;
   readFile(

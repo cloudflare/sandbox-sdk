@@ -10,6 +10,7 @@
   "dependencies": {
     "@cloudflare/containers": "^0.3.0",
     "aws4fetch": "^1.0.20",
+    "capnweb": "^0.6.1",
     "hono": "^4.7.11"
   },
   "devDependencies": {
