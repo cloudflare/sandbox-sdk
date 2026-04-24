@@ -109,7 +109,7 @@ export class SessionManager {
         sessionId,
         exitCode
       });
-      await this.evictDeadSession(sessionId, existing);
+      await this.evictTerminatedSession(sessionId, existing);
 
       return {
         success: false,
