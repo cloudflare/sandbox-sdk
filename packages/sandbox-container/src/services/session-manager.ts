@@ -206,51 +206,74 @@ export class SessionManager {
       //     replacing it matches their stated intent.
       //
       // LOCKING CONTRACT: callers of createSession do not normally hold
-      // the per-session lock (the public HTTP handler calls it directly).
-      // The dead-replace branch below takes the lock itself so that any
-      // concurrent executeInSession serializes behind the recreate.
-      const existing = this.sessions.get(options.id);
-      if (existing) {
-        if (existing.isReady()) {
-          outcome = 'success';
-          return {
-            success: false,
-            error: {
-              message: `Session '${options.id}' already exists`,
-              code: ErrorCode.SESSION_ALREADY_EXISTS,
-              details: {
-                sessionId: options.id
-              }
+      // the per-session lock (the public HTTP handler calls it
+      // directly). We acquire it here and hold it across the entire
+      // check -> evict -> construct -> initialize -> set sequence, so:
+      //
+      //   - Concurrent executeInSession / withSession / streaming
+      //     callers serialize behind the recreate, as the design comment
+      //     has always claimed.
+      //   - The dead-replace branch cannot interleave with a
+      //     getOrCreateSession that would otherwise construct a
+      //     competing Session between our evict and our set, orphaning
+      //     one of them with a live bash process and an on-disk session
+      //     directory.
+      //   - Two concurrent createSession() calls on the same id also
+      //     serialize, so the fresh-create path cannot double-initialize
+      //     either.
+      //
+      // The lock scope covers session.initialize() (which has multiple
+      // await points). That is acceptable: commands on the same session
+      // id already serialize behind creation in getOrCreateSession via
+      // creatingLocks, and different session ids use different locks.
+      const lock = this.getSessionLock(options.id);
+      const lockedResult = await lock.runExclusive(
+        async (): Promise<ServiceResult<Session>> => {
+          const existing = this.sessions.get(options.id);
+          if (existing) {
+            if (existing.isReady()) {
+              return {
+                success: false,
+                error: {
+                  message: `Session '${options.id}' already exists`,
+                  code: ErrorCode.SESSION_ALREADY_EXISTS,
+                  details: {
+                    sessionId: options.id
+                  }
+                }
+              };
             }
-          };
-        }
 
-        this.logger.warn('Recreating terminated session via createSession', {
-          sessionId: options.id
-        });
-        const lock = this.getSessionLock(options.id);
-        await lock.runExclusive(async () => {
-          const current = this.sessions.get(options.id);
-          if (current && !current.isReady()) {
-            await this.evictDeadSession(options.id, current);
+            this.logger.warn(
+              'Recreating terminated session via createSession',
+              { sessionId: options.id }
+            );
+            await this.evictDeadSession(options.id, existing);
           }
-        });
+
+          // Create and initialize session under the lock, so no
+          // concurrent caller can insert a competing Session between
+          // `new Session` and `this.sessions.set`.
+          const session = new Session({
+            ...options,
+            logger: this.logger
+          });
+          await session.initialize();
+          this.sessions.set(options.id, session);
+
+          return { success: true, data: session };
+        }
+      );
+
+      if (lockedResult.success) {
+        outcome = 'success';
+      } else if (lockedResult.error.code === ErrorCode.SESSION_ALREADY_EXISTS) {
+        // Healthy duplicate: an expected idempotent-caller outcome, not
+        // an error for the canonical log.
+        outcome = 'success';
       }
 
-      // Create and initialize session - pass logger with sessionId context
-      const session = new Session({
-        ...options,
-        logger: this.logger
-      });
-      await session.initialize();
-
-      this.sessions.set(options.id, session);
-
-      outcome = 'success';
-      return {
-        success: true,
-        data: session
-      };
+      return lockedResult;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       errorMessage = caughtError.message;
@@ -569,6 +592,27 @@ export class SessionManager {
 
         return serviceSuccess<T>(result);
       } catch (error) {
+        // Shell-death errors thrown from inside the callback's exec()
+        // are plain Error subclasses with no `code` field, so they do
+        // not match the ServiceError-shape check below. Handle them
+        // first so callers get SESSION_TERMINATED / SESSION_DESTROYED
+        // (mirroring executeInSession) instead of a generic
+        // INTERNAL_ERROR, and evict the dead handle under the lock we
+        // already hold so the next call creates a fresh session.
+        if (error instanceof SessionDestroyedError) {
+          return serviceError<T>(this.sessionDestroyedError(sessionId));
+        }
+
+        if (error instanceof ShellTerminatedError) {
+          const dead = this.sessions.get(sessionId);
+          if (dead && !dead.isReady()) {
+            await this.evictDeadSession(sessionId, dead);
+          }
+          return serviceError<T>(
+            this.sessionTerminatedError(sessionId, error.exitCode)
+          );
+        }
+
         // Check if error is a ServiceError-like object (from service callbacks)
         // Validates that code is a known ErrorCode to avoid catching unrelated objects
         if (

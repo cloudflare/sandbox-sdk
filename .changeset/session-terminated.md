@@ -21,4 +21,11 @@ The SDK now models shell death as a first-class error:
   session id transparently starts a fresh session.
 - `createSession({ id })` on a dead session id now replaces the dead handle
   instead of returning `SESSION_ALREADY_EXISTS`, giving callers a deterministic
-  recovery API.
+  recovery API. The evict + recreate sequence runs entirely under the
+  per-session lock, so it cannot race with a concurrent `executeInSession` or a
+  concurrent second `createSession` and orphan a Session with a live bash PTY.
+- Shell-death errors thrown from inside `withSession` callbacks (used by
+  `setEnvVars`, `writeFile`, `readFile`, git clone, etc.) now surface as
+  `SESSION_TERMINATED` and evict the dead handle eagerly, matching the behavior
+  of `executeInSession`. Previously they leaked through as `INTERNAL_ERROR` and
+  recovery was deferred to the next call.
