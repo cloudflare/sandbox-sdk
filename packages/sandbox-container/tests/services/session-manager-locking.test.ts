@@ -344,7 +344,7 @@ describe('SessionManager Locking', () => {
       }
     });
 
-    it('should preserve shell-terminated errors for exit commands', async () => {
+    it('should surface SESSION_TERMINATED with exit code for exit commands', async () => {
       const sessionId = 'exit-shell-session';
 
       const result = await sessionManager.executeInSession(
@@ -355,9 +355,13 @@ describe('SessionManager Locking', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('COMMAND_EXECUTION_ERROR');
-        expect(result.error.message).toMatch(/shell terminated unexpectedly/i);
+        expect(result.error.code).toBe('SESSION_TERMINATED');
         expect(result.error.message).toMatch(/exit code.*1/i);
+        const details = result.error.details as {
+          sessionId: string;
+          exitCode: number | null;
+        };
+        expect(details.sessionId).toBe(sessionId);
       }
     });
   });

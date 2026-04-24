@@ -38,6 +38,7 @@ import type {
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
+  SessionTerminatedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -292,6 +293,27 @@ export class SessionDestroyedError extends SandboxError<SessionDestroyedContext>
   // Type-safe accessor
   get sessionId() {
     return this.context.sessionId;
+  }
+}
+
+/**
+ * Error thrown when a session's underlying shell exited without an explicit
+ * `destroy()` call (user ran `exit`, the shell crashed, or a child process
+ * took the shell down). The session-local state is gone, but the next call
+ * with the same sessionId will transparently start a fresh session.
+ */
+export class SessionTerminatedError extends SandboxError<SessionTerminatedContext> {
+  constructor(errorResponse: ErrorResponse<SessionTerminatedContext>) {
+    super(errorResponse);
+    this.name = 'SessionTerminatedError';
+  }
+
+  get sessionId() {
+    return this.context.sessionId;
+  }
+
+  get exitCode() {
+    return this.context.exitCode;
   }
 }
 

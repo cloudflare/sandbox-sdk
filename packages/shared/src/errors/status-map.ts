@@ -47,6 +47,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
 
   // 410 Gone
   [ErrorCode.SESSION_DESTROYED]: 410,
+  [ErrorCode.SESSION_TERMINATED]: 410,
 
   // 413 Content Too Large
   [ErrorCode.FILE_TOO_LARGE]: 413,

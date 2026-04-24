@@ -703,4 +703,81 @@ describe('Session State Isolation Workflow', () => {
     expect(sandboxAliveData.success).toBe(true);
     expect(sandboxAliveData.stdout.trim()).toBe('sandbox-alive');
   }, 90000);
+
+  test('should recover a session whose shell exited, without destroying the sandbox', async () => {
+    // Regression test: once the underlying shell exits (crash, OOM,
+    // `exit 0`, child process taking the shell down), the sandbox used
+    // to return the dead session handle forever. Every subsequent call
+    // failed with "Session is not ready or shell has died" until the
+    // Durable Object was destroyed.
+    //
+    // Expected behavior now:
+    //   1. The command that killed the shell returns SESSION_TERMINATED
+    //      (410) with the observed exit code, so the caller learns that
+    //      session-local state is gone.
+    //   2. The next call on the same session id transparently starts a
+    //      fresh session.
+    //   3. The sandbox as a whole stays usable — no need to call
+    //      sandbox.destroy() or recreate the DO.
+
+    const sessionResponse = await fetch(`${workerUrl}/api/session/create`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId!),
+      body: JSON.stringify({
+        env: { SESSION_MARKER: 'before-death' }
+      })
+    });
+    expect(sessionResponse.status).toBe(200);
+    const sessionData = (await sessionResponse.json()) as SessionCreateResult;
+    const sessionId = sessionData.sessionId;
+
+    // Confirm the session is healthy and carries the marker.
+    const beforeResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId, sessionId),
+      body: JSON.stringify({ command: 'echo $SESSION_MARKER' })
+    });
+    expect(beforeResponse.status).toBe(200);
+    const beforeData = (await beforeResponse.json()) as ExecResult;
+    expect(beforeData.stdout.trim()).toBe('before-death');
+
+    // Kill the shell. The response should be a 410 SESSION_TERMINATED
+    // rather than a generic 500.
+    const killResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId, sessionId),
+      body: JSON.stringify({ command: 'exit 42' })
+    });
+    expect(killResponse.status).toBe(410);
+    const killData = (await killResponse.json()) as {
+      error?: { code?: string };
+      code?: string;
+    };
+    const killCode = killData.error?.code ?? killData.code;
+    expect(killCode).toBe('SESSION_TERMINATED');
+
+    // Next call on the same session id must succeed against a fresh
+    // shell. The previous env var is gone, as it should be.
+    const recoverResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId, sessionId),
+      body: JSON.stringify({
+        command: 'echo "marker=[$SESSION_MARKER]"'
+      })
+    });
+    expect(recoverResponse.status).toBe(200);
+    const recoverData = (await recoverResponse.json()) as ExecResult;
+    expect(recoverData.success).toBe(true);
+    expect(recoverData.stdout.trim()).toBe('marker=[]');
+
+    // And the rest of the sandbox is untouched.
+    const defaultResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId!),
+      body: JSON.stringify({ command: 'echo sandbox-still-alive' })
+    });
+    expect(defaultResponse.status).toBe(200);
+    const defaultData = (await defaultResponse.json()) as ExecResult;
+    expect(defaultData.stdout.trim()).toBe('sandbox-still-alive');
+  }, 90000);
 });
