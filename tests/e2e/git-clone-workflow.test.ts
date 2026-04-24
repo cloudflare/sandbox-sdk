@@ -79,9 +79,13 @@ describe('Git Clone Error Handling', () => {
       })
     });
 
-    expect(cloneResponse.status).toBe(500);
+    expect(cloneResponse.status).toBeGreaterThanOrEqual(400);
     const errorData = (await cloneResponse.json()) as ErrorResponse;
-    expect(errorData.error).toMatch(/Invalid timeout value: 0/i);
+    // "Invalid timeout value" comes from the HTTP handler's validation;
+    // "Invalid clone timeout" comes from the git service itself.
+    expect(errorData.error).toMatch(
+      /Invalid (timeout value|clone timeout).*0/i
+    );
   });
 });
 

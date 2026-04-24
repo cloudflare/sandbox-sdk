@@ -154,6 +154,8 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   PortError: { status: 500, code: 'PORT_OPERATION_ERROR' },
   // Git errors (generic)
   GitError: { status: 500, code: 'GIT_OPERATION_FAILED' },
+  // Security errors
+  SandboxSecurityError: { status: 400, code: 'SECURITY_ERROR' },
   // Validation errors
   ValidationFailedError: { status: 400, code: 'VALIDATION_FAILED' },
   DesktopNotStartedError: { status: 400, code: 'DESKTOP_NOT_STARTED' },
@@ -185,7 +187,10 @@ export default {
     if (proxyResponse) return proxyResponse;
 
     const url = new URL(request.url);
-    const body = await parseBody(request);
+    // Skip JSON body parsing for streaming endpoints to preserve request.body
+    const isStreamingUpload =
+      url.pathname === '/api/file/write-stream' && request.method === 'PUT';
+    const body = isStreamingUpload ? {} : await parseBody(request);
 
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
@@ -194,9 +199,10 @@ export default {
       url.searchParams.get('sandboxId') ||
       'default-test-sandbox';
 
-    const transport: 'http' | 'websocket' =
-      request.headers.get('X-Sandbox-Transport') === 'websocket'
-        ? 'websocket'
+    const transportHeader = request.headers.get('X-Sandbox-Transport');
+    const transport: 'http' | 'websocket' | 'rpc' =
+      transportHeader === 'websocket' || transportHeader === 'rpc'
+        ? transportHeader
         : 'http';
 
     // Suffix sandbox ID with transport so each transport gets its own DO instance
@@ -661,6 +667,24 @@ console.log('Terminal server on port ' + port);
       if (url.pathname === '/api/file/write' && request.method === 'POST') {
         await executor.writeFile(body.path, body.content);
         return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // File write via streaming (request body piped directly as a ReadableStream)
+      if (
+        url.pathname === '/api/file/write-stream' &&
+        request.method === 'PUT'
+      ) {
+        const filePath = request.headers.get('X-File-Path');
+        if (!filePath || !request.body) {
+          return new Response(
+            JSON.stringify({ error: 'X-File-Path header and body required' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const result = await executor.writeFile(filePath, request.body);
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

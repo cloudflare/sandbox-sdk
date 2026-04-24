@@ -508,7 +508,7 @@ console.log("Line 3");
       }
 
       const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
-        method: 'DELETE',
+        method: 'POST',
         headers
       });
       expect(killAllResponse.status).toBe(200);

@@ -311,3 +311,106 @@ describe('File Operations Error Handling', () => {
     expect(readData.content).toMatch(/^[A-Za-z0-9+/=]+$/);
   }, 90000);
 });
+
+const isCapnweb = process.env.TEST_TRANSPORT === 'rpc';
+
+describe.skipIf(!isCapnweb)('File Streaming Write (capnweb)', () => {
+  let sandbox: TestSandbox | null = null;
+  let workerUrl: string;
+  let headers: Record<string, string>;
+
+  beforeAll(async () => {
+    sandbox = await createTestSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
+  }, 120000);
+
+  test('should stream-write a file and read it back', async () => {
+    const testPath = sandbox!.uniquePath('stream-write.txt');
+    const testContent = 'Streamed content for capnweb transport ✨';
+    const body = new TextEncoder().encode(testContent);
+
+    const writeResponse = await fetch(`${workerUrl}/api/file/write-stream`, {
+      method: 'PUT',
+      headers: { ...headers, 'X-File-Path': testPath },
+      body
+    });
+    expect(writeResponse.status).toBe(200);
+
+    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testPath })
+    });
+    expect(readResponse.status).toBe(200);
+    const readResult = (await readResponse.json()) as ReadFileResult;
+    expect(readResult.content).toBe(testContent);
+  });
+
+  test('should preserve executable permissions on stream-write', async () => {
+    const testPath = sandbox!.uniquePath('stream-exec.sh');
+
+    // Create an executable file
+    await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: `mkdir -p $(dirname ${testPath}) && printf '#!/bin/sh\necho original' > ${testPath} && chmod +x ${testPath}`
+      })
+    });
+
+    // Overwrite via streaming
+    const newContent = '#!/bin/sh\necho updated';
+    const body = new TextEncoder().encode(newContent);
+    const writeResponse = await fetch(`${workerUrl}/api/file/write-stream`, {
+      method: 'PUT',
+      headers: { ...headers, 'X-File-Path': testPath },
+      body
+    });
+    expect(writeResponse.status).toBe(200);
+
+    // Verify file is still executable
+    const execResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: `test -x ${testPath} && echo executable`
+      })
+    });
+    expect(execResponse.status).toBe(200);
+    const result = (await execResponse.json()) as { stdout: string };
+    expect(result.stdout.trim()).toBe('executable');
+  });
+
+  test('should stream-write a large file', async () => {
+    const testPath = sandbox!.uniquePath('stream-large.bin');
+    // 256KB of data
+    const chunk = new Uint8Array(1024).fill(0x42);
+    const chunks: Uint8Array[] = [];
+    for (let i = 0; i < 256; i++) chunks.push(chunk);
+    const blob = new Blob(chunks);
+
+    const writeResponse = await fetch(`${workerUrl}/api/file/write-stream`, {
+      method: 'PUT',
+      headers: { ...headers, 'X-File-Path': testPath },
+      body: blob.stream(),
+      duplex: 'half'
+    } as RequestInit);
+    expect(writeResponse.status).toBe(200);
+
+    // Verify size
+    const execResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: `stat -c %s ${testPath}` })
+    });
+    expect(execResponse.status).toBe(200);
+    const result = (await execResponse.json()) as { stdout: string };
+    expect(Number.parseInt(result.stdout.trim(), 10)).toBe(256 * 1024);
+  });
+});
