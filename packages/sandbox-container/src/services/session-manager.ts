@@ -248,7 +248,7 @@ export class SessionManager {
               'Recreating terminated session via createSession',
               { sessionId: options.id }
             );
-            await this.evictDeadSession(options.id, existing);
+            await this.evictTerminatedSession(options.id, existing);
           }
 
           // Create and initialize session under the lock, so no
@@ -435,14 +435,14 @@ export class SessionManager {
    * that associated resources (pty, in-flight command handles) are reaped
    * and that the next call on this sessionId creates a fresh session.
    */
-  private async evictDeadSession(
+  private async evictTerminatedSession(
     sessionId: string,
     session: Session
   ): Promise<void> {
     try {
       await session.destroy();
     } catch (error) {
-      this.logger.debug('Dead session destroy() threw during eviction', {
+      this.logger.debug('Terminated session, destroy() threw during eviction', {
         sessionId,
         error: error instanceof Error ? error.message : String(error)
       });
@@ -592,13 +592,14 @@ export class SessionManager {
 
         return serviceSuccess<T>(result);
       } catch (error) {
-        // Shell-death errors thrown from inside the callback's exec()
-        // are plain Error subclasses with no `code` field, so they do
-        // not match the ServiceError-shape check below. Handle them
-        // first so callers get SESSION_TERMINATED / SESSION_DESTROYED
-        // (mirroring executeInSession) instead of a generic
-        // INTERNAL_ERROR, and evict the dead handle under the lock we
-        // already hold so the next call creates a fresh session.
+        // Errors thrown from inside the callback's exec() for a
+        // terminated session are plain Error subclasses with no `code`
+        // field, so they do not match the ServiceError-shape check
+        // below. Handle them first so callers get
+        // SESSION_TERMINATED / SESSION_DESTROYED (mirroring
+        // executeInSession) instead of a generic INTERNAL_ERROR, and
+        // evict the dead handle under the lock we already hold so the
+        // next call creates a fresh session.
         if (error instanceof SessionDestroyedError) {
           return serviceError<T>(this.sessionDestroyedError(sessionId));
         }

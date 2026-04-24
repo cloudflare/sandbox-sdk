@@ -31,12 +31,12 @@ import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { SessionManager } from '../../src/services/session-manager';
 
-describe('SessionManager dead-session semantics', () => {
+describe('SessionManager terminated-session semantics', () => {
   let sessionManager: SessionManager;
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `session-dead-test-${Date.now()}`);
+    testDir = join(tmpdir(), `session-terminated-test-${Date.now()}`);
     await mkdir(testDir, { recursive: true });
     sessionManager = new SessionManager(createNoOpLogger());
   });
