@@ -70,7 +70,9 @@ jobs:
             'tests/e2e/test-worker/Dockerfile.*',
             'packages/sandbox/src/**',
             'tests/e2e/test-worker/**',
-            'vitest.e2e.config.ts'
+            'vitest.e2e.config.ts',
+            '.github/workflows/release.yml',
+            '.github/workflows/reusable-e2e.yml'
           ) }}" >> $GITHUB_OUTPUT
 
   # --- Build (always runs everything on release) ---
@@ -112,7 +114,7 @@ jobs:
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-main
-      image_tag: main
+      image_tag: ci-${{ needs.hashes.outputs.docker }}
       images_changed: ${{ needs.build.outputs.images_changed }}
       deploy_hash: ${{ needs.hashes.outputs.deploy }}
     secrets: inherit
