@@ -11,7 +11,7 @@ the sandbox kept returning the dead session handle. Every subsequent call threw
 the dead session with `SESSION_ALREADY_EXISTS`. The only recovery path was
 `sandbox.destroy()`, which loses `/workspace` state and forces a backup restore.
 
-The SDK now models shell death as a first-class error:
+The SDK now models shell termination as a first-class error:
 
 - The call that terminates the shell returns a new `SessionTerminatedError`
   (`SESSION_TERMINATED`, HTTP 410) with the observed exit code. Callers learn
