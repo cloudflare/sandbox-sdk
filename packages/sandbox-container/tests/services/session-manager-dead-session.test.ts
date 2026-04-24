@@ -1,5 +1,5 @@
 /**
- * Session Manager dead-session semantics
+ * Session Manager terminated-session semantics
  *
  * Regression coverage for the bug where a session's underlying shell
  * exits (`exit`, crash, OOM) and the stale Session object keeps serving
