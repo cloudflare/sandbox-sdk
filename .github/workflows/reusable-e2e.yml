@@ -301,6 +301,7 @@ jobs:
         include:
           - transport: http
           - transport: websocket
+          - transport: rpc
     steps:
       - uses: actions/checkout@v6
         with:
