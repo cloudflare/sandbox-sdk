@@ -261,13 +261,23 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
   -d '{"bucket": "my-bucket", "mountPath": "/mnt/data", "options": {"endpoint": "https://ACCT.r2.cloudflarestorage.com"}}'
 ```
 
+To mount a Worker R2 binding without credentials, omit `options.endpoint`. The `bucket`
+value must match the R2 binding name on the Worker:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"bucket": "MY_BUCKET", "mountPath": "/mnt/data", "options": {"prefix": "/uploads/"}}'
+```
+
 **Request body:**
 
 | Field                                 | Type    | Required | Description                                    |
 | ------------------------------------- | ------- | -------- | ---------------------------------------------- |
 | `bucket`                              | string  | yes      | Bucket name                                    |
 | `mountPath`                           | string  | yes      | Absolute path in the container to mount at     |
-| `options.endpoint`                    | string  | yes      | S3-compatible endpoint URL                     |
+| `options.endpoint`                    | string  | no       | S3-compatible endpoint URL                     |
 | `options.readOnly`                    | boolean | no       | Mount as read-only (default: false)            |
 | `options.prefix`                      | string  | no       | Subdirectory prefix within the bucket          |
 | `options.credentials.accessKeyId`     | string  | no       | Explicit access key (auto-detected if omitted) |

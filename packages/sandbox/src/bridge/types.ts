@@ -114,14 +114,16 @@ export interface MountBucketCredentials {
 
 /** Options nested inside a MountBucketRequest. */
 export interface MountBucketRequestOptions {
-  /** S3-compatible endpoint URL (required). */
-  endpoint: string;
+  /** S3-compatible endpoint URL. Omit to mount a Worker R2 binding with the same name as `bucket`. */
+  endpoint?: string;
   /** Mount filesystem as read-only (default: false). */
   readOnly?: boolean;
   /** Optional prefix/subdirectory within the bucket to mount. */
   prefix?: string;
   /** Explicit credentials. Omit to use auto-detected Worker secrets. */
   credentials?: MountBucketCredentials;
+  /** Advanced: Override or extend s3fs options (R2 binding mounts only). */
+  s3fsOptions?: string[];
 }
 
 /** Sent by the client for /mount requests. */

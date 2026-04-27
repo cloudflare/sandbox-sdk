@@ -98,11 +98,11 @@ export const OPENAPI_SCHEMA = {
       },
       MountBucketRequestOptions: {
         type: 'object',
-        required: ['endpoint'],
         properties: {
           endpoint: {
             type: 'string',
-            description: 'S3-compatible endpoint URL.',
+            description:
+              'S3-compatible endpoint URL. Omit to mount a Worker R2 binding with the same name as `bucket`.',
             example: 'https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
           },
           readOnly: {
@@ -120,6 +120,13 @@ export const OPENAPI_SCHEMA = {
             $ref: '#/components/schemas/MountBucketCredentials',
             description:
               'Explicit credentials. When omitted, the SDK auto-detects from Worker secrets (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY or AWS equivalents).'
+          },
+          s3fsOptions: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Advanced: Override or extend s3fs mount options. Only applies to R2 binding mounts (when endpoint is omitted).',
+            example: ['nomultipart']
           }
         }
       },

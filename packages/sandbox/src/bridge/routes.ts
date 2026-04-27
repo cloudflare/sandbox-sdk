@@ -6,7 +6,14 @@
  * factory and reused for all requests.
  */
 
-import type { ExecutionSession, ISandbox, PtyOptions } from '@repo/shared';
+import type {
+  ExecutionSession,
+  ISandbox,
+  MountBucketOptions,
+  PtyOptions,
+  R2BindingMountBucketOptions,
+  RemoteMountBucketOptions
+} from '@repo/shared';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Sandbox } from '../sandbox';
 import { getSandbox as _getSandbox } from '../sandbox';
@@ -682,9 +689,12 @@ export function createBridgeApp(
     if (!body.options || typeof body.options !== 'object') {
       return errorJson('options must be an object', 'invalid_request', 400);
     }
-    if (!body.options.endpoint || typeof body.options.endpoint !== 'string') {
+    if (
+      body.options.endpoint !== undefined &&
+      typeof body.options.endpoint !== 'string'
+    ) {
       return errorJson(
-        'options.endpoint must be a non-empty string',
+        'options.endpoint must be a string when provided',
         'invalid_request',
         400
       );
@@ -692,26 +702,36 @@ export function createBridgeApp(
 
     const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
 
-    const sdkOptions: {
-      endpoint: string;
-      readOnly?: boolean;
-      prefix?: string;
-      credentials?: { accessKeyId: string; secretAccessKey: string };
-    } = {
-      endpoint: body.options.endpoint
-    };
-
-    if (body.options.readOnly !== undefined) {
-      sdkOptions.readOnly = body.options.readOnly;
-    }
-    if (body.options.prefix !== undefined) {
-      sdkOptions.prefix = body.options.prefix;
-    }
-    if (body.options.credentials) {
-      sdkOptions.credentials = {
-        accessKeyId: body.options.credentials.accessKeyId,
-        secretAccessKey: body.options.credentials.secretAccessKey
+    let sdkOptions: MountBucketOptions;
+    if (body.options.endpoint) {
+      const remoteOptions: RemoteMountBucketOptions = {
+        endpoint: body.options.endpoint
       };
+      if (body.options.readOnly !== undefined) {
+        remoteOptions.readOnly = body.options.readOnly;
+      }
+      if (body.options.prefix !== undefined) {
+        remoteOptions.prefix = body.options.prefix;
+      }
+      if (body.options.credentials) {
+        remoteOptions.credentials = {
+          accessKeyId: body.options.credentials.accessKeyId,
+          secretAccessKey: body.options.credentials.secretAccessKey
+        };
+      }
+      sdkOptions = remoteOptions;
+    } else {
+      const r2BindingOptions: R2BindingMountBucketOptions = {};
+      if (body.options.readOnly !== undefined) {
+        r2BindingOptions.readOnly = body.options.readOnly;
+      }
+      if (body.options.prefix !== undefined) {
+        r2BindingOptions.prefix = body.options.prefix;
+      }
+      if (body.options.s3fsOptions !== undefined) {
+        r2BindingOptions.s3fsOptions = body.options.s3fsOptions;
+      }
+      sdkOptions = r2BindingOptions;
     }
 
     try {

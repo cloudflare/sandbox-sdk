@@ -71,9 +71,9 @@ describe('POST /v1/sandbox/:id/mount', () => {
       options: { endpoint: 'https://s3.us-west-2.amazonaws.com' }
     });
 
-    const call = mockSandbox.mountBucket.mock.calls[0];
-    expect(call[2]).toEqual({ endpoint: 'https://s3.us-west-2.amazonaws.com' });
-    expect(call[2]).not.toHaveProperty('credentials');
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('my-bucket', '/mnt/data', {
+      endpoint: 'https://s3.us-west-2.amazonaws.com'
+    });
   });
 
   it('passes prefix option', async () => {
@@ -105,6 +105,33 @@ describe('POST /v1/sandbox/:id/mount', () => {
     expect(mockSandbox.mountBucket).toHaveBeenCalledWith('my-bucket', '/mnt/data', {
       endpoint: 'https://acct.r2.cloudflarestorage.com',
       readOnly: true
+    });
+  });
+
+  it('mounts a Worker R2 binding when endpoint is omitted', async () => {
+    const res = await mountRequest({
+      bucket: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { readOnly: true, prefix: '/uploads/' }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      readOnly: true,
+      prefix: '/uploads/'
+    });
+  });
+
+  it('passes s3fsOptions for R2 binding mounts', async () => {
+    const res = await mountRequest({
+      bucket: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { s3fsOptions: ['nomultipart', 'nomixupload'] }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      s3fsOptions: ['nomultipart', 'nomixupload']
     });
   });
 
@@ -149,11 +176,11 @@ describe('POST /v1/sandbox/:id/mount', () => {
     expect(body.error).toContain('options');
   });
 
-  it('rejects missing endpoint', async () => {
+  it('rejects non-string endpoint values', async () => {
     const res = await mountRequest({
       bucket: 'my-bucket',
       mountPath: '/mnt/data',
-      options: {}
+      options: { endpoint: 123 }
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };

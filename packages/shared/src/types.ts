@@ -1299,11 +1299,43 @@ export interface LocalMountBucketOptions {
 }
 
 /**
- * Options for mounting a bucket — either remote (s3fs-FUSE) or local (R2 binding sync)
+ * Options for mounting an R2 binding via credential-less egress interception.
+ */
+export interface R2BindingMountBucketOptions {
+  /**
+   * Must not be set — distinguishes this variant from RemoteMountBucketOptions.
+   */
+  endpoint?: never;
+
+  /**
+   * Optional prefix/subdirectory within the bucket to mount.
+   *
+   * When specified, only the contents under this prefix will be visible
+   * at the mount point.
+   */
+  prefix?: string;
+
+  /**
+   * Mount filesystem as read-only
+   * Default: false
+   */
+  readOnly?: boolean;
+
+  /**
+   * Advanced: Override or extend s3fs options.
+   * Provider defaults for R2 are still applied automatically.
+   */
+  s3fsOptions?: string[];
+}
+
+/**
+ * Options for mounting a bucket — remote (s3fs-FUSE), local (R2 binding sync),
+ * or R2 egress (credential-less s3fs via egress interception).
  */
 export type MountBucketOptions =
   | RemoteMountBucketOptions
-  | LocalMountBucketOptions;
+  | LocalMountBucketOptions
+  | R2BindingMountBucketOptions;
 
 // Main Sandbox interface
 export interface ISandbox {
