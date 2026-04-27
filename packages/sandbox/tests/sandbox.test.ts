@@ -1818,13 +1818,11 @@ describe('Sandbox - Automatic Session Management', () => {
         id: 'backup-session',
         message: 'Created'
       } as any);
-      const deleteSessionSpy = vi
-        .spyOn(backupSandbox.client.utils, 'deleteSession')
-        .mockResolvedValue({
-          success: true,
-          id: 'backup-session',
-          message: 'Deleted'
-        } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
       const createArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'createArchive')
         .mockResolvedValue({
@@ -1872,11 +1870,13 @@ describe('Sandbox - Automatic Session Management', () => {
         id: 'backup-session',
         message: 'Created'
       } as any);
-      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Deleted'
-      } as any);
+      const deleteSessionSpy = vi
+        .spyOn(backupSandbox.client.utils, 'deleteSession')
+        .mockResolvedValue({
+          success: true,
+          id: 'backup-session',
+          message: 'Deleted'
+        } as any);
       const restoreArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
