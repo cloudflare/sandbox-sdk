@@ -3,8 +3,12 @@
 /**
  * Integration tests for the cloudflare-sandbox-bridge Worker.
  *
- * Starts `wrangler dev` (with containers disabled — no Docker required),
- * then exercises every API endpoint via real HTTP requests.
+ * By default, starts `wrangler dev` (with containers disabled — no Docker
+ * required) and exercises every API endpoint via real HTTP requests.
+ *
+ * Set BASE_URL to skip the local server and run against a remote service:
+ *
+ *   BASE_URL=https://bridge.example.com SANDBOX_API_KEY=secret script/integration
  *
  * Uses Bun for:
  *   - Built-in WebSocket client with custom headers support
@@ -20,8 +24,10 @@
  *   - OpenAPI schema availability
  *
  * Usage:
- *   script/integration                        # auth disabled (SANDBOX_API_KEY="")
- *   SANDBOX_API_KEY=secret script/integration    # auth enabled
+ *   script/integration                                              # local, auth disabled
+ *   SANDBOX_API_KEY=secret script/integration                       # local, auth enabled
+ *   BASE_URL=https://bridge.example.com script/integration          # remote, auth disabled
+ *   BASE_URL=https://bridge.example.com SANDBOX_API_KEY=s script/integration  # remote, auth enabled
  */
 
 import { spawn } from 'node:child_process';
@@ -31,10 +37,41 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // Config
 // ---------------------------------------------------------------------------
 
+const REMOTE_BASE = process.env.BASE_URL?.replace(/\/$/, '');
 const PORT = process.env.PORT || 18787;
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = REMOTE_BASE || `http://127.0.0.1:${PORT}`;
 const TOKEN = process.env.SANDBOX_API_KEY || '';
-const SANDBOX_ID = 'integration-test';
+let SANDBOX_ID = 'integration-test';
+
+// ---------------------------------------------------------------------------
+// Sandbox lifecycle
+// ---------------------------------------------------------------------------
+
+async function createSandbox(): Promise<string> {
+  const res = await fetch(`${BASE}/v1/sandbox`, {
+    method: 'POST',
+    headers: authHeadersRaw()
+  });
+  if (!res.ok) {
+    throw new Error(`POST /v1/sandbox failed: ${res.status} ${await res.text()}`);
+  }
+  const body: any = await res.json();
+  if (!body.id || typeof body.id !== 'string') {
+    throw new Error(`POST /v1/sandbox returned unexpected body: ${JSON.stringify(body)}`);
+  }
+  return body.id;
+}
+
+async function destroySandbox(id: string): Promise<void> {
+  try {
+    await fetch(`${BASE}/v1/sandbox/${id}`, {
+      method: 'DELETE',
+      headers: authHeadersRaw()
+    });
+  } catch {
+    // Best-effort cleanup
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -155,6 +192,15 @@ function stopServer(child: ReturnType<typeof spawn>) {
 // ---------------------------------------------------------------------------
 
 async function runTests() {
+  // ── Sandbox creation ──────────────────────────────────
+  console.log('\n📋 Sandbox creation');
+
+  await test('POST /v1/sandbox returns a sandbox ID', async () => {
+    SANDBOX_ID = await createSandbox();
+    assert(SANDBOX_ID.length > 0, 'sandbox ID should be non-empty');
+    console.log(`     (using sandbox ID: ${SANDBOX_ID})`);
+  });
+
   // ── Health ──────────────────────────────────────────────
   console.log('\n📋 Health');
 
@@ -380,7 +426,10 @@ async function runTests() {
   console.log('\n📋 DELETE /v1/sandbox/:id');
 
   await test('returns 204 No Content (best-effort)', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}`, {
+    // Create a throwaway sandbox to test deletion without destroying
+    // the main sandbox used by other tests.
+    const throwawayId = await createSandbox();
+    const res = await fetch(`${BASE}/v1/sandbox/${throwawayId}`, {
       method: 'DELETE',
       headers: authHeadersRaw()
     });
@@ -426,7 +475,8 @@ async function runTests() {
     // Without a real container the SDK terminal() will throw,
     // resulting in a 502 or a WS close — but the key assertion is
     // that the route is reached (not a 404).
-    const wsUrl = `ws://127.0.0.1:${PORT}/v1/sandbox/${SANDBOX_ID}/pty?cols=80&rows=24`;
+    const wsBase = BASE.replace(/^http/, 'ws');
+    const wsUrl = `${wsBase}/v1/sandbox/${SANDBOX_ID}/pty?cols=80&rows=24`;
 
     const result = await new Promise<{
       opened: boolean;
@@ -540,29 +590,38 @@ async function runTests() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log('🚀 Starting wrangler dev on port', PORT, TOKEN ? '(auth enabled)' : '(auth disabled)');
-
   let server: ReturnType<typeof spawn> | undefined;
-  try {
+
+  if (REMOTE_BASE) {
+    console.log(`🌐 Testing remote service at ${REMOTE_BASE}`, TOKEN ? '(auth enabled)' : '(auth disabled)');
+    console.log();
+  } else {
+    console.log('🚀 Starting wrangler dev on port', PORT, TOKEN ? '(auth enabled)' : '(auth disabled)');
     server = await startServer();
     console.log('✅ Server started\n');
+  }
 
+  try {
     await runTests();
-
-    console.log('\n' + '─'.repeat(50));
-    console.log(`\n  Results: ${passed} passed, ${failed} failed\n`);
-
-    if (failures.length > 0) {
-      console.log('  Failed tests:');
-      for (const f of failures) {
-        console.log(`    ❌ ${f.name}`);
-        console.log(`       ${f.error.message}`);
-      }
-      console.log();
-    }
   } finally {
+    // Clean up the test sandbox
+    if (SANDBOX_ID && SANDBOX_ID !== 'integration-test') {
+      await destroySandbox(SANDBOX_ID);
+    }
     if (server) stopServer(server);
-    await sleep(1000);
+    if (server) await sleep(1000);
+  }
+
+  console.log('\n' + '─'.repeat(50));
+  console.log(`\n  Results: ${passed} passed, ${failed} failed\n`);
+
+  if (failures.length > 0) {
+    console.log('  Failed tests:');
+    for (const f of failures) {
+      console.log(`    ❌ ${f.name}`);
+      console.log(`       ${f.error.message}`);
+    }
+    console.log();
   }
 
   process.exit(failed > 0 ? 1 : 0);
