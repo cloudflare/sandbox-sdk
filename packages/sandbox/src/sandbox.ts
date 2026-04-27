@@ -4646,17 +4646,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * **Production flow** (`localBucket` not set):
    *   1. DO reads metadata from R2 and checks TTL
    *   2. Container mounts the backup archive from R2 via s3fs
-   *   3. Container mounts the squashfs archive with FUSE overlayfs
-   *
-   * The target directory becomes an overlay mount with the backup as a
-   * read-only lower layer and a writable upper layer for copy-on-write.
-   * Any processes writing to the directory should be stopped first.
-   *
-   * **Mount Lifecycle**: The FUSE overlay mount persists only while the
-   * container is running. When the sandbox sleeps or the container restarts,
-   * the mount is lost and the directory becomes empty. Re-restore from the
-   * backup handle to recover. This is an ephemeral restore, not a persistent
-   * extraction.
+   *   3. Container mounts the squashfs archive temporarily and copies files
+   *      into the target directory
+   *   4. Temporary FUSE mounts and backup session are cleaned up
    *
    * **Local-dev flow** (`localBucket: true` on the originating `createBackup` call):
    *   1. DO reads metadata and checks TTL via R2 binding
@@ -4787,7 +4779,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Step 3: Tear down existing restore mounts before replacing the backing
       // R2 mount. squashfuse reads the archive lazily through the s3fs mount,
       // so the overlay and lower mounts must come down before the bucket mount.
-      const mountGlob = `/var/backups/mounts/r2mount/${id}/data`;
+      const mountGlob = `/var/backups/mounts/${id}`;
       await this.execWithSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
         backupSession,
@@ -4831,6 +4823,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      await this.execWithSession(
+        `/usr/bin/fusermount3 -u ${shellEscape(r2MountPath)} 2>/dev/null; /usr/bin/fusermount3 -uz ${shellEscape(r2MountPath)} 2>/dev/null; true`,
+        backupSession,
+        { origin: 'internal' }
+      ).catch(() => {});
+
+      const backupMount = this.activeMounts.get(r2MountPath);
+      if (backupMount?.mountType === 'fuse') {
+        backupMount.mounted = false;
+        this.activeMounts.delete(r2MountPath);
+        await this.deletePasswordFile(backupMount.passwordFilePath);
+      }
+
       outcome = 'success';
 
       return {
@@ -4842,7 +4847,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
     } finally {
-      if (backupSession && outcome !== 'success') {
+      if (backupSession) {
         await this.client.utils.deleteSession(backupSession).catch(() => {});
       }
       logCanonicalEvent(this.logger, {

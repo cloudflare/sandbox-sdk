@@ -191,7 +191,7 @@ describe('Backup Workflow E2E', () => {
       await cleanupDir(workerUrl, headers, TEST_DIR);
     }, 60000);
 
-    test('should keep restored backup mounted after restore returns', async () => {
+    test('should materialize restored files after restore returns', async () => {
       if (!backupBucketAvailable) return;
 
       const testDir = `/workspace/restore-lifetime-${crypto.randomUUID().slice(0, 8)}`;
@@ -234,6 +234,16 @@ describe('Backup Workflow E2E', () => {
       const immediateResult = (await immediateRead.json()) as ExecuteResponse;
       expect(immediateResult.exitCode).toBe(0);
       expect(immediateResult.stdout).toBe(content);
+
+      const mountCheck = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `mountpoint -q ${testDir} && echo mounted || echo materialized`
+        })
+      });
+      const mountResult = (await mountCheck.json()) as ExecuteResponse;
+      expect(mountResult.stdout?.trim()).toBe('materialized');
 
       await new Promise((resolve) => setTimeout(resolve, 500));
 

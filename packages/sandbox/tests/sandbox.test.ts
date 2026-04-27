@@ -1910,7 +1910,9 @@ describe('Sandbox - Automatic Session Management', () => {
         `backups/${backupId}/`,
         expect.stringMatching(/^__sandbox_backup_/)
       );
-      expect(deleteSessionSpy).not.toHaveBeenCalled();
+      expect(deleteSessionSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^__sandbox_backup_/)
+      );
       expect(
         (backupSandbox as any).execWithSession.mock.calls.some(
           ([command]: [string]) =>

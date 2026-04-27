@@ -76,8 +76,7 @@ interface RestoreArchiveResult {
  *
  * Restore flow:
  *   squashfuse <archivePath> <lowerDir>
- *   fuse-overlayfs -o lowerdir=<lowerDir>,upperdir=<upperDir>,workdir=<workDir> <targetDir>
- *   Mounts the squashfs image as a read-only layer with a writable overlay on top.
+ *   Copies the mounted squashfs contents into the target directory.
  *
  * The DO (Sandbox class) handles R2 upload/download. This service only deals
  * with local filesystem operations.
@@ -376,17 +375,12 @@ export class BackupService {
   }
 
   /**
-   * Restore a squashfs archive into a directory using overlayfs.
-   *
-   * This mounts the squashfs as a read-only lower layer and uses
-   * fuse-overlayfs to provide a writable upper layer, giving instant
-   * restore with copy-on-write semantics.
+   * Restore a squashfs archive into a directory.
    *
    * Mount structure:
-   *   /var/backups/mounts/{backupId}/lower  - squashfs mount (read-only)
-   *   /var/backups/mounts/{backupId}/upper  - writable changes
-   *   /var/backups/mounts/{backupId}/work   - overlayfs workdir
-   *   {dir}                                  - merged overlay view
+   *   /var/backups/mounts/{backupId}/lower        - squashfs mount (read-only)
+   *   /var/backups/mounts/{backupId}/materialized - temporary copy source
+   *   {dir}                                       - real restored files
    */
   async restoreArchive(
     dir: string,
@@ -398,6 +392,8 @@ export class BackupService {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let errorMessage: string | undefined;
+    let lowerDir: string | undefined;
+    let mountBase: string | undefined;
 
     try {
       if (
@@ -424,14 +420,12 @@ export class BackupService {
         });
       }
 
-      // Each restore uses a unique mount base so stale upper-layer files from a
-      // previous overlay session cannot leak into a new mount.  Old mount bases
-      // for this backup ID are torn down (best-effort) before the new mount.
+      // Each restore uses a unique mount base for temporary FUSE state. Old
+      // mount bases for this backup ID are torn down before the new mount.
       const restoreId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}_${restoreId}`;
-      const lowerDir = `${mountBase}/lower`;
-      const upperDir = `${mountBase}/upper`;
-      const workDir = `${mountBase}/work`;
+      mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}_${restoreId}`;
+      lowerDir = `${mountBase}/lower`;
+      const materializedDir = `${mountBase}/materialized`;
       // Verify the archive exists
       const checkResult = await this.sessionManager.executeInSession(
         sessionId,
@@ -447,7 +441,7 @@ export class BackupService {
         });
       }
 
-      // Unmount the overlay on `dir` (from a previous restore of any backup).
+      // Unmount the overlay on `dir` from legacy live-mount restores.
       await this.sessionManager.executeInSession(
         sessionId,
         `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null; true`,
@@ -475,7 +469,7 @@ export class BackupService {
       // Create fresh mount directories
       const mkdirResult = await this.sessionManager.executeInSession(
         sessionId,
-        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`,
+        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(materializedDir)} ${shellEscape(dir)}`,
         { origin: 'internal' }
       );
       if (!mkdirResult.success) {
@@ -519,46 +513,25 @@ export class BackupService {
         });
       }
 
-      // Mount overlayfs to combine lower (snapshot) + upper (writable) layers
-      // Using fuse-overlayfs for userspace overlay support in containers
-      // All mount options in a single -o flag as comma-separated values
-      const overlayMountCmd = [
-        BIN.fuseOverlayfs,
-        `-o lowerdir=${shellEscape(lowerDir)},upperdir=${shellEscape(upperDir)},workdir=${shellEscape(workDir)}`,
-        shellEscape(dir)
-      ].join(' ');
-
-      const overlayMountResult = await this.sessionManager.executeInSession(
+      const materializeResult = await this.sessionManager.executeInSession(
         sessionId,
-        overlayMountCmd,
+        `cp -a ${shellEscape(`${lowerDir}/.`)} ${shellEscape(`${materializedDir}/`)} && find ${shellEscape(dir)} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && cp -a ${shellEscape(`${materializedDir}/.`)} ${shellEscape(`${dir}/`)}`,
         { origin: 'internal' }
       );
-      if (!overlayMountResult.success) {
-        // Cleanup: unmount squashfs on failure
-        await this.sessionManager.executeInSession(
-          sessionId,
-          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`,
-          { origin: 'internal' }
-        );
-        errorMessage = 'Failed to mount overlayfs';
+      if (!materializeResult.success) {
+        errorMessage = 'Failed to materialize restored files';
         return serviceError({
-          message: `Failed to mount overlayfs: ${overlayMountResult.error.message}`,
+          message: `Failed to materialize restored files: ${materializeResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
-          details: { dir, archivePath, cmd: overlayMountCmd }
+          details: { dir, archivePath }
         });
       }
-      if (overlayMountResult.data.exitCode !== 0) {
-        // Cleanup: unmount squashfs on failure
-        await this.sessionManager.executeInSession(
-          sessionId,
-          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`,
-          { origin: 'internal' }
-        );
-        errorMessage = 'Failed to mount overlayfs';
+      if (materializeResult.data.exitCode !== 0) {
+        errorMessage = 'Failed to materialize restored files';
         return serviceError({
-          message: `Failed to mount overlayfs: ${overlayMountResult.data.stderr}`,
+          message: `Failed to materialize restored files: ${materializeResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
-          details: { dir, archivePath, cmd: overlayMountCmd }
+          details: { dir, archivePath }
         });
       }
 
@@ -569,8 +542,6 @@ export class BackupService {
       caughtError = error instanceof Error ? error : new Error(String(error));
       errorMessage = caughtError.message;
       // Best-effort cleanup of any FUSE mounts that may have been established.
-      // Clean up the overlay on dir; per-restore lowerDir is scoped inside try
-      // and cleaned up by the mount-base glob teardown on the next restore.
       await this.sessionManager
         .executeInSession(
           sessionId,
@@ -584,6 +555,24 @@ export class BackupService {
         details: { dir, archivePath }
       });
     } finally {
+      if (lowerDir) {
+        await this.sessionManager
+          .executeInSession(
+            sessionId,
+            `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(lowerDir)} 2>/dev/null; true`,
+            { origin: 'internal' }
+          )
+          .catch(() => {});
+      }
+      if (mountBase) {
+        await this.sessionManager
+          .executeInSession(
+            sessionId,
+            `rm -rf ${shellEscape(mountBase)} 2>/dev/null; true`,
+            { origin: 'internal' }
+          )
+          .catch(() => {});
+      }
       logCanonicalEvent(this.logger, {
         event: 'backup.restore',
         outcome,

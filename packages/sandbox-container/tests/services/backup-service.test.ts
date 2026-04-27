@@ -101,6 +101,7 @@ describe('BackupService', () => {
         if (command.startsWith('rm -rf ')) return execSuccess();
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
+        if (command.startsWith('cp -a ')) return execSuccess();
         if (command.startsWith('/usr/bin/fuse-overlayfs '))
           return execSuccess();
 
@@ -133,6 +134,7 @@ describe('BackupService', () => {
         if (command.startsWith('rm -rf ')) return execSuccess();
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
+        if (command.startsWith('cp -a ')) return execSuccess();
         if (command.startsWith('/usr/bin/fuse-overlayfs '))
           return execSuccess();
 
@@ -160,6 +162,9 @@ describe('BackupService', () => {
         command.includes(`'/var/backups/mounts/${backupId}_`)
       )
     ).toBe(true);
+    expect(
+      callArgs.some((command) => command.startsWith('/usr/bin/fuse-overlayfs '))
+    ).toBe(false);
     expect(
       callArgs.some((command) =>
         command.includes('/var/backups/mounts/r2mount')
