@@ -43,7 +43,10 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
-import { BACKUP_ALLOWED_PREFIXES } from '@repo/shared/backup';
+import {
+  BACKUP_ALLOWED_PREFIXES,
+  normalizeBackupExcludePattern
+} from '@repo/shared/backup';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import { RPCSandboxClient } from './clients/rpc-sandbox-client';
@@ -4128,6 +4131,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.backupBucket;
   }
 
+  private normalizeBackupExcludes(excludes: string[]): string[] {
+    const normalizedExcludes: string[] = [];
+
+    for (const pattern of excludes) {
+      const normalized = normalizeBackupExcludePattern(pattern);
+      if (normalized === null) {
+        this.logger.warn(
+          'Exclude pattern reduced to empty after globstar normalization; skipping',
+          { original: pattern }
+        );
+        continue;
+      }
+      if (normalized !== pattern) {
+        this.logger.warn(
+          'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
+          { original: pattern, normalized }
+        );
+      }
+      normalizedExcludes.push(normalized);
+    }
+
+    return normalizedExcludes;
+  }
+
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
@@ -4456,6 +4483,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const normalizedExcludes = this.normalizeBackupExcludes(excludes);
+
       backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
@@ -4464,7 +4493,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        { gitignore, excludes }
+        { gitignore, excludes: normalizedExcludes }
       );
 
       if (!createResult.success) {
@@ -4639,6 +4668,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const normalizedExcludes = this.normalizeBackupExcludes(excludes);
+
       backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
@@ -4648,7 +4679,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        { gitignore, excludes }
+        { gitignore, excludes: normalizedExcludes }
       );
 
       if (!createResult.success) {

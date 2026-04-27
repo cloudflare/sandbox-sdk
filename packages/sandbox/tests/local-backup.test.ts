@@ -323,6 +323,46 @@ describe('Local Backup & Restore', () => {
       expect(result.id).toBeDefined();
       expect(result.localBucket).toBe(true);
     });
+
+    it('should normalize globstar excludes before calling createArchive', async () => {
+      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+        success: true,
+        archivePath: '/var/backups/test.sqsh',
+        sizeBytes: 4
+      } as any);
+
+      const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
+      const ssePayload = [
+        `data: ${JSON.stringify({ type: 'metadata', mimeType: 'application/octet-stream', size: archiveContent.length, isBinary: true, encoding: 'base64' })}\n\n`,
+        `data: ${JSON.stringify({ type: 'chunk', data: btoa(String.fromCharCode(...archiveContent)) })}\n\n`,
+        `data: ${JSON.stringify({ type: 'complete' })}\n\n`
+      ].join('');
+
+      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(ssePayload));
+            controller.close();
+          }
+        })
+      );
+
+      await sandbox.createBackup({
+        dir: '/workspace/myapp',
+        localBucket: true,
+        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
+      });
+
+      expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
+        '/workspace/myapp',
+        expect.stringContaining('/var/backups/'),
+        expect.any(String),
+        {
+          gitignore: false,
+          excludes: ['node_modules/.cache', '.next/cache', 'dist']
+        }
+      );
+    });
   });
 
   describe('restoreBackup with localBucket', () => {

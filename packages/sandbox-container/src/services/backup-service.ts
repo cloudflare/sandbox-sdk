@@ -1,6 +1,9 @@
 import type { Logger } from '@repo/shared';
 import { logCanonicalEvent, shellEscape } from '@repo/shared';
-import { BACKUP_ALLOWED_PREFIXES } from '@repo/shared/backup';
+import {
+  BACKUP_ALLOWED_PREFIXES,
+  normalizeBackupExcludePattern
+} from '@repo/shared/backup';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
@@ -173,7 +176,26 @@ export class BackupService {
         ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
         : [];
 
-      const userExcludePatterns = excludes.flatMap((pattern) => [
+      const normalizedExcludes: string[] = [];
+      for (const pattern of excludes) {
+        const normalized = BackupService.normalizeMksquashfsPattern(pattern);
+        if (normalized === null) {
+          opLogger.warn(
+            'Exclude pattern reduced to empty after globstar normalization; skipping',
+            { original: pattern }
+          );
+          continue;
+        }
+        if (normalized !== pattern) {
+          opLogger.warn(
+            'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
+            { original: pattern, normalized }
+          );
+        }
+        normalizedExcludes.push(normalized);
+      }
+
+      const userExcludePatterns = normalizedExcludes.flatMap((pattern) => [
         pattern,
         `... ${pattern}`
       ]);
@@ -373,6 +395,16 @@ export class BackupService {
 
   private static escapeMksquashfsWildcardLiteral(path: string): string {
     return path.replace(/\\/g, '\\\\').replace(/([*?[\]])/g, '\\$1');
+  }
+
+  /**
+   * Normalize a user-provided exclude pattern for mksquashfs compatibility.
+   * mksquashfs uses fnmatch-style wildcards which do not support ** (globstar).
+   * The mksquashfs "... " prefix already provides recursive directory matching,
+   * making leading ** redundant. Returns null if the pattern reduces to empty.
+   */
+  static normalizeMksquashfsPattern(pattern: string): string | null {
+    return normalizeBackupExcludePattern(pattern);
   }
 
   /**

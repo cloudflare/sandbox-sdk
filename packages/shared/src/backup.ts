@@ -8,3 +8,23 @@ export const BACKUP_ALLOWED_PREFIXES = [
   '/var/tmp',
   '/app'
 ] as const;
+
+export function normalizeBackupExcludePattern(pattern: string): string | null {
+  let normalized = pattern;
+
+  while (normalized.startsWith('**/')) {
+    normalized = normalized.slice(3);
+  }
+
+  normalized = normalized.replace(/\/\*\*\//g, '/');
+
+  if (normalized.endsWith('/**')) {
+    normalized = normalized.slice(0, -3);
+  }
+
+  if (!normalized || normalized === '**') {
+    return null;
+  }
+
+  return normalized;
+}

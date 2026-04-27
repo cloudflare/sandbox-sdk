@@ -1917,6 +1917,51 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(bucket.put).toHaveBeenCalled();
     });
 
+    it('should normalize globstar excludes before calling createArchive', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+
+      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Created'
+      } as any);
+      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        id: 'backup-session',
+        message: 'Deleted'
+      } as any);
+      const createArchiveSpy = vi
+        .spyOn(backupSandbox.client.backup, 'createArchive')
+        .mockResolvedValue({
+          success: true,
+          sizeBytes: 42,
+          archivePath: '/var/backups/mock.sqsh'
+        });
+      vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
+        undefined
+      );
+      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+        stdout: '',
+        stderr: '',
+        exitCode: 0
+      });
+
+      await backupSandbox.createBackup({
+        dir: '/app/project',
+        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
+      });
+
+      expect(createArchiveSpy).toHaveBeenCalledWith(
+        '/app/project',
+        expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
+        expect.stringMatching(/^__sandbox_backup_/),
+        {
+          gitignore: false,
+          excludes: ['node_modules/.cache', '.next/cache', 'dist']
+        }
+      );
+    });
+
     it('should allow restoring a backup into /app', async () => {
       const { backupSandbox, bucket } = await createBackupSandbox();
       const backupId = crypto.randomUUID();
