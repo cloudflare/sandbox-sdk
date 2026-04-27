@@ -621,31 +621,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (transport === 'rpc') {
       // Access the base Container's private inflightRequests counter so
       // the alarm loop's isActivityExpired() check sees active work and
-      // skips the sleepAfterMs comparison while RPC calls are in flight.
+      // skips the sleepAfterMs comparison while RPC calls or returned
+      // streams are still active over the capnweb session.
       const self = this as unknown as { inflightRequests: number };
       return new RPCSandboxClient({
         stub: this,
         port: 3000,
         logger: this.logger,
         // Mirrors containerFetch()'s request lifecycle for the RPC transport.
-        // The HTTP transport increments inflightRequests at the start of each
-        // containerFetch() call and renews the activity timeout so the alarm
-        // loop sees active work and pushes sleepAfter forward. The RPC
-        // transport bypasses containerFetch() entirely (all calls multiplex
-        // over a single WebSocket), so we replicate the same bookkeeping here.
+        //
+        // The HTTP transport bumps inflightRequests at the top of each
+        // containerFetch() call and decrements in `finally`. The RPC
+        // transport multiplexes all work over a single capnweb WebSocket,
+        // so we can't bracket per-request — and a method that returns a
+        // ReadableStream resolves its promise long before the stream is
+        // actually drained. Instead, RPCSandboxClient polls capnweb's
+        // session stats and reports busy/idle *transitions* of the whole
+        // session. We treat one transition as equivalent to one in-flight
+        // request: increment on busy, decrement on idle. See the
+        // file-level comment in rpc-sandbox-client.ts for details.
         onActivity: () => {
-          // Called at the start of each RPC method invocation.
-          // Equivalent to the top of containerFetch(): mark the DO as busy
-          // so isActivityExpired() returns false, and push the sleepAfter
-          // deadline forward.
-          self.inflightRequests++;
+          // Called at the start of each RPC call AND on every busy-poll
+          // tick while the session has work in flight. Equivalent to
+          // the top of containerFetch(): push the sleepAfter deadline
+          // forward.
           this.renewActivityTimeout();
         },
-        onIdle: () => {
-          // Called when an RPC method promise settles.
-          // Equivalent to containerFetch()'s finally block: decrement the
-          // inflight counter, and when it reaches zero restart the inactivity
-          // window from now — the same behavior as decrementInflight().
+        onSessionBusy: () => {
+          // Idle → busy: a new RPC call started or a stream return is
+          // now in flight. Mark the DO busy so isActivityExpired()
+          // returns false until the session goes idle again.
+          self.inflightRequests++;
+        },
+        onSessionIdle: () => {
+          // Busy → idle: all RPC promises have settled and all stream
+          // exports have been released. Equivalent to containerFetch's
+          // finally block — decrement and restart the inactivity window
+          // from now.
           self.inflightRequests = Math.max(0, self.inflightRequests - 1);
           if (self.inflightRequests === 0) {
             this.renewActivityTimeout();

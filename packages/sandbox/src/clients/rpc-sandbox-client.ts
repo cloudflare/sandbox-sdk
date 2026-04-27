@@ -11,6 +11,62 @@
  * detection uses capnweb's `RpcSession.getStats()` which naturally tracks
  * all in-flight RPC calls, streams, and peer-held references — no manual
  * operation counting required.
+ *
+ * ---------------------------------------------------------------------------
+ * How capnweb tracks in-flight work (and why we poll getStats)
+ * ---------------------------------------------------------------------------
+ *
+ * Every capnweb session maintains two tables: `imports` (references the
+ * peer is exposing to us) and `exports` (references we are exposing to the
+ * peer). `getStats()` returns the live count of each.
+ *
+ * At rest, both contain exactly one entry — the bootstrap "main" stub each
+ * side exposes to reach the other. We treat `imports <= 1 && exports <= 1`
+ * as the idle baseline.
+ *
+ * Each kind of in-flight work bumps these counts:
+ *
+ *   - **Pending RPC call.** `sendCall()` allocates a new import slot for
+ *     the return value; the slot is released when the response arrives and
+ *     the caller disposes the promise. So a regular call shows up as
+ *     `imports = 2` for its lifetime.
+ *
+ *   - **Returned ReadableStream.** When the peer (the container) returns a
+ *     `ReadableStream` from an RPC method (e.g. `commands.executeStream`),
+ *     capnweb serializes it via `createPipe()`: the *server* allocates an
+ *     import slot, pumps `readable.pipeTo(writable)` over the wire, and
+ *     only releases the slot in `pipeTo().finally(() => hook.dispose())`
+ *     once the source stream ends or is canceled. On *our* side this
+ *     materializes as an export entry held for the same duration. So an
+ *     active stream return keeps `exports = 2` even after the RPC promise
+ *     that delivered the stream has already resolved.
+ *
+ *   - **Stubs / RpcTargets passed across the wire.** Anything the peer
+ *     hands us (or we hand the peer) that isn't a plain value adds an
+ *     entry until both sides dispose it.
+ *
+ * The practical consequence for sleepAfter: the per-call promise lifecycle
+ * is *not* a reliable signal of "the container is done with this work".
+ * `commands.executeStream(...)` resolves in milliseconds with a stream
+ * reference, but the container then writes to that stream for seconds. The
+ * only signal that survives across the promise boundary is the export
+ * entry — i.e. `getStats()`.
+ *
+ * So the strategy is:
+ *
+ *   1. Run a periodic poll while the WebSocket is connected.
+ *   2. While `imports > 1 || exports > 1`, treat the session as busy:
+ *      hold the DO's `inflightRequests` counter at >= 1 and renew the
+ *      activity timeout each tick so the sleepAfter alarm gets pushed
+ *      forward.
+ *   3. When the poll observes idle, decrement back to 0, renew once more
+ *      to reset the inactivity window from now, and schedule the WS
+ *      disconnect.
+ *
+ * On top of that, every RPC method invocation also fires `onActivity`
+ * synchronously at call start. That keeps fast calls from racing the
+ * poll cadence: even if a call begins and ends entirely between two
+ * polls, the activity timeout was renewed at the start.
  */
 
 import type {
@@ -46,6 +102,28 @@ import type { TransportMode } from './transport';
 
 /** Close the idle capnweb WebSocket promptly so the DO can sleep. */
 const DEFAULT_IDLE_DISCONNECT_MS = 1_000;
+
+/**
+ * How often the busy/idle poller samples `getStats()`.
+ *
+ * Sets two worst-case bounds:
+ *
+ *   1. **Idle-detection lag.** Time between the session going idle on
+ *      the wire and the DO observing it (and arming the disconnect).
+ *      Bounded by `pollInterval`.
+ *   2. **Activity-renewal lag while busy.** While a stream is active we
+ *      renew the DO's activity timeout once per tick. The alarm could
+ *      fire as late as `sleepAfter` after the last renew, so the
+ *      effective margin against a mid-stream sleep is
+ *      `sleepAfter - pollInterval`.
+ *
+ * **Invariant: `pollInterval` must be comfortably less than the
+ * smallest configurable `sleepAfter`.** Aim for at least 2-3× headroom.
+ * The minimum `sleepAfter` exercised by the E2E suite is 3s, so 1s gives
+ * 3× margin and at least two renewals during a 3s window. If a smaller
+ * `sleepAfter` is ever supported, drop this proportionally.
+ */
+const BUSY_POLL_INTERVAL_MS = 1_000;
 
 /**
  * Baseline getStats() values for an idle session. The bootstrap stub on each
@@ -96,27 +174,28 @@ function translateRPCError(error: unknown): never {
 
 /**
  * Wrap a capnweb RPC stub so that every method call translates errors
- * from the `[CODE] message` wire format into typed SandboxError instances.
+ * from the JSON wire format into typed SandboxError instances and signals
+ * activity at call start.
  *
- * `onCallStarted` fires synchronously when an RPC method is invoked.
- * `onCallSettled` fires after each promise-returning call resolves or
- * rejects. The RPCSandboxClient uses these to renew the DO activity
- * timeout (start) and check for idle disconnect (settle).
+ * `onCallStarted` fires synchronously when an RPC method is invoked. The
+ * RPCSandboxClient uses this to renew the DO's activity timeout
+ * immediately, so even a call that completes entirely between two
+ * busy-poll ticks still pushes the sleepAfter deadline forward.
+ *
+ * Note: there is no `onCallSettled` hook. A method whose returned promise
+ * resolves with a `ReadableStream` is *not* finished when the promise
+ * settles — capnweb keeps the export alive until the stream ends. The
+ * busy/idle poll on `getStats()` is the source of truth for that.
  */
-function wrapStub<T extends object>(
-  stub: T,
-  onCallStarted?: () => void,
-  onCallSettled?: () => void
-): T {
+function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
-      // Return a wrapper that catches errors from the RPC call.
       // Use Reflect.apply instead of value.apply() because capnweb
       // stubs are Proxies that interpret .apply as an RPC property access.
       return (...args: unknown[]) => {
-        onCallStarted?.();
+        onCallStarted();
         try {
           const result = Reflect.apply(
             value as (...a: unknown[]) => unknown,
@@ -129,24 +208,17 @@ function wrapStub<T extends object>(
             result != null &&
             typeof (result as { then?: unknown }).then === 'function'
           ) {
-            return (result as Promise<unknown>)
-              .catch(translateRPCError)
-              .finally(() => onCallSettled?.());
+            return (result as Promise<unknown>).catch(translateRPCError);
           }
-          // Non-promise return: settle immediately so the inflight
-          // counter doesn't drift.
-          onCallSettled?.();
           return result;
         } catch (err) {
-          // Synchronous throw: settle before re-throwing so the
-          // inflight counter doesn't drift.
-          onCallSettled?.();
           translateRPCError(err);
         }
       };
     }
   });
 }
+
 // ---------------------------------------------------------------------------
 // Public client
 // ---------------------------------------------------------------------------
@@ -154,18 +226,29 @@ function wrapStub<T extends object>(
 export interface RPCSandboxClientOptions extends ContainerConnectionOptions {
   /** Idle timeout before disconnecting the WebSocket (ms). Defaults to 1 000. */
   idleDisconnectMs?: number;
+  /** Busy/idle poll interval (ms). Defaults to 1 000. */
+  busyPollIntervalMs?: number;
   /**
-   * Fires at the start of each RPC call. The Sandbox DO wires this to
-   * increment inflightRequests and renew the activity timeout, matching
-   * what containerFetch() does for the HTTP transport.
+   * Renew the DO's activity timeout. Fires at the start of every RPC call
+   * and on every busy-poll tick while the session has work in flight.
+   * Mirrors what `containerFetch()` does at the top of each HTTP request.
    */
   onActivity?: () => void;
   /**
-   * Fires after each RPC call settles. The Sandbox DO wires this to
-   * decrement inflightRequests and renew the activity timeout when the
-   * count reaches zero, matching containerFetch's finally block.
+   * Fires once when the capnweb session transitions from idle to busy
+   * (an RPC call was started or a stream return is now in flight). The
+   * Sandbox DO wires this to `inflightRequests++`, which makes
+   * `isActivityExpired()` skip the sleepAfter comparison.
    */
-  onIdle?: () => void;
+  onSessionBusy?: () => void;
+  /**
+   * Fires once when the session transitions from busy back to idle
+   * (all RPC promises settled and all stream exports released). The
+   * Sandbox DO wires this to `inflightRequests = max(0, n-1)` and a
+   * final `renewActivityTimeout()`, matching containerFetch's finally
+   * block.
+   */
+  onSessionIdle?: () => void;
 }
 
 /**
@@ -177,19 +260,25 @@ export interface RPCSandboxClientOptions extends ContainerConnectionOptions {
  *
  * Manages its own WebSocket lifecycle: a fresh `ContainerConnection` is
  * created on demand and torn down after `idleDisconnectMs` of inactivity.
- * Idle detection relies on `RpcSession.getStats()` which tracks all in-flight
- * RPC calls and streams — including long-lived streaming RPCs that would be
- * invisible to a simple request counter.
+ * Busy/idle detection relies on `RpcSession.getStats()` which tracks all
+ * in-flight RPC calls and stream exports — including long-lived streaming
+ * RPCs that would be invisible to a simple per-call request counter (see
+ * the file-level comment for the full rationale).
  */
 export class RPCSandboxClient {
   private readonly connOptions: ContainerConnectionOptions;
   private readonly idleDisconnectMs: number;
+  private readonly busyPollIntervalMs: number;
   private readonly logger: Logger;
   private readonly onActivity: (() => void) | undefined;
-  private readonly onIdle: (() => void) | undefined;
+  private readonly onSessionBusy: (() => void) | undefined;
+  private readonly onSessionIdle: (() => void) | undefined;
 
   private conn: ContainerConnection | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private busyPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Tracks whether we currently believe the session is busy. */
+  private busy = false;
 
   constructor(options: RPCSandboxClientOptions) {
     this.connOptions = {
@@ -199,9 +288,12 @@ export class RPCSandboxClient {
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
+    this.busyPollIntervalMs =
+      options.busyPollIntervalMs ?? BUSY_POLL_INTERVAL_MS;
     this.logger = options.logger ?? createNoOpLogger();
     this.onActivity = options.onActivity;
-    this.onIdle = options.onIdle;
+    this.onSessionBusy = options.onSessionBusy;
+    this.onSessionIdle = options.onSessionIdle;
   }
 
   // -------------------------------------------------------------------------
@@ -210,17 +302,19 @@ export class RPCSandboxClient {
 
   /**
    * Return the current connection, creating a new one if none exists or the
-   * previous one was torn down by an idle disconnect.
+   * previous one was torn down by an idle disconnect. Starts the busy-poll
+   * timer the first time a connection is materialized.
    */
   private getConnection(): ContainerConnection {
     if (!this.conn) {
       this.conn = new ContainerConnection(this.connOptions);
+      this.startBusyPoll();
     }
     return this.conn;
   }
 
   // -------------------------------------------------------------------------
-  // Idle disconnect
+  // Activity & busy/idle tracking
   // -------------------------------------------------------------------------
 
   /**
@@ -233,32 +327,63 @@ export class RPCSandboxClient {
   };
 
   /**
-   * Called after each RPC promise settles. Decrements the DO's inflight
-   * counter via onIdle, then checks whether the capnweb session is idle
-   * enough to disconnect the WebSocket.
+   * Sample `getStats()` and update busy/idle state. While busy, renews the
+   * activity timeout each tick so an in-flight stream keeps pushing the
+   * sleepAfter deadline forward. On the busy → idle edge, fires
+   * `onSessionIdle` and schedules the WebSocket disconnect.
    */
-  private checkIdle = (): void => {
-    this.onIdle?.();
+  private pollBusyState = (): void => {
     const conn = this.conn;
     if (!conn || !conn.isConnected()) return;
 
     const { imports, exports } = conn.getStats();
-    if (imports <= IDLE_IMPORT_THRESHOLD && exports <= IDLE_EXPORT_THRESHOLD) {
+    const isBusy =
+      imports > IDLE_IMPORT_THRESHOLD || exports > IDLE_EXPORT_THRESHOLD;
+
+    if (isBusy) {
+      if (!this.busy) {
+        this.busy = true;
+        this.onSessionBusy?.();
+      }
+      // Renew on every busy tick — this is what keeps a long-lived stream
+      // alive past sleepAfter.
+      this.onActivity?.();
+      this.clearIdleTimer();
+    } else if (this.busy) {
+      this.busy = false;
+      this.onSessionIdle?.();
       this.scheduleIdleDisconnect();
     } else {
-      // Still busy — clear any pending timer and wait for the next settle.
-      this.clearIdleTimer();
+      // Already idle, no state change. Still ensure the disconnect timer
+      // is armed (covers the case where we connected but never observed
+      // any activity).
+      if (!this.idleTimer) this.scheduleIdleDisconnect();
     }
   };
+
+  private startBusyPoll(): void {
+    if (this.busyPollTimer) return;
+    this.busyPollTimer = setInterval(
+      this.pollBusyState,
+      this.busyPollIntervalMs
+    );
+  }
+
+  private stopBusyPoll(): void {
+    if (this.busyPollTimer) {
+      clearInterval(this.busyPollTimer);
+      this.busyPollTimer = null;
+    }
+  }
 
   private scheduleIdleDisconnect(): void {
     this.clearIdleTimer();
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      // Re-check before disconnecting — a new call may have started.
       const conn = this.conn;
       if (!conn || !conn.isConnected()) return;
 
+      // Re-check before disconnecting — a new call may have started.
       const { imports, exports } = conn.getStats();
       if (
         imports <= IDLE_IMPORT_THRESHOLD &&
@@ -278,6 +403,14 @@ export class RPCSandboxClient {
   }
 
   private destroyConnection(): void {
+    this.stopBusyPoll();
+    this.clearIdleTimer();
+    // If we tear down while still believing the session is busy, fire the
+    // idle transition so the DO's inflight counter doesn't leak.
+    if (this.busy) {
+      this.busy = false;
+      this.onSessionIdle?.();
+    }
     if (this.conn) {
       this.conn.disconnect();
       this.conn = null;
@@ -294,74 +427,34 @@ export class RPCSandboxClient {
   // type machinery from expanding in .d.ts output (causes OOM).
 
   get commands(): SandboxCommandsAPI {
-    return wrapStub(
-      this.getConnection().rpc().commands,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().commands, this.renewActivity);
   }
   get files(): SandboxFilesAPI {
-    return wrapStub(
-      this.getConnection().rpc().files,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().files, this.renewActivity);
   }
   get processes(): SandboxProcessesAPI {
-    return wrapStub(
-      this.getConnection().rpc().processes,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().processes, this.renewActivity);
   }
   get ports(): SandboxPortsAPI {
-    return wrapStub(
-      this.getConnection().rpc().ports,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().ports, this.renewActivity);
   }
   get git(): SandboxGitAPI {
-    return wrapStub(
-      this.getConnection().rpc().git,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().git, this.renewActivity);
   }
   get utils(): SandboxUtilsAPI {
-    return wrapStub(
-      this.getConnection().rpc().utils,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().utils, this.renewActivity);
   }
   get backup(): SandboxBackupAPI {
-    return wrapStub(
-      this.getConnection().rpc().backup,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().backup, this.renewActivity);
   }
   get desktop(): SandboxDesktopAPI {
-    return wrapStub(
-      this.getConnection().rpc().desktop,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().desktop, this.renewActivity);
   }
   get watch(): SandboxWatchAPI {
-    return wrapStub(
-      this.getConnection().rpc().watch,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().watch, this.renewActivity);
   }
   get interpreter(): SandboxInterpreterAPI {
-    return wrapStub(
-      this.getConnection().rpc().interpreter,
-      this.renewActivity,
-      this.checkIdle
-    );
+    return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
   }
 
   setRetryTimeoutMs(_ms: number): void {
@@ -381,7 +474,6 @@ export class RPCSandboxClient {
   }
 
   disconnect(): void {
-    this.clearIdleTimer();
     this.destroyConnection();
   }
 
