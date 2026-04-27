@@ -3312,7 +3312,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
-Preview URLs survive transient container restarts: the token and any
+   * Preview URLs survive transient container restarts: the token and any
    * friendly name are persisted in Durable Object storage, and the port is
    * automatically re-exposed on the container when it comes back up. Tokens
    * are cleared only on explicit `unexposePort()` or full sandbox
