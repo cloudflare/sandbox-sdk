@@ -4359,8 +4359,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        gitignore,
-        excludes
+        { gitignore, excludes }
       );
 
       if (!createResult.success) {
@@ -4544,8 +4543,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        gitignore,
-        excludes
+        { gitignore, excludes }
       );
 
       if (!createResult.success) {

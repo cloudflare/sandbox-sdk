@@ -213,8 +213,7 @@ describe('Local Backup & Restore', () => {
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         expect.any(String), // backup session ID
-        false, // gitignore default
-        [] // excludes default
+        { gitignore: false, excludes: [] }
       );
 
       // Verify archive was uploaded to R2 via binding

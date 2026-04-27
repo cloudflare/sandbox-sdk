@@ -24,14 +24,13 @@ export class BackupClient extends BaseHttpClient {
     dir: string,
     archivePath: string,
     sessionId: string,
-    gitignore = false,
-    excludes: string[] = []
+    options?: { excludes?: string[]; gitignore?: boolean }
   ): Promise<CreateBackupResponse> {
     const data: CreateBackupRequest = {
       dir,
       archivePath,
-      gitignore,
-      excludes,
+      gitignore: options?.gitignore ?? false,
+      excludes: options?.excludes ?? [],
       sessionId
     };
 

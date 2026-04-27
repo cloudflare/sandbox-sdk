@@ -1846,8 +1846,7 @@ describe('Sandbox - Automatic Session Management', () => {
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         expect.stringMatching(/^__sandbox_backup_/),
-        false,
-        []
+        { gitignore: false, excludes: [] }
       );
       expect(bucket.put).toHaveBeenCalled();
     });
