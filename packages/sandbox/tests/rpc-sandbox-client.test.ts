@@ -121,4 +121,39 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     client.disconnect();
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
   });
+
+  it('releases inflight when the WebSocket drops while busy', () => {
+    const onSessionBusy = vi.fn();
+    const onSessionIdle = vi.fn();
+
+    const client = new RPCSandboxClient({
+      stub: { fetch: vi.fn() },
+      onSessionBusy,
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+    void client.commands;
+
+    stats = { imports: 1, exports: 2 };
+    vi.advanceTimersByTime(1_000);
+    expect(onSessionBusy).toHaveBeenCalledTimes(1);
+
+    // Container crash / WebSocket peer-close: connection reports
+    // disconnected on the next poll.
+    connected = false;
+    vi.advanceTimersByTime(1_000);
+
+    // The poller must observe the dead connection, fire onSessionIdle so
+    // the DO's inflight counter unwinds, and tear down so it isn't
+    // looping over a corpse forever.
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+    expect(disconnects).toHaveLength(1);
+
+    // Subsequent ticks must be a no-op — if the poller fired again it
+    // would attempt destroyConnection() repeatedly.
+    vi.advanceTimersByTime(5_000);
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+    expect(disconnects).toHaveLength(1);
+  });
 });

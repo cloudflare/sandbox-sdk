@@ -331,10 +331,18 @@ export class RPCSandboxClient {
    * activity timeout each tick so an in-flight stream keeps pushing the
    * sleepAfter deadline forward. On the busy → idle edge, fires
    * `onSessionIdle` and schedules the WebSocket disconnect.
+   *
+   * If the WebSocket has dropped underneath us (container crash, network
+   * blip) we tear the connection down here. `destroyConnection()` fires
+   * `onSessionIdle` if we were busy, so the DO's inflight counter doesn't
+   * stay pinned forever waiting for a peer that's never going to reply.
    */
   private pollBusyState = (): void => {
     const conn = this.conn;
-    if (!conn || !conn.isConnected()) return;
+    if (!conn || !conn.isConnected()) {
+      this.destroyConnection();
+      return;
+    }
 
     const { imports, exports } = conn.getStats();
     const isBusy =
