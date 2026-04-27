@@ -88,6 +88,22 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     return undefined;
   }
 
+  /**
+   * Validate backup IDs before they are used in restore mount paths.
+   */
+  private static validateBackupId(backupId: string): string | undefined {
+    if (!backupId || typeof backupId !== 'string') {
+      return 'Missing or invalid field: backupId';
+    }
+    if (backupId.includes('/') || backupId.includes('..')) {
+      return 'backupId must not contain path traversal sequences';
+    }
+    if (backupId.includes('\0')) {
+      return 'backupId must not contain null bytes';
+    }
+    return undefined;
+  }
+
   private async handleCreate(
     request: Request,
     context: RequestContext
@@ -198,12 +214,24 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         Operation.BACKUP_RESTORE
       );
     }
+    const backupIdError = BackupHandler.validateBackupId(body.backupId);
+    if (backupIdError) {
+      return this.createErrorResponse(
+        {
+          message: backupIdError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_RESTORE
+      );
+    }
 
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.restoreArchive(
       body.dir,
       body.archivePath,
+      body.backupId,
       sessionId
     );
 

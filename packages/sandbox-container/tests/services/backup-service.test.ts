@@ -91,6 +91,7 @@ describe('BackupService', () => {
   it('allows restoring an archive into /app', async () => {
     const dir = '/app/project';
     const archivePath = '/var/backups/app-dir.sqsh';
+    const backupId = 'app-dir';
 
     mocked(mockSessionManager.executeInSession).mockImplementation(
       async (_sessionId: string, command: string) => {
@@ -114,9 +115,56 @@ describe('BackupService', () => {
       }
     );
 
-    const result = await service.restoreArchive(dir, archivePath);
+    const result = await service.restoreArchive(dir, archivePath, backupId);
 
     expect(result.success).toBe(true);
+  });
+
+  it('uses explicit backup ID for production restore mount paths', async () => {
+    const backupId = '12345678-1234-1234-1234-123456789012';
+    const dir = '/workspace/project';
+    const archivePath = `/var/backups/r2mount/${backupId}/data.sqsh`;
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('test -f ')) return execSuccess();
+        if (command.includes('/usr/bin/fusermount3 -u ')) return execSuccess();
+        if (command.startsWith('for d in ')) return execSuccess();
+        if (command.startsWith('rm -rf ')) return execSuccess();
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
+        if (command.startsWith('/usr/bin/fuse-overlayfs '))
+          return execSuccess();
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.restoreArchive(dir, archivePath, backupId);
+
+    expect(result.success).toBe(true);
+
+    const callArgs = mocked(mockSessionManager.executeInSession)
+      .mock.calls.map(([, command]) => command)
+      .filter((command): command is string => typeof command === 'string');
+
+    expect(
+      callArgs.some((command) =>
+        command.includes(`'/var/backups/mounts/${backupId}_`)
+      )
+    ).toBe(true);
+    expect(
+      callArgs.some((command) =>
+        command.includes('/var/backups/mounts/r2mount')
+      )
+    ).toBe(false);
   });
 
   it('uses wildcard exclude mode for gitignore-derived excludes', async () => {

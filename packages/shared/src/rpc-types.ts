@@ -237,6 +237,7 @@ export interface SandboxBackupAPI {
   restoreArchive(
     dir: string,
     archivePath: string,
+    backupId: string,
     sessionId: string
   ): Promise<RestoreBackupResponse>;
 }

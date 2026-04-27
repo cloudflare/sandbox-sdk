@@ -47,15 +47,18 @@ export class BackupClient extends BaseHttpClient {
    * Tell the container to restore a squashfs archive into a directory.
    * @param dir - Target directory
    * @param archivePath - Path to the archive file in the container
+   * @param backupId - Backup identifier used for restore mount paths
    * @param sessionId - Session context
    */
   async restoreArchive(
     dir: string,
     archivePath: string,
+    backupId: string,
     sessionId: string
   ): Promise<RestoreBackupResponse> {
     const data: RestoreBackupRequest = {
       dir,
+      backupId,
       archivePath,
       sessionId
     };

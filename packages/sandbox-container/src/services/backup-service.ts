@@ -391,19 +391,29 @@ export class BackupService {
   async restoreArchive(
     dir: string,
     archivePath: string,
+    backupId: string,
     sessionId = 'default'
   ): Promise<ServiceResult<RestoreArchiveResult>> {
-    // Extract backup ID from archive path (e.g., /var/backups/abc123.sqsh -> abc123)
-    const backupId = archivePath
-      .replace(`${BACKUP_WORK_DIR}/`, '')
-      .replace('.sqsh', '');
-
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let errorMessage: string | undefined;
 
     try {
+      if (
+        !backupId ||
+        backupId.includes('/') ||
+        backupId.includes('..') ||
+        backupId.includes('\0')
+      ) {
+        errorMessage = `Invalid backupId for restore: ${backupId}`;
+        return serviceError({
+          message: errorMessage,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          details: { dir, archivePath, backupId }
+        });
+      }
+
       const pathError = validateBackupPaths(dir, archivePath);
       if (pathError) {
         errorMessage = pathError;

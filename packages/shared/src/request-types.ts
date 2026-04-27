@@ -180,6 +180,8 @@ export interface CreateBackupResponse {
 export interface RestoreBackupRequest {
   /** Directory to restore into */
   dir: string;
+  /** Backup identifier used for restore mount paths */
+  backupId: string;
   /** Path to the archive file in the container */
   archivePath: string;
   sessionId?: string;

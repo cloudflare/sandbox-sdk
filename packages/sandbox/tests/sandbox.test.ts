@@ -1818,11 +1818,13 @@ describe('Sandbox - Automatic Session Management', () => {
         id: 'backup-session',
         message: 'Created'
       } as any);
-      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Deleted'
-      } as any);
+      const deleteSessionSpy = vi
+        .spyOn(backupSandbox.client.utils, 'deleteSession')
+        .mockResolvedValue({
+          success: true,
+          id: 'backup-session',
+          message: 'Deleted'
+        } as any);
       const createArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'createArchive')
         .mockResolvedValue({
@@ -1900,6 +1902,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
         `/var/backups/r2mount/${backupId}/data.sqsh`,
+        backupId,
         expect.stringMatching(/^__sandbox_backup_/)
       );
       expect(mountBackupR2Spy).toHaveBeenCalledWith(
@@ -1907,6 +1910,7 @@ describe('Sandbox - Automatic Session Management', () => {
         `backups/${backupId}/`,
         expect.stringMatching(/^__sandbox_backup_/)
       );
+      expect(deleteSessionSpy).not.toHaveBeenCalled();
       expect(
         (backupSandbox as any).execWithSession.mock.calls.some(
           ([command]: [string]) =>

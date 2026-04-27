@@ -1015,8 +1015,18 @@ class BackupRPCAPI extends RpcTarget {
     };
   }
 
-  async restoreArchive(dir: string, archivePath: string, sessionId: string) {
-    const result = await this.#svc.restoreArchive(dir, archivePath, sessionId);
+  async restoreArchive(
+    dir: string,
+    archivePath: string,
+    backupId: string,
+    sessionId: string
+  ) {
+    const result = await this.#svc.restoreArchive(
+      dir,
+      archivePath,
+      backupId,
+      sessionId
+    );
     throwIfError(result);
     return { success: true, dir };
   }

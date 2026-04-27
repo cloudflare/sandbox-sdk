@@ -4028,8 +4028,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Create a unique, dedicated session for a single backup operation.
    * Each call produces a fresh session ID so concurrent or sequential
-   * operations never share shell state. Callers must destroy the session
-   * in a finally block via `client.utils.deleteSession()`.
+   * operations never share shell state. Callers must destroy the session when
+   * the operation does not leave live mounts behind.
    */
   private async ensureBackupSession(): Promise<string> {
     const sessionId = `__sandbox_backup_${crypto.randomUUID()}`;
@@ -4817,6 +4817,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
+        id,
         backupSession
       );
 
@@ -4841,7 +4842,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
     } finally {
-      if (backupSession) {
+      if (backupSession && outcome !== 'success') {
         await this.client.utils.deleteSession(backupSession).catch(() => {});
       }
       logCanonicalEvent(this.logger, {

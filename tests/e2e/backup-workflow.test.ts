@@ -190,6 +190,67 @@ describe('Backup Workflow E2E', () => {
       // Cleanup (unmounts FUSE overlay if present, then removes directory)
       await cleanupDir(workerUrl, headers, TEST_DIR);
     }, 60000);
+
+    test('should keep restored backup mounted after restore returns', async () => {
+      if (!backupBucketAvailable) return;
+
+      const testDir = `/workspace/restore-lifetime-${crypto.randomUUID().slice(0, 8)}`;
+      const content = `restore lifetime ${crypto.randomUUID()}`;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `mkdir -p ${testDir} && printf '%s' '${content}' > ${testDir}/file.txt`
+        })
+      });
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ dir: testDir })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `rm -rf ${testDir}/*` })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: testDir })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      const immediateRead = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `cat ${testDir}/file.txt` })
+      });
+      const immediateResult = (await immediateRead.json()) as ExecuteResponse;
+      expect(immediateResult.exitCode).toBe(0);
+      expect(immediateResult.stdout).toBe(content);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const delayedRead = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `cat ${testDir}/file.txt && printf '\n' && printf 'changed' > ${testDir}/cow.txt && cat ${testDir}/cow.txt`
+        })
+      });
+      const delayedResult = (await delayedRead.json()) as ExecuteResponse;
+      expect(delayedResult.exitCode).toBe(0);
+      expect(delayedResult.stdout).toContain(content);
+      expect(delayedResult.stdout).toContain('changed');
+
+      await cleanupDir(workerUrl, headers, testDir);
+    }, 60000);
   });
 
   describe('Backup excludes', () => {
