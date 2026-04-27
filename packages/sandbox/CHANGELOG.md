@@ -1,5 +1,46 @@
 # @cloudflare/sandbox
 
+## 0.9.1
+
+### Patch Changes
+
+- [`51f1d04`](https://github.com/cloudflare/sandbox-sdk/commit/51f1d04b6faf5b36470a030d01e38480c8810553) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Coalesce concurrent `Sandbox.destroy()` calls onto a single teardown. If a
+  previous `destroy()` is still in flight, subsequent calls await the same
+  underlying work instead of starting a second teardown, and emit a canonical
+  `sandbox.destroy.coalesced` event per coalesced call for observability.
+  Once the in-flight teardown settles, later `destroy()` calls run a fresh
+  teardown as before. Fixes observed destroy-recreate thrash where external
+  health checks can invoke `destroy()` faster than the sandbox can initialize.
+
+- [#592](https://github.com/cloudflare/sandbox-sdk/pull/592) [`b2bf021`](https://github.com/cloudflare/sandbox-sdk/commit/b2bf021025bd31fe875626b8751929c3b2ec7478) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `sandbox.getContainerPlacementId()` to retrieve the Cloudflare placement ID
+  observed for the underlying container.
+
+  The placement ID identifies the current container placement and changes when
+  the container is replaced by the platform. Compare the returned value against
+  a stored value to detect container replacement and trigger reconciliation.
+
+  The placement ID is captured during the session-create handshake and cached
+  in Durable Object storage, so reads are cheap and do not require a healthy
+  container. A fresh placement ID is captured on each subsequent handshake,
+  so a replacement is reflected the next time the sandbox is used.
+
+  Returns `undefined` when no session-create handshake has been observed yet on
+  this sandbox — call any method that triggers session creation (such as
+  `exec()`) first. Returns `null` when a handshake has completed but the
+  container's `CLOUDFLARE_PLACEMENT_ID` environment variable is not set, such as
+  in local development with wrangler.
+
+  ```ts
+  await sandbox.exec('true'); // ensures the handshake has run
+  const containerPlacementId = await sandbox.getContainerPlacementId();
+  if (
+    typeof containerPlacementId === 'string' &&
+    containerPlacementId !== lastKnownPlacementId
+  ) {
+    // Container was replaced — reconcile state
+  }
+  ```
+
 ## 0.9.0
 
 ### Minor Changes

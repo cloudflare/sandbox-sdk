@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox-test:0.9.0-musl
+FROM docker.io/cloudflare/sandbox-test:0.9.1-musl
 
 # Install snapshot tools (Alpine uses apk)
 # squashfs-tools: create archives, squashfuse: mount, fuse-overlayfs: COW layer
