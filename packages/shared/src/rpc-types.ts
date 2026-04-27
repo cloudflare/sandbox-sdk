@@ -220,6 +220,7 @@ export interface SandboxUtilsAPI {
     id: string;
     message: string;
     timestamp: string;
+    containerPlacementId?: string | null;
   }>;
   deleteSession(
     sessionId: string

@@ -26,6 +26,7 @@ import type {
   SandboxAPI as SandboxAPIInterface,
   WatchRequest
 } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import { RpcTarget } from 'capnweb';
 import type {
   CommandResult,
@@ -959,12 +960,30 @@ class UtilsRPCAPI extends RpcTarget {
     cwd?: string;
   }) {
     const result = await this.#mgr.createSession(options);
+    if (
+      !result.success &&
+      result.error.code === ErrorCode.SESSION_ALREADY_EXISTS
+    ) {
+      // Mirror the HTTP handler: surface placement ID on the duplicate-create
+      // path so a restarted DO can capture it from the idempotent retry.
+      throw new RPCError(
+        JSON.stringify({
+          code: result.error.code,
+          message: result.error.message,
+          context: {
+            ...(result.error.details ?? {}),
+            containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
+          }
+        })
+      );
+    }
     throwIfError(result);
     return {
       success: true,
       id: options.id,
       message: `Session ${options.id} created`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
     };
   }
 
