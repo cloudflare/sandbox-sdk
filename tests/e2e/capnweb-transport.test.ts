@@ -231,4 +231,29 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
     const defaultResult = (await defaultExecResponse.json()) as ExecResult;
     expect(defaultResult.stdout.trim()).toBe('');
   });
+
+  test('should expose container placement ID after a session handshake', async () => {
+    // Trigger a handshake so the DO captures CLOUDFLARE_PLACEMENT_ID from
+    // the createSession response.
+    const execResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'true' })
+    });
+    expect(execResponse.status).toBe(200);
+
+    const placementResponse = await fetch(`${workerUrl}/api/placement-id`, {
+      method: 'GET',
+      headers
+    });
+    expect(placementResponse.status).toBe(200);
+    const { placementId } = (await placementResponse.json()) as {
+      placementId: string | null | undefined;
+    };
+
+    // After a handshake the DO must have stored a value (string when
+    // CLOUDFLARE_PLACEMENT_ID is set, null when running locally) but not
+    // undefined, which would mean the RPC transport dropped the field.
+    expect(placementId === null || typeof placementId === 'string').toBe(true);
+  });
 });
