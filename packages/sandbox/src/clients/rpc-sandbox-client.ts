@@ -279,6 +279,13 @@ export class RPCSandboxClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
+  /**
+   * Set the first time the poller observes `conn.isConnected() === true`,
+   * cleared in `destroyConnection()`. Lets us distinguish "the WebSocket
+   * upgrade is still in progress" (don't tear down) from "we were
+   * connected and the peer went away" (do tear down).
+   */
+  private wasEverConnected = false;
 
   constructor(options: RPCSandboxClientOptions) {
     this.connOptions = {
@@ -339,10 +346,25 @@ export class RPCSandboxClient {
    */
   private pollBusyState = (): void => {
     const conn = this.conn;
-    if (!conn || !conn.isConnected()) {
-      this.destroyConnection();
+    if (!conn) return;
+    if (!conn.isConnected()) {
+      // Two distinct cases share the same `isConnected() === false`
+      // signal:
+      //   1. The WebSocket upgrade is still in progress — we constructed
+      //      the connection in getConnection() but doConnect() hasn't
+      //      resolved yet. Sends are queued in the deferred transport.
+      //      Tearing down here would drop those queued calls on the floor.
+      //   2. We were connected and the peer went away (container crash,
+      //      network blip). The session is dead, we must release
+      //      inflight and stop polling.
+      // `wasEverConnected` distinguishes them: it flips to true the first
+      // time we observe a live connection below.
+      if (this.wasEverConnected) {
+        this.destroyConnection();
+      }
       return;
     }
+    this.wasEverConnected = true;
 
     const { imports, exports } = conn.getStats();
     const isBusy =
@@ -423,6 +445,7 @@ export class RPCSandboxClient {
       this.conn.disconnect();
       this.conn = null;
     }
+    this.wasEverConnected = false;
   }
 
   // -------------------------------------------------------------------------

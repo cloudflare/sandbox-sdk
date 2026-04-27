@@ -156,4 +156,39 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
     expect(disconnects).toHaveLength(1);
   });
+
+  it('does not tear down a connection that has not finished its WebSocket upgrade', () => {
+    // Simulate the upgrade still being in flight: isConnected() returns
+    // false from the moment the connection is constructed until
+    // doConnect() resolves. While in this state the deferred transport
+    // is queueing sends — tearing the connection down would discard them.
+    connected = false;
+
+    const onSessionIdle = vi.fn();
+    const client = new RPCSandboxClient({
+      stub: { fetch: vi.fn() },
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+    void client.commands;
+
+    // Several poll ticks while the upgrade is still pending. Must not
+    // dispose the connection — the deferred transport's queue is the
+    // only thing standing between the user's RPC call and the wire.
+    vi.advanceTimersByTime(5_000);
+    expect(disconnects).toHaveLength(0);
+    expect(onSessionIdle).not.toHaveBeenCalled();
+
+    // Upgrade completes. From here on the poller treats subsequent
+    // disconnections as real peer-gone events.
+    connected = true;
+    stats = { imports: 1, exports: 2 };
+    vi.advanceTimersByTime(1_000); // observed busy
+
+    connected = false;
+    vi.advanceTimersByTime(1_000); // peer-gone — now we tear down
+    expect(disconnects).toHaveLength(1);
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+  });
 });
