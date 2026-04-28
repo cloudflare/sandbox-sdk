@@ -1,10 +1,10 @@
 # Cloudflare Sandbox — Agent QA Test Harness
 
-An agent-driven test harness that exercises every capability of the `cloudflare-sandbox-bridge` Cloudflare Worker. The harness creates a `SandboxAgent` with Shell and ApplyPatch capabilities, connects it to a `CloudflareSandboxClient`, and prompts it through a structured QA script. The agent runs all tests inside the sandbox, reports pass/fail per check, and validates session persistence across a pause/resume cycle.
+An agent-driven test harness that exercises every capability of the `cloudflare-sandbox-bridge` Cloudflare Worker. The harness creates a `SandboxAgent` with Shell and Filesystem capabilities, connects it to a `CloudflareSandboxClient`, and prompts it through a structured QA script. The agent runs all tests inside the sandbox, reports pass/fail per check, and validates session persistence across a pause/resume cycle.
 
 ## Prerequisites
 
-- Python 3.12.x (pinned in `pyproject.toml` as `>=3.12,<3.13`)
+- Python 3.12.x (pinned via PEP 723 inline metadata in `src/main.py`)
 - [uv](https://docs.astral.sh/uv/) installed
 - A deployed `cloudflare-sandbox-bridge` Cloudflare Worker
 - An OpenAI API key with access to `gpt-5.2-codex`
@@ -41,6 +41,15 @@ Resume from a previous run (skips phases 1–7, runs verification only):
 
 ```bash
 ./script/start --resume
+```
+
+`script/start` is a thin wrapper around `uv run --env-file .env src/main.py`. Dependencies and the Python version are declared inline in `src/main.py` via [PEP 723](https://peps.python.org/pep-0723/) script metadata, so there is no `pyproject.toml` or lockfile — uv resolves and caches the environment on first run.
+
+You can also invoke the script directly if your environment is already populated (e.g. via `direnv`):
+
+```bash
+uv run src/main.py --help
+./src/main.py --help   # uses the `uv run --script` shebang
 ```
 
 ## Test Phases
@@ -81,7 +90,7 @@ After the pause, the harness deserializes the session state from `session_state.
 
 ## How It Works
 
-1. `src/main.py` builds a `SandboxAgent` with `Shell` + `ApplyPatch` capabilities backed by `CloudflareSandboxClient`.
+1. `src/main.py` builds a `SandboxAgent` with `Shell` + `Filesystem` capabilities backed by `CloudflareSandboxClient`.
 2. Each phase prompt is loaded from `src/prompts/*.md` and sent as a user message via `Runner.run_streamed()`.
 3. The agent streams responses and tool calls; the harness prints text deltas and tool-call banners.
 4. After Phase 5, the sandbox workspace is persisted to R2 via `session.stop()` (using `RemoteSnapshotSpec` + `R2SnapshotClient`) and the `CloudflareSandboxSessionState` is serialized to `src/session_state.json`.
@@ -102,7 +111,7 @@ After the pause, the harness deserializes the session state from `session_state.
 | `src/prompts/phase5_pre_pause.md`      | Phase 5 QA prompt (template with `{magic_uuid}` placeholder) |
 | `src/prompts/phase6_bucket_mount.md`   | Phase 6 QA prompt (template with `{magic_uuid}` placeholder) |
 | `src/prompts/phase7_bucket_unmount.md` | Phase 7 QA prompt                                            |
-| `script/start`                         | Shell wrapper: `uv run src/main.py`                          |
+| `script/start`                         | Shell wrapper: `uv run --env-file .env src/main.py`          |
 | `.env.example`                         | Template for required environment variables                  |
 
 ## SSL / Corporate VPN
