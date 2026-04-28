@@ -1,0 +1,183 @@
+name: Bridge E2E
+
+# Deploys the cloudflare-sandbox-bridge Worker to a per-PR (or per-main)
+# Cloudflare account and runs the integration suite against it. Mirrors
+# reusable-e2e.yml in shape and security posture (fork-PR inputs, opt-in
+# cache writes), but is bridge-specific:
+#
+#   - Worker name comes from the caller as <prefix>-bridge-<pr> /
+#     <prefix>-bridge-main, so capacity-management greps stay precise.
+#   - Image source is bridge/worker/Dockerfile, optionally rebased onto
+#     the PR's sandbox image via the image_tag input.
+#   - Auth is on; SANDBOX_API_KEY is generated per-run, injected via
+#     `wrangler secret bulk`, and reused as the test client's bearer token.
+#   - Tests are bridge/script/integration with BASE_URL pointing at the
+#     deployed worker.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: 'ubuntu-24.04-4core'
+      worker_name:
+        type: string
+        required: true
+        description: 'Full worker name. Must follow <prefix>-bridge-<pr> or <prefix>-bridge-main.'
+      image_tag:
+        type: string
+        default: ''
+        description: 'Optional. CF registry tag of the sandbox base image to rebase bridge/worker/Dockerfile onto (e.g. ci-<hash>). Empty = use the pinned base in the Dockerfile.'
+      checkout_ref:
+        type: string
+        default: ''
+        description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'
+      checkout_repo:
+        type: string
+        default: ''
+        description: 'Repository to checkout (for fork PRs). Empty = default behavior.'
+      cache_readonly:
+        type: boolean
+        default: false
+        description: 'When true, skip cache writes (security: prevents cache poisoning from fork PRs).'
+
+env:
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
+jobs:
+  deploy-and-test:
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Validate worker name
+        run: |
+          NAME="${{ inputs.worker_name }}"
+          # Worker name must contain "-bridge-" and end with "main" or "pr-<digits>".
+          if ! [[ "$NAME" =~ -bridge-(main|pr-[0-9]+)$ ]]; then
+            echo "::error::worker_name '$NAME' does not match required pattern <prefix>-bridge-(main|pr-<n>)"
+            exit 1
+          fi
+          echo "Worker name: $NAME"
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            bridge/worker/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      # The bridge Worker imports from @cloudflare/sandbox/bridge, which
+      # resolves to packages/sandbox/dist/. The privileged build job
+      # uploads dist/ as the build-${{ github.sha }} artifact.
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: Generate per-run SANDBOX_API_KEY
+        id: apikey
+        run: |
+          KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+
+      - name: Rewrite wrangler.jsonc worker name
+        working-directory: bridge/worker
+        run: |
+          NAME="${{ inputs.worker_name }}"
+          # Replace the "name" field with the deploy target. The default value
+          # is "cloudflare-sandbox-bridge"; we substitute the full string so
+          # the substitution stays anchored to the intended field.
+          sed -i 's|"name": "cloudflare-sandbox-bridge"|"name": "'"$NAME"'"|' wrangler.jsonc
+          if ! grep -q "\"name\": \"$NAME\"" wrangler.jsonc; then
+            echo "::error::Failed to set worker name in wrangler.jsonc"
+            exit 1
+          fi
+
+      - name: Rebase Dockerfile onto PR sandbox image
+        if: ${{ inputs.image_tag != '' }}
+        working-directory: bridge/worker
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          IMAGE="registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/sandbox:${TAG}"
+          # Replace the FROM line so the bridge image layers on top of the
+          # PR's sandbox build instead of the pinned Docker Hub release.
+          sed -i 's|^FROM docker.io/cloudflare/sandbox:.*|FROM '"$IMAGE"'|' Dockerfile
+          echo "Rebased Dockerfile FROM:"
+          grep '^FROM ' Dockerfile
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Login to CF registry (for rebased base image)
+        if: ${{ inputs.image_tag != '' }}
+        run: |
+          source .github/cf-registry-login.sh
+          cf_registry_credentials 15 '["pull"]'
+          echo "$CF_REGISTRY_PASSWORD" | docker login registry.cloudflare.com \
+            -u "$CF_REGISTRY_USERNAME" --password-stdin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy bridge worker
+        working-directory: bridge/worker
+        run: |
+          npx wrangler deploy \
+            ${{ inputs.image_tag != '' && '--containers-rollout immediate' || '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Inject SANDBOX_API_KEY secret
+        working-directory: bridge/worker
+        run: |
+          jq -n --arg k "$SANDBOX_API_KEY" '{SANDBOX_API_KEY:$k}' \
+            | npx wrangler secret bulk
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_API_KEY: ${{ steps.apikey.outputs.key }}
+
+      - name: Wait for worker readiness
+        run: |
+          URL="https://${{ inputs.worker_name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 5 "$URL" >/dev/null; then
+              echo "Worker ready at $URL"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Worker did not respond at $URL within 60s"
+          exit 1
+
+      - name: Run integration tests against deployed worker
+        working-directory: bridge
+        run: bun script/integration
+        env:
+          BASE_URL: https://${{ inputs.worker_name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev
+          SANDBOX_API_KEY: ${{ steps.apikey.outputs.key }}
