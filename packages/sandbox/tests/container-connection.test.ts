@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ContainerConnection } from '../src/container-connection';
+import {
+  ContainerConnection,
+  DeferredTransport
+} from '../src/container-connection';
 
 /**
  * Tests for ContainerConnection — the capnweb RPC connection manager.
@@ -185,6 +188,101 @@ describe('ContainerConnection', () => {
 
       await Promise.all([conn.connect(), conn.connect()]);
       expect(doConnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * Minimal EventTarget-based fake that satisfies the bits of WebSocket the
+   * DeferredTransport actually uses: addEventListener('message'|'close'|'error')
+   * and `send()`. Avoids the workerd test environment's restriction on
+   * constructing real WebSockets in unit tests.
+   */
+  function createFakeWebSocket(): {
+    ws: WebSocket;
+    emitMessage: (data: unknown) => void;
+    emitClose: (code: number, reason: string) => void;
+    emitError: () => void;
+    sent: string[];
+  } {
+    const target = new EventTarget();
+    const sent: string[] = [];
+    const ws = Object.assign(target, {
+      send: (msg: string) => {
+        sent.push(msg);
+      },
+      close: () => {}
+    }) as unknown as WebSocket;
+    return {
+      ws,
+      emitMessage: (data) =>
+        target.dispatchEvent(
+          Object.assign(new Event('message'), { data }) as MessageEvent
+        ),
+      emitClose: (code, reason) =>
+        target.dispatchEvent(
+          Object.assign(new Event('close'), { code, reason }) as CloseEvent
+        ),
+      emitError: () => target.dispatchEvent(new Event('error')),
+      sent
+    };
+  }
+
+  describe('DeferredTransport', () => {
+    it('rejects pending receive() with a TypeError when a non-string frame arrives', async () => {
+      const fake = createFakeWebSocket();
+      const transport = new DeferredTransport();
+      transport.activate(fake.ws);
+
+      const recv = transport.receive();
+      fake.emitMessage(new ArrayBuffer(8));
+
+      await expect(recv).rejects.toBeInstanceOf(TypeError);
+      await expect(recv).rejects.toThrow(
+        'Received non-string message from WebSocket.'
+      );
+    });
+
+    it('fails subsequent receive() calls after a binary frame, matching capnweb parity', async () => {
+      const fake = createFakeWebSocket();
+      const transport = new DeferredTransport();
+      transport.activate(fake.ws);
+
+      fake.emitMessage(new Uint8Array([1, 2, 3]));
+
+      // The transport is now poisoned: any further receive() must reject
+      // immediately rather than hang waiting for a frame that won't come.
+      await expect(transport.receive()).rejects.toBeInstanceOf(TypeError);
+    });
+
+    it('still passes through string frames before any binary frame', async () => {
+      const fake = createFakeWebSocket();
+      const transport = new DeferredTransport();
+      transport.activate(fake.ws);
+
+      fake.emitMessage('hello');
+      await expect(transport.receive()).resolves.toBe('hello');
+    });
+
+    it('surfaces close events as a Peer closed WebSocket error', async () => {
+      const fake = createFakeWebSocket();
+      const transport = new DeferredTransport();
+      transport.activate(fake.ws);
+
+      const recv = transport.receive();
+      fake.emitClose(1006, 'gone');
+
+      await expect(recv).rejects.toThrow(/Peer closed WebSocket: 1006 gone/);
+    });
+
+    it('surfaces error events as a WebSocket connection failed error', async () => {
+      const fake = createFakeWebSocket();
+      const transport = new DeferredTransport();
+      transport.activate(fake.ws);
+
+      const recv = transport.receive();
+      fake.emitError();
+
+      await expect(recv).rejects.toThrow('WebSocket connection failed');
     });
   });
 });
