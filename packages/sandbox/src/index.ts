@@ -130,6 +130,7 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
+export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
 // Export backup and process readiness errors
 export {
   BackupCreateError,
@@ -145,6 +146,8 @@ export {
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
+  // RPC transport error (raised on capnweb WebSocket session failures)
+  RPCTransportError,
   SessionTerminatedError
 } from './errors';
 // Export file streaming utilities for binary file support
