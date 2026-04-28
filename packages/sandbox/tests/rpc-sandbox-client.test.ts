@@ -464,11 +464,24 @@ describe('translateRPCError', () => {
     );
   });
 
-  it('rethrows non-Error values as-is (not wrapped in RPCTransportError)', async () => {
+  it('wraps non-Error values in RPCTransportError with kind=unknown', async () => {
     const translateRPCError = await loadFn();
-    expect(() => translateRPCError('boom')).toThrow('boom');
-    expect(() => translateRPCError(42)).toThrow();
-    expect(() => translateRPCError(undefined)).toThrow();
+    const { RPCTransportError } = await loadErr();
+    for (const value of ['boom', 42, undefined, null, { weird: true }]) {
+      let thrown: unknown;
+      try {
+        translateRPCError(value);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RPCTransportError);
+      const err = thrown as InstanceType<typeof RPCTransportError>;
+      expect(err.kind).toBe('unknown');
+      // The raw value is preserved as `cause` for diagnostics.
+      expect(err.cause).toBe(value);
+      // originalMessage is the String() coercion of the value.
+      expect(err.context.originalMessage).toBe(String(value));
+    }
   });
 
   it('produces an RPCTransportError that carries a helpful suggestion', async () => {

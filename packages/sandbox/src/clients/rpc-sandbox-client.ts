@@ -185,7 +185,15 @@ export function translateRPCError(error: unknown): never {
       { cause: error }
     );
   }
-  throw error;
+  // Non-Error throw (rare — capnweb's deserializer always constructs Error
+  // instances, but defensively handle anything else that bubbles up).
+  // Coerce to an Error so the kind=unknown context still has a usable
+  // originalMessage, and preserve the raw value as `cause`.
+  const wrapped = new Error(String(error));
+  throw createErrorFromResponse(
+    buildTransportErrorResponse(wrapped) as unknown as ErrorResponse,
+    { cause: error }
+  );
 }
 
 /**
