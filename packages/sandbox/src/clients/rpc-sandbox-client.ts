@@ -199,9 +199,10 @@ export function translateRPCError(error: unknown): never {
 /**
  * Inspect a transport-level Error's message and produce the ErrorResponse
  * that becomes an RPCTransportError. Pattern strings are pinned to the exact
- * messages emitted by capnweb's WebSocketTransport (vendored at
- * /repos/capnweb/src/websocket.ts) and our DeferredTransport in
- * container-connection.ts. The DeferredTransport tests in
+ * messages emitted by capnweb's WebSocketTransport (see capnweb's
+ * src/websocket.ts) and our DeferredTransport in container-connection.ts —
+ * notably the trailing period in `WebSocket connection failed.` matches
+ * capnweb verbatim. The DeferredTransport tests in
  * tests/container-connection.test.ts pin the literal strings.
  */
 function buildTransportErrorResponse(
@@ -240,7 +241,7 @@ function buildTransportErrorResponse(
       kind = 'peer_closed';
       closeCode = Number(peerCloseMatch[1]);
       closeReason = peerCloseMatch[2] || undefined;
-    } else if (message === 'WebSocket connection failed') {
+    } else if (message === 'WebSocket connection failed.') {
       kind = 'connection_failed';
     } else if (message.startsWith('WebSocket upgrade failed')) {
       // ContainerConnection.doConnect throws this when the HTTP upgrade
