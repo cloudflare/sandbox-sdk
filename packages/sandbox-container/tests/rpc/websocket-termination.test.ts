@@ -119,10 +119,6 @@ describe('capnweb client error surface on WebSocket termination', () => {
     //    in the production logs
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    console.log(
-      '[repro] capnweb client error message:',
-      JSON.stringify(message)
-    );
     expect(typeof message).toBe('string');
     expect(message.length).toBeGreaterThan(0);
     expect(() => JSON.parse(message)).toThrow();
