@@ -246,7 +246,7 @@ export class DeferredTransport implements RpcTransport {
       );
     });
     ws.addEventListener('error', () => {
-      this.#fail(new Error('WebSocket connection failed'));
+      this.#fail(new Error('WebSocket connection failed.'));
     });
 
     // Flush queued sends

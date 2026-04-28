@@ -282,7 +282,7 @@ describe('ContainerConnection', () => {
       const recv = transport.receive();
       fake.emitError();
 
-      await expect(recv).rejects.toThrow('WebSocket connection failed');
+      await expect(recv).rejects.toThrow('WebSocket connection failed.');
     });
   });
 });
