@@ -194,9 +194,6 @@ describe('RPCSandboxClient busy/idle tracking', () => {
 });
 
 describe('translateRPCError', () => {
-  // We import translateRPCError lazily here to avoid the top-level vi.mock
-  // affecting test isolation. The function is a pure transform and does not
-  // depend on ContainerConnection.
   async function loadFn() {
     const mod = await import('../src/clients/rpc-sandbox-client');
     return mod.translateRPCError;
@@ -271,12 +268,12 @@ describe('translateRPCError', () => {
     expect(err.context.closeReason).toBeUndefined();
   });
 
-  it('classifies "WebSocket connection failed" as kind=connection_failed', async () => {
+  it('classifies "WebSocket connection failed." as kind=connection_failed', async () => {
     const translateRPCError = await loadFn();
     const { RPCTransportError } = await loadErr();
     let thrown: unknown;
     try {
-      translateRPCError(new Error('WebSocket connection failed'));
+      translateRPCError(new Error('WebSocket connection failed.'));
     } catch (e) {
       thrown = e;
     }
@@ -513,9 +510,13 @@ describe('translateRPCError', () => {
     expect((thrown as Error).cause).toBe(original);
   });
 
-  it('exposes `cause` on toJSON output for logging', async () => {
+  it('omits `cause` from toJSON output (Error instances are not JSON-serializable)', async () => {
+    // `cause` is intentionally absent from toJSON(): JSON.stringify(new Error())
+    // emits `{}` because Error own properties are non-enumerable, so logging
+    // `cause: <Error>` would surface a misleading empty object. The cause is
+    // still reachable in-memory via `err.cause` for debugger/inspect.
     const translateRPCError = await loadFn();
-    const original = new Error('WebSocket connection failed');
+    const original = new Error('WebSocket connection failed.');
     let thrown: unknown;
     try {
       translateRPCError(original);
@@ -523,7 +524,9 @@ describe('translateRPCError', () => {
       thrown = e;
     }
     const json = (thrown as { toJSON: () => Record<string, unknown> }).toJSON();
-    expect(json.cause).toBe(original);
+    expect('cause' in json).toBe(false);
+    // But the live instance still carries it for in-memory inspection.
+    expect((thrown as Error).cause).toBe(original);
   });
 
   it('does not set `cause` on errors translated from JSON-encoded structured payloads', async () => {
