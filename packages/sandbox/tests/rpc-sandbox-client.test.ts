@@ -192,3 +192,54 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('translateRPCError', () => {
+  // We import translateRPCError lazily here to avoid the top-level vi.mock
+  // affecting test isolation. The function is a pure transform and does not
+  // depend on ContainerConnection.
+  it('rethrows transport-level errors verbatim when the message is not JSON', async () => {
+    const { translateRPCError } =
+      await import('../src/clients/rpc-sandbox-client');
+    const original = new Error('WebSocket connection failed');
+    expect(() => translateRPCError(original)).toThrow(original);
+  });
+
+  it('rethrows peer-close errors verbatim when the message is not JSON', async () => {
+    const { translateRPCError } =
+      await import('../src/clients/rpc-sandbox-client');
+    const original = new Error('Peer closed WebSocket: 1006 ');
+    expect(() => translateRPCError(original)).toThrow(original);
+  });
+
+  it('translates JSON-encoded structured errors into typed SandboxErrors', async () => {
+    const { translateRPCError } =
+      await import('../src/clients/rpc-sandbox-client');
+    const payload = JSON.stringify({
+      code: 'FILE_NOT_FOUND',
+      message: 'no such file',
+      context: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error(payload));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain('no such file');
+  });
+
+  it('rethrows the original error when JSON parses but lacks required fields', async () => {
+    const { translateRPCError } =
+      await import('../src/clients/rpc-sandbox-client');
+    // Valid JSON, but not a structured RPCErrorPayload.
+    const original = new Error('{"foo":"bar"}');
+    expect(() => translateRPCError(original)).toThrow(original);
+  });
+
+  it('rethrows non-Error values as-is', async () => {
+    const { translateRPCError } =
+      await import('../src/clients/rpc-sandbox-client');
+    expect(() => translateRPCError('boom')).toThrow('boom');
+  });
+});

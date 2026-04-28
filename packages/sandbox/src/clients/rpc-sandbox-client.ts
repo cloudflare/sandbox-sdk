@@ -149,24 +149,28 @@ interface RPCErrorPayload {
  * The container encodes the full error as a JSON object in the message
  * string: `{"code":"...","message":"...","context":{...}}`.
  */
-function translateRPCError(error: unknown): never {
+export function translateRPCError(error: unknown): never {
   if (error instanceof Error) {
+    let payload: RPCErrorPayload | undefined;
     try {
-      const payload = JSON.parse(error.message) as RPCErrorPayload;
-      if (
-        typeof payload.code === 'string' &&
-        typeof payload.message === 'string'
-      ) {
-        throw createErrorFromResponse({
-          code: payload.code as ErrorCode,
-          message: payload.message,
-          context: payload.context ?? {},
-          httpStatus: getHttpStatus(payload.code as ErrorCode),
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (e) {
-      if (e instanceof Error && e !== error) throw e;
+      payload = JSON.parse(error.message) as RPCErrorPayload;
+    } catch {
+      // Not a JSON-encoded structured error (e.g. a transport-level
+      // failure like 'WebSocket connection failed' or 'Peer closed
+      // WebSocket: ...'). Fall through and rethrow the original error.
+    }
+    if (
+      payload &&
+      typeof payload.code === 'string' &&
+      typeof payload.message === 'string'
+    ) {
+      throw createErrorFromResponse({
+        code: payload.code as ErrorCode,
+        message: payload.message,
+        context: payload.context ?? {},
+        httpStatus: getHttpStatus(payload.code as ErrorCode),
+        timestamp: new Date().toISOString()
+      });
     }
   }
   throw error;
