@@ -54,7 +54,11 @@ export class SandboxError<TContext = Record<string, unknown>> extends Error {
     options?: { cause?: unknown }
   ) {
     // Forward `cause` through the standard ES2022 Error options bag so
-    // `error.cause` is set natively and shows up in toString()/serialization.
+    // `error.cause` is set natively for in-memory inspection (debugger,
+    // util.inspect, manual `.cause` walks). It is intentionally omitted
+    // from toJSON() — Error instances are not JSON-serializable (their
+    // own properties are non-enumerable), so emitting `cause: <Error>`
+    // would log `cause: {}` and mislead operators.
     super(errorResponse.message, options);
     this.name = 'SandboxError';
   }
@@ -92,7 +96,6 @@ export class SandboxError<TContext = Record<string, unknown>> extends Error {
       httpStatus: this.httpStatus,
       operation: this.operation,
       suggestion: this.suggestion,
-      cause: this.cause,
       timestamp: this.timestamp,
       documentation: this.documentation,
       stack: this.stack
