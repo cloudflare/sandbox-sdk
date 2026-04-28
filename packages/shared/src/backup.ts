@@ -16,7 +16,9 @@ export function normalizeBackupExcludePattern(pattern: string): string | null {
     normalized = normalized.slice(3);
   }
 
-  normalized = normalized.replace(/\/\*\*\//g, '/');
+  while (normalized.includes('/**/')) {
+    normalized = normalized.replace(/\/\*\*\//g, '/');
+  }
 
   if (normalized.endsWith('/**')) {
     normalized = normalized.slice(0, -3);

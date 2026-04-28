@@ -484,6 +484,7 @@ describe('BackupService', () => {
       expect(BackupService.normalizeMksquashfsPattern('src/**/test')).toBe(
         'src/test'
       );
+      expect(BackupService.normalizeMksquashfsPattern('a/**/**/b')).toBe('a/b');
       expect(BackupService.normalizeMksquashfsPattern('a/**/b/**/c')).toBe(
         'a/b/c'
       );
