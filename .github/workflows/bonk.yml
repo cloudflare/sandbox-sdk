@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:
-      group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     permissions:
       contents: write
