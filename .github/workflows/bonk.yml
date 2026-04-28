@@ -36,3 +36,4 @@ jobs:
         with:
           model: 'cloudflare-ai-gateway/anthropic/claude-opus-4-6'
           mentions: '/bonk,@ask-bonk'
+          opencode_version: '1.4.6'
