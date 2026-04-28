@@ -58,6 +58,7 @@
   // The Python client must send this value as: Authorization: Bearer <token>
   // Declared here so wrangler generates the Env type; override in .dev.vars for local dev.
   "vars": {
+    "SANDBOX_TRANSPORT": "rpc",
     // Target number of pre-warmed containers (0 = disabled, no surprise bills).
     "WARM_POOL_TARGET": "0",
     // How often the pool alarm checks health and replenishes containers (ms).
