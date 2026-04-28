@@ -156,7 +156,14 @@ export const ErrorCode = {
   // Generic Errors (400/500)
   INVALID_JSON_RESPONSE: 'INVALID_JSON_RESPONSE',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
-  INTERNAL_ERROR: 'INTERNAL_ERROR'
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+
+  // RPC Transport Errors (503) — capnweb WebSocket session-level failures
+  // raised on the SDK side, not by the container. The container went away
+  // mid-call (peer close), the WebSocket failed before/after upgrade, the
+  // peer sent a frame the transport cannot handle, or the session was
+  // disposed while a call was in flight.
+  RPC_TRANSPORT_ERROR: 'RPC_TRANSPORT_ERROR'
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -84,9 +84,12 @@ import type {
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
-  type ErrorCode,
+  ErrorCode,
   type ErrorResponse,
-  getHttpStatus
+  getHttpStatus,
+  getSuggestion,
+  type RPCTransportContext,
+  type RPCTransportErrorKind
 } from '@repo/shared/errors';
 import {
   ContainerConnection,
@@ -155,9 +158,8 @@ export function translateRPCError(error: unknown): never {
     try {
       payload = JSON.parse(error.message) as RPCErrorPayload;
     } catch {
-      // Not a JSON-encoded structured error (e.g. a transport-level
-      // failure like 'WebSocket connection failed' or 'Peer closed
-      // WebSocket: ...'). Fall through and rethrow the original error.
+      // Not a JSON-encoded structured error. Fall through to transport-
+      // level classification below.
     }
     if (
       payload &&
@@ -172,8 +174,81 @@ export function translateRPCError(error: unknown): never {
         timestamp: new Date().toISOString()
       });
     }
+    // Map capnweb / DeferredTransport messages onto a typed RPCTransportError
+    // so consumers get a structured `code` + `kind` instead of substring
+    // matching on a free-form Error.message.
+    // Preserve the underlying capnweb/transport Error as `cause` so callers
+    // can reach the original via `err.cause` (and it shows up in toString /
+    // toJSON output) without having to substring-match the message.
+    throw createErrorFromResponse(
+      buildTransportErrorResponse(error) as unknown as ErrorResponse,
+      { cause: error }
+    );
   }
   throw error;
+}
+
+/**
+ * Inspect a transport-level Error's message and produce the ErrorResponse
+ * that becomes an RPCTransportError. Pattern strings are pinned to the exact
+ * messages emitted by capnweb's WebSocketTransport (vendored at
+ * /repos/capnweb/src/websocket.ts) and our DeferredTransport in
+ * container-connection.ts. The DeferredTransport tests in
+ * tests/container-connection.test.ts pin the literal strings.
+ */
+function buildTransportErrorResponse(
+  error: Error
+): ErrorResponse<RPCTransportContext> {
+  const message = error.message;
+  let kind: RPCTransportErrorKind = 'unknown';
+  let closeCode: number | undefined;
+  let closeReason: string | undefined;
+
+  // "Peer closed WebSocket: <code> <reason>" — emitted by both
+  // DeferredTransport (container-connection.ts) and capnweb's own
+  // WebSocketTransport on a `close` event.
+  const peerCloseMatch = message.match(/^Peer closed WebSocket: (\d+) ?(.*)$/);
+  if (peerCloseMatch) {
+    kind = 'peer_closed';
+    closeCode = Number(peerCloseMatch[1]);
+    closeReason = peerCloseMatch[2] || undefined;
+  } else if (message === 'WebSocket connection failed') {
+    kind = 'connection_failed';
+  } else if (message.startsWith('WebSocket upgrade failed')) {
+    // ContainerConnection.doConnect throws this when the HTTP upgrade
+    // returns a non-101 status.
+    kind = 'upgrade_failed';
+  } else if (message === 'No WebSocket in upgrade response') {
+    kind = 'upgrade_failed';
+  } else if (
+    error instanceof TypeError &&
+    message === 'Received non-string message from WebSocket.'
+  ) {
+    kind = 'invalid_frame';
+  } else if (
+    message === 'RPC session was shut down by disposing the main stub' ||
+    message === 'RPC was canceled because the RpcPromise was disposed.'
+  ) {
+    kind = 'session_disposed';
+  }
+
+  const context: RPCTransportContext = {
+    kind,
+    originalMessage: message,
+    ...(closeCode !== undefined ? { closeCode } : {}),
+    ...(closeReason !== undefined ? { closeReason } : {})
+  };
+  return {
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message,
+    context,
+    httpStatus: getHttpStatus(ErrorCode.RPC_TRANSPORT_ERROR),
+    suggestion: getSuggestion(
+      ErrorCode.RPC_TRANSPORT_ERROR,
+      context as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  };
 }
 
 /**

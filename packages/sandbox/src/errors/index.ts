@@ -71,6 +71,8 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  RPCTransportContext,
+  RPCTransportErrorKind,
   SessionDestroyedContext,
   SessionTerminatedContext,
   ValidationFailedContext
@@ -130,6 +132,8 @@ export {
   // Process Errors
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
+  // RPC Transport Errors (SDK-side, raised on WebSocket failures)
+  RPCTransportError,
   SandboxError,
   ServiceNotRespondingError,
   // Session Errors
