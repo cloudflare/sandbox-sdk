@@ -200,41 +200,58 @@ function buildTransportErrorResponse(
   error: Error
 ): ErrorResponse<RPCTransportContext> {
   const message = error.message;
+  const errorName = error.name;
   let kind: RPCTransportErrorKind = 'unknown';
   let closeCode: number | undefined;
   let closeReason: string | undefined;
 
-  // "Peer closed WebSocket: <code> <reason>" — emitted by both
-  // DeferredTransport (container-connection.ts) and capnweb's own
-  // WebSocketTransport on a `close` event.
-  const peerCloseMatch = message.match(/^Peer closed WebSocket: (\d+) ?(.*)$/);
-  if (peerCloseMatch) {
-    kind = 'peer_closed';
-    closeCode = Number(peerCloseMatch[1]);
-    closeReason = peerCloseMatch[2] || undefined;
-  } else if (message === 'WebSocket connection failed') {
-    kind = 'connection_failed';
-  } else if (message.startsWith('WebSocket upgrade failed')) {
-    // ContainerConnection.doConnect throws this when the HTTP upgrade
-    // returns a non-101 status.
-    kind = 'upgrade_failed';
-  } else if (message === 'No WebSocket in upgrade response') {
-    kind = 'upgrade_failed';
-  } else if (
-    error instanceof TypeError &&
-    message === 'Received non-string message from WebSocket.'
-  ) {
+  // First pass: classify by `error.name`. capnweb preserves the name
+  // across the wire for the standard built-ins (see ERROR_TYPES in
+  // capnweb's serialize.ts), and an unambiguous name beats substring
+  // matching on a free-form message that future capnweb versions might
+  // reword. It also dodges the cross-realm `instanceof` trap: a TypeError
+  // raised inside capnweb's serializer lives in capnweb's realm, not the
+  // SDK's, so `error instanceof TypeError` would falsely return false.
+  if (errorName === 'TypeError') {
+    // Only DeferredTransport / capnweb's WebSocketTransport raise a
+    // TypeError on the receive path — always a non-string frame.
     kind = 'invalid_frame';
-  } else if (
-    message === 'RPC session was shut down by disposing the main stub' ||
-    message === 'RPC was canceled because the RpcPromise was disposed.'
-  ) {
-    kind = 'session_disposed';
+  } else if (errorName === 'SyntaxError') {
+    // capnweb's readLoop calls JSON.parse on each incoming frame; if the
+    // peer sends garbage that's not parseable JSON, the SyntaxError flows
+    // through abort() to every in-flight call.
+    kind = 'protocol_error';
+  } else {
+    // Second pass: plain Errors. capnweb's transport layer and our
+    // DeferredTransport both emit unnamed Errors with these specific
+    // messages — the message is the only signal we have.
+    const peerCloseMatch = message.match(
+      /^Peer closed WebSocket: (\d+) ?(.*)$/
+    );
+    if (peerCloseMatch) {
+      kind = 'peer_closed';
+      closeCode = Number(peerCloseMatch[1]);
+      closeReason = peerCloseMatch[2] || undefined;
+    } else if (message === 'WebSocket connection failed') {
+      kind = 'connection_failed';
+    } else if (message.startsWith('WebSocket upgrade failed')) {
+      // ContainerConnection.doConnect throws this when the HTTP upgrade
+      // returns a non-101 status.
+      kind = 'upgrade_failed';
+    } else if (message === 'No WebSocket in upgrade response') {
+      kind = 'upgrade_failed';
+    } else if (
+      message === 'RPC session was shut down by disposing the main stub' ||
+      message === 'RPC was canceled because the RpcPromise was disposed.'
+    ) {
+      kind = 'session_disposed';
+    }
   }
 
   const context: RPCTransportContext = {
     kind,
     originalMessage: message,
+    errorName,
     ...(closeCode !== undefined ? { closeCode } : {}),
     ...(closeReason !== undefined ? { closeReason } : {})
   };

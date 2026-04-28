@@ -254,6 +254,8 @@ export type RPCTransportErrorKind =
   | 'upgrade_failed'
   /** Peer sent a non-string frame; capnweb's wire format is JSON text only. */
   | 'invalid_frame'
+  /** Peer sent a frame the wire-format parser rejected (capnweb readLoop SyntaxError). */
+  | 'protocol_error'
   /** Session was disposed (locally or remotely) while a call was pending. */
   | 'session_disposed'
   /** Anything else that bubbled up from the transport with no recognisable shape. */
@@ -264,6 +266,12 @@ export interface RPCTransportContext {
   kind: RPCTransportErrorKind;
   /** Original error message, verbatim from capnweb / our DeferredTransport. */
   originalMessage: string;
+  /**
+   * The underlying Error's `name` property. capnweb preserves this across
+   * the wire for the standard built-ins (TypeError, SyntaxError, etc.), so
+   * it's a more reliable hint than the message string for those cases.
+   */
+  errorName: string;
   /** WebSocket close code, when available (kind === 'peer_closed'). */
   closeCode?: number;
   /** WebSocket close reason, when available (kind === 'peer_closed'). */

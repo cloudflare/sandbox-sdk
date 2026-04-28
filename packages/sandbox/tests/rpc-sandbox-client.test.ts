@@ -316,7 +316,12 @@ describe('translateRPCError', () => {
     );
   });
 
-  it('classifies a TypeError("Received non-string message from WebSocket.") as kind=invalid_frame', async () => {
+  it('classifies any Error with name="TypeError" as kind=invalid_frame', async () => {
+    // The dispatcher introspects error.name (preserved across the wire by
+    // capnweb) rather than `instanceof TypeError`. This is robust to
+    // cross-realm errors — a TypeError raised inside capnweb's serializer
+    // would not satisfy `instanceof TypeError` in the SDK realm but will
+    // still carry name="TypeError".
     const translateRPCError = await loadFn();
     const { RPCTransportError } = await loadErr();
     let thrown: unknown;
@@ -328,15 +333,53 @@ describe('translateRPCError', () => {
       thrown = e;
     }
     expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('invalid_frame');
+    expect(err.context.errorName).toBe('TypeError');
+  });
+
+  it('classifies a name-only TypeError-shaped Error as kind=invalid_frame', async () => {
+    // Cross-realm scenario: `instanceof TypeError` would return false, but
+    // capnweb still ships the name across the wire. We trust the name.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    const err = new Error('whatever');
+    err.name = 'TypeError';
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
     expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
       'invalid_frame'
     );
   });
 
+  it('classifies SyntaxError as kind=protocol_error', async () => {
+    // capnweb's readLoop calls JSON.parse on each incoming frame; a peer
+    // that sends a non-JSON payload raises a SyntaxError that propagates
+    // through abort() to every in-flight call.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new SyntaxError('Unexpected token x in JSON at position 0')
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('protocol_error');
+    expect(err.context.errorName).toBe('SyntaxError');
+    expect(err.suggestion).toContain('malformed');
+  });
+
   it('does NOT misclassify a plain Error with the invalid_frame message as invalid_frame', async () => {
-    // The TypeError check is part of the gate: only an actual TypeError
-    // surfaced from DeferredTransport / capnweb counts. A coincidence of
-    // message text on a plain Error stays as kind=unknown.
+    // Now gated on error.name rather than instanceof. A plain Error with
+    // the message but name="Error" stays as kind=unknown.
     const translateRPCError = await loadFn();
     const { RPCTransportError } = await loadErr();
     let thrown: unknown;
@@ -351,6 +394,20 @@ describe('translateRPCError', () => {
     expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
       'unknown'
     );
+  });
+
+  it('exposes errorName in context for diagnostic purposes', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('Peer closed WebSocket: 1006 gone'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(
+      (thrown as InstanceType<typeof RPCTransportError>).context.errorName
+    ).toBe('Error');
   });
 
   it('classifies capnweb session-disposed errors as kind=session_disposed', async () => {
