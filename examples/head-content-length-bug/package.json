@@ -1,0 +1,16 @@
+{
+  "name": "head-content-length-bug",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Minimal repro: outbound interception strips Content-Length from HEAD responses",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.76.0"
+  }
+}
