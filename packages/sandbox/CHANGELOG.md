@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.9.2
+
+### Patch Changes
+
+- [#645](https://github.com/cloudflare/sandbox-sdk/pull/645) [`2d0687b`](https://github.com/cloudflare/sandbox-sdk/commit/2d0687bb1c1b177982b25582a1e4f767be4497af) Thanks [@scuffi](https://github.com/scuffi)! - Fix `createBackup()` excludes that use gitignore-style `**` globstars.
+
+  Normalize globstar excludes to the mksquashfs-compatible patterns used by the backup pipeline so local and production backups handle them consistently.
+
 ## 0.9.1
 
 ### Patch Changes
