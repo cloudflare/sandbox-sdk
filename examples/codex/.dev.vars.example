@@ -1,0 +1,10 @@
+# Set ONE of the following. The credential stays in the worker;
+# only a placeholder is forwarded into the container.
+
+# Pay-per-token
+OPENAI_API_KEY=
+
+# OR ChatGPT subscription. Generate by running `codex login` on a trusted
+# machine, then paste the contents of ~/.codex/auth.json as a single-line
+# JSON string. See: https://developers.openai.com/codex/auth/ci-cd-auth
+CODEX_AUTH_JSON=
