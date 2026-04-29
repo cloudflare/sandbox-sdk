@@ -205,4 +205,134 @@ describe('Bucket Mounting E2E', () => {
       sandbox = null;
     }, 120000);
   });
+
+  /**
+   * Credential-less R2 egress mount: mountBucket is called with no endpoint,
+   * so the SDK resolves the bucket via its R2 binding and routes s3fs traffic
+   * through the outbound egress handler. This path previously had two bugs:
+   * 1. setOutboundByHost('r2.internal', 'r2Mount') threw "not found" because
+   *    the CF runtime couldn't find the handler name in outboundHandlers.
+   * 2. s3fs exited with "could not determine security credentials" even with
+   *    nosignrequest, because it validates credentials before applying that flag.
+   * Both only surface at runtime against a real container + CF runtime.
+   */
+  describe('r2-egress', () => {
+    let sandbox: TestSandbox | null = null;
+    let workerUrl: string;
+    let headers: Record<string, string>;
+
+    const MOUNT_PATH = '/mnt/r2-egress-test';
+    const PRE_EXISTING_FILE = `r2-egress-pre-${Date.now()}.txt`;
+    const PRE_EXISTING_CONTENT = 'Written to R2 before egress mount';
+    const WRITTEN_FILE = `r2-egress-write-${Date.now()}.txt`;
+    const WRITTEN_CONTENT = `Written via egress mount - ${new Date().toISOString()}`;
+
+    beforeAll(async () => {
+      sandbox = await createTestSandbox();
+      workerUrl = sandbox.workerUrl;
+      headers = sandbox.headers(createUniqueSession());
+    }, 120000);
+
+    test('should mount R2 binding without credentials and perform bidirectional file operations', async () => {
+      try {
+        // 1. Write a file to the R2 bucket via binding before mounting
+        const putResponse = await fetch(`${workerUrl}/api/bucket/put`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            key: PRE_EXISTING_FILE,
+            content: PRE_EXISTING_CONTENT,
+            contentType: 'text/plain'
+          })
+        });
+        expect(putResponse.ok).toBe(true);
+
+        // 2. Mount via R2 binding — no endpoint means the egress handler path is used.
+        //    This catches: outboundHandlers name-lookup errors, s3fs credential-check
+        //    errors, and any other runtime failures specific to this mount path.
+        const mountResponse = await fetch(`${workerUrl}/api/bucket/mount`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            bucket: 'TEST_BUCKET',
+            mountPath: MOUNT_PATH,
+            options: {}
+          })
+        });
+        expect(mountResponse.ok).toBe(true);
+        const mountResult = (await mountResponse.json()) as SuccessResponse;
+        expect(mountResult.success).toBe(true);
+
+        // 3. Verify the pre-existing R2 file is visible through the mount (R2 → container)
+        const readResponse = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
+          })
+        });
+        const readResult = (await readResponse.json()) as ExecResult;
+        expect(readResult.exitCode).toBe(0);
+        expect(readResult.stdout?.trim()).toBe(PRE_EXISTING_CONTENT);
+
+        // 4. Write a new file through the mount (container → R2)
+        const writeResponse = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `echo "${WRITTEN_CONTENT}" > ${MOUNT_PATH}/${WRITTEN_FILE}`
+          })
+        });
+        const writeResult = (await writeResponse.json()) as ExecResult;
+        expect(writeResult.exitCode).toBe(0);
+
+        // 5. Verify the written file is visible in R2 via binding
+        const getResponse = await fetch(
+          `${workerUrl}/api/bucket/get?key=${WRITTEN_FILE}`,
+          { method: 'GET', headers }
+        );
+        expect(getResponse.ok).toBe(true);
+        const getResult = (await getResponse.json()) as BucketGetResponse;
+        expect(getResult.success).toBe(true);
+        expect(getResult.content.trim()).toBe(WRITTEN_CONTENT);
+
+        // 6. Unmount
+        const unmountResponse = await fetch(`${workerUrl}/api/bucket/unmount`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ mountPath: MOUNT_PATH })
+        });
+        expect(unmountResponse.ok).toBe(true);
+        const unmountResult =
+          (await unmountResponse.json()) as BucketUnmountResponse;
+        expect(unmountResult.success).toBe(true);
+
+        // 7. Mount point should no longer be active
+        const mountCheck = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command: `mountpoint -q ${MOUNT_PATH}` })
+        });
+        const mountCheckResult = (await mountCheck.json()) as ExecResult;
+        expect(mountCheckResult.exitCode).not.toBe(0);
+      } finally {
+        // Cleanup: delete test files from R2
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: PRE_EXISTING_FILE })
+        }).catch(() => {});
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: WRITTEN_FILE })
+        }).catch(() => {});
+      }
+    }, 120000);
+
+    afterAll(async () => {
+      await cleanupTestSandbox(sandbox);
+      sandbox = null;
+    }, 120000);
+  });
 });

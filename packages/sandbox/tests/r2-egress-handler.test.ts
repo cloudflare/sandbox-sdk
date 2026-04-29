@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  r2EgressHandler,
-  registerBucketAccess,
-  revokeBucketAccess
+  type R2EgressParams,
+  r2EgressHandler
 } from '../src/storage-mount/r2-egress-handler';
 
 // ---------------------------------------------------------------------------
@@ -91,6 +90,8 @@ function createMockR2Bucket(store: Map<string, MockObject>): R2Bucket {
     put: vi.fn(async (key: string, value: unknown, options?: R2PutOptions) => {
       let body = '';
       if (typeof value === 'string') body = value;
+      else if (value instanceof ArrayBuffer)
+        body = new TextDecoder().decode(value);
       else if (value instanceof ReadableStream) {
         const reader = value.getReader();
         const chunks: Uint8Array[] = [];
@@ -218,8 +219,10 @@ function makeEnv(bucket: R2Bucket, bindingName = 'MY_BUCKET'): Cloudflare.Env {
   return { [bindingName]: bucket } as unknown as Cloudflare.Env;
 }
 
-function makeCtx() {
-  return { containerId: 'test-container', className: 'Sandbox' };
+function makeCtx(
+  params: R2EgressParams = { buckets: { MY_BUCKET: undefined } }
+) {
+  return { containerId: 'test-container', className: 'Sandbox', params };
 }
 
 function req(method: string, path: string, body?: string): Request {
@@ -235,15 +238,6 @@ function req(method: string, path: string, body?: string): Request {
 // ---------------------------------------------------------------------------
 
 describe('r2EgressHandler', () => {
-  // Register MY_BUCKET for the test container before each test so the
-  // allowlist check passes. Tests for the 403 path manage their own state.
-  beforeEach(() => {
-    registerBucketAccess('test-container', 'MY_BUCKET');
-  });
-  afterEach(() => {
-    revokeBucketAccess('test-container', 'MY_BUCKET');
-  });
-
   describe('GetBucketLocation', () => {
     it('returns LocationConstraint XML', async () => {
       const r2 = createMockR2Bucket(new Map());
@@ -574,15 +568,17 @@ describe('r2EgressHandler', () => {
       expect(text).toContain('OTHER_BUCKET');
     });
 
-    it('returns 403 for a different container even if bucket is registered', async () => {
-      registerBucketAccess('other-container', 'MY_BUCKET');
+    it('returns 403 when bucket is not in params', async () => {
       const r2 = createMockR2Bucket(new Map([['key.txt', { body: 'hi' }]]));
       const res = await r2EgressHandler(
         req('GET', '/MY_BUCKET/key.txt'),
         makeEnv(r2),
-        { containerId: 'unrelated-container', className: 'Sandbox' }
+        {
+          containerId: 'test-container',
+          className: 'Sandbox',
+          params: { buckets: {} }
+        }
       );
-      revokeBucketAccess('other-container', 'MY_BUCKET');
       expect(res.status).toBe(403);
     });
 

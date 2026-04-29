@@ -32,5 +32,7 @@ export interface R2EgressMountInfo {
   mountType: 'r2-egress';
   bucket: string;
   mountPath: string;
+  passwordFilePath: string;
   mounted: boolean;
+  prefix?: string;
 }

@@ -98,9 +98,8 @@ import {
   S3FSMountError
 } from './storage-mount/errors';
 import {
-  r2EgressHandler,
-  registerBucketAccess,
-  revokeBucketAccess
+  type R2EgressParams,
+  r2EgressHandler
 } from './storage-mount/r2-egress-handler';
 import type {
   FuseMountInfo,
@@ -1298,6 +1297,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  private getR2EgressParams(): R2EgressParams {
+    const buckets: Record<string, string | undefined> = {};
+    for (const [, m] of this.activeMounts) {
+      if (m.mountType === 'r2-egress') {
+        buckets[m.bucket] = m.prefix;
+      }
+    }
+    return { buckets };
+  }
+
   /**
    * Credential-less R2 mount: egress interception routes s3fs requests to the
    * R2 binding. No S3 credentials are needed in the container or Worker env.
@@ -1316,29 +1325,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       validateBucketBindingName(bucket, mountPath);
       this.validateMountPath(mountPath);
 
-      registerBucketAccess(this.ctx.id.toString(), bucket);
-
-      // Register the r2.internal egress handler for this DO instance so the
-      // Cloudflare Containers runtime routes s3fs requests to r2EgressHandler.
-      await this.setOutboundByHost('r2.internal', 'r2Mount');
+      const passwordFilePath = this.generatePasswordFilePath();
+      await this.createPasswordFile(passwordFilePath, bucket, {
+        accessKeyId: 'x',
+        secretAccessKey: 'x'
+      });
 
       const mountInfo: R2EgressMountInfo = {
         mountType: 'r2-egress',
         bucket,
         mountPath,
-        mounted: false
+        passwordFilePath,
+        mounted: false,
+        prefix
       };
       this.activeMounts.set(mountPath, mountInfo);
 
       await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
-      const s3fsSource = buildS3fsSource(bucket, prefix);
+      await this.setOutboundByHost<R2EgressParams>(
+        'r2.internal',
+        'r2EgressMount',
+        this.getR2EgressParams()
+      );
+
+      const s3fsSource = bucket;
       const s3fsArgMap = new Map<string, string>();
+      s3fsArgMap.set('passwd_file', `passwd_file=${passwordFilePath}`);
       for (const arg of resolveS3fsOptions('r2', options.s3fsOptions)) {
         const [key] = arg.split('=');
         s3fsArgMap.set(key, arg);
       }
-      s3fsArgMap.set('nosignrequest', 'nosignrequest');
       s3fsArgMap.set('use_path_request_style', 'use_path_request_style');
       s3fsArgMap.set('url', 'url=http://r2.internal');
 
@@ -1347,25 +1364,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const optionsStr = shellEscape(s3fsArgs.join(','));
       const mountCmd = `s3fs ${shellEscape(s3fsSource)} ${shellEscape(mountPath)} -o ${optionsStr}`;
+      this.logger.debug('r2-egress: running s3fs', { mountCmd });
       const result = await this.execInternal(mountCmd);
+      this.logger.debug('r2-egress: s3fs exited', {
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr
+      });
       if (result.exitCode !== 0) {
         throw new S3FSMountError(
           `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
         );
       }
 
+      const mountpointCheck = await this.execInternal(
+        `mountpoint -q ${shellEscape(mountPath)} && echo 'FUSE_MOUNTED' || echo 'NOT_FUSE_MOUNTED'`
+      );
+      this.logger.debug('r2-egress: mountpoint check', {
+        stdout: mountpointCheck.stdout.trim(),
+        exitCode: mountpointCheck.exitCode
+      });
+
       mountInfo.mounted = true;
       mountOutcome = 'success';
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
-      revokeBucketAccess(this.ctx.id.toString(), bucket);
       this.activeMounts.delete(mountPath);
-
-      // Remove the egress handler if no r2-egress mounts remain.
-      if (!this.hasActiveR2EgressMounts()) {
+      const remainingParams = this.getR2EgressParams();
+      if (Object.keys(remainingParams.buckets).length === 0) {
         await this.removeOutboundByHost('r2.internal').catch(() => {});
+      } else {
+        await this.setOutboundByHost<R2EgressParams>(
+          'r2.internal',
+          'r2EgressMount',
+          remainingParams
+        ).catch(() => {});
       }
-
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {
@@ -1379,13 +1413,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error: mountError
       });
     }
-  }
-
-  private hasActiveR2EgressMounts(): boolean {
-    for (const m of this.activeMounts.values()) {
-      if (m.mountType === 'r2-egress') return true;
-    }
-    return false;
   }
 
   /**
@@ -1550,9 +1577,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
           );
         }
-        revokeBucketAccess(this.ctx.id.toString(), mountInfo.bucket);
+        await this.deletePasswordFile(mountInfo.passwordFilePath);
         mountInfo.mounted = false;
         this.activeMounts.delete(mountPath);
+        const remainingR2Params = this.getR2EgressParams();
+        if (Object.keys(remainingR2Params.buckets).length === 0) {
+          await this.removeOutboundByHost('r2.internal');
+        } else {
+          await this.setOutboundByHost<R2EgressParams>(
+            'r2.internal',
+            'r2EgressMount',
+            remainingR2Params
+          );
+        }
 
         try {
           await this.execInternal(
@@ -1560,10 +1597,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           );
         } catch {
           // Best-effort directory removal
-        }
-
-        if (!this.hasActiveR2EgressMounts()) {
-          await this.removeOutboundByHost('r2.internal').catch(() => {});
         }
       } else {
         // FUSE unmount
@@ -1903,7 +1936,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               );
             }
           }
-          revokeBucketAccess(this.ctx.id.toString(), mountInfo.bucket);
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
         } else {
           if (mountInfo.mounted) {
             try {
@@ -1927,14 +1960,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           // Always cleanup password file for FUSE mounts
           await this.deletePasswordFile(mountInfo.passwordFilePath);
         }
-      }
-
-      // Remove the egress handler if any R2 egress mounts were active.
-      // hasActiveR2EgressMounts() still returns true here because
-      // activeMounts is cleared below — we just want to know if we need
-      // to deregister the outbound handler.
-      if (this.hasActiveR2EgressMounts()) {
-        await this.removeOutboundByHost('r2.internal').catch(() => {});
       }
 
       // portTokens is cleared while still inside destroy()'s try block:
@@ -2155,13 +2180,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Disconnect the active client so open sockets do not hold the DO alive.
     this.client.disconnect();
 
-    // Stop local sync managers and revoke R2 egress access before clearing the map.
+    // Stop local sync managers before clearing the map.
+    let hadR2EgressMount = false;
     for (const [, m] of this.activeMounts) {
       if (m.mountType === 'local-sync') {
         await m.syncManager.stop().catch(() => {});
       } else if (m.mountType === 'r2-egress') {
-        revokeBucketAccess(this.ctx.id.toString(), m.bucket);
+        hadR2EgressMount = true;
       }
+    }
+    if (hadR2EgressMount) {
+      await this.removeOutboundByHost('r2.internal').catch(() => {});
     }
 
     this.activeMounts.clear();
@@ -6046,3 +6075,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 }
+
+Sandbox.outboundByHost = { 'r2.internal': r2EgressHandler };
+Sandbox.outboundHandlers = { r2EgressMount: r2EgressHandler };

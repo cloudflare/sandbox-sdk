@@ -17,38 +17,17 @@ import type {
 import { isR2Bucket } from './validation';
 
 // ---------------------------------------------------------------------------
-// Per-instance bucket allowlist
+// Per-mount bucket params
 //
-// Maps containerId → Set of bucket binding names that this sandbox instance
-// is explicitly permitted to access. Populated by mountBucketR2Egress() and
-// cleaned up on unmount/destroy. Requests for buckets not in this set are
-// rejected with 403 to prevent a sandbox from reaching R2 bindings it was
-// never told to mount.
+// Passed through setOutboundByHost params so they are serialized into
+// ContainerProxy props and transmitted with every intercepted request.
+// This avoids relying on module-level state which is not shared across
+// Cloudflare Worker isolates.
 // ---------------------------------------------------------------------------
 
-const allowedBuckets = new Map<string, Set<string>>();
-
-export function registerBucketAccess(
-  containerId: string,
-  bucketName: string
-): void {
-  const existing = allowedBuckets.get(containerId);
-  if (existing) {
-    existing.add(bucketName);
-  } else {
-    allowedBuckets.set(containerId, new Set([bucketName]));
-  }
-}
-
-export function revokeBucketAccess(
-  containerId: string,
-  bucketName: string
-): void {
-  const buckets = allowedBuckets.get(containerId);
-  if (!buckets) return;
-  buckets.delete(bucketName);
-  if (buckets.size === 0) allowedBuckets.delete(containerId);
-}
+export type R2EgressParams = {
+  buckets: Record<string, string | undefined>;
+};
 
 // ---------------------------------------------------------------------------
 // XML helpers
@@ -81,12 +60,19 @@ interface ParsedPath {
   key: string;
 }
 
+function normalizeObjectKey(value: string): string {
+  return value.replace(/^\/+/, '');
+}
+
 function parsePath(pathname: string): ParsedPath | null {
   const stripped = pathname.startsWith('/') ? pathname.slice(1) : pathname;
   if (!stripped) return null;
   const slash = stripped.indexOf('/');
   if (slash === -1) return { bucket: stripped, key: '' };
-  return { bucket: stripped.slice(0, slash), key: stripped.slice(slash + 1) };
+  return {
+    bucket: stripped.slice(0, slash),
+    key: normalizeObjectKey(stripped.slice(slash + 1))
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,12 +112,26 @@ function parseRange(header: string | null): R2Range | undefined {
 // S3 XML response builders
 // ---------------------------------------------------------------------------
 
+interface ListDisplayObject {
+  key: string;
+  uploaded: Date;
+  httpEtag: string;
+  size: number;
+}
+
+interface ListDisplayResult {
+  objects: ListDisplayObject[];
+  delimitedPrefixes: string[];
+  truncated: boolean;
+  cursor?: string;
+}
+
 function buildListObjectsV2Xml(
   bucketName: string,
   prefix: string,
   delimiter: string,
   maxKeys: number,
-  result: R2Objects
+  result: ListDisplayResult
 ): string {
   const contents = result.objects
     .map(
@@ -299,7 +299,13 @@ function parseCopySource(header: string): ParsedPath | null {
   const sourcePath = header.split('?')[0] ?? '';
   if (!sourcePath) return null;
   const decoded = decodeURIComponent(sourcePath);
-  return parsePath(decoded.startsWith('/') ? decoded : `/${decoded}`);
+  const parsed = parsePath(decoded.startsWith('/') ? decoded : `/${decoded}`);
+  return parsed
+    ? {
+        bucket: parsed.bucket,
+        key: normalizeObjectKey(parsed.key)
+      }
+    : null;
 }
 
 function normalizeStorageClass(
@@ -318,9 +324,10 @@ function normalizeStorageClass(
 async function handleListObjects(
   r2: R2Bucket,
   bucketName: string,
-  url: URL
+  url: URL,
+  mountPrefix?: string
 ): Promise<Response> {
-  const prefix = url.searchParams.get('prefix') ?? '';
+  const queryPrefix = normalizeObjectKey(url.searchParams.get('prefix') ?? '');
   const delimiter = url.searchParams.get('delimiter') ?? '';
   const maxKeys = Math.min(
     parseInt(url.searchParams.get('max-keys') ?? '1000', 10),
@@ -329,24 +336,60 @@ async function handleListObjects(
   const continuationToken =
     url.searchParams.get('continuation-token') ?? undefined;
 
+  const r2Prefix = mountPrefix ? `${mountPrefix}/${queryPrefix}` : queryPrefix;
+
   const listOpts: R2ListOptions = {
-    prefix: prefix || undefined,
+    prefix: r2Prefix || undefined,
     delimiter: delimiter || undefined,
     limit: maxKeys,
     cursor: continuationToken
   };
 
   const result = await r2.list(listOpts);
+  console.log('[r2-egress] LIST result', {
+    r2Prefix,
+    count: result.objects.length,
+    objects: result.objects.map((o) => ({ key: o.key, size: o.size }))
+  });
+
+  const stripKey = mountPrefix
+    ? (k: string): string =>
+        k.startsWith(`${mountPrefix}/`) ? k.slice(mountPrefix.length + 1) : k
+    : (k: string): string => k;
+
+  const displayResult: ListDisplayResult = {
+    objects: result.objects.map((obj) => ({
+      key: stripKey(obj.key),
+      uploaded: obj.uploaded,
+      httpEtag: obj.httpEtag,
+      size: obj.size
+    })),
+    delimitedPrefixes: result.delimitedPrefixes.map(stripKey),
+    truncated: result.truncated,
+    cursor: result.truncated ? result.cursor : undefined
+  };
+
   return xmlResponse(
-    buildListObjectsV2Xml(bucketName, prefix, delimiter, maxKeys, result)
+    buildListObjectsV2Xml(
+      bucketName,
+      queryPrefix,
+      delimiter,
+      maxKeys,
+      displayResult
+    )
   );
 }
 
 async function handleHeadObject(r2: R2Bucket, key: string): Promise<Response> {
   const obj = await r2.head(key);
   if (!obj) {
+    console.log('[r2-egress] HEAD 404', { key });
     return new Response(null, { status: 404 });
   }
+  console.log('[r2-egress] HEAD 200', { key, size: obj.size });
+  // NOTE: The outbound proxy rewrites Content-Length to 0 for bodiless
+  // responses. s3fs stat cache must be pre-populated from LIST (readdir)
+  // so that getattr never falls through to HEAD for file size information.
   return new Response(null, {
     status: 200,
     headers: buildResponseHeaders(obj)
@@ -363,9 +406,12 @@ async function handleGetObject(
   if (!range) {
     const obj = await r2.get(key);
     if (!obj) {
+      console.log('[r2-egress] GET 404', { key });
       return new Response(null, { status: 404 });
     }
-    return new Response(obj.body, {
+    const body = await obj.arrayBuffer();
+    console.log('[r2-egress] GET 200', { key, bytes: body.byteLength });
+    return new Response(body, {
       status: 200,
       headers: buildResponseHeaders(obj)
     });
@@ -379,11 +425,12 @@ async function handleGetObject(
     return new Response(null, { status: 404 });
   }
 
+  const rangeBody = await rangeObj.arrayBuffer();
   const headers = buildResponseHeaders(rangeObj);
   headers.set('Content-Range', buildContentRange(range, headObj.size));
-  headers.set('Content-Length', String(rangeObj.size));
+  headers.set('Content-Length', String(rangeBody.byteLength));
 
-  return new Response(rangeObj.body, { status: 206, headers });
+  return new Response(rangeBody, { status: 206, headers });
 }
 
 async function handlePutObject(
@@ -392,7 +439,8 @@ async function handlePutObject(
   key: string,
   request: Request,
   env: Cloudflare.Env,
-  permitted: Set<string>
+  permitted: Set<string>,
+  mountPrefix?: string
 ): Promise<Response> {
   const copySourceHeader = request.headers.get('x-amz-copy-source');
   if (copySourceHeader) {
@@ -423,7 +471,11 @@ async function handlePutObject(
       );
     }
 
-    const sourceObject = await sourceBucket.get(copySource.key);
+    const sourceKey =
+      mountPrefix && copySource.bucket === bucketName
+        ? `${mountPrefix}/${copySource.key}`
+        : copySource.key;
+    const sourceObject = await sourceBucket.get(sourceKey);
     if (!sourceObject) {
       return new Response(null, { status: 404 });
     }
@@ -433,7 +485,8 @@ async function handlePutObject(
       metadataDirective?.toUpperCase() === 'REPLACE'
         ? extractHttpMetadata(request)
         : sourceObject.httpMetadata;
-    const result = await r2.put(key, sourceObject.body, {
+    const sourceBody = await sourceObject.arrayBuffer();
+    const result = await r2.put(key, sourceBody, {
       httpMetadata,
       customMetadata: sourceObject.customMetadata,
       storageClass: normalizeStorageClass(sourceObject.storageClass)
@@ -442,7 +495,8 @@ async function handlePutObject(
   }
 
   const httpMetadata = extractHttpMetadata(request);
-  const result = await r2.put(key, request.body, { httpMetadata });
+  const body = await request.arrayBuffer();
+  const result = await r2.put(key, body, { httpMetadata });
   const headers = new Headers();
   headers.set('ETag', result.httpEtag);
   return new Response(null, { status: 200, headers });
@@ -534,13 +588,23 @@ async function handleAbortMultipartUpload(
 // Main handler
 // ---------------------------------------------------------------------------
 
-export const r2EgressHandler: OutboundHandler = async (
+export const r2EgressHandler: OutboundHandler<
+  Cloudflare.Env,
+  R2EgressParams
+> = async (
   request: Request,
   env: Cloudflare.Env,
-  ctx: OutboundHandlerContext
+  ctx: OutboundHandlerContext<R2EgressParams>
 ): Promise<Response> => {
   const url = new URL(request.url);
   const parsed = parsePath(url.pathname);
+
+  console.log('[r2-egress] incoming request', {
+    method: request.method,
+    url: request.url,
+    containerId: ctx.containerId,
+    paramBuckets: ctx.params ? Object.keys(ctx.params.buckets) : null
+  });
 
   if (!parsed) {
     return new Response('Bad Request: empty path', { status: 400 });
@@ -548,14 +612,28 @@ export const r2EgressHandler: OutboundHandler = async (
 
   const { bucket: bucketName, key } = parsed;
 
-  const permitted = allowedBuckets.get(ctx.containerId);
-  if (!permitted?.has(bucketName)) {
+  if (!ctx.params?.buckets || !(bucketName in ctx.params.buckets)) {
+    console.log('[r2-egress] 403: bucket not in params', {
+      bucketName,
+      containerId: ctx.containerId,
+      paramBuckets: ctx.params ? Object.keys(ctx.params.buckets) : null
+    });
     return new Response(
       `Access to R2 bucket "${bucketName}" is not permitted. ` +
         'Call mountBucket() with this bucket before accessing it.',
       { status: 403 }
     );
   }
+
+  const rawPrefix = ctx.params.buckets[bucketName];
+  const mountPrefix = rawPrefix ? normalizeObjectKey(rawPrefix) : undefined;
+
+  console.log('[r2-egress] resolved', {
+    bucketName,
+    key,
+    rawPrefix,
+    mountPrefix
+  });
 
   const r2 = resolveR2Bucket(env, bucketName);
   if (!r2) {
@@ -574,23 +652,26 @@ export const r2EgressHandler: OutboundHandler = async (
       return xmlResponse(buildLocationXml());
     }
     if (method === 'GET' && url.searchParams.get('list-type') === '2') {
-      return handleListObjects(r2, bucketName, url);
+      return handleListObjects(r2, bucketName, url, mountPrefix);
     }
     // Legacy ListObjects (v1) — s3fs may use this for some operations
     if (method === 'GET') {
-      return handleListObjects(r2, bucketName, url);
+      return handleListObjects(r2, bucketName, url, mountPrefix);
     }
     return new Response('Method Not Allowed', { status: 405 });
   }
 
+  const fullKey = mountPrefix ? `${mountPrefix}/${key}` : key;
+  const permitted = new Set(Object.keys(ctx.params.buckets));
+
   // Multipart upload: POST /bucket/key?uploads — initiate
   if (method === 'POST' && url.searchParams.has('uploads')) {
-    return handleCreateMultipartUpload(r2, bucketName, key, request);
+    return handleCreateMultipartUpload(r2, bucketName, fullKey, request);
   }
 
   // Multipart upload: POST /bucket/key?uploadId=X — complete
   if (method === 'POST' && url.searchParams.has('uploadId')) {
-    return handleCompleteMultipartUpload(r2, bucketName, key, url, request);
+    return handleCompleteMultipartUpload(r2, bucketName, fullKey, url, request);
   }
 
   // Multipart upload: PUT /bucket/key?partNumber=N&uploadId=X — upload part
@@ -599,24 +680,32 @@ export const r2EgressHandler: OutboundHandler = async (
     url.searchParams.has('partNumber') &&
     url.searchParams.has('uploadId')
   ) {
-    return handleUploadPart(r2, key, url, request);
+    return handleUploadPart(r2, fullKey, url, request);
   }
 
   // Multipart upload: DELETE /bucket/key?uploadId=X — abort
   if (method === 'DELETE' && url.searchParams.has('uploadId')) {
-    return handleAbortMultipartUpload(r2, key, url);
+    return handleAbortMultipartUpload(r2, fullKey, url);
   }
 
   // Standard object operations
   switch (method) {
     case 'HEAD':
-      return handleHeadObject(r2, key);
+      return handleHeadObject(r2, fullKey);
     case 'GET':
-      return handleGetObject(r2, key, request);
+      return handleGetObject(r2, fullKey, request);
     case 'PUT':
-      return handlePutObject(r2, bucketName, key, request, env, permitted);
+      return handlePutObject(
+        r2,
+        bucketName,
+        fullKey,
+        request,
+        env,
+        permitted,
+        mountPrefix
+      );
     case 'DELETE':
-      return handleDeleteObject(r2, key);
+      return handleDeleteObject(r2, fullKey);
     default:
       return new Response('Method Not Allowed', { status: 405 });
   }
