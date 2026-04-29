@@ -208,7 +208,7 @@ export class ContainerConnection {
  * is provided via `activate()`. Allows the RPC stub to be created before
  * the connection is established — queued calls flush automatically.
  */
-class DeferredTransport implements RpcTransport {
+export class DeferredTransport implements RpcTransport {
   #ws: WebSocket | null = null;
   #sendQueue: string[] = [];
   #receiveQueue: string[] = [];
@@ -229,6 +229,15 @@ class DeferredTransport implements RpcTransport {
         } else {
           this.#receiveQueue.push(event.data);
         }
+      } else {
+        // Mirrors capnweb's WebSocketTransport. capnweb's wire format is
+        // strictly text (JSON), so a binary frame indicates a misbehaving
+        // peer. Failing the transport here surfaces the problem to in-flight
+        // RPC calls; without it `receive()` would hang forever waiting for
+        // a string that is never going to arrive.
+        this.#fail(
+          new TypeError('Received non-string message from WebSocket.')
+        );
       }
     });
     ws.addEventListener('close', (event: CloseEvent) => {
@@ -237,7 +246,7 @@ class DeferredTransport implements RpcTransport {
       );
     });
     ws.addEventListener('error', () => {
-      this.#fail(new Error('WebSocket connection failed'));
+      this.#fail(new Error('WebSocket connection failed.'));
     });
 
     // Flush queued sends

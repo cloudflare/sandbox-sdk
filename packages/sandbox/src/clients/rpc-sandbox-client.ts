@@ -84,9 +84,12 @@ import type {
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
-  type ErrorCode,
+  ErrorCode,
   type ErrorResponse,
-  getHttpStatus
+  getHttpStatus,
+  getSuggestion,
+  type RPCTransportContext,
+  type RPCTransportErrorKind
 } from '@repo/shared/errors';
 import {
   ContainerConnection,
@@ -149,27 +152,129 @@ interface RPCErrorPayload {
  * The container encodes the full error as a JSON object in the message
  * string: `{"code":"...","message":"...","context":{...}}`.
  */
-function translateRPCError(error: unknown): never {
+export function translateRPCError(error: unknown): never {
   if (error instanceof Error) {
+    let payload: RPCErrorPayload | undefined;
     try {
-      const payload = JSON.parse(error.message) as RPCErrorPayload;
-      if (
-        typeof payload.code === 'string' &&
-        typeof payload.message === 'string'
-      ) {
-        throw createErrorFromResponse({
-          code: payload.code as ErrorCode,
-          message: payload.message,
-          context: payload.context ?? {},
-          httpStatus: getHttpStatus(payload.code as ErrorCode),
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (e) {
-      if (e instanceof Error && e !== error) throw e;
+      payload = JSON.parse(error.message) as RPCErrorPayload;
+    } catch {
+      // Not a JSON-encoded structured error. Fall through to transport-
+      // level classification below.
+    }
+    if (
+      payload &&
+      typeof payload.code === 'string' &&
+      typeof payload.message === 'string'
+    ) {
+      throw createErrorFromResponse({
+        code: payload.code as ErrorCode,
+        message: payload.message,
+        context: payload.context ?? {},
+        httpStatus: getHttpStatus(payload.code as ErrorCode),
+        timestamp: new Date().toISOString()
+      });
+    }
+    // Map capnweb / DeferredTransport messages onto a typed RPCTransportError
+    // so consumers get a structured `code` + `kind` instead of substring
+    // matching on a free-form Error.message.
+    // Preserve the underlying capnweb/transport Error as `cause` so callers
+    // can reach the original via `err.cause` (and it shows up in toString /
+    // toJSON output) without having to substring-match the message.
+    throw createErrorFromResponse(
+      buildTransportErrorResponse(error) as unknown as ErrorResponse,
+      { cause: error }
+    );
+  }
+  // Non-Error throw (rare — capnweb's deserializer always constructs Error
+  // instances, but defensively handle anything else that bubbles up).
+  // Coerce to an Error so the kind=unknown context still has a usable
+  // originalMessage, and preserve the raw value as `cause`.
+  const wrapped = new Error(String(error));
+  throw createErrorFromResponse(
+    buildTransportErrorResponse(wrapped) as unknown as ErrorResponse,
+    { cause: error }
+  );
+}
+
+/**
+ * Inspect a transport-level Error's message and produce the ErrorResponse
+ * that becomes an RPCTransportError. Pattern strings are pinned to the exact
+ * messages emitted by capnweb's WebSocketTransport (see capnweb's
+ * src/websocket.ts) and our DeferredTransport in container-connection.ts —
+ * notably the trailing period in `WebSocket connection failed.` matches
+ * capnweb verbatim. The DeferredTransport tests in
+ * tests/container-connection.test.ts pin the literal strings.
+ */
+function buildTransportErrorResponse(
+  error: Error
+): ErrorResponse<RPCTransportContext> {
+  const message = error.message;
+  const errorName = error.name;
+  let kind: RPCTransportErrorKind = 'unknown';
+  let closeCode: number | undefined;
+  let closeReason: string | undefined;
+
+  // First pass: classify by `error.name`. capnweb preserves the name
+  // across the wire for the standard built-ins (see ERROR_TYPES in
+  // capnweb's serialize.ts), and an unambiguous name beats substring
+  // matching on a free-form message that future capnweb versions might
+  // reword. It also dodges the cross-realm `instanceof` trap: a TypeError
+  // raised inside capnweb's serializer lives in capnweb's realm, not the
+  // SDK's, so `error instanceof TypeError` would falsely return false.
+  if (errorName === 'TypeError') {
+    // Only DeferredTransport / capnweb's WebSocketTransport raise a
+    // TypeError on the receive path — always a non-string frame.
+    kind = 'invalid_frame';
+  } else if (errorName === 'SyntaxError') {
+    // capnweb's readLoop calls JSON.parse on each incoming frame; if the
+    // peer sends garbage that's not parseable JSON, the SyntaxError flows
+    // through abort() to every in-flight call.
+    kind = 'protocol_error';
+  } else {
+    // Second pass: plain Errors. capnweb's transport layer and our
+    // DeferredTransport both emit unnamed Errors with these specific
+    // messages — the message is the only signal we have.
+    const peerCloseMatch = message.match(
+      /^Peer closed WebSocket: (\d+) ?(.*)$/
+    );
+    if (peerCloseMatch) {
+      kind = 'peer_closed';
+      closeCode = Number(peerCloseMatch[1]);
+      closeReason = peerCloseMatch[2] || undefined;
+    } else if (message === 'WebSocket connection failed.') {
+      kind = 'connection_failed';
+    } else if (message.startsWith('WebSocket upgrade failed')) {
+      // ContainerConnection.doConnect throws this when the HTTP upgrade
+      // returns a non-101 status.
+      kind = 'upgrade_failed';
+    } else if (message === 'No WebSocket in upgrade response') {
+      kind = 'upgrade_failed';
+    } else if (
+      message === 'RPC session was shut down by disposing the main stub' ||
+      message === 'RPC was canceled because the RpcPromise was disposed.'
+    ) {
+      kind = 'session_disposed';
     }
   }
-  throw error;
+
+  const context: RPCTransportContext = {
+    kind,
+    originalMessage: message,
+    errorName,
+    ...(closeCode !== undefined ? { closeCode } : {}),
+    ...(closeReason !== undefined ? { closeReason } : {})
+  };
+  return {
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message,
+    context,
+    httpStatus: getHttpStatus(ErrorCode.RPC_TRANSPORT_ERROR),
+    suggestion: getSuggestion(
+      ErrorCode.RPC_TRANSPORT_ERROR,
+      context as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  };
 }
 
 /**

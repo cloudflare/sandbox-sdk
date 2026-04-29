@@ -192,3 +192,359 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('translateRPCError', () => {
+  async function loadFn() {
+    const mod = await import('../src/clients/rpc-sandbox-client');
+    return mod.translateRPCError;
+  }
+
+  async function loadErr() {
+    return await import('../src/errors');
+  }
+
+  // -------------------------------------------------------------------------
+  // Structured (container-side) errors
+  // -------------------------------------------------------------------------
+
+  it('translates JSON-encoded structured errors into typed SandboxErrors', async () => {
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError } = await loadErr();
+    const payload = JSON.stringify({
+      code: 'FILE_NOT_FOUND',
+      message: 'no such file',
+      context: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error(payload));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+    expect((thrown as Error).message).toContain('no such file');
+  });
+
+  // -------------------------------------------------------------------------
+  // Transport-level errors — each `kind` of RPCTransportError
+  // -------------------------------------------------------------------------
+
+  it('classifies "Peer closed WebSocket: <code> <reason>" as kind=peer_closed', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError, ErrorCode } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('Peer closed WebSocket: 1006 Connection ended')
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.code).toBe(ErrorCode.RPC_TRANSPORT_ERROR);
+    expect(err.kind).toBe('peer_closed');
+    expect(err.context.closeCode).toBe(1006);
+    expect(err.context.closeReason).toBe('Connection ended');
+    expect(err.originalMessage).toBe(
+      'Peer closed WebSocket: 1006 Connection ended'
+    );
+    expect(err.httpStatus).toBe(503);
+  });
+
+  it('handles peer_closed with no reason text', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('Peer closed WebSocket: 1006 '));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('peer_closed');
+    expect(err.context.closeCode).toBe(1006);
+    expect(err.context.closeReason).toBeUndefined();
+  });
+
+  it('classifies "WebSocket connection failed." as kind=connection_failed', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('WebSocket connection failed.'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'connection_failed'
+    );
+  });
+
+  it('classifies "WebSocket upgrade failed: 502 Bad Gateway" as kind=upgrade_failed', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('WebSocket upgrade failed: 502 Bad Gateway'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'upgrade_failed'
+    );
+  });
+
+  it('classifies "No WebSocket in upgrade response" as kind=upgrade_failed', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('No WebSocket in upgrade response'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'upgrade_failed'
+    );
+  });
+
+  it('classifies any Error with name="TypeError" as kind=invalid_frame', async () => {
+    // The dispatcher introspects error.name (preserved across the wire by
+    // capnweb) rather than `instanceof TypeError`. This is robust to
+    // cross-realm errors — a TypeError raised inside capnweb's serializer
+    // would not satisfy `instanceof TypeError` in the SDK realm but will
+    // still carry name="TypeError".
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new TypeError('Received non-string message from WebSocket.')
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('invalid_frame');
+    expect(err.context.errorName).toBe('TypeError');
+  });
+
+  it('classifies a name-only TypeError-shaped Error as kind=invalid_frame', async () => {
+    // Cross-realm scenario: `instanceof TypeError` would return false, but
+    // capnweb still ships the name across the wire. We trust the name.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    const err = new Error('whatever');
+    err.name = 'TypeError';
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'invalid_frame'
+    );
+  });
+
+  it('classifies SyntaxError as kind=protocol_error', async () => {
+    // capnweb's readLoop calls JSON.parse on each incoming frame; a peer
+    // that sends a non-JSON payload raises a SyntaxError that propagates
+    // through abort() to every in-flight call.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new SyntaxError('Unexpected token x in JSON at position 0')
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('protocol_error');
+    expect(err.context.errorName).toBe('SyntaxError');
+    expect(err.suggestion).toContain('malformed');
+  });
+
+  it('does NOT misclassify a plain Error with the invalid_frame message as invalid_frame', async () => {
+    // Now gated on error.name rather than instanceof. A plain Error with
+    // the message but name="Error" stays as kind=unknown.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('Received non-string message from WebSocket.')
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'unknown'
+    );
+  });
+
+  it('exposes errorName in context for diagnostic purposes', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('Peer closed WebSocket: 1006 gone'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(
+      (thrown as InstanceType<typeof RPCTransportError>).context.errorName
+    ).toBe('Error');
+  });
+
+  it('classifies capnweb session-disposed errors as kind=session_disposed', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+
+    for (const message of [
+      'RPC session was shut down by disposing the main stub',
+      'RPC was canceled because the RpcPromise was disposed.'
+    ]) {
+      let thrown: unknown;
+      try {
+        translateRPCError(new Error(message));
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RPCTransportError);
+      expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+        'session_disposed'
+      );
+    }
+  });
+
+  it('falls back to kind=unknown for unrecognised Error.message strings', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('totally bizarre socket failure'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    const err = thrown as InstanceType<typeof RPCTransportError>;
+    expect(err.kind).toBe('unknown');
+    expect(err.originalMessage).toBe('totally bizarre socket failure');
+  });
+
+  it('treats valid-JSON-but-not-an-RPCErrorPayload as a transport error', async () => {
+    // Valid JSON, but doesn't have the {code, message} shape we recognise.
+    // Falls through to transport classification; with no message match, lands
+    // in kind=unknown with the JSON string preserved as originalMessage.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('{"foo":"bar"}'));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'unknown'
+    );
+  });
+
+  it('wraps non-Error values in RPCTransportError with kind=unknown', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    for (const value of ['boom', 42, undefined, null, { weird: true }]) {
+      let thrown: unknown;
+      try {
+        translateRPCError(value);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RPCTransportError);
+      const err = thrown as InstanceType<typeof RPCTransportError>;
+      expect(err.kind).toBe('unknown');
+      // The raw value is preserved as `cause` for diagnostics.
+      expect(err.cause).toBe(value);
+      // originalMessage is the String() coercion of the value.
+      expect(err.context.originalMessage).toBe(String(value));
+    }
+  });
+
+  it('produces an RPCTransportError that carries a helpful suggestion', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('Peer closed WebSocket: 1006 '));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect(
+      (thrown as InstanceType<typeof RPCTransportError>).suggestion
+    ).toContain('container');
+  });
+
+  it('preserves the underlying transport Error as `cause`', async () => {
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    const original = new Error('Peer closed WebSocket: 1006 Connection ended');
+    let thrown: unknown;
+    try {
+      translateRPCError(original);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as Error).cause).toBe(original);
+  });
+
+  it('omits `cause` from toJSON output (Error instances are not JSON-serializable)', async () => {
+    // `cause` is intentionally absent from toJSON(): JSON.stringify(new Error())
+    // emits `{}` because Error own properties are non-enumerable, so logging
+    // `cause: <Error>` would surface a misleading empty object. The cause is
+    // still reachable in-memory via `err.cause` for debugger/inspect.
+    const translateRPCError = await loadFn();
+    const original = new Error('WebSocket connection failed.');
+    let thrown: unknown;
+    try {
+      translateRPCError(original);
+    } catch (e) {
+      thrown = e;
+    }
+    const json = (thrown as { toJSON: () => Record<string, unknown> }).toJSON();
+    expect('cause' in json).toBe(false);
+    // But the live instance still carries it for in-memory inspection.
+    expect((thrown as Error).cause).toBe(original);
+  });
+
+  it('does not set `cause` on errors translated from JSON-encoded structured payloads', async () => {
+    // The container-side errors flow through createErrorFromResponse without
+    // an `options` argument, so `cause` stays unset (matching pre-fix
+    // behaviour for that path).
+    const translateRPCError = await loadFn();
+    const payload = JSON.stringify({
+      code: 'FILE_NOT_FOUND',
+      message: 'no such file',
+      context: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error(payload));
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as Error).cause).toBeUndefined();
+  });
+});

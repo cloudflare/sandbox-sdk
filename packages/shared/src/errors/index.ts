@@ -66,6 +66,8 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  RPCTransportContext,
+  RPCTransportErrorKind,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
   SessionTerminatedContext,

@@ -34,6 +34,7 @@ import type {
   PortNotExposedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
+  RPCTransportContext,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
   SessionTerminatedContext,
@@ -79,6 +80,7 @@ import {
   PortNotExposedError,
   ProcessError,
   ProcessNotFoundError,
+  RPCTransportError,
   SandboxError,
   ServiceNotRespondingError,
   SessionAlreadyExistsError,
@@ -91,7 +93,10 @@ import {
  * Convert ErrorResponse to appropriate Error class
  * Simple switch statement - we trust the container sends correct context
  */
-export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
+export function createErrorFromResponse(
+  errorResponse: ErrorResponse,
+  options?: { cause?: unknown }
+): Error {
   // We trust the container sends correct context, use type assertions
   switch (errorResponse.code) {
     // File System Errors
@@ -314,6 +319,14 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.DESKTOP_INVALID_COORDINATES:
       return new DesktopInvalidCoordinatesError(
         errorResponse as unknown as ErrorResponse<DesktopCoordinateErrorContext>
+      );
+
+    // RPC Transport Errors (SDK-side, raised by translateRPCError on
+    // capnweb / DeferredTransport WebSocket failures).
+    case ErrorCode.RPC_TRANSPORT_ERROR:
+      return new RPCTransportError(
+        errorResponse as unknown as ErrorResponse<RPCTransportContext>,
+        options
       );
 
     // Validation Errors

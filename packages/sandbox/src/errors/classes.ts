@@ -36,6 +36,8 @@ import type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  RPCTransportContext,
+  RPCTransportErrorKind,
   SessionAlreadyExistsContext,
   SessionDestroyedContext,
   SessionTerminatedContext,
@@ -47,8 +49,17 @@ import type {
  * Preserves all error information from container
  */
 export class SandboxError<TContext = Record<string, unknown>> extends Error {
-  constructor(public readonly errorResponse: ErrorResponse<TContext>) {
-    super(errorResponse.message);
+  constructor(
+    public readonly errorResponse: ErrorResponse<TContext>,
+    options?: { cause?: unknown }
+  ) {
+    // Forward `cause` through the standard ES2022 Error options bag so
+    // `error.cause` is set natively for in-memory inspection (debugger,
+    // util.inspect, manual `.cause` walks). It is intentionally omitted
+    // from toJSON() — Error instances are not JSON-serializable (their
+    // own properties are non-enumerable), so emitting `cause: <Error>`
+    // would log `cause: {}` and mislead operators.
+    super(errorResponse.message, options);
     this.name = 'SandboxError';
   }
 
@@ -858,5 +869,39 @@ export class DesktopInvalidCoordinatesError extends SandboxError<DesktopCoordina
   constructor(errorResponse: ErrorResponse<DesktopCoordinateErrorContext>) {
     super(errorResponse);
     this.name = 'DesktopInvalidCoordinatesError';
+  }
+}
+
+// ============================================================================
+// RPC Transport Errors (SDK-side)
+// ============================================================================
+
+/**
+ * Raised when the capnweb WebSocket session itself fails on the SDK side.
+ * Unlike the rest of the SandboxError tree, the container never produces
+ * this error — it is synthesised by `translateRPCError` from the plain
+ * Errors capnweb / DeferredTransport raise when the connection dies.
+ *
+ * `kind` distinguishes the failure mode (peer close, upgrade failed, etc.)
+ * so callers can branch on a structured code instead of substring-matching
+ * on the message.
+ *
+ * Always retryable: the SDK opens a fresh connection on the next call.
+ */
+export class RPCTransportError extends SandboxError<RPCTransportContext> {
+  constructor(
+    errorResponse: ErrorResponse<RPCTransportContext>,
+    options?: { cause?: unknown }
+  ) {
+    super(errorResponse, options);
+    this.name = 'RPCTransportError';
+  }
+
+  get kind(): RPCTransportErrorKind {
+    return this.errorResponse.context.kind;
+  }
+
+  get originalMessage(): string {
+    return this.errorResponse.context.originalMessage;
   }
 }

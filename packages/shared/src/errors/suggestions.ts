@@ -116,6 +116,26 @@ export function getSuggestion(
     case ErrorCode.DESKTOP_INVALID_COORDINATES:
       return `Coordinates (${context.x}, ${context.y}) are outside the display area (${context.displayWidth}x${context.displayHeight})`;
 
+    case ErrorCode.RPC_TRANSPORT_ERROR: {
+      const kind = context.kind as string | undefined;
+      switch (kind) {
+        case 'peer_closed':
+          return 'The container closed the WebSocket mid-call (likely a container restart, eviction, or crash). Retry the call — the SDK will open a fresh connection.';
+        case 'connection_failed':
+          return 'The WebSocket connection failed. Retry the call; if the failure persists, check container health and network connectivity.';
+        case 'upgrade_failed':
+          return 'The WebSocket upgrade was rejected by the container. Verify the container is running and reachable on the configured port.';
+        case 'invalid_frame':
+          return 'The container sent a frame the RPC transport cannot handle. This usually indicates a version mismatch between the SDK and the container image.';
+        case 'protocol_error':
+          return 'The peer sent a malformed RPC message (capnweb could not parse the wire format). This usually indicates a version mismatch between the SDK and the container image.';
+        case 'session_disposed':
+          return 'The RPC session was disposed while a call was in flight. Avoid reusing stubs after disconnect(); the next method call will reconnect automatically.';
+        default:
+          return 'The RPC transport raised an error. Retry the call — the SDK will open a fresh connection.';
+      }
+    }
+
     // Generic fallback for other errors
     default:
       return undefined;

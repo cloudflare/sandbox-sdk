@@ -241,6 +241,44 @@ export interface InternalErrorContext {
 }
 
 /**
+ * RPC transport error contexts. Surfaced when the capnweb WebSocket session
+ * fails on the SDK side rather than the container reporting a structured
+ * error. Always retryable — the next call will open a fresh connection.
+ */
+export type RPCTransportErrorKind =
+  /** Server closed the WebSocket (container crash, DO eviction, network blip). */
+  | 'peer_closed'
+  /** Underlying socket fired the `error` event. */
+  | 'connection_failed'
+  /** WebSocket upgrade failed before the session was established. */
+  | 'upgrade_failed'
+  /** Peer sent a non-string frame; capnweb's wire format is JSON text only. */
+  | 'invalid_frame'
+  /** Peer sent a frame the wire-format parser rejected (capnweb readLoop SyntaxError). */
+  | 'protocol_error'
+  /** Session was disposed (locally or remotely) while a call was pending. */
+  | 'session_disposed'
+  /** Anything else that bubbled up from the transport with no recognisable shape. */
+  | 'unknown';
+
+export interface RPCTransportContext {
+  /** Categorical bucket so callers can branch on `peer_closed` vs `upgrade_failed` etc. */
+  kind: RPCTransportErrorKind;
+  /** Original error message, verbatim from capnweb / our DeferredTransport. */
+  originalMessage: string;
+  /**
+   * The underlying Error's `name` property. capnweb preserves this across
+   * the wire for the standard built-ins (TypeError, SyntaxError, etc.), so
+   * it's a more reliable hint than the message string for those cases.
+   */
+  errorName: string;
+  /** WebSocket close code, when available (kind === 'peer_closed'). */
+  closeCode?: number;
+  /** WebSocket close reason, when available (kind === 'peer_closed'). */
+  closeReason?: string;
+}
+
+/**
  * Desktop error contexts
  */
 export interface DesktopErrorContext {
