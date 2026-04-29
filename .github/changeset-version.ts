@@ -92,6 +92,9 @@ try {
     '**/dist/**',
     '**/build/**',
     '**/.git/**',
+    'examples/**/Dockerfile',
+    'examples/**/Dockerfile.*',
+    'examples/**/README.md',
     '**/package.json', // Don't modify package.json (changeset does this)
     '**/package-lock.json', // Don't modify package-lock.json (npm install does this)
     '**/.github/changeset-version.ts', // Don't modify this script itself
