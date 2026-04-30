@@ -4,13 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
-from dotenv import load_dotenv
-
-# Resolve .env relative to the harness project root (one level above src/).
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
-ENV_FILE = HARNESS_ROOT / ".env"
 
 @dataclass(frozen=True)
 class Config:
@@ -26,8 +20,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        """Load config from .env file at the harness project root."""
-        load_dotenv(ENV_FILE)
+        """Load config from process environment."""
 
         def _require(name: str) -> str:
             val = os.environ.get(name, "").strip()
