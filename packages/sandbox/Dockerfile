@@ -1,5 +1,7 @@
 # Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
 ARG BUN_VERSION=1
+# Node version — override via --build-arg NODE_VERSION=22
+ARG NODE_VERSION=20
 FROM oven/bun:${BUN_VERSION} AS bun-binary
 
 # Sandbox container images (default and python variants)
@@ -8,7 +10,7 @@ FROM oven/bun:${BUN_VERSION} AS bun-binary
 # ============================================================================
 # Stage 1: Prune monorepo to only include necessary packages
 # ============================================================================
-FROM node:20-slim AS pruner
+FROM node:${NODE_VERSION}-slim AS pruner
 
 WORKDIR /app
 
@@ -25,7 +27,7 @@ RUN turbo prune @repo/sandbox-container --docker
 # Using glibc-based images (not Alpine) so the standalone binary works on
 # standard Linux distributions (Debian, Ubuntu, RHEL, etc.)
 # ============================================================================
-FROM node:20-slim AS builder
+FROM node:${NODE_VERSION}-slim AS builder
 
 WORKDIR /app
 
@@ -96,6 +98,9 @@ FROM ubuntu:22.04 AS runtime-base
 # Accept version as build argument (passed from npm_package_version)
 ARG SANDBOX_VERSION=unknown
 
+# Re-declare NODE_VERSION so COPY --from below can resolve it
+ARG NODE_VERSION=20
+
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -126,9 +131,10 @@ RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 # fusermount requires /etc/mtab to locate active mounts
 RUN ln -sf /proc/mounts /etc/mtab
 
-# Install Node.js 20 LTS from official Node image
-COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+# Install Node.js from official Node image (defaults to 20 LTS,
+# override via --build-arg NODE_VERSION=22)
+COPY --from=node:${NODE_VERSION}-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:${NODE_VERSION}-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
