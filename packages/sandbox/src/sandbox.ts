@@ -1555,23 +1555,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const logFile = s3fsOptions.logfile as string;
     const optionsStr = serializeS3fsOptions(s3fsOptions);
 
-    // s3fs daemonises: the parent exits 0 before the FUSE child completes
-    // its SigV4 bucket check. Run the mount and the mountpoint poll as a
-    // single in-container script so the whole flow is one round-trip and
+    // s3fs daemonises: the parent forks a FUSE child, then exits 0 once the
+    // child reports its bucket check passed. Run mount + verification as a
+    // single in-container script so the whole flow is one round-trip with
     // one observable outcome.
+    //
+    // s3fs output is redirected to the logfile (not captured via $()):
+    // the daemon child inherits the redirected stdout/stderr fds, and
+    // command substitution would block on those fds until the daemon
+    // exited (i.e. until unmount), hanging the script for the lifetime
+    // of the mount.
     //
     // Exit codes consumed by the caller:
     //   0 — mount established
-    //   2 — s3fs parent failed; stdout carries its combined output
+    //   2 — s3fs parent failed; stdout carries the s3fs log tail
     //   3 — mount never appeared; stdout carries the s3fs log tail
     //
     // 60 iterations x 100ms = 6s budget for the SigV4 bucket check, which
     // is comfortable under CI load while still cheap on success (the loop
     // exits on the first iteration once the FUSE filesystem is live).
     const script = sh`
-      out=$(s3fs ${bucket} ${mountPath} -o ${optionsStr} 2>&1)
+      s3fs ${bucket} ${mountPath} -o ${optionsStr} >${logFile} 2>&1
       rc=$?
-      if [ "$rc" -ne 0 ]; then printf '%s' "$out"; exit 2; fi
+      if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
       for _ in $(seq 1 60); do
         if mountpoint -q ${mountPath}; then exit 0; fi
         sleep 0.1
