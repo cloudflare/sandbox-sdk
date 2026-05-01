@@ -159,7 +159,53 @@ export interface CreateBackupRequest {
   gitignore?: boolean;
   /** Glob patterns to exclude from the backup */
   excludes?: string[];
+  /** Compression algorithm for mksquashfs (default: lz4) */
+  compression?: 'gzip' | 'lz4' | 'zstd';
+  /** Number of parallel compression threads (default: 8) */
+  compressThreads?: number;
   sessionId?: string;
+}
+
+/**
+ * A single part to upload in a multipart upload.
+ * The container reads the byte range from the local archive and PUTs it
+ * to the presigned URL.
+ */
+export interface UploadPart {
+  partNumber: number;
+  /** Presigned PUT URL for this part */
+  url: string;
+  /** Byte offset within the archive file */
+  offset: number;
+  /** Number of bytes in this part */
+  size: number;
+}
+
+/**
+ * Request to upload parts of a backup archive directly from the container to R2.
+ * Used for parallel multipart upload of large archives.
+ */
+export interface UploadPartsRequest {
+  /** Path to the archive file in the container */
+  archivePath: string;
+  /** Parts to upload in parallel */
+  parts: UploadPart[];
+}
+
+/**
+ * Result for a single uploaded part (ETag returned by R2).
+ */
+export interface UploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
+/**
+ * Response after the container has uploaded all parts.
+ */
+export interface UploadPartsResponse {
+  success: boolean;
+  parts: UploadedPart[];
 }
 
 /**

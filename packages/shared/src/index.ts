@@ -105,6 +105,10 @@ export type {
   SessionCreateRequest,
   SessionDeleteRequest,
   StartProcessRequest,
+  UploadedPart,
+  UploadPart,
+  UploadPartsRequest,
+  UploadPartsResponse,
   WriteFileRequest
 } from './request-types.js';
 // RPC interface types (shared between SDK and container)

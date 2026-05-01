@@ -100,7 +100,9 @@ export class BackupService {
     archivePath: string,
     sessionId = 'default',
     gitignore = false,
-    excludes: string[] = []
+    excludes: string[] = [],
+    compression: 'gzip' | 'lz4' | 'zstd' = 'lz4',
+    compressThreads = 8
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
     const excludeFilePath = `${archivePath}.exclude`;
@@ -225,14 +227,15 @@ export class BackupService {
         shouldCleanupExcludeFile = true;
       }
 
-      // Create squashfs archive with zstd compression
+      // Create squashfs archive with configurable compression
       // -no-progress suppresses progress output
       // -noappend creates a fresh archive (no appending to existing)
       const squashCmdParts = [
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
-        '-comp zstd',
+        `-comp ${compression}`,
+        `-processors ${Math.max(1, compressThreads)}`,
         '-no-progress',
         '-noappend'
       ];
@@ -405,6 +408,105 @@ export class BackupService {
    */
   static normalizeMksquashfsPattern(pattern: string): string | null {
     return normalizeBackupExcludePattern(pattern);
+  }
+
+  /**
+   * Upload parts of a backup archive to presigned URLs in parallel.
+   * The caller (DO) has already created a multipart upload and generated
+   * presigned PUT URLs for each part. This method extracts each byte range
+   * with `dd` and pipes it to `curl`, running all parts concurrently.
+   */
+  async uploadParts(
+    archivePath: string,
+    parts: Array<{
+      partNumber: number;
+      url: string;
+      offset: number;
+      size: number;
+    }>,
+    sessionId = 'default'
+  ): Promise<
+    ServiceResult<{ parts: Array<{ partNumber: number; etag: string }> }>
+  > {
+    if (parts.length === 0) {
+      return serviceSuccess({ parts: [] });
+    }
+
+    const hdrFiles = parts.map((p) => `/tmp/bp_${p.partNumber}.hdr`);
+
+    const launchLines = parts.map((part, i) => {
+      const ddCmd = [
+        'dd',
+        `if=${shellEscape(archivePath)}`,
+        'iflag=skip_bytes,count_bytes',
+        `skip=${part.offset}`,
+        `count=${part.size}`,
+        '2>/dev/null'
+      ].join(' ');
+      const curlCmd = [
+        'curl -sSf -X PUT',
+        `-H ${shellEscape(`Content-Length: ${part.size}`)}`,
+        `-H 'Content-Type: application/octet-stream'`,
+        `-D ${shellEscape(hdrFiles[i])}`,
+        '--data-binary @-',
+        shellEscape(part.url)
+      ].join(' ');
+      return `${ddCmd} | ${curlCmd} & J${i}=$!`;
+    });
+
+    const waitLines = parts.map((_, i) => `wait $J${i}; E${i}=$?`);
+    const exitVars = parts.map((_, i) => `$E${i}`).join(' + ');
+    const etagLines = parts.map(
+      (part, i) =>
+        `printf 'PART:%d:%s\\n' ${part.partNumber} "$(grep -i '^etag:' ${shellEscape(hdrFiles[i])} 2>/dev/null | tr -d '\\r' | awk '{print $2}')"`
+    );
+    const cleanupCmd = `rm -f ${hdrFiles.map(shellEscape).join(' ')}`;
+
+    const script = [
+      ...launchLines,
+      ...waitLines,
+      `FAILED=$(( ${exitVars} ))`,
+      `if [ "$FAILED" -ne 0 ]; then ${cleanupCmd}; exit 1; fi`,
+      ...etagLines,
+      cleanupCmd
+    ].join('; ');
+
+    const result = await this.sessionManager.executeInSession(
+      sessionId,
+      script,
+      {
+        origin: 'internal'
+      }
+    );
+
+    if (!result.success || result.data.exitCode !== 0) {
+      return serviceError({
+        message: `Multipart upload failed: ${result.success ? result.data.stderr : result.error.message}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        details: { archivePath }
+      });
+    }
+
+    const uploadedParts: Array<{ partNumber: number; etag: string }> = [];
+    for (const line of result.data.stdout.split('\n')) {
+      const match = line.match(/^PART:(\d+):(.+)$/);
+      if (match) {
+        uploadedParts.push({
+          partNumber: parseInt(match[1], 10),
+          etag: match[2]
+        });
+      }
+    }
+
+    if (uploadedParts.length !== parts.length) {
+      return serviceError({
+        message: `Expected ${parts.length} part ETags, got ${uploadedParts.length}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        details: { archivePath }
+      });
+    }
+
+    return serviceSuccess({ parts: uploadedParts });
   }
 
   /**

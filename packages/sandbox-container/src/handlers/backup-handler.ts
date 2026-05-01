@@ -3,7 +3,9 @@ import type {
   CreateBackupResponse,
   Logger,
   RestoreBackupRequest,
-  RestoreBackupResponse
+  RestoreBackupResponse,
+  UploadPartsRequest,
+  UploadPartsResponse
 } from '@repo/shared';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 
@@ -31,6 +33,8 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         return await this.handleCreate(request, context);
       case '/api/backup/restore':
         return await this.handleRestore(request, context);
+      case '/api/backup/upload-parts':
+        return await this.handleUploadParts(request, context);
       default:
         return this.createErrorResponse(
           {
@@ -151,7 +155,9 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       body.archivePath,
       sessionId,
       body.gitignore ?? false,
-      body.excludes ?? []
+      body.excludes ?? [],
+      body.compression ?? 'lz4',
+      body.compressThreads ?? 8
     );
 
     if (result.success) {
@@ -159,6 +165,57 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         success: true,
         sizeBytes: result.data.sizeBytes,
         archivePath: result.data.archivePath
+      };
+      return this.createTypedResponse(response, context);
+    }
+
+    return this.createErrorResponse(
+      result.error,
+      context,
+      Operation.BACKUP_CREATE
+    );
+  }
+
+  private async handleUploadParts(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const body = await this.parseRequestBody<UploadPartsRequest>(request);
+
+    const archiveError = BackupHandler.validateArchivePath(body.archivePath);
+    if (archiveError) {
+      return this.createErrorResponse(
+        {
+          message: archiveError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    if (!Array.isArray(body.parts) || body.parts.length === 0) {
+      return this.createErrorResponse(
+        {
+          message: 'parts must be a non-empty array',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    const sessionId = context.sessionId ?? 'default';
+    const result = await this.backupService.uploadParts(
+      body.archivePath,
+      body.parts,
+      sessionId
+    );
+
+    if (result.success) {
+      const response: UploadPartsResponse = {
+        success: true,
+        parts: result.data.parts
       };
       return this.createTypedResponse(response, context);
     }

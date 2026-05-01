@@ -1015,14 +1015,21 @@ class BackupRPCAPI extends RpcTarget {
     dir: string,
     archivePath: string,
     sessionId: string,
-    options?: { excludes?: string[]; gitignore?: boolean }
+    options?: {
+      excludes?: string[];
+      gitignore?: boolean;
+      compression?: 'gzip' | 'lz4' | 'zstd';
+      compressThreads?: number;
+    }
   ) {
     const result = await this.#svc.createArchive(
       dir,
       archivePath,
       sessionId,
       options?.gitignore ?? false,
-      options?.excludes ?? []
+      options?.excludes ?? [],
+      options?.compression ?? 'lz4',
+      options?.compressThreads ?? 8
     );
     const data = extractData<{ sizeBytes: number; archivePath: string }>(
       result
@@ -1038,6 +1045,25 @@ class BackupRPCAPI extends RpcTarget {
     const result = await this.#svc.restoreArchive(dir, archivePath, sessionId);
     throwIfError(result);
     return { success: true, dir };
+  }
+
+  async uploadParts(request: {
+    archivePath: string;
+    parts: Array<{
+      partNumber: number;
+      url: string;
+      offset: number;
+      size: number;
+    }>;
+  }) {
+    const result = await this.#svc.uploadParts(
+      request.archivePath,
+      request.parts
+    );
+    const data = extractData<{
+      parts: Array<{ partNumber: number; etag: string }>;
+    }>(result);
+    return { success: true, parts: data.parts };
   }
 }
 
