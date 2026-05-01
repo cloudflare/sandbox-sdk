@@ -312,9 +312,9 @@ describe('File Operations Error Handling', () => {
   }, 90000);
 });
 
-const isCapnweb = process.env.TEST_TRANSPORT === 'rpc';
+const isRPCTransport = process.env.TEST_TRANSPORT === 'rpc';
 
-describe.skipIf(!isCapnweb)('File Streaming Write (capnweb)', () => {
+describe.skipIf(!isRPCTransport)('File Streaming Write (rpc)', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -332,7 +332,7 @@ describe.skipIf(!isCapnweb)('File Streaming Write (capnweb)', () => {
 
   test('should stream-write a file and read it back', async () => {
     const testPath = sandbox!.uniquePath('stream-write.txt');
-    const testContent = 'Streamed content for capnweb transport ✨';
+    const testContent = 'Streamed content for rpc transport ✨';
     const body = new TextEncoder().encode(testContent);
 
     const writeResponse = await fetch(`${workerUrl}/api/file/write-stream`, {

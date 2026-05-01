@@ -11,8 +11,8 @@ import {
 } from '@repo/shared';
 import { BaseTransport } from './base-transport';
 import type {
+  RouteTransportMode,
   TransportConfig,
-  TransportMode,
   TransportRequestInit
 } from './types';
 
@@ -73,7 +73,7 @@ export class WebSocketTransport extends BaseTransport {
     this.boundHandleClose = this.handleClose.bind(this);
   }
 
-  getMode(): TransportMode {
+  getMode(): RouteTransportMode {
     return 'websocket';
   }
 

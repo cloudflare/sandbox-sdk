@@ -26,22 +26,52 @@ description: Use when navigating the codebase for the first time, adding a new c
 
 ## Request Flow
 
+Primary control path:
+
 ```
 Worker
   → Sandbox DO (packages/sandbox)
-    → Container HTTP API on port 3000 (packages/sandbox-container)
-      → Bun runtime
-        → Shell commands / filesystem
+    → ContainerControlClient (packages/sandbox/src/container-control/)
+      → capnweb over /rpc WebSocket
+        → SandboxControlAPI (packages/sandbox-container/src/control-plane/)
+          → container services
+            → Shell commands / filesystem
+```
+
+Route-based compatibility path:
+
+```
+Worker
+  → Sandbox DO (packages/sandbox)
+    → SandboxClient / clients/transport
+      → Container HTTP API on port 3000 (packages/sandbox-container)
+        → Router / handlers
+          → container services
+            → Shell commands / filesystem
 ```
 
 Errors flow back the same path: container → Sandbox DO → Worker, using the custom error classes in `packages/shared/src/errors/` keyed by the `ErrorCode` enum.
 
-## Client Architecture (`packages/sandbox/src/clients/`)
+## Primary Control Path
 
-The SDK uses a modular client pattern:
+The primary Sandbox Durable Object to container control path is the container-control/control-plane path:
 
-- **`BaseClient`** — abstract HTTP client with shared request/response handling
-- **`SandboxClient`** — aggregator that exposes all specialized clients
+- SDK side: `packages/sandbox/src/container-control/`
+- Container side: `packages/sandbox-container/src/control-plane/`
+- Current wire implementation: capnweb RPC over the `/rpc` WebSocket route
+
+Control-channel/transport-layer capabilities belong in this path. Treat capnweb/RPC as the current implementation detail, not the architectural boundary.
+
+The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the current control API contract used by both sides.
+
+## Route-Based Compatibility Path (`packages/sandbox/src/clients/`)
+
+`packages/sandbox/src/clients/` and `packages/sandbox/src/clients/transport/` implement the HTTP and custom WebSocket route-based compatibility API. Maintain these for compatibility, debugging, local development, fallback behavior, and bug fixes, but do not add new control-plane capabilities there by default.
+
+The route-based client pattern is:
+
+- **`BaseHttpClient`** — abstract route-based HTTP/WebSocket client with shared request/response handling
+- **`SandboxClient`** — compatibility aggregator that exposes all specialized route-based clients
 - **Specialized clients** — one per domain:
   - `CommandClient` — exec / execStream
   - `FileClient` — read, write, list, delete
@@ -51,25 +81,27 @@ The SDK uses a modular client pattern:
   - `UtilityClient` — ping, metadata
   - `InterpreterClient` — code interpreter sessions
 
-When adding a new SDK capability, add a new specialized client (or extend an existing one) and wire it into `SandboxClient`.
+When maintaining route-based compatibility, add or extend specialized clients under `packages/sandbox/src/clients/`. DO-to-container control capabilities belong in `packages/sandbox/src/container-control/` and `packages/sandbox-container/src/control-plane/`.
 
 ## Container Runtime (`packages/sandbox-container/src/`)
 
 - **DI container** (`core/container.ts`) — manages service lifecycle and wiring
 - **Router** — simple HTTP router with middleware
-- **Handlers** (`handlers/`) — route handlers, thin layer that parses requests
+- **Control plane** (`control-plane/`) — primary container-side API called by the Sandbox DO
+- **Handlers** (`handlers/`) — route-based compatibility handlers, thin layer that parses requests
 - **Services** (`services/`) — business logic (`CommandService`, `FileService`, `ProcessService`, …)
 - **Managers** (`managers/`) — stateful coordinators (`ProcessManager`, `PortManager`)
 
 Entry point: `packages/sandbox-container/src/index.ts` starts a Bun HTTP server on port 3000.
 
-When adding a new container endpoint:
+When adding a new container control operation:
 
 1. Add/extend a service in `services/` for the business logic.
-2. Add a handler in `handlers/` that parses the request and calls the service.
-3. Register the route in the router.
-4. Mirror the call in a SDK client under `packages/sandbox/src/clients/`.
-5. Add unit tests on both sides; add an E2E test if it touches real shell/filesystem behavior.
+2. Add the control-plane method in `packages/sandbox-container/src/control-plane/`.
+3. Mirror the call in `packages/sandbox/src/container-control/`.
+4. Add unit tests on both sides; add an E2E test if it touches real shell/filesystem behavior.
+
+Only add a route handler in `handlers/` and a route-based SDK client in `packages/sandbox/src/clients/` when maintaining HTTP/WebSocket compatibility.
 
 ## Monorepo Structure
 

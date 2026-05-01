@@ -1,9 +1,10 @@
 /**
- * WebSocket Protocol Adapter for Container
+ * WebSocket adapter for the route-based compatibility API.
  *
- * Adapts WebSocket messages to HTTP requests for routing through existing handlers.
- * This enables multiplexing multiple requests over a single WebSocket connection,
- * reducing sub-request count when the SDK runs inside Workers/Durable Objects.
+ * This adapts custom WebSocket messages to HTTP requests and routes them through
+ * the existing handlers. It supports the route-based API. Container
+ * control-plane operations live under `control-plane/` and are called through
+ * the container-control client.
  */
 
 import type { Logger } from '@repo/shared';
@@ -301,7 +302,7 @@ export class WebSocketAdapter {
   /**
    * Handle a streaming (SSE) HTTP response with a pre-acquired reader
    *
-   * This variant receives the reader instead of the Response, allowing the caller
+   * This variant receives a pre-acquired reader from the Response, allowing the caller
    * to acquire the reader synchronously before any await points. This is critical
    * for WebSocket streaming because Bun's message handler may invalidate the
    * Response body if the reader is acquired after the handler returns.

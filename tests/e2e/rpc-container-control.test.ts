@@ -1,15 +1,15 @@
 /**
- * Cap'n Web Transport E2E Tests
+ * RPC Container Control E2E Tests
  *
- * Validates core sandbox operations work end-to-end through the capnweb
- * transport layer. These tests exercise:
+ * Validates core sandbox operations work end-to-end through the
+ * container-control path. These tests exercise:
  * - Command execution (exec)
  * - Streaming output (execStream)
  * - File operations (write, read, list, delete)
  * - Session isolation
  *
- * Skipped unless TEST_TRANSPORT=capnweb. Transport selection flows through
- * the X-Sandbox-Transport header to the test worker, which passes it to
+ * Skipped unless TEST_TRANSPORT=rpc. Transport selection flows through the
+ * X-Sandbox-Transport header to the test worker, which passes it to
  * getSandbox() as a per-instance transport option.
  */
 
@@ -28,9 +28,9 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 
-const isCapnweb = process.env.TEST_TRANSPORT === 'rpc';
+const isRPCTransport = process.env.TEST_TRANSPORT === 'rpc';
 
-describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
+describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -50,13 +50,13 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo hello-capnweb' })
+      body: JSON.stringify({ command: 'echo hello-rpc' })
     });
 
     expect(response.status).toBe(200);
     const result = (await response.json()) as ExecResult;
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe('hello-capnweb');
+    expect(result.stdout.trim()).toBe('hello-rpc');
   });
 
   test('should handle command with non-zero exit code', async () => {
@@ -72,8 +72,8 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
   });
 
   test('should write and read a file', async () => {
-    const testPath = sandbox!.uniquePath('capnweb-test.txt');
-    const testContent = 'Hello from capnweb transport! 🚀';
+    const testPath = sandbox!.uniquePath('rpc-test.txt');
+    const testContent = 'Hello from rpc transport! 🚀';
 
     // Write
     const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -95,7 +95,7 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
   });
 
   test('should list files in a directory', async () => {
-    const testDir = sandbox!.uniquePath('capnweb-list');
+    const testDir = sandbox!.uniquePath('rpc-list');
 
     // Create directory with files
     await fetch(`${workerUrl}/api/execute`, {
@@ -164,7 +164,7 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
   });
 
   test('should delete a file', async () => {
-    const testPath = sandbox!.uniquePath('capnweb-delete.txt');
+    const testPath = sandbox!.uniquePath('rpc-delete.txt');
 
     // Create file
     await fetch(`${workerUrl}/api/file/write`, {
@@ -206,7 +206,7 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
       headers: sandbox!.headers(),
       body: JSON.stringify({
         id: sessionId,
-        env: { CAPNWEB_TEST: 'transport-works' }
+        env: { RPC_TEST: 'transport-works' }
       })
     });
     expect(createResponse.status).toBe(200);
@@ -216,7 +216,7 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
     const execResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: sessionHeaders,
-      body: JSON.stringify({ command: 'echo $CAPNWEB_TEST' })
+      body: JSON.stringify({ command: 'echo $RPC_TEST' })
     });
     expect(execResponse.status).toBe(200);
     const result = (await execResponse.json()) as ExecResult;
@@ -226,7 +226,7 @@ describe.skipIf(!isCapnweb)("Cap'n Web Transport", () => {
     const defaultExecResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo $CAPNWEB_TEST' })
+      body: JSON.stringify({ command: 'echo $RPC_TEST' })
     });
     const defaultResult = (await defaultExecResponse.json()) as ExecResult;
     expect(defaultResult.stdout.trim()).toBe('');

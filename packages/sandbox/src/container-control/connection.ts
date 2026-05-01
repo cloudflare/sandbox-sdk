@@ -2,8 +2,8 @@
  * Capnweb RPC connection to the container.
  *
  * Manages a single WebSocket session and exposes typed methods that map
- * 1:1 to the container's SandboxAPI. The Sandbox DO calls these
- * directly instead of going through the HTTP client layer.
+ * 1:1 to the container's SandboxAPI. The Sandbox DO calls these directly,
+ * bypassing the route-based HTTP client layer.
  */
 
 import type {
@@ -34,7 +34,7 @@ export interface ContainerFetchStub {
   fetch(request: Request): Promise<Response>;
 }
 
-export interface ContainerConnectionOptions {
+export interface ContainerControlConnectionOptions {
   stub: ContainerFetchStub;
   port?: number;
   logger?: Logger;
@@ -47,7 +47,7 @@ export interface ContainerConnectionOptions {
  * transport. Calls made before `connect()` completes are queued in the
  * transport and flushed once the WebSocket is established.
  */
-export class ContainerConnection {
+export class ContainerControlConnection {
   private readonly stub: RpcStub<SandboxAPI>;
   private readonly session: RpcSession<SandboxAPI>;
   private readonly transport: DeferredTransport;
@@ -58,7 +58,7 @@ export class ContainerConnection {
   private readonly port: number;
   private readonly logger: Logger;
 
-  constructor(options: ContainerConnectionOptions) {
+  constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
     this.port = options.port ?? 3000;
     this.logger = options.logger ?? createNoOpLogger();
@@ -171,7 +171,7 @@ export class ContainerConnection {
       ws.addEventListener('close', () => {
         this.connected = false;
         this.ws = null;
-        this.logger.debug('ContainerConnection WebSocket closed');
+        this.logger.debug('ContainerControlConnection WebSocket closed');
       });
 
       ws.addEventListener('error', () => {
@@ -183,7 +183,7 @@ export class ContainerConnection {
       this.transport.activate(ws);
       this.connected = true;
 
-      this.logger.debug('ContainerConnection established', {
+      this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
     } catch (error) {
@@ -191,7 +191,7 @@ export class ContainerConnection {
       this.connected = false;
       this.transport.abort(error);
       this.logger.error(
-        'ContainerConnection failed',
+        'ContainerControlConnection failed',
         error instanceof Error ? error : new Error(String(error))
       );
       throw error;

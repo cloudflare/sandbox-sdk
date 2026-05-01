@@ -10,15 +10,15 @@ import {
 import type { HttpClientOptions, ResponseHandler } from './types';
 
 /**
- * Abstract base class providing common HTTP/WebSocket functionality for all domain clients
+ * Abstract base class for route-based HTTP/WebSocket compatibility clients.
  *
- * All requests go through the Transport abstraction layer, which handles:
- * - HTTP and WebSocket modes transparently
- * - Automatic retry for 503 errors (container starting)
- * - Streaming responses
+ * Requests go through the Transport abstraction layer, which handles:
+ * - HTTP and WebSocket route-based modes transparently
+ * - Automatic retry for 503 errors while the container is starting
+ * - Streaming responses for the existing route API
  *
- * WebSocket mode is useful when running inside Workers/Durable Objects
- * where sub-request limits apply.
+ * DO-to-container control-channel capabilities live in `container-control/`.
+ * This layer supports the route-based compatibility API.
  */
 export abstract class BaseHttpClient {
   protected options: HttpClientOptions;
@@ -209,7 +209,7 @@ export abstract class BaseHttpClient {
   /**
    * Stream request handler
    *
-   * For HTTP mode, uses doFetch + handleStreamResponse to get proper error typing.
+   * HTTP mode uses doFetch + handleStreamResponse for typed error handling.
    * For WebSocket mode, uses Transport's streaming support.
    *
    * @param path - The API path to call
@@ -234,7 +234,7 @@ export abstract class BaseHttpClient {
       return this.transport.fetchStream(path, body, method, streamHeaders);
     }
 
-    // HTTP mode: use doFetch + handleStreamResponse for proper error typing
+    // HTTP mode uses doFetch + handleStreamResponse for typed error handling.
     const response = await this.doFetch(path, {
       method,
       headers: { 'Content-Type': 'application/json' },

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import {
-  SandboxAPI,
-  type SandboxAPIDeps
-} from '@sandbox-container/rpc/sandbox-api';
+  type SandboxAPIDeps,
+  SandboxControlAPI
+} from '@sandbox-container/control-plane';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { Session } from '@sandbox-container/session';
 
@@ -17,16 +17,16 @@ const mockLogger = {
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
 
-function buildApi(sessionManager: SessionManager): SandboxAPI {
+function buildApi(sessionManager: SessionManager): SandboxControlAPI {
   // Domains other than sessionManager are unused by utils.createSession; cast
   // through unknown so the test does not have to construct real services.
-  return new SandboxAPI({
+  return new SandboxControlAPI({
     sessionManager,
     logger: mockLogger
   } as unknown as SandboxAPIDeps);
 }
 
-describe('SandboxAPI utils.createSession', () => {
+describe('SandboxControlAPI utils.createSession', () => {
   let mockSessionManager: SessionManager;
 
   beforeEach(() => {

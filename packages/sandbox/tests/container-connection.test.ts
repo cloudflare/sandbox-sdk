@@ -1,26 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ContainerConnection,
+  ContainerControlConnection,
   DeferredTransport
-} from '../src/container-connection';
+} from '../src/container-control/connection';
 
 /**
- * Tests for ContainerConnection — the capnweb RPC connection manager.
+ * Tests for ContainerControlConnection — the capnweb RPC connection manager.
  *
  * These tests verify connection lifecycle and RPC stub access.
  * The actual RPC methods are tested via E2E tests against a real container.
  */
-describe('ContainerConnection', () => {
+describe('ContainerControlConnection', () => {
   describe('initial state', () => {
     it('should not be connected after construction', () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       expect(conn.isConnected()).toBe(false);
     });
 
     it('should have a stub available immediately after construction', () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       expect(conn.rpc()).toBeDefined();
@@ -29,7 +29,7 @@ describe('ContainerConnection', () => {
 
   describe('disconnect', () => {
     it('should be safe to call disconnect when not connected', () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       conn.disconnect();
@@ -37,7 +37,7 @@ describe('ContainerConnection', () => {
     });
 
     it('should be safe to call disconnect multiple times', () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       conn.disconnect();
@@ -49,7 +49,7 @@ describe('ContainerConnection', () => {
 
   describe('connect', () => {
     it('should fail when WebSocket upgrade is rejected', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: {
           fetch: vi
             .fn()
@@ -64,7 +64,7 @@ describe('ContainerConnection', () => {
     });
 
     it('should reject pending RPC calls when connection fails', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: {
           fetch: vi
             .fn()
@@ -89,7 +89,7 @@ describe('ContainerConnection', () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValue(new Response('Not Found', { status: 404 }));
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: fetchMock }
       });
 
@@ -102,7 +102,7 @@ describe('ContainerConnection', () => {
 
   describe('connection lifecycle with mocked internals', () => {
     it('should return connected after successful connect', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
@@ -121,7 +121,7 @@ describe('ContainerConnection', () => {
     });
 
     it('should return the same stub before and after connect', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
@@ -143,7 +143,7 @@ describe('ContainerConnection', () => {
     });
 
     it('should disconnect and reconnect', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
@@ -170,7 +170,7 @@ describe('ContainerConnection', () => {
     });
 
     it('should share connection across concurrent connect() calls', async () => {
-      const conn = new ContainerConnection({
+      const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
