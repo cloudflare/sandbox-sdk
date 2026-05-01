@@ -96,6 +96,7 @@ This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. E
 | `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`        | Populate workspace from a tar archive            |
 | `shutdown()`                | `DELETE /v1/sandbox/:id`              | Destroy sandbox via `destroy()` (returns 204)    |
 | _(terminal)_                | `GET /v1/sandbox/:id/pty`             | WebSocket PTY proxy (bidirectional terminal I/O) |
+| _(capnweb RPC)_             | `GET /v1/rpc`                         | Typed capnweb RPC over WebSocket (multi-sandbox) |
 | `mountBucket()`             | `POST /v1/sandbox/:id/mount`          | Mount an S3-compatible bucket                    |
 | `unmountBucket()`           | `POST /v1/sandbox/:id/unmount`        | Unmount a mounted bucket                         |
 | _(create session)_          | `POST /v1/sandbox/:id/session`        | Create an execution session                      |
@@ -236,6 +237,72 @@ The request must include the `Upgrade: websocket` header; plain HTTP requests re
 websocat "ws://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/pty?cols=120&rows=30" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
+
+---
+
+#### `GET /v1/rpc` _(experimental)_
+
+> **⚠️ Experimental.** This endpoint is gated behind
+> `SANDBOX_EXPERIMENTAL_RPC=true` and returns 404 unless explicitly enabled.
+> The RPC surface mirrors the still-evolving sandbox interface and is
+> **subject to breaking changes** as we iterate on the underlying API.
+> Do not depend on its shape from production clients.
+
+Open a [capnweb](https://github.com/cloudflare/capnweb) RPC session over a
+WebSocket. Unlike the HTTP routes the wire path is **sandbox-agnostic**: one
+connection can address many sandboxes via repeated `rpc.sandbox(id)` calls.
+Sandbox-ID validation happens inside the RPC call rather than in HTTP
+middleware.
+
+**Enable it:** set `SANDBOX_EXPERIMENTAL_RPC=true` on the deployment
+(via `wrangler secret put SANDBOX_EXPERIMENTAL_RPC` or in `.dev.vars`).
+The bridge worker reads this and passes `enableExperimentalRPC: true` to
+the `bridge()` factory; the route returns 404 otherwise.
+
+**Authentication:** subprotocol-only. Browsers can't set arbitrary upgrade
+headers, so the bearer token is delivered via `Sec-WebSocket-Protocol`:
+
+```
+Sec-WebSocket-Protocol: cloudflare-sandbox-bridge.bearer.<SANDBOX_API_KEY>
+```
+
+An `Authorization: Bearer` header is **not** accepted on this route. The
+selected protocol is echoed in the 101 response so capnweb's framing is
+unaffected.
+
+**RPC surface:**
+
+```ts
+interface BridgeRPCAPI {
+  sandbox(id?: string): Promise<SandboxRPCAPI>;
+}
+```
+
+`SandboxRPCAPI` mirrors the container's internal `SandboxAPI` and exposes
+ten domains — `commands`, `files`, `processes`, `ports`, `git`,
+`interpreter`, `utils`, `backup`, `desktop`, `watch` — plus an `id`
+getter so callers can read back a server-generated id when `sandbox()` is
+called without one. Method shapes match the container types in
+`@repo/shared` (`SandboxCommandsAPI`, `SandboxFilesAPI`, etc.).
+
+Use the `@cloudflare/sandbox/bridge-client` package for a typed client:
+
+```ts
+import { createBridgeClient } from '@cloudflare/sandbox/bridge-client';
+
+const client = createBridgeClient({
+  baseURL: 'https://bridge.example.com/v1',
+  token: process.env.SANDBOX_API_KEY
+});
+
+const sandbox = client.sandbox('my-sandbox');
+const result = await sandbox.commands.execute('ls', sessionId);
+
+await client.close();
+```
+
+One WebSocket per `BridgeClient` regardless of how many sandboxes you
+address. See [`packages/sandbox/src/bridge-client/`](../../packages/sandbox/src/bridge-client/index.ts).
 
 ---
 

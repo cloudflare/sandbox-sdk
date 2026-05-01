@@ -62,7 +62,11 @@
     // Target number of pre-warmed containers (0 = disabled, no surprise bills).
     "WARM_POOL_TARGET": "0",
     // How often the pool alarm checks health and replenishes containers (ms).
-    "WARM_POOL_REFRESH_INTERVAL": "10000"
+    "WARM_POOL_REFRESH_INTERVAL": "10000",
+    // Set to "true" to enable the experimental capnweb RPC endpoint at
+    // /v1/rpc. Returns 404 by default. Surface is subject to breaking
+    // changes — do not depend on it from production clients.
+    "SANDBOX_EXPERIMENTAL_RPC": ""
   },
   "preview_urls": false
 }

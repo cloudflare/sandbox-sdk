@@ -1,2 +1,7 @@
 # Bearer token for API authentication. Generate with: openssl rand -hex 32
-SANDBOX_API_KEY=""
+SANDBOX_API_KEY=
+
+# Set to "true" to enable the experimental capnweb RPC endpoint at /v1/rpc.
+# Returns 404 by default. Surface is subject to breaking changes — do not
+# depend on it from production clients.
+SANDBOX_EXPERIMENTAL_RPC=
