@@ -648,6 +648,86 @@ export const OPENAPI_SCHEMA = {
         }
       }
     },
+    '/v1/rpc': {
+      get: {
+        operationId: 'capnwebRpc',
+        summary: 'Open a capnweb RPC session over WebSocket',
+        description:
+          'Upgrades the HTTP connection to a WebSocket and starts a [capnweb](https://github.com/cloudflare/capnweb) RPC session. Unlike the `/v1/sandbox/*` HTTP routes, the wire path is **sandbox-agnostic** — one connection can address many sandboxes via repeated `rpc.sandbox(id)` calls.\n\n' +
+          '**Authentication.** Subprotocol-only. Browsers cannot set arbitrary upgrade headers, so the bearer token is delivered via `Sec-WebSocket-Protocol`:\n\n' +
+          '```\nSec-WebSocket-Protocol: cloudflare-sandbox-bridge.bearer.<SANDBOX_API_KEY>\n```\n\n' +
+          'An `Authorization: Bearer` header is **not** accepted on this route. The selected protocol is echoed in the 101 response so capnweb framing is unaffected.\n\n' +
+          '**RPC surface.** `BridgeRPCAPI = { sandbox(id): Promise<SandboxRPCAPI> }`. `SandboxRPCAPI` mirrors the container `SandboxAPI` and exposes ten domains: `commands`, `files`, `processes`, `ports`, `git`, `interpreter`, `utils`, `backup`, `desktop`, `watch`. See [`@cloudflare/sandbox/bridge-client`](https://www.npmjs.com/package/@cloudflare/sandbox) for a typed client.',
+        'x-codeSamples': [
+          {
+            lang: 'TypeScript',
+            label: 'bridge-client',
+            source:
+              "import { createBridgeClient } from '@cloudflare/sandbox/bridge-client';\n" +
+              '\n' +
+              'const client = createBridgeClient({\n' +
+              "  url: 'https://bridge.example.com',\n" +
+              '  token: process.env.SANDBOX_API_KEY,\n' +
+              '});\n' +
+              '\n' +
+              'const result = await client\n' +
+              "  .sandbox('my-sandbox')\n" +
+              "  .commands.execute('ls', sessionId);\n" +
+              '\n' +
+              'await client.close();'
+          },
+          {
+            lang: 'JavaScript',
+            label: 'Raw WebSocket',
+            source:
+              'const ws = new WebSocket(\n' +
+              "  'wss://$HOST/v1/rpc',\n" +
+              "  ['cloudflare-sandbox-bridge.bearer.' + token]\n" +
+              ');'
+          }
+        ],
+        responses: {
+          '101': {
+            description:
+              'WebSocket upgrade successful. The capnweb session begins immediately; the selected `Sec-WebSocket-Protocol` is echoed in the response headers.'
+          },
+          '400': {
+            description: 'Missing `Upgrade: websocket` header.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: {
+                  error: 'WebSocket upgrade required',
+                  code: 'invalid_request'
+                }
+              }
+            }
+          },
+          '401': {
+            description:
+              'Bearer token missing from `Sec-WebSocket-Protocol`, or token did not match `SANDBOX_API_KEY`. Note: this route does **not** accept the `Authorization` header.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: { error: 'Unauthorized', code: 'unauthorized' }
+              }
+            }
+          },
+          '503': {
+            description: 'Bridge bindings (Sandbox or WarmPool) misconfigured.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: {
+                  error: 'Bridge bindings missing (Sandbox or WarmPool)',
+                  code: 'config_error'
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/v1/sandbox/{id}/running': {
       get: {
         operationId: 'isSandboxRunning',

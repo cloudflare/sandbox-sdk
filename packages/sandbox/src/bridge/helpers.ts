@@ -42,6 +42,25 @@ export function base32Encode(data: Uint8Array): string {
   return out;
 }
 
+/**
+ * Sandbox IDs are 26-character base32 strings (16 random bytes encoded as
+ * RFC 4648 base32 lowercase). The validator also accepts shorter strings
+ * for backwards compatibility with existing user-supplied IDs.
+ */
+const SANDBOX_ID_PATTERN = /^[a-z2-7]{1,128}$/;
+
+/** Generate a fresh sandbox ID: 16 random bytes, base32-encoded (26 chars). */
+export function generateSandboxId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return base32Encode(bytes);
+}
+
+/** True iff `id` matches the sandbox-ID format. */
+export function isValidSandboxId(id: string): boolean {
+  return SANDBOX_ID_PATTERN.test(id);
+}
+
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
