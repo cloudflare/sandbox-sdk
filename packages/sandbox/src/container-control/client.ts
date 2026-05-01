@@ -6,7 +6,7 @@
  * can use `rpc.commands`, `rpc.files`, etc. directly without any
  * per-method boilerplate.
  *
- * Manages its own connection lifecycle: creates a fresh ContainerConnection
+ * Manages its own connection lifecycle: creates a fresh ContainerControlConnection
  * on demand and disconnects it after a configurable idle period. Idle
  * detection uses capnweb's `RpcSession.getStats()` which naturally tracks
  * all in-flight RPC calls, streams, and peer-held references — no manual
@@ -79,6 +79,7 @@ import type {
   SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTransport,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -91,13 +92,12 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
-import {
-  ContainerConnection,
-  type ContainerConnectionOptions
-} from '../container-connection';
+import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
-import type { SandboxClient } from './sandbox-client';
-import type { TransportMode } from './transport';
+import {
+  ContainerControlConnection,
+  type ContainerControlConnectionOptions
+} from './connection';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -175,8 +175,7 @@ export function translateRPCError(error: unknown): never {
       });
     }
     // Map capnweb / DeferredTransport messages onto a typed RPCTransportError
-    // so consumers get a structured `code` + `kind` instead of substring
-    // matching on a free-form Error.message.
+    // so consumers get structured `code` and `kind` fields.
     // Preserve the underlying capnweb/transport Error as `cause` so callers
     // can reach the original via `err.cause` (and it shows up in toString /
     // toJSON output) without having to substring-match the message.
@@ -200,7 +199,7 @@ export function translateRPCError(error: unknown): never {
  * Inspect a transport-level Error's message and produce the ErrorResponse
  * that becomes an RPCTransportError. Pattern strings are pinned to the exact
  * messages emitted by capnweb's WebSocketTransport (see capnweb's
- * src/websocket.ts) and our DeferredTransport in container-connection.ts —
+ * src/websocket.ts) and our DeferredTransport in container-control/connection.ts —
  * notably the trailing period in `WebSocket connection failed.` matches
  * capnweb verbatim. The DeferredTransport tests in
  * tests/container-connection.test.ts pin the literal strings.
@@ -217,10 +216,9 @@ function buildTransportErrorResponse(
   // First pass: classify by `error.name`. capnweb preserves the name
   // across the wire for the standard built-ins (see ERROR_TYPES in
   // capnweb's serialize.ts), and an unambiguous name beats substring
-  // matching on a free-form message that future capnweb versions might
-  // reword. It also dodges the cross-realm `instanceof` trap: a TypeError
-  // raised inside capnweb's serializer lives in capnweb's realm, not the
-  // SDK's, so `error instanceof TypeError` would falsely return false.
+  // matching on a free-form message. It also handles the cross-realm
+  // `instanceof` trap: a TypeError raised inside capnweb's serializer lives
+  // in capnweb's realm, not the SDK's.
   if (errorName === 'TypeError') {
     // Only DeferredTransport / capnweb's WebSocketTransport raise a
     // TypeError on the receive path — always a non-string frame.
@@ -233,7 +231,7 @@ function buildTransportErrorResponse(
   } else {
     // Second pass: plain Errors. capnweb's transport layer and our
     // DeferredTransport both emit unnamed Errors with these specific
-    // messages — the message is the only signal we have.
+    // messages; the message is the only signal we have.
     const peerCloseMatch = message.match(
       /^Peer closed WebSocket: (\d+) ?(.*)$/
     );
@@ -244,7 +242,7 @@ function buildTransportErrorResponse(
     } else if (message === 'WebSocket connection failed.') {
       kind = 'connection_failed';
     } else if (message.startsWith('WebSocket upgrade failed')) {
-      // ContainerConnection.doConnect throws this when the HTTP upgrade
+      // ContainerControlConnection.doConnect throws this when the HTTP upgrade
       // returns a non-101 status.
       kind = 'upgrade_failed';
     } else if (message === 'No WebSocket in upgrade response') {
@@ -283,7 +281,7 @@ function buildTransportErrorResponse(
  * activity at call start.
  *
  * `onCallStarted` fires synchronously when an RPC method is invoked. The
- * RPCSandboxClient uses this to renew the DO's activity timeout
+ * ContainerControlClient uses this to renew the DO's activity timeout
  * immediately, so even a call that completes entirely between two
  * busy-poll ticks still pushes the sleepAfter deadline forward.
  *
@@ -297,7 +295,7 @@ function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
-      // Use Reflect.apply instead of value.apply() because capnweb
+      // Reflect.apply preserves the method call target because capnweb
       // stubs are Proxies that interpret .apply as an RPC property access.
       return (...args: unknown[]) => {
         onCallStarted();
@@ -328,7 +326,7 @@ function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
 // Public client
 // ---------------------------------------------------------------------------
 
-export interface RPCSandboxClientOptions extends ContainerConnectionOptions {
+export interface ContainerControlClientOptions extends ContainerControlConnectionOptions {
   /** Idle timeout before disconnecting the WebSocket (ms). Defaults to 1 000. */
   idleDisconnectMs?: number;
   /** Busy/idle poll interval (ms). Defaults to 1 000. */
@@ -357,21 +355,20 @@ export interface RPCSandboxClientOptions extends ContainerConnectionOptions {
 }
 
 /**
- * SandboxClient backed by direct capnweb RPC.
+ * SandboxClient-compatible facade backed by direct capnweb RPC.
  *
- * Drop-in replacement for SandboxClient when the capnweb transport is active.
- * All operations call the container's SandboxRPCAPI directly over capnweb,
- * bypassing the HTTP handler/router layer entirely.
+ * All operations call the container's SandboxAPI control interface directly
+ * over capnweb, bypassing the HTTP handler/router layer entirely.
  *
- * Manages its own WebSocket lifecycle: a fresh `ContainerConnection` is
+ * Manages its own WebSocket lifecycle: a fresh `ContainerControlConnection` is
  * created on demand and torn down after `idleDisconnectMs` of inactivity.
  * Busy/idle detection relies on `RpcSession.getStats()` which tracks all
  * in-flight RPC calls and stream exports — including long-lived streaming
  * RPCs that would be invisible to a simple per-call request counter (see
  * the file-level comment for the full rationale).
  */
-export class RPCSandboxClient {
-  private readonly connOptions: ContainerConnectionOptions;
+export class ContainerControlClient {
+  private readonly connOptions: ContainerControlConnectionOptions;
   private readonly idleDisconnectMs: number;
   private readonly busyPollIntervalMs: number;
   private readonly logger: Logger;
@@ -379,7 +376,7 @@ export class RPCSandboxClient {
   private readonly onSessionBusy: (() => void) | undefined;
   private readonly onSessionIdle: (() => void) | undefined;
 
-  private conn: ContainerConnection | null = null;
+  private conn: ContainerControlConnection | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
@@ -392,7 +389,7 @@ export class RPCSandboxClient {
    */
   private wasEverConnected = false;
 
-  constructor(options: RPCSandboxClientOptions) {
+  constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
       stub: options.stub,
       port: options.port,
@@ -413,13 +410,12 @@ export class RPCSandboxClient {
   // -------------------------------------------------------------------------
 
   /**
-   * Return the current connection, creating a new one if none exists or the
-   * previous one was torn down by an idle disconnect. Starts the busy-poll
-   * timer the first time a connection is materialized.
+   * Return the current connection, creating one when the client is disconnected.
+   * Starts the busy-poll timer the first time a connection is materialized.
    */
-  private getConnection(): ContainerConnection {
+  private getConnection(): ContainerControlConnection {
     if (!this.conn) {
-      this.conn = new ContainerConnection(this.connOptions);
+      this.conn = new ContainerControlConnection(this.connOptions);
       this.startBusyPoll();
     }
     return this.conn;
@@ -559,8 +555,8 @@ export class RPCSandboxClient {
 
   // Each getter returns the corresponding nested RpcTarget stub
   // wrapped in a Proxy that translates RPC errors into SandboxError
-  // subclasses. Explicit return types prevent capnweb's recursive
-  // type machinery from expanding in .d.ts output (causes OOM).
+  // subclasses. Explicit return types keep capnweb's recursive
+  // type machinery out of .d.ts output.
 
   get commands(): SandboxCommandsAPI {
     return wrapStub(this.getConnection().rpc().commands, this.renewActivity);
@@ -597,7 +593,7 @@ export class RPCSandboxClient {
     // RPC transport does not use HTTP retry budgets
   }
 
-  getTransportMode(): TransportMode {
+  getTransportMode(): SandboxTransport {
     return 'rpc';
   }
 
@@ -629,11 +625,11 @@ export class RPCSandboxClient {
 
 /**
  * Extracts the public key set of a type. Used to verify that
- * RPCSandboxClient exposes the same top-level properties and methods
- * as SandboxClient without requiring deep structural compatibility
- * (sub-clients are capnweb stubs, not HTTP client class instances).
+ * ContainerControlClient exposes the same top-level properties and methods
+ * as SandboxClient with top-level key coverage. Sub-clients are capnweb stubs, not HTTP
+ * client class instances.
  */
 type PublicKeys<T> = { [K in keyof T]: unknown };
 
-// Compile-time check: RPCSandboxClient has every public key that SandboxClient has.
-void (0 as unknown as PublicKeys<RPCSandboxClient> satisfies PublicKeys<SandboxClient>);
+// Compile-time check: ContainerControlClient has every public key that SandboxClient has.
+void (0 as unknown as PublicKeys<ContainerControlClient> satisfies PublicKeys<SandboxClient>);

@@ -26,6 +26,7 @@ import type {
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
+  SandboxTransport,
   SessionOptions,
   StreamOptions,
   WaitForExitResult,
@@ -49,7 +50,7 @@ import {
 } from '@repo/shared/backup';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
-import { RPCSandboxClient } from './clients/rpc-sandbox-client';
+import { ContainerControlClient } from './container-control';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -113,7 +114,7 @@ type SandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: 'http' | 'websocket' | 'rpc';
+  transport?: SandboxTransport;
 };
 
 type CachedSandboxConfiguration = {
@@ -122,7 +123,7 @@ type CachedSandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: 'http' | 'websocket' | 'rpc';
+  transport?: SandboxTransport;
 };
 
 type ConfigurableSandboxStub = {
@@ -133,7 +134,7 @@ type ConfigurableSandboxStub = {
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
-  setTransport?: (transport: 'http' | 'websocket' | 'rpc') => Promise<void>;
+  setTransport?: (transport: SandboxTransport) => Promise<void>;
 };
 
 const sandboxConfigurationCache = new WeakMap<
@@ -441,7 +442,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: SandboxClient | RPCSandboxClient;
+  client: SandboxClient | ContainerControlClient;
 
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
@@ -460,7 +461,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
-  private transport: 'http' | 'websocket' | 'rpc' = 'http';
+  private transport: SandboxTransport = 'http';
 
   /**
    * True once transport has been written to storage at least once (either
@@ -597,7 +598,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Create a SandboxClient with current transport settings
+   * Create the route-based compatibility client with current HTTP/WebSocket
+   * transport settings.
    */
   private createSandboxClient(): SandboxClient {
     return new SandboxClient({
@@ -616,18 +618,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Create the appropriate client for a given transport protocol.
+   * Create the appropriate client for the configured control path.
+   *
+   * `rpc` currently selects the primary container-control client. `http` and
+   * `websocket` select the route-based compatibility client.
    */
   private createClientForTransport(
-    transport: 'http' | 'websocket' | 'rpc'
-  ): SandboxClient | RPCSandboxClient {
+    transport: SandboxTransport
+  ): SandboxClient | ContainerControlClient {
     if (transport === 'rpc') {
       // Access the base Container's private inflightRequests counter so
       // the alarm loop's isActivityExpired() check sees active work and
       // skips the sleepAfterMs comparison while RPC calls or returned
       // streams are still active over the capnweb session.
       const self = this as unknown as { inflightRequests: number };
-      return new RPCSandboxClient({
+      return new ContainerControlClient({
         stub: this,
         port: 3000,
         logger: this.logger,
@@ -638,11 +643,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // transport multiplexes all work over a single capnweb WebSocket,
         // so we can't bracket per-request — and a method that returns a
         // ReadableStream resolves its promise long before the stream is
-        // actually drained. Instead, RPCSandboxClient polls capnweb's
+        // actually drained. Instead, ContainerControlClient polls capnweb's
         // session stats and reports busy/idle *transitions* of the whole
         // session. We treat one transition as equivalent to one in-flight
         // request: increment on busy, decrement on idle. See the
-        // file-level comment in rpc-sandbox-client.ts for details.
+        // file-level comment in container-control/client.ts for details.
         onActivity: () => {
           // Called at the start of each RPC call AND on every busy-poll
           // tick while the session has work in flight. Equivalent to
@@ -761,9 +766,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Restore transport setting from storage (overrides env var default)
-      const storedTransport = await this.ctx.storage.get<
-        'http' | 'websocket' | 'rpc'
-      >('transport');
+      const storedTransport =
+        await this.ctx.storage.get<SandboxTransport>('transport');
       if (storedTransport && storedTransport !== this.transport) {
         this.transport = storedTransport;
         const previousClient = this.client;
@@ -966,7 +970,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * has been persisted: re-applying the same transport is a no-op.
    * Storage is written before the in-memory state and client are updated.
    */
-  async setTransport(transport: 'http' | 'websocket' | 'rpc'): Promise<void> {
+  async setTransport(transport: SandboxTransport): Promise<void> {
     if (
       transport !== 'http' &&
       transport !== 'websocket' &&
@@ -1821,7 +1825,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.defaultSessionInit = null;
 
-    // Disconnect capnweb transport so the WebSocket doesn't hold the DO alive
+    // Disconnect the active client so open sockets do not hold the DO alive.
     this.client.disconnect();
 
     // Stop local sync managers before clearing the map.

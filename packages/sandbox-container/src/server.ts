@@ -3,6 +3,7 @@ import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
+import { SandboxControlAPI } from './control-plane';
 import { Container } from './core/container';
 import { Router } from './core/router';
 import type { PtyWSData } from './handlers/pty-ws-handler';
@@ -16,7 +17,6 @@ import {
   newBunWebSocketRpcSession
 } from './lib/capnweb-bun';
 import { setupRoutes } from './routes/setup';
-import { SandboxAPI } from './rpc/sandbox-api';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -60,7 +60,7 @@ async function createApplication(): Promise<{
   ) => Promise<Response>;
   container: Container;
   wsAdapter: WebSocketAdapter;
-  rpcAPI: SandboxAPI;
+  controlPlaneAPI: SandboxControlAPI;
 }> {
   const container = new Container();
   await container.initialize();
@@ -72,8 +72,8 @@ async function createApplication(): Promise<{
   // Create WebSocket adapter with the router for control plane multiplexing
   const wsAdapter = new WebSocketAdapter(router, logger);
 
-  // Create native RPC API that calls services directly (bypasses HTTP routing)
-  const rpcAPI = new SandboxAPI({
+  // Create the control-plane API that calls services directly.
+  const controlPlaneAPI = new SandboxControlAPI({
     processService: container.get('processService'),
     fileService: container.get('fileService'),
     portService: container.get('portService'),
@@ -160,7 +160,7 @@ async function createApplication(): Promise<{
     },
     container,
     wsAdapter,
-    rpcAPI
+    controlPlaneAPI
   };
 }
 
@@ -200,7 +200,10 @@ export async function startServer(): Promise<ServerInstance> {
                 } catch {}
               });
           } else if (ws.data.type === 'capnweb') {
-            const { transport } = newBunWebSocketRpcSession(ws, app.rpcAPI);
+            const { transport } = newBunWebSocketRpcSession(
+              ws,
+              app.controlPlaneAPI
+            );
             ws.data.transport = transport;
             logger.debug('capnweb session initialized', {
               connectionId: ws.data.connectionId

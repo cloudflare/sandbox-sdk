@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaseApiResponse, HttpClientOptions } from '../src/clients';
 import { BaseHttpClient } from '../src/clients/base-client';
-import type { ITransport, TransportMode } from '../src/clients/transport';
+import type { ITransport, RouteTransportMode } from '../src/clients/transport';
 import type { ErrorResponse } from '../src/errors';
 import {
   CommandError,
@@ -44,7 +44,7 @@ class MockTransport implements ITransport {
   public isConnectedMock = vi.fn<() => boolean>();
   public setRetryTimeoutMsMock = vi.fn<(ms: number) => void>();
 
-  constructor(private mode: TransportMode = 'http') {
+  constructor(private mode: RouteTransportMode = 'http') {
     this.connectMock.mockResolvedValue(undefined);
     this.isConnectedMock.mockReturnValue(true);
   }
@@ -62,7 +62,7 @@ class MockTransport implements ITransport {
     return this.fetchStreamMock(path, body, method, headers);
   }
 
-  getMode(): TransportMode {
+  getMode(): RouteTransportMode {
     return this.mode;
   }
 

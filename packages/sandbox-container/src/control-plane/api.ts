@@ -23,7 +23,7 @@ import type {
   Logger,
   OutputMessage,
   Result,
-  SandboxAPI as SandboxAPIInterface,
+  SandboxAPI,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -92,13 +92,13 @@ function extractData<T>(result: ServiceResult<any, any>): T {
 }
 
 /**
- * Native RPC API exposed to capnweb clients.
+ * Container control-plane API exposed over capnweb.
  *
  * Each domain is exposed as a nested RpcTarget so the client can access
- * them directly as `rpc.commands`, `rpc.files`, etc. Top-level methods
- * handle utility and session management.
+ * them directly as `commands`, `files`, etc. Top-level methods handle
+ * utility and session management.
  */
-export class SandboxAPI extends RpcTarget implements SandboxAPIInterface {
+export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   #deps: SandboxAPIDeps;
 
   constructor(deps: SandboxAPIDeps) {

@@ -1,5 +1,5 @@
 import type { Logger } from '@repo/shared';
-import type { ITransport, TransportMode } from './transport';
+import type { ITransport, RouteTransportMode } from './transport';
 
 /**
  * Minimal interface for container fetch functionality
@@ -36,11 +36,10 @@ export interface HttpClientOptions {
   onError?: (error: string, command?: string) => void;
 
   /**
-   * Transport mode: 'http' (default) or 'websocket'
-   * WebSocket mode multiplexes all requests over a single connection,
-   * reducing sub-request count in Workers/Durable Objects.
+   * Route-based transport mode: 'http' (default) or 'websocket'.
+   * WebSocket mode multiplexes HTTP API requests over a single connection.
    */
-  transportMode?: TransportMode;
+  transportMode?: RouteTransportMode;
 
   /**
    * WebSocket URL for WebSocket transport mode.

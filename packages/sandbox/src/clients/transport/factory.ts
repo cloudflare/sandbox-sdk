@@ -1,20 +1,20 @@
 import { HttpTransport } from './http-transport';
-import type { ITransport, TransportConfig, TransportMode } from './types';
+import type { ITransport, RouteTransportMode, TransportConfig } from './types';
 import { WebSocketTransport } from './ws-transport';
 
 /**
  * Transport options with mode selection
  */
 export interface TransportOptions extends TransportConfig {
-  /** Transport mode */
-  mode: TransportMode;
+  /** Route-based transport mode */
+  mode: RouteTransportMode;
 }
 
 /**
- * Create a transport instance based on mode
+ * Create a route-based compatibility transport instance based on mode.
  *
- * This is the primary API for creating transports. It handles
- * the selection of HTTP or WebSocket transport based on the mode.
+ * Selects the HTTP or custom WebSocket transport for the route-based client
+ * layer.
  *
  * @example
  * ```typescript
@@ -33,10 +33,9 @@ export interface TransportOptions extends TransportConfig {
  */
 export function createTransport(options: TransportOptions): ITransport {
   switch (options.mode) {
+    case 'http':
+      return new HttpTransport(options);
     case 'websocket':
       return new WebSocketTransport(options);
-
-    default:
-      return new HttpTransport(options);
   }
 }

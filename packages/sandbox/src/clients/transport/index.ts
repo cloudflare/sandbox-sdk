@@ -5,6 +5,7 @@
 export type { TransportOptions } from './factory';
 export type {
   ITransport,
+  RouteTransportMode,
   TransportConfig,
   TransportMode,
   TransportRequestInit
