@@ -215,7 +215,6 @@ export interface SandboxUtilsAPI {
     id: string;
     env?: Record<string, string | undefined>;
     cwd?: string;
-    commandTimeoutMs?: number;
   }): Promise<{
     success: boolean;
     id: string;

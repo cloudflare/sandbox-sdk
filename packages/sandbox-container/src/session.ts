@@ -1138,6 +1138,8 @@ export class Session {
         .join('\n');
     };
 
+    // Background and isolated foreground commands run in a subshell, so
+    // scoped exports die with that subshell and do not need explicit cleanup.
     const { setup: envSetupBlock, cleanup: envCleanupBlock } =
       this.buildScopedEnvBlocks(env, cmdId, {
         restore: !isBackground && preserveShellState
@@ -1312,23 +1314,16 @@ export class Session {
       // ISOLATED FOREGROUND PATTERN (for one-shot exec)
       // Command runs in a subshell so exit/exec/errexit cannot kill the
       // persistent session shell.
+      script += `  (\n`;
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
-        script += `  (\n`;
         script += `    cd ${safeCwd} || { printf '%s\\n' "Failed to change directory to ${safeCwd}" >&2; exit 1; }\n`;
-        script += `    {\n`;
-        script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
-        script += `    }\n`;
-        script += `    exit "$EXIT_CODE"\n`;
-        script += `  ) < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
-      } else {
-        script += `  (\n`;
-        script += `    {\n`;
-        script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
-        script += `    }\n`;
-        script += `    exit "$EXIT_CODE"\n`;
-        script += `  ) < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
       }
+      script += `    {\n`;
+      script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
+      script += `    }\n`;
+      script += `    exit "$EXIT_CODE"\n`;
+      script += `  ) < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
 
       script += `  EXIT_CODE=$?\n`;
       appendForegroundCompletion();

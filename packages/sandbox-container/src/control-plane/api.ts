@@ -960,7 +960,6 @@ class UtilsRPCAPI extends RpcTarget {
     id: string;
     env?: Record<string, string | undefined>;
     cwd?: string;
-    commandTimeoutMs?: number;
   }) {
     const result = await this.#mgr.createSession(options);
     if (

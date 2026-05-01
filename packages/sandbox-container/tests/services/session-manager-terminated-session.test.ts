@@ -184,6 +184,34 @@ describe('SessionManager terminated-session semantics', () => {
     }
   });
 
+  it('isolated exec mode applies scoped env vars without leaking them', async () => {
+    const sessionId = 'isolated-env';
+
+    const result = await sessionManager.executeInSession(
+      sessionId,
+      'echo "scoped=[$SCOPED_MARKER]"',
+      {
+        cwd: testDir,
+        env: { SCOPED_MARKER: 'isolated' },
+        preserveShellState: false
+      }
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.stdout).toContain('scoped=[isolated]');
+    }
+
+    const after = await sessionManager.executeInSession(
+      sessionId,
+      'echo "scoped=[$SCOPED_MARKER]"',
+      { cwd: testDir }
+    );
+    expect(after.success).toBe(true);
+    if (after.success) {
+      expect(after.data.stdout).toContain('scoped=[]');
+    }
+  });
+
   it('does not leak state across a dead-then-recreated session', async () => {
     const sessionId = 'dead-state-loss';
 

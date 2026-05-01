@@ -1,6 +1,10 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PortNotExposedError } from '../src/errors';
+import {
+  ErrorCode,
+  PortNotExposedError,
+  ValidationFailedError
+} from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -231,13 +235,17 @@ describe('Sandbox - Automatic Session Management', () => {
         'executeStream'
       );
 
-      await expect(
-        sandbox.exec('echo streamed', {
-          stream: true,
-          preserveShellState: true,
-          onOutput: vi.fn()
-        })
-      ).rejects.toThrow('preserveShellState: true is not supported');
+      const result = sandbox.exec('echo streamed', {
+        stream: true,
+        preserveShellState: true,
+        onOutput: vi.fn()
+      });
+
+      await expect(result).rejects.toMatchObject({
+        code: ErrorCode.VALIDATION_FAILED,
+        name: 'ValidationFailedError'
+      });
+      await expect(result).rejects.toBeInstanceOf(ValidationFailedError);
 
       expect(executeStreamSpy).not.toHaveBeenCalled();
     });

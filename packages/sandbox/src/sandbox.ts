@@ -63,7 +63,8 @@ import {
   PortNotExposedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
-  SessionAlreadyExistsError
+  SessionAlreadyExistsError,
+  ValidationFailedError
 } from './errors';
 import { collectFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
@@ -2468,9 +2469,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     try {
       if (options.preserveShellState === true) {
-        throw new Error(
-          'preserveShellState: true is not supported with streaming exec. Use session.exec() without stream for persistent shell state.'
-        );
+        throw new ValidationFailedError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message:
+            'preserveShellState: true is not supported with streaming exec. Use session.exec() without stream for persistent shell state.',
+          context: {
+            validationErrors: [
+              {
+                field: 'preserveShellState',
+                message:
+                  'preserveShellState: true is not supported with streaming exec',
+                code: 'unsupported_with_streaming'
+              }
+            ]
+          },
+          httpStatus: 400,
+          timestamp
+        });
       }
 
       const stream = await this.client.commands.executeStream(
