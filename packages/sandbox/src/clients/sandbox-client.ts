@@ -10,20 +10,20 @@ import { ProcessClient } from './process-client';
 import {
   createTransport,
   type ITransport,
-  type TransportMode
+  type RouteTransportMode
 } from './transport';
 import type { HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
 import { WatchClient } from './watch-client';
 
 /**
- * Main sandbox client that composes all domain-specific clients.
- * Provides organized access to all sandbox functionality.
+ * Route-based compatibility sandbox client that composes all domain-specific
+ * HTTP API clients.
  *
- * Supports two transport modes:
- * - HTTP (default): Each request is a separate HTTP call
- * - WebSocket: All requests multiplexed over a single connection,
- *   reducing sub-request count inside Workers/Durable Objects
+ * This client supports the route-based HTTP and custom WebSocket transports.
+ * The primary DO-to-container control path is ContainerControlClient under
+ * `container-control/`. This client supports route-based compatibility,
+ * debugging, local development, and fallback behavior.
  */
 export class SandboxClient {
   public readonly backup: BackupClient;
@@ -103,7 +103,7 @@ export class SandboxClient {
   /**
    * Get the current transport mode
    */
-  getTransportMode(): TransportMode {
+  getTransportMode(): RouteTransportMode {
     return this.transport?.getMode() ?? 'http';
   }
 
@@ -117,9 +117,9 @@ export class SandboxClient {
   /**
    * Stream a file directly to the container over a binary RPC channel.
    *
-   * Requires the capnweb transport (`useWebSocket: 'rpc'`). Calling this
-   * method with the HTTP or WebSocket transports throws an error because those
-   * transports do not support binary streaming.
+   * Requires the container-control path (`transport: 'rpc'`). Calling this
+   * method with the HTTP or WebSocket route transports throws an error because
+   * those transports do not support binary streaming.
    */
   writeFileStream(
     _path: string,
@@ -159,7 +159,7 @@ export class SandboxClient {
 }
 
 // Compile-time check: SandboxClient exposes every top-level field that SandboxAPI requires.
-// Deep structural compatibility is not enforced because the HTTP sub-clients
-// (e.g. FileClient) lack streaming methods only available via capnweb.
+// Checks top-level API coverage. The HTTP sub-clients and RPC stubs
+// intentionally have different concrete method shapes.
 type PublicKeys<T> = { [K in keyof T]: unknown };
 void (0 as unknown as PublicKeys<SandboxClient> satisfies PublicKeys<SandboxAPI>);

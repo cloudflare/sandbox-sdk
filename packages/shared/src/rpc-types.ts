@@ -1,9 +1,8 @@
 /**
- * Shared RPC interface types for the capnweb transport layer.
+ * Shared interface types for the container-control path.
  *
- * Defines the contract between the SDK client (ContainerConnection) and the
- * container server (SandboxAPI). Both sides must implement or satisfy
- * these interfaces to ensure type-safe communication.
+ * Defines the contract between the SDK control client and the container
+ * control-plane API. The current wire implementation uses capnweb RPC.
  */
 
 import type {

@@ -2,9 +2,12 @@ import type { Logger } from '@repo/shared';
 import type { ContainerStub } from '../types';
 
 /**
- * Transport mode for SDK communication
+ * Transport modes supported by the route-based compatibility layer.
  */
-export type TransportMode = 'http' | 'websocket' | 'rpc';
+export type RouteTransportMode = 'http' | 'websocket';
+
+/** Alias for the transport package API. */
+export type TransportMode = RouteTransportMode;
 
 /**
  * Configuration options for creating a transport
@@ -52,10 +55,11 @@ export interface TransportRequestInit extends RequestInit {
 }
 
 /**
- * Transport interface - all transports must implement this
+ * Route transport interface.
  *
- * Provides a unified abstraction over HTTP and WebSocket communication.
- * Both transports support fetch-compatible requests and streaming.
+ * Provides a unified abstraction over the route-based HTTP and custom
+ * WebSocket compatibility paths. Both transports support fetch-compatible
+ * requests and streaming.
  */
 export interface ITransport {
   /**
@@ -78,7 +82,7 @@ export interface ITransport {
   /**
    * Get the transport mode
    */
-  getMode(): TransportMode;
+  getMode(): RouteTransportMode;
 
   /**
    * Connect the transport (no-op for HTTP)

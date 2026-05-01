@@ -195,6 +195,7 @@ export type {
   RestoreBackupResult,
   // Sandbox configuration options
   SandboxOptions,
+  SandboxTransport,
   // Session management result types
   SessionCreateResult,
   SessionDeleteResult,

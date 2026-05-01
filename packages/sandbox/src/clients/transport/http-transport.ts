@@ -1,5 +1,5 @@
 import { BaseTransport } from './base-transport';
-import type { TransportMode, TransportRequestInit } from './types';
+import type { RouteTransportMode, TransportRequestInit } from './types';
 
 /**
  * HTTP transport implementation
@@ -12,7 +12,7 @@ import type { TransportMode, TransportRequestInit } from './types';
  * the abstract `doFetch` / `fetchStream` hooks to those shared helpers.
  */
 export class HttpTransport extends BaseTransport {
-  getMode(): TransportMode {
+  getMode(): RouteTransportMode {
     return 'http';
   }
 

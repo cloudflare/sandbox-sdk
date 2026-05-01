@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * after the call promise has resolved) keeps `onActivity` firing past
  * `sleepAfter` and only fires `onSessionIdle` once stats return to baseline.
  *
- * We mock ContainerConnection so we can drive `getStats()` directly. The
+ * We mock ContainerControlConnection so we can drive `getStats()` directly. The
  * test never actually opens a WebSocket.
  */
 
@@ -14,8 +14,8 @@ let stats = { imports: 1, exports: 1 };
 let connected = true;
 const disconnects: number[] = [];
 
-vi.mock('../src/container-connection', () => ({
-  ContainerConnection: class {
+vi.mock('../src/container-control/connection', () => ({
+  ContainerControlConnection: class {
     isConnected() {
       return connected;
     }
@@ -35,9 +35,12 @@ vi.mock('../src/container-connection', () => ({
   }
 }));
 
-import { RPCSandboxClient } from '../src/clients/rpc-sandbox-client';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
 
-describe('RPCSandboxClient busy/idle tracking', () => {
+describe('ContainerControlClient busy/idle tracking', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     stats = { imports: 1, exports: 1 };
@@ -54,7 +57,7 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
 
-    const client = new RPCSandboxClient({
+    const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       onActivity,
       onSessionBusy,
@@ -102,7 +105,7 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
 
-    const client = new RPCSandboxClient({
+    const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       onSessionBusy,
       onSessionIdle,
@@ -126,7 +129,7 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
 
-    const client = new RPCSandboxClient({
+    const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       onSessionBusy,
       onSessionIdle,
@@ -165,7 +168,7 @@ describe('RPCSandboxClient busy/idle tracking', () => {
     connected = false;
 
     const onSessionIdle = vi.fn();
-    const client = new RPCSandboxClient({
+    const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       onSessionIdle,
       busyPollIntervalMs: 1_000,
@@ -195,8 +198,7 @@ describe('RPCSandboxClient busy/idle tracking', () => {
 
 describe('translateRPCError', () => {
   async function loadFn() {
-    const mod = await import('../src/clients/rpc-sandbox-client');
-    return mod.translateRPCError;
+    return translateRPCError;
   }
 
   async function loadErr() {

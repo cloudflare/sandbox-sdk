@@ -2,8 +2,8 @@ import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type {
   ITransport,
+  RouteTransportMode,
   TransportConfig,
-  TransportMode,
   TransportRequestInit
 } from './types';
 
@@ -30,7 +30,7 @@ export abstract class BaseTransport implements ITransport {
     this.retryTimeoutMs = config.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
   }
 
-  abstract getMode(): TransportMode;
+  abstract getMode(): RouteTransportMode;
   abstract connect(): Promise<void>;
   abstract disconnect(): void;
   abstract isConnected(): boolean;
