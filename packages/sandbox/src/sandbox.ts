@@ -1334,12 +1334,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (passwordFilePath) {
         await this.deletePasswordFile(passwordFilePath);
       }
+      // Tear down any mount that may have established between the script's
+      // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
+      // runs as a daemon, so the FUSE mount can flip live in that window;
+      // without this, the throw would leave an orphaned mount with no
+      // `activeMounts` entry to clean up later.
+      try {
+        await this.execInternal(
+          `mountpoint -q ${shellEscape(mountPath)} && fusermount -u ${shellEscape(mountPath)}`
+        );
+      } catch {
+        // best-effort cleanup
+      }
 
-      // Remove the mount directory only if the SDK created it
+      // Remove the mount directory only if the SDK created it. Runs after
+      // the unmount above so a late-arriving mount doesn't keep the dir busy.
       if (!dirExisted) {
         try {
           await this.execInternal(
-            `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)} 2>/dev/null`
+            `rmdir ${shellEscape(mountPath)} 2>/dev/null`
           );
         } catch {
           // best-effort cleanup
@@ -1566,6 +1579,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // exited (i.e. until unmount), hanging the script for the lifetime
     // of the mount.
     //
+    // The whole script runs inside a `( ... )` subshell. execInternal and
+    // execWithSession dispatch into a long-lived bash session shell; a bare
+    // top-level `exit N` would terminate that session and surface as
+    // SESSION_TERMINATED to every subsequent caller. The subshell scopes the
+    // exits so only the subshell exits, and its status becomes the command's
+    // exit code as the caller expects.
+    //
     // Exit codes consumed by the caller:
     //   0 — mount established
     //   2 — s3fs parent failed; stdout carries the s3fs log tail
@@ -1574,7 +1594,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // 60 iterations x 100ms = 6s budget for the SigV4 bucket check, which
     // is comfortable under CI load while still cheap on success (the loop
     // exits on the first iteration once the FUSE filesystem is live).
-    const script = sh`
+    const script = sh`(
       s3fs ${bucket} ${mountPath} -o ${optionsStr} >${logFile} 2>&1
       rc=$?
       if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
@@ -1584,7 +1604,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       done
       tail -n 20 ${logFile} 2>/dev/null || true
       exit 3
-    `;
+    )`;
 
     const exec = sessionId
       ? (cmd: string) =>

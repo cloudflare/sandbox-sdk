@@ -2554,5 +2554,49 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(err!.message).toMatch(/403 AccessDenied/);
       expect((sandbox as any).activeMounts.has('/mnt/data2')).toBe(false);
     });
+
+    it('unmounts a late-arriving FUSE mount when the script reports timeout', async () => {
+      // Race: the script polls 60x for `mountpoint -q` and exits 3 when none
+      // succeed, but s3fs is daemonised and can complete the mount between
+      // the last poll and our cleanup. The failure path must unmount that
+      // mount instead of leaking it.
+      const issuedCommands: string[] = [];
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          issuedCommands.push(command);
+          const base = {
+            success: true,
+            command,
+            timestamp: new Date().toISOString()
+          };
+          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
+            return {
+              ...base,
+              exitCode: 3,
+              stdout: 'mount took too long',
+              stderr: ''
+            } as any;
+          }
+          return { ...base, exitCode: 0, stdout: '', stderr: '' } as any;
+        }
+      );
+
+      const err = await sandbox
+        .mountBucket('my-bucket', '/mnt/late', mountOptions)
+        .catch((e: Error) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((sandbox as any).activeMounts.has('/mnt/late')).toBe(false);
+      // The cleanup path must issue an unmount conditional on `mountpoint -q`,
+      // so a late-arriving FUSE mount is torn down before we drop the entry.
+      expect(
+        issuedCommands.some(
+          (c) =>
+            c.includes('mountpoint -q') &&
+            c.includes('fusermount -u') &&
+            c.includes('/mnt/late')
+        )
+      ).toBe(true);
+    });
   });
 });
