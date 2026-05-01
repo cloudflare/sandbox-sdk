@@ -56,6 +56,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           timeoutMs: body.timeoutMs,
           env: body.env,
           cwd: body.cwd,
+          preserveShellState: body.preserveShellState,
           origin: body.origin
         }
       );
@@ -83,6 +84,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
+      preserveShellState: body.preserveShellState,
       origin: body.origin
     });
 
@@ -113,6 +115,17 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // Parse request body directly
     const body = await this.parseRequestBody<ExecuteRequest>(request);
     const sessionId = body.sessionId || context.sessionId;
+
+    if (body.preserveShellState === true) {
+      return this.createErrorResponse(
+        {
+          message:
+            'preserveShellState: true is not supported with streaming exec',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
 
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {

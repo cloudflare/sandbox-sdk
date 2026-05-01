@@ -2349,7 +2349,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async execInternal(command: string): Promise<ExecResult> {
     const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, { origin: 'internal' });
+    return this.execWithSession(command, session, {
+      origin: 'internal',
+      preserveShellState: false
+    });
   }
 
   /**
@@ -2392,11 +2395,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           (options.timeout !== undefined ||
             options.env !== undefined ||
             options.cwd !== undefined ||
+            options.preserveShellState !== undefined ||
             options.origin !== undefined)
             ? {
                 timeoutMs: options.timeout,
                 env: options.env,
                 cwd: options.cwd,
+                preserveShellState: options.preserveShellState,
                 origin: options.origin
               }
             : undefined;
@@ -2458,6 +2463,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
+      if (options.preserveShellState === true) {
+        throw new Error(
+          'preserveShellState: true is not supported with streaming exec. Use session.exec() without stream for persistent shell state.'
+        );
+      }
+
       const stream = await this.client.commands.executeStream(
         command,
         sessionId,

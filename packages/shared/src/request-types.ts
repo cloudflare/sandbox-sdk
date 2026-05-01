@@ -13,6 +13,7 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  preserveShellState?: boolean;
   origin?: 'user' | 'internal';
 }
 

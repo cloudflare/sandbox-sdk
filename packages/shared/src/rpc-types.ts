@@ -76,6 +76,7 @@ export interface SandboxCommandsAPI {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      preserveShellState?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -215,6 +216,7 @@ export interface SandboxUtilsAPI {
     id: string;
     env?: Record<string, string | undefined>;
     cwd?: string;
+    commandTimeoutMs?: number;
   }): Promise<{
     success: boolean;
     id: string;

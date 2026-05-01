@@ -277,6 +277,7 @@ export interface ProcessOptions {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  preserveShellState?: boolean;
   encoding?: string;
   autoCleanup?: boolean;
   origin?: 'user' | 'internal';

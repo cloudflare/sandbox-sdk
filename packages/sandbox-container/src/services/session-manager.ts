@@ -33,6 +33,7 @@ export interface ExecuteInSessionOptions {
   cwd?: string;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  preserveShellState?: boolean;
   origin?: 'user' | 'internal';
 }
 
@@ -460,7 +461,7 @@ export class SessionManager {
     command: string,
     options?: ExecuteInSessionOptions
   ): Promise<ServiceResult<RawExecResult>> {
-    const { cwd, timeoutMs, env, origin } = options ?? {};
+    const { cwd, timeoutMs, env, preserveShellState, origin } = options ?? {};
     const lock = this.getSessionLock(sessionId);
 
     return lock.runExclusive(async () => {
@@ -479,8 +480,12 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs !== undefined || origin !== undefined
-            ? { cwd, env, timeoutMs, origin }
+          cwd ||
+            env ||
+            timeoutMs !== undefined ||
+            preserveShellState !== undefined ||
+            origin !== undefined
+            ? { cwd, env, timeoutMs, preserveShellState, origin }
             : undefined
         );
 

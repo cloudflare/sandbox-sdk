@@ -87,6 +87,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      preserveShellState?: boolean;
       origin?: 'user' | 'internal';
     }
   ): Promise<ReadableStream<Uint8Array>> {
@@ -99,6 +100,9 @@ export class CommandClient extends BaseHttpClient {
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.preserveShellState !== undefined && {
+          preserveShellState: options.preserveShellState
+        }),
         ...(options?.origin !== undefined && { origin: options.origin })
       };
 

@@ -290,6 +290,58 @@ describe('Session State Isolation Workflow', () => {
     expect(newPwd2Data.stdout.trim()).toBe('/workspace/test/unit');
   }, 90000);
 
+  test('exec can opt out of shell-state persistence, while sessions still persist it', async () => {
+    const topLevelCwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId!),
+      body: JSON.stringify({
+        command: 'cd /tmp',
+        preserveShellState: false
+      })
+    });
+    expect(topLevelCwdResponse.status).toBe(200);
+    const topLevelCwdData = (await topLevelCwdResponse.json()) as ExecResult;
+    expect(topLevelCwdData.success).toBe(true);
+
+    const topLevelPwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId!),
+      body: JSON.stringify({ command: 'pwd' })
+    });
+    expect(topLevelPwdResponse.status).toBe(200);
+    const topLevelPwdData = (await topLevelPwdResponse.json()) as ExecResult;
+    expect(topLevelPwdData.success).toBe(true);
+    expect(topLevelPwdData.stdout.trim()).not.toBe('/tmp');
+
+    const sessionResponse = await fetch(`${workerUrl}/api/session/create`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId!),
+      body: JSON.stringify({})
+    });
+    expect(sessionResponse.status).toBe(200);
+    const sessionData = (await sessionResponse.json()) as SessionCreateResult;
+    const sessionId = sessionData.sessionId;
+
+    const sessionCwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId, sessionId),
+      body: JSON.stringify({ command: 'cd /tmp' })
+    });
+    expect(sessionCwdResponse.status).toBe(200);
+    const sessionCwdData = (await sessionCwdResponse.json()) as ExecResult;
+    expect(sessionCwdData.success).toBe(true);
+
+    const sessionPwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId, sessionId),
+      body: JSON.stringify({ command: 'pwd' })
+    });
+    expect(sessionPwdResponse.status).toBe(200);
+    const sessionPwdData = (await sessionPwdResponse.json()) as ExecResult;
+    expect(sessionPwdData.success).toBe(true);
+    expect(sessionPwdData.stdout.trim()).toBe('/tmp');
+  }, 90000);
+
   test('should isolate shell state (functions and aliases) between sessions', async () => {
     // Create two sessions
     const session1Response = await fetch(`${workerUrl}/api/session/create`, {

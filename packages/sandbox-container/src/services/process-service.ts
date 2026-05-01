@@ -61,7 +61,8 @@ export class ProcessService {
           cwd: options.cwd,
           timeoutMs: options.timeoutMs,
           env: options.env,
-          origin: options.origin
+          origin: options.origin,
+          preserveShellState: options.preserveShellState
         }
       );
 

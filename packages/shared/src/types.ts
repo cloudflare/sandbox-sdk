@@ -43,6 +43,13 @@ export interface BaseExecOptions {
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
   /**
+   * Preserve shell state changes such as `cd`, `export`, and shell functions.
+   * Defaults to true. Set false for one-shot scripts that may use `exit`,
+   * `exec`, or `set -e` without terminating the persistent session shell.
+   */
+  preserveShellState?: boolean;
+
+  /**
    * Enable real-time output streaming via callbacks
    */
   stream?: boolean;

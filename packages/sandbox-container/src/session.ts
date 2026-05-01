@@ -190,6 +190,8 @@ interface ExecOptions {
   cwd?: string;
   /** Environment variables for this command only (does not persist in session). Undefined values are skipped. */
   env?: Record<string, string | undefined>;
+  /** Whether command shell-state changes should persist in this session. */
+  preserveShellState?: boolean;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
   /** Whether this command was initiated by the user or internally by the SDK */
@@ -373,6 +375,7 @@ export class Session {
         sessionDir,
         options?.cwd,
         false,
+        options?.preserveShellState ?? true,
         options?.env
       );
 
@@ -498,6 +501,7 @@ export class Session {
         exitCodeFile,
         sessionDir,
         options?.cwd,
+        true,
         true,
         options?.env,
         pidPipe
@@ -1106,6 +1110,7 @@ export class Session {
     sessionDir: string,
     cwd?: string,
     isBackground = false,
+    preserveShellState = true,
     env?: Record<string, string | undefined>,
     pidPipe?: string
   ): string {
@@ -1134,7 +1139,9 @@ export class Session {
     };
 
     const { setup: envSetupBlock, cleanup: envCleanupBlock } =
-      this.buildScopedEnvBlocks(env, cmdId, { restore: !isBackground });
+      this.buildScopedEnvBlocks(env, cmdId, {
+        restore: !isBackground && preserveShellState
+      });
 
     const hasScopedEnv = envSetupBlock.length > 0;
 
@@ -1170,6 +1177,18 @@ export class Session {
   ep=${safeStderrPipe}
 
 `;
+
+    const appendForegroundCompletion = (): void => {
+      script += `  \n`;
+      script += `  # Prefix and merge stdout/stderr into main log\n`;
+      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done < "$log.stdout" >> "$log") 2>/dev/null\n`;
+      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done < "$log.stderr" >> "$log") 2>/dev/null\n`;
+      script += `  rm -f "$log.stdout" "$log.stderr"\n`;
+      script += `  \n`;
+      script += `  # Write exit code\n`;
+      script += `  echo "$EXIT_CODE" > ${safeExitCodeFile}.tmp\n`;
+      script += `  mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
+    };
 
     // Setup trap only for foreground pattern
     if (!isBackground) {
@@ -1258,7 +1277,7 @@ export class Session {
         script += `    touch ${safeLabelersDoneFile}\n`;
         script += `  ) &\n`;
       }
-    } else {
+    } else if (preserveShellState) {
       // FOREGROUND PATTERN (for exec)
       // Command runs in main shell, state persists!
 
@@ -1288,15 +1307,31 @@ export class Session {
         script += `  } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
       }
 
-      script += `  \n`;
-      script += `  # Prefix and merge stdout/stderr into main log\n`;
-      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done < "$log.stdout" >> "$log") 2>/dev/null\n`;
-      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done < "$log.stderr" >> "$log") 2>/dev/null\n`;
-      script += `  rm -f "$log.stdout" "$log.stderr"\n`;
-      script += `  \n`;
-      script += `  # Write exit code\n`;
-      script += `  echo "$EXIT_CODE" > ${safeExitCodeFile}.tmp\n`;
-      script += `  mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
+      appendForegroundCompletion();
+    } else {
+      // ISOLATED FOREGROUND PATTERN (for one-shot exec)
+      // Command runs in a subshell so exit/exec/errexit cannot kill the
+      // persistent session shell.
+      if (cwd) {
+        const safeCwd = this.escapeShellPath(cwd);
+        script += `  (\n`;
+        script += `    cd ${safeCwd} || { printf '%s\\n' "Failed to change directory to ${safeCwd}" >&2; exit 1; }\n`;
+        script += `    {\n`;
+        script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
+        script += `    }\n`;
+        script += `    exit "$EXIT_CODE"\n`;
+        script += `  ) < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+      } else {
+        script += `  (\n`;
+        script += `    {\n`;
+        script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
+        script += `    }\n`;
+        script += `    exit "$EXIT_CODE"\n`;
+        script += `  ) < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+      }
+
+      script += `  EXIT_CODE=$?\n`;
+      appendForegroundCompletion();
     }
 
     // Cleanup (only for foreground - background monitor handles it)

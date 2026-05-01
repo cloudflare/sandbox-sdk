@@ -213,6 +213,35 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('should allow top-level exec to opt out of preserving shell state', async () => {
+      await sandbox.exec('git add . && git commit -m test && git push', {
+        preserveShellState: false
+      });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'git add . && git commit -m test && git push',
+        expect.stringMatching(/^sandbox-/),
+        { preserveShellState: false }
+      );
+    });
+
+    it('should reject persistent shell state for streaming exec', async () => {
+      const executeStreamSpy = vi.spyOn(
+        sandbox.client.commands,
+        'executeStream'
+      );
+
+      await expect(
+        sandbox.exec('echo streamed', {
+          stream: true,
+          preserveShellState: true,
+          onOutput: vi.fn()
+        })
+      ).rejects.toThrow('preserveShellState: true is not supported');
+
+      expect(executeStreamSpy).not.toHaveBeenCalled();
+    });
+
     it('should forward checkChanges options to the watch client', async () => {
       await sandbox.checkChanges('/workspace/test', {
         since: 'watch-1:0',

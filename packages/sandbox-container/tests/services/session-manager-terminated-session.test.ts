@@ -94,6 +94,96 @@ describe('SessionManager terminated-session semantics', () => {
     }
   });
 
+  it('repeated top-level exit kills each fresh persistent shell', async () => {
+    const sessionId = 'exit-retry';
+
+    for (let i = 0; i < 3; i++) {
+      const result = await sessionManager.executeInSession(
+        sessionId,
+        'if true; then exit 0; fi',
+        { cwd: testDir }
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.SESSION_TERMINATED);
+      }
+    }
+  });
+
+  it('isolated exec mode prevents exit from terminating the session shell', async () => {
+    const sessionId = 'isolated-exit';
+
+    const result = await sessionManager.executeInSession(
+      sessionId,
+      'if true; then exit 0; fi',
+      { cwd: testDir, preserveShellState: false }
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.exitCode).toBe(0);
+    }
+
+    const alive = await sessionManager.executeInSession(
+      sessionId,
+      'echo alive',
+      { cwd: testDir }
+    );
+    expect(alive.success).toBe(true);
+    if (alive.success) {
+      expect(alive.data.stdout).toContain('alive');
+    }
+  });
+
+  it('isolated exec mode prevents exec from replacing the session shell', async () => {
+    const sessionId = 'isolated-exec';
+
+    const result = await sessionManager.executeInSession(
+      sessionId,
+      'exec printf exec-ok',
+      { cwd: testDir, preserveShellState: false }
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.exitCode).toBe(0);
+      expect(result.data.stdout).toContain('exec-ok');
+    }
+
+    const alive = await sessionManager.executeInSession(
+      sessionId,
+      'echo alive',
+      { cwd: testDir }
+    );
+    expect(alive.success).toBe(true);
+    if (alive.success) {
+      expect(alive.data.stdout).toContain('alive');
+    }
+  });
+
+  it('isolated exec mode turns errexit into a command result', async () => {
+    const sessionId = 'isolated-errexit';
+
+    const result = await sessionManager.executeInSession(
+      sessionId,
+      'set -e; false',
+      { cwd: testDir, preserveShellState: false }
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.exitCode).toBe(1);
+    }
+
+    const alive = await sessionManager.executeInSession(
+      sessionId,
+      'echo alive',
+      { cwd: testDir }
+    );
+    expect(alive.success).toBe(true);
+    if (alive.success) {
+      expect(alive.data.stdout).toContain('alive');
+    }
+  });
+
   it('does not leak state across a dead-then-recreated session', async () => {
     const sessionId = 'dead-state-loss';
 

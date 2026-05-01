@@ -158,6 +158,7 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      preserveShellState?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -171,7 +172,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      preserveShellState: options?.preserveShellState
     });
     const data = extractData<CommandResult>(result);
     return {
@@ -958,6 +960,7 @@ class UtilsRPCAPI extends RpcTarget {
     id: string;
     env?: Record<string, string | undefined>;
     cwd?: string;
+    commandTimeoutMs?: number;
   }) {
     const result = await this.#mgr.createSession(options);
     if (
