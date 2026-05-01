@@ -11,6 +11,8 @@ import type { SessionManager } from './session-manager';
 
 export const BACKUP_WORK_DIR = '/var/backups';
 const BACKUP_MOUNTS_DIR = '/var/backups/mounts';
+const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
+type BackupCompression = (typeof BACKUP_ALLOWED_COMPRESSIONS)[number];
 
 /**
  * Absolute paths for squashfs/FUSE binaries.
@@ -61,6 +63,10 @@ function validateBackupPaths(dir: string, archivePath: string): string | null {
   return null;
 }
 
+function isBackupCompression(value: string): value is BackupCompression {
+  return BACKUP_ALLOWED_COMPRESSIONS.includes(value as BackupCompression);
+}
+
 interface CreateArchiveResult {
   sizeBytes: number;
   archivePath: string;
@@ -101,7 +107,7 @@ export class BackupService {
     sessionId = 'default',
     gitignore = false,
     excludes: string[] = [],
-    compression: 'gzip' | 'lz4' | 'zstd' = 'lz4',
+    compression: string = 'lz4',
     compressThreads = 8
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
@@ -122,6 +128,14 @@ export class BackupService {
           message: pathError,
           code: ErrorCode.INVALID_BACKUP_CONFIG,
           details: { dir, archivePath }
+        });
+      }
+      if (!isBackupCompression(compression)) {
+        errorMessage = 'Invalid compression algorithm';
+        return serviceError({
+          message: `Invalid compression algorithm: ${compression}. Expected one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          details: { compression }
         });
       }
       // Ensure the work directory exists
@@ -451,7 +465,7 @@ export class BackupService {
         '--data-binary @-',
         shellEscape(part.url)
       ].join(' ');
-      return `${ddCmd} | ${curlCmd} & J${i}=$!`;
+      return `(set -o pipefail; ${ddCmd} | ${curlCmd}) & J${i}=$!`;
     });
 
     const waitLines = parts.map((_, i) => `wait $J${i}; E${i}=$?`);

@@ -15,6 +15,7 @@ import { BACKUP_WORK_DIR } from '../services/backup-service';
 import { BaseHandler } from './base-handler';
 
 type CreateBackupRequestBody = CreateBackupRequest;
+const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
 
 export class BackupHandler extends BaseHandler<Request, Response> {
   constructor(
@@ -92,6 +93,84 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     return undefined;
   }
 
+  private static validateCompression(compression: unknown): string | undefined {
+    if (compression === undefined) {
+      return undefined;
+    }
+    if (
+      typeof compression !== 'string' ||
+      !BACKUP_ALLOWED_COMPRESSIONS.includes(
+        compression as (typeof BACKUP_ALLOWED_COMPRESSIONS)[number]
+      )
+    ) {
+      return `compression must be one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`;
+    }
+    return undefined;
+  }
+
+  private static validateCompressThreads(
+    compressThreads: unknown
+  ): string | undefined {
+    if (compressThreads === undefined) {
+      return undefined;
+    }
+    if (
+      typeof compressThreads !== 'number' ||
+      !Number.isInteger(compressThreads) ||
+      compressThreads < 1
+    ) {
+      return 'compressThreads must be a positive integer';
+    }
+    return undefined;
+  }
+
+  private static validateUploadPart(part: unknown): string | undefined {
+    if (typeof part !== 'object' || part === null) {
+      return 'each part must be an object';
+    }
+
+    const candidate = part as {
+      partNumber?: unknown;
+      url?: unknown;
+      offset?: unknown;
+      size?: unknown;
+    };
+
+    if (
+      typeof candidate.partNumber !== 'number' ||
+      !Number.isInteger(candidate.partNumber) ||
+      candidate.partNumber < 1
+    ) {
+      return 'partNumber must be a positive integer';
+    }
+    if (typeof candidate.url !== 'string') {
+      return 'part url must be a string';
+    }
+    try {
+      const url = new URL(candidate.url);
+      if (url.protocol !== 'https:') {
+        return 'part url must use https';
+      }
+    } catch {
+      return 'part url must be a valid URL';
+    }
+    if (
+      typeof candidate.offset !== 'number' ||
+      !Number.isInteger(candidate.offset) ||
+      candidate.offset < 0
+    ) {
+      return 'part offset must be a non-negative integer';
+    }
+    if (
+      typeof candidate.size !== 'number' ||
+      !Number.isInteger(candidate.size) ||
+      candidate.size < 1
+    ) {
+      return 'part size must be a positive integer';
+    }
+    return undefined;
+  }
+
   private async handleCreate(
     request: Request,
     context: RequestContext
@@ -146,6 +225,34 @@ export class BackupHandler extends BaseHandler<Request, Response> {
           Operation.BACKUP_CREATE
         );
       }
+    }
+
+    const compressionError = BackupHandler.validateCompression(
+      body.compression
+    );
+    if (compressionError) {
+      return this.createErrorResponse(
+        {
+          message: compressionError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    const compressThreadsError = BackupHandler.validateCompressThreads(
+      body.compressThreads
+    );
+    if (compressThreadsError) {
+      return this.createErrorResponse(
+        {
+          message: compressThreadsError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
     }
 
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
@@ -203,6 +310,20 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         context,
         Operation.BACKUP_CREATE
       );
+    }
+
+    for (const part of body.parts) {
+      const partError = BackupHandler.validateUploadPart(part);
+      if (partError) {
+        return this.createErrorResponse(
+          {
+            message: partError,
+            code: ErrorCode.INVALID_BACKUP_CONFIG
+          },
+          context,
+          Operation.BACKUP_CREATE
+        );
+      }
     }
 
     const sessionId = context.sessionId ?? 'default';

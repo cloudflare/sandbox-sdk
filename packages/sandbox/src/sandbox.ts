@@ -4544,6 +4544,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp: new Date().toISOString()
         });
       }
+
+      const head = await this.requireBackupBucket().head(r2Key);
+      if (!head || head.size !== sizeBytes) {
+        throw new BackupCreateError({
+          message: `Multipart upload verification failed: expected ${sizeBytes} bytes, got ${head?.size ?? 0}`,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       await abortMultipart();
       throw error;
@@ -4955,7 +4966,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       name,
       ttl = BACKUP_DEFAULT_TTL_SECONDS,
       gitignore = false,
-      excludes = []
+      excludes = [],
+      compression = BACKUP_DEFAULT_COMPRESSION,
+      compressThreads = BACKUP_DEFAULT_COMPRESS_THREADS
     } = options;
 
     const backupStartTime = Date.now();
@@ -5047,7 +5060,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        { gitignore, excludes: normalizedExcludes }
+        {
+          gitignore,
+          excludes: normalizedExcludes,
+          compression,
+          compressThreads
+        }
       );
 
       if (!createResult.success) {
