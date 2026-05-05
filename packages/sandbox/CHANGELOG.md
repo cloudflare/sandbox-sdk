@@ -1,5 +1,51 @@
 # @cloudflare/sandbox
 
+## 0.9.3
+
+### Patch Changes
+
+- [#666](https://github.com/cloudflare/sandbox-sdk/pull/666) [`e8f57c8`](https://github.com/cloudflare/sandbox-sdk/commit/e8f57c86896a6740aa434c794986b6e2b53c96dd) Thanks [@scuffi](https://github.com/scuffi)! - Speed up backup and restore for larger archives with faster default compression, multipart R2 uploads, and parallel range downloads that write directly into the restored archive.
+
+- [#647](https://github.com/cloudflare/sandbox-sdk/pull/647) [`68c4f9b`](https://github.com/cloudflare/sandbox-sdk/commit/68c4f9b9262179af4bae3e74125bbce36ab51dca) Thanks [@aron-cf](https://github.com/aron-cf)! - Introduce new `rpc` transport to consolidate `http` and `websocket` transports.
+
+  The intention is to replace `http` and `websocket` transports with a single implementation.
+  - No sub-request limitations (currently affects the `http` transport).
+  - No limit on write file size (currently affects both `http` and `websocket` transports).
+
+  To enable the transport set `SANDBOX_TRANSPORT` to `rpc` in your wrangler config.
+
+  A `ReadableStream` instance can now be passed to `sandbox.writeFile()` when using the `rpc` transport to avoid the 32mb file limit.
+
+  ```js
+  {
+    fetch(req, env) {
+      const sandbox = getSandbox(env.Sandbox, "my-sandbox");
+
+      // A ReadableStream can be passed as the content to writeFile().
+      sandbox.writeFile("/workspace/archive.tar.gz", req.body);
+
+      return new Response("OK");
+    }
+  }
+  ```
+
+- [#653](https://github.com/cloudflare/sandbox-sdk/pull/653) [`e18ba4d`](https://github.com/cloudflare/sandbox-sdk/commit/e18ba4d51e6bebb4c87e03756c4588c7fe3d8272) Thanks [@ask-bonk](https://github.com/apps/ask-bonk)! - Surface s3fs mount failures from `mountBucket()`. Mount errors (bad credentials, wrong bucket name, network failures) now throw `S3FSMountError` with the underlying `s3fs` log output, instead of silently returning success and leaving no filesystem attached.
+
+  ```ts
+  import { S3FSMountError } from '@cloudflare/sandbox';
+
+  try {
+    await sandbox.mountBucket('my-bucket', '/mnt/data', {
+      endpoint,
+      credentials
+    });
+  } catch (err) {
+    if (err instanceof S3FSMountError) {
+      // err.message includes the s3fs log tail, e.g. "403 AccessDenied"
+    }
+  }
+  ```
+
 ## 0.9.2
 
 ### Patch Changes
