@@ -11,6 +11,8 @@ import type { SessionManager } from './session-manager';
 
 export const BACKUP_WORK_DIR = '/var/backups';
 const BACKUP_MOUNTS_DIR = '/var/backups/mounts';
+const BACKUP_UPLOAD_TIMEOUT_MS = 1_800_000;
+const BACKUP_UPLOAD_MAX_ATTEMPTS = 3;
 const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
 type BackupCompression = (typeof BACKUP_ALLOWED_COMPRESSIONS)[number];
 
@@ -54,6 +56,10 @@ function validateBackupPaths(dir: string, archivePath: string): string | null {
   if (!isAllowed) {
     return `Directory not in allowed paths (${BACKUP_ALLOWED_PREFIXES.join(', ')}): ${dir}`;
   }
+  return validateArchivePath(archivePath);
+}
+
+function validateArchivePath(archivePath: string): string | null {
   if (!archivePath.startsWith(`${BACKUP_WORK_DIR}/`)) {
     return 'Invalid archivePath: must use designated backup directory';
   }
@@ -74,6 +80,18 @@ interface CreateArchiveResult {
 
 interface RestoreArchiveResult {
   dir: string;
+}
+
+interface BackupUploadPart {
+  partNumber: number;
+  url: string;
+  offset: number;
+  size: number;
+}
+
+interface UploadedBackupPart {
+  partNumber: number;
+  etag: string;
 }
 
 /**
@@ -424,101 +442,110 @@ export class BackupService {
     return normalizeBackupExcludePattern(pattern);
   }
 
+  private async uploadPart(
+    archiveFile: ReturnType<typeof Bun.file>,
+    part: BackupUploadPart
+  ): Promise<UploadedBackupPart> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= BACKUP_UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        const body = archiveFile.slice(part.offset, part.offset + part.size);
+        const response = await fetch(part.url, {
+          method: 'PUT',
+          headers: {
+            'Content-Length': String(part.size),
+            'Content-Type': 'application/octet-stream'
+          },
+          body,
+          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS)
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `part ${part.partNumber} failed with HTTP ${response.status}`
+          );
+        }
+
+        const etag = response.headers.get('etag')?.trim();
+        if (!etag) {
+          throw Object.assign(
+            new Error(
+              `part ${part.partNumber} response did not include an ETag header`
+            ),
+            { retryable: false }
+          );
+        }
+
+        return {
+          partNumber: part.partNumber,
+          etag
+        };
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        if ((error as { retryable?: boolean }).retryable === false) {
+          throw err;
+        }
+        lastError = err;
+        if (attempt < BACKUP_UPLOAD_MAX_ATTEMPTS) {
+          this.logger.warn(
+            `backup upload part ${part.partNumber} failed on attempt ${attempt}, retrying`,
+            { error: err.message }
+          );
+        }
+      }
+    }
+
+    throw lastError ?? new Error(`part ${part.partNumber} failed`);
+  }
+
   /**
    * Upload parts of a backup archive to presigned URLs in parallel.
    * The caller (DO) has already created a multipart upload and generated
-   * presigned PUT URLs for each part. This method extracts each byte range
-   * with `dd` and pipes it to `curl`, running all parts concurrently.
+   * presigned PUT URLs for each part. This method uploads each byte range
+   * directly from the local archive using concurrent PUT requests.
    */
   async uploadParts(
     archivePath: string,
-    parts: Array<{
-      partNumber: number;
-      url: string;
-      offset: number;
-      size: number;
-    }>,
-    sessionId = 'default'
-  ): Promise<
-    ServiceResult<{ parts: Array<{ partNumber: number; etag: string }> }>
-  > {
+    parts: BackupUploadPart[],
+    _sessionId = 'default'
+  ): Promise<ServiceResult<{ parts: UploadedBackupPart[] }>> {
     if (parts.length === 0) {
       return serviceSuccess({ parts: [] });
     }
 
-    const hdrFiles = parts.map((p) => `/tmp/bp_${p.partNumber}.hdr`);
-
-    const launchLines = parts.map((part, i) => {
-      const ddCmd = [
-        'dd',
-        `if=${shellEscape(archivePath)}`,
-        'iflag=skip_bytes,count_bytes',
-        `skip=${part.offset}`,
-        `count=${part.size}`,
-        '2>/dev/null'
-      ].join(' ');
-      const curlCmd = [
-        'curl -sSf -X PUT',
-        `-H ${shellEscape(`Content-Length: ${part.size}`)}`,
-        `-H 'Content-Type: application/octet-stream'`,
-        `-D ${shellEscape(hdrFiles[i])}`,
-        '--data-binary @-',
-        shellEscape(part.url)
-      ].join(' ');
-      return `(set -o pipefail; ${ddCmd} | ${curlCmd}) & J${i}=$!`;
-    });
-
-    const waitLines = parts.map((_, i) => `wait $J${i}; E${i}=$?`);
-    const exitVars = parts.map((_, i) => `$E${i}`).join(' + ');
-    const etagLines = parts.map(
-      (part, i) =>
-        `printf 'PART:%d:%s\\n' ${part.partNumber} "$(grep -i '^etag:' ${shellEscape(hdrFiles[i])} 2>/dev/null | tr -d '\\r' | awk '{print $2}')"`
-    );
-    const cleanupCmd = `rm -f ${hdrFiles.map(shellEscape).join(' ')}`;
-
-    const script = [
-      ...launchLines,
-      ...waitLines,
-      `FAILED=$(( ${exitVars} ))`,
-      `if [ "$FAILED" -ne 0 ]; then ${cleanupCmd}; exit 1; fi`,
-      ...etagLines,
-      cleanupCmd
-    ].join('; ');
-
-    const result = await this.sessionManager.executeInSession(
-      sessionId,
-      script,
-      {
-        origin: 'internal'
-      }
-    );
-
-    if (!result.success || result.data.exitCode !== 0) {
+    const archivePathError = validateArchivePath(archivePath);
+    if (archivePathError) {
       return serviceError({
-        message: `Multipart upload failed: ${result.success ? result.data.stderr : result.error.message}`,
+        message: archivePathError,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        details: { archivePath }
+      });
+    }
+
+    const archiveFile = Bun.file(archivePath);
+    if (!(await archiveFile.exists())) {
+      return serviceError({
+        message: `Backup archive does not exist: ${archivePath}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { archivePath }
       });
     }
 
-    const uploadedParts: Array<{ partNumber: number; etag: string }> = [];
-    for (const line of result.data.stdout.split('\n')) {
-      const match = line.match(/^PART:(\d+):(.+)$/);
-      if (match) {
-        uploadedParts.push({
-          partNumber: parseInt(match[1], 10),
-          etag: match[2]
-        });
-      }
-    }
-
-    if (uploadedParts.length !== parts.length) {
+    let uploadedParts: UploadedBackupPart[];
+    try {
+      uploadedParts = await Promise.all(
+        parts.map((part) => this.uploadPart(archiveFile, part))
+      );
+    } catch (error) {
       return serviceError({
-        message: `Expected ${parts.length} part ETags, got ${uploadedParts.length}`,
+        message: `Multipart upload failed: ${error instanceof Error ? error.message : String(error)}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { archivePath }
       });
     }
+
+    uploadedParts.sort((a, b) => a.partNumber - b.partNumber);
 
     return serviceSuccess({ parts: uploadedParts });
   }
