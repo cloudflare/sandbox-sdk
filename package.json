@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "an api for computers",
   "scripts": {
+    "changeset": "changeset add",
     "typecheck": "turbo run typecheck && npm run typecheck:e2e && npm run typecheck:perf",
     "typecheck:e2e": "tsc --noEmit --project tests/e2e/tsconfig.json",
     "typecheck:perf": "tsc --noEmit --project tests/perf/tsconfig.json",
