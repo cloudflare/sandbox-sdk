@@ -4644,7 +4644,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ].join(' ')
       );
 
-      const startLines = curlCmds.map((cmd, i) => `${cmd} & J${i}=$!`);
+      const startLines = curlCmds.map(
+        (cmd, i) => `(set -o pipefail; ${cmd}) & J${i}=$!`
+      );
       const waitLines = Array.from(
         { length: numParts },
         (_, i) => `wait $J${i}; E${i}=$?`

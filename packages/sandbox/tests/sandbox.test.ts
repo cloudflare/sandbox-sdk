@@ -2063,6 +2063,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(downloadCommand).toContain("of='/var/backups/test.sqsh.tmp'");
       expect(downloadCommand).toContain('oflag=seek_bytes');
       expect(downloadCommand).toContain('conv=notrunc');
+      expect(downloadCommand).toContain('(set -o pipefail; curl -sSf');
       expect(downloadCommand).not.toContain('cat ');
       expect(downloadCommand).not.toContain('.part0.tmp');
     });
