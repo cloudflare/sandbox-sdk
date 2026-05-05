@@ -213,7 +213,14 @@ describe('Local Backup & Restore', () => {
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         expect.any(String), // backup session ID
-        { gitignore: false, excludes: [] }
+        {
+          gitignore: false,
+          excludes: [],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
+        }
       );
 
       // Verify archive was uploaded to R2 via binding
@@ -359,7 +366,11 @@ describe('Local Backup & Restore', () => {
         expect.any(String),
         {
           gitignore: false,
-          excludes: ['node_modules/.cache', '.next/cache', 'dist']
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
         }
       );
     });

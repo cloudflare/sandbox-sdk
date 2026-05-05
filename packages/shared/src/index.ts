@@ -133,6 +133,7 @@ export { parseSSEFrames } from './sse.js';
 // Export all types from types.ts
 export type {
   // Backup types
+  BackupCompressionOptions,
   BackupOptions,
   BaseExecOptions,
   // Bucket mounting types

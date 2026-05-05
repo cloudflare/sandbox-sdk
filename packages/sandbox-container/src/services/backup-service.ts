@@ -15,6 +15,10 @@ const BACKUP_UPLOAD_TIMEOUT_MS = 1_800_000;
 const BACKUP_UPLOAD_MAX_ATTEMPTS = 3;
 const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
 type BackupCompression = (typeof BACKUP_ALLOWED_COMPRESSIONS)[number];
+type BackupCreateCompressionOptions = {
+  format?: BackupCompression;
+  threads?: number;
+};
 
 /**
  * Absolute paths for squashfs/FUSE binaries.
@@ -125,12 +129,13 @@ export class BackupService {
     sessionId = 'default',
     gitignore = false,
     excludes: string[] = [],
-    compression: string = 'lz4',
-    compressThreads = 8
+    compression?: BackupCreateCompressionOptions
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
     const excludeFilePath = `${archivePath}.exclude`;
     let shouldCleanupExcludeFile = false;
+    const compressionFormat = compression?.format ?? 'lz4';
+    const compressionThreads = compression?.threads ?? 8;
 
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
@@ -148,12 +153,12 @@ export class BackupService {
           details: { dir, archivePath }
         });
       }
-      if (!isBackupCompression(compression)) {
+      if (!isBackupCompression(compressionFormat)) {
         errorMessage = 'Invalid compression algorithm';
         return serviceError({
-          message: `Invalid compression algorithm: ${compression}. Expected one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`,
+          message: `Invalid compression algorithm: ${compressionFormat}. Expected one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`,
           code: ErrorCode.INVALID_BACKUP_CONFIG,
-          details: { compression }
+          details: { compression: compressionFormat }
         });
       }
       // Ensure the work directory exists
@@ -266,8 +271,8 @@ export class BackupService {
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
-        `-comp ${compression}`,
-        `-processors ${Math.max(1, compressThreads)}`,
+        `-comp ${compressionFormat}`,
+        `-processors ${Math.max(1, compressionThreads)}`,
         '-no-progress',
         '-noappend'
       ];

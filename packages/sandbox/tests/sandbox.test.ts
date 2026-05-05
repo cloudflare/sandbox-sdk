@@ -1915,8 +1915,10 @@ describe('Sandbox - Automatic Session Management', () => {
         {
           gitignore: false,
           excludes: [],
-          compression: 'lz4',
-          compressThreads: 8
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
         }
       );
       expect(bucket.put).toHaveBeenCalled();
@@ -1963,8 +1965,10 @@ describe('Sandbox - Automatic Session Management', () => {
         {
           gitignore: false,
           excludes: ['node_modules/.cache', '.next/cache', 'dist'],
-          compression: 'lz4',
-          compressThreads: 8
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
         }
       );
     });
@@ -1979,10 +1983,12 @@ describe('Sandbox - Automatic Session Management', () => {
       await expect(
         backupSandbox.createBackup({
           dir: '/app/project',
-          compression: 'brotli' as unknown as 'gzip'
+          compression: {
+            format: 'brotli' as unknown as 'gzip'
+          }
         })
       ).rejects.toThrow(
-        /BackupOptions\.compression must be one of: gzip, lz4, zstd/
+        /BackupOptions\.compression\.format must be one of: gzip, lz4, zstd/
       );
 
       expect(createArchiveSpy).not.toHaveBeenCalled();
@@ -1998,10 +2004,12 @@ describe('Sandbox - Automatic Session Management', () => {
       await expect(
         backupSandbox.createBackup({
           dir: '/app/project',
-          compressThreads: 0
+          compression: {
+            threads: 0
+          }
         })
       ).rejects.toThrow(
-        /BackupOptions\.compressThreads must be a positive integer/
+        /BackupOptions\.compression\.threads must be a positive integer/
       );
 
       expect(createArchiveSpy).not.toHaveBeenCalled();

@@ -97,29 +97,29 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     if (compression === undefined) {
       return undefined;
     }
-    if (
-      typeof compression !== 'string' ||
-      !BACKUP_ALLOWED_COMPRESSIONS.includes(
-        compression as (typeof BACKUP_ALLOWED_COMPRESSIONS)[number]
-      )
-    ) {
-      return `compression must be one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`;
+    if (typeof compression !== 'object' || compression === null) {
+      return 'compression must be an object';
     }
-    return undefined;
-  }
-
-  private static validateCompressThreads(
-    compressThreads: unknown
-  ): string | undefined {
-    if (compressThreads === undefined) {
-      return undefined;
+    const candidate = compression as {
+      format?: unknown;
+      threads?: unknown;
+    };
+    if (
+      candidate.format !== undefined &&
+      (typeof candidate.format !== 'string' ||
+        !BACKUP_ALLOWED_COMPRESSIONS.includes(
+          candidate.format as (typeof BACKUP_ALLOWED_COMPRESSIONS)[number]
+        ))
+    ) {
+      return `compression.format must be one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`;
     }
     if (
-      typeof compressThreads !== 'number' ||
-      !Number.isInteger(compressThreads) ||
-      compressThreads < 1
+      candidate.threads !== undefined &&
+      (typeof candidate.threads !== 'number' ||
+        !Number.isInteger(candidate.threads) ||
+        candidate.threads < 1)
     ) {
-      return 'compressThreads must be a positive integer';
+      return 'compression.threads must be a positive integer';
     }
     return undefined;
   }
@@ -241,20 +241,6 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    const compressThreadsError = BackupHandler.validateCompressThreads(
-      body.compressThreads
-    );
-    if (compressThreadsError) {
-      return this.createErrorResponse(
-        {
-          message: compressThreadsError,
-          code: ErrorCode.INVALID_BACKUP_CONFIG
-        },
-        context,
-        Operation.BACKUP_CREATE
-      );
-    }
-
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.createArchive(
@@ -263,8 +249,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       sessionId,
       body.gitignore ?? false,
       body.excludes ?? [],
-      body.compression ?? 'lz4',
-      body.compressThreads ?? 8
+      body.compression
     );
 
     if (result.success) {

@@ -1018,8 +1018,10 @@ class BackupRPCAPI extends RpcTarget {
     options?: {
       excludes?: string[];
       gitignore?: boolean;
-      compression?: 'gzip' | 'lz4' | 'zstd';
-      compressThreads?: number;
+      compression?: {
+        format?: 'gzip' | 'lz4' | 'zstd';
+        threads?: number;
+      };
     }
   ) {
     const result = await this.#svc.createArchive(
@@ -1028,8 +1030,7 @@ class BackupRPCAPI extends RpcTarget {
       sessionId,
       options?.gitignore ?? false,
       options?.excludes ?? [],
-      options?.compression ?? 'lz4',
-      options?.compressThreads ?? 8
+      options?.compression
     );
     const data = extractData<{ sizeBytes: number; archivePath: string }>(
       result

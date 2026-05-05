@@ -29,8 +29,7 @@ export class BackupClient extends BaseHttpClient {
     options?: {
       excludes?: string[];
       gitignore?: boolean;
-      compression?: 'gzip' | 'lz4' | 'zstd';
-      compressThreads?: number;
+      compression?: CreateBackupRequest['compression'];
     }
   ): Promise<CreateBackupResponse> {
     const data: CreateBackupRequest = {
@@ -39,7 +38,6 @@ export class BackupClient extends BaseHttpClient {
       gitignore: options?.gitignore ?? false,
       excludes: options?.excludes ?? [],
       compression: options?.compression,
-      compressThreads: options?.compressThreads,
       sessionId
     };
 

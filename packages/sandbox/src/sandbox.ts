@@ -4190,6 +4190,70 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return normalizedExcludes;
   }
 
+  private resolveBackupCompression(compression: unknown): {
+    format: 'gzip' | 'lz4' | 'zstd';
+    threads: number;
+  } {
+    if (compression !== undefined) {
+      if (typeof compression !== 'object' || compression === null) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compression must be an object',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'compression must be an object' },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    const compressionOptions = compression as
+      | { format?: unknown; threads?: unknown }
+      | undefined;
+    const format = compressionOptions?.format ?? BACKUP_DEFAULT_COMPRESSION;
+    const threads =
+      compressionOptions?.threads ?? BACKUP_DEFAULT_COMPRESS_THREADS;
+    const allowedCompressions = ['gzip', 'lz4', 'zstd'];
+
+    if (
+      typeof format !== 'string' ||
+      !allowedCompressions.includes(
+        format as (typeof allowedCompressions)[number]
+      )
+    ) {
+      throw new InvalidBackupConfigError({
+        message:
+          'BackupOptions.compression.format must be one of: gzip, lz4, zstd',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason: 'compression.format must be one of: gzip, lz4, zstd'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (
+      typeof threads !== 'number' ||
+      !Number.isInteger(threads) ||
+      threads < 1
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.compression.threads must be a positive integer',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason: 'compression.threads must be a positive integer'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return {
+      format: format as 'gzip' | 'lz4' | 'zstd',
+      threads
+    };
+  }
+
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
@@ -4784,8 +4848,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ttl = BACKUP_DEFAULT_TTL_SECONDS,
       gitignore = false,
       excludes = [],
-      compression = BACKUP_DEFAULT_COMPRESSION,
-      compressThreads = BACKUP_DEFAULT_COMPRESS_THREADS,
+      compression,
       multipart = true
     } = options;
 
@@ -4855,34 +4918,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const allowedCompressions = ['gzip', 'lz4', 'zstd'];
-      if (!allowedCompressions.includes(compression)) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.compression must be one of: gzip, lz4, zstd',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: 'compression must be one of: gzip, lz4, zstd'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      if (
-        typeof compressThreads !== 'number' ||
-        !Number.isInteger(compressThreads) ||
-        compressThreads < 1
-      ) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.compressThreads must be a positive integer',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: 'compressThreads must be a positive integer'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
+      const resolvedCompression = this.resolveBackupCompression(compression);
 
       const normalizedExcludes = this.normalizeBackupExcludes(excludes);
 
@@ -4897,8 +4933,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           gitignore,
           excludes: normalizedExcludes,
-          compression,
-          compressThreads
+          compression: resolvedCompression
         }
       );
 
@@ -5005,8 +5040,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ttl = BACKUP_DEFAULT_TTL_SECONDS,
       gitignore = false,
       excludes = [],
-      compression = BACKUP_DEFAULT_COMPRESSION,
-      compressThreads = BACKUP_DEFAULT_COMPRESS_THREADS
+      compression
     } = options;
 
     const backupStartTime = Date.now();
@@ -5087,34 +5121,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const allowedCompressions = ['gzip', 'lz4', 'zstd'];
-      if (!allowedCompressions.includes(compression)) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.compression must be one of: gzip, lz4, zstd',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: 'compression must be one of: gzip, lz4, zstd'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      if (
-        typeof compressThreads !== 'number' ||
-        !Number.isInteger(compressThreads) ||
-        compressThreads < 1
-      ) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.compressThreads must be a positive integer',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: 'compressThreads must be a positive integer'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
+      const resolvedCompression = this.resolveBackupCompression(compression);
 
       const normalizedExcludes = this.normalizeBackupExcludes(excludes);
 
@@ -5130,8 +5137,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           gitignore,
           excludes: normalizedExcludes,
-          compression,
-          compressThreads
+          compression: resolvedCompression
         }
       );
 

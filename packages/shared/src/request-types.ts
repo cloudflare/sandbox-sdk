@@ -1,3 +1,5 @@
+import type { BackupCompressionOptions } from './types.js';
+
 /**
  * Request types for API calls to the container
  * Single source of truth for the contract between SDK clients and container handlers
@@ -159,10 +161,7 @@ export interface CreateBackupRequest {
   gitignore?: boolean;
   /** Glob patterns to exclude from the backup */
   excludes?: string[];
-  /** Compression algorithm for mksquashfs (default: lz4) */
-  compression?: 'gzip' | 'lz4' | 'zstd';
-  /** Number of parallel compression threads (default: 8) */
-  compressThreads?: number;
+  compression?: BackupCompressionOptions;
   sessionId?: string;
 }
 

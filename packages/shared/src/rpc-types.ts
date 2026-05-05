@@ -31,6 +31,7 @@ import type {
   UploadPartsResponse
 } from './request-types.js';
 import type {
+  BackupCompressionOptions,
   CheckChangesRequest,
   CheckChangesResult,
   DeleteFileResult,
@@ -237,8 +238,7 @@ export interface SandboxBackupAPI {
     options?: {
       excludes?: string[];
       gitignore?: boolean;
-      compression?: 'gzip' | 'lz4' | 'zstd';
-      compressThreads?: number;
+      compression?: BackupCompressionOptions;
     }
   ): Promise<CreateBackupResponse>;
   restoreArchive(
