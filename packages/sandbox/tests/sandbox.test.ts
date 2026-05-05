@@ -2570,4 +2570,120 @@ describe('Sandbox - Automatic Session Management', () => {
       await secondCall;
     });
   });
+
+  describe('mountBucket FUSE verification', () => {
+    const mountOptions = {
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      credentials: {
+        accessKeyId: 'AKID',
+        secretAccessKey: 'SECRET'
+      }
+    };
+
+    /**
+     * The mount + verification flow runs as a single in-container script.
+     * Match it by the `s3fs ` prefix inside the script body and return the
+     * exit code the caller would see for each scenario.
+     */
+    function mockMountScript(result: {
+      exitCode: number;
+      stdout?: string;
+      stderr?: string;
+    }) {
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          const base = {
+            success: true,
+            command,
+            timestamp: new Date().toISOString()
+          };
+          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
+            return {
+              ...base,
+              stdout: '',
+              stderr: '',
+              ...result
+            } as any;
+          }
+          return { ...base, exitCode: 0, stdout: '', stderr: '' } as any;
+        }
+      );
+    }
+
+    it('succeeds when the mount script reports the mount is live', async () => {
+      mockMountScript({ exitCode: 0 });
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws when the s3fs parent exits non-zero', async () => {
+      mockMountScript({ exitCode: 2, stdout: 'fuse: bad mount point' });
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).rejects.toThrow('S3FS mount failed: fuse: bad mount point');
+    });
+
+    it('throws with the s3fs log tail when the mount never appears', async () => {
+      mockMountScript({
+        exitCode: 3,
+        stdout: '[ERR] check_bucket_access: 403 AccessDenied'
+      });
+
+      const err = await sandbox
+        .mountBucket('my-bucket', '/mnt/data2', mountOptions)
+        .catch((e: Error) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/FUSE filesystem never appeared/);
+      expect(err!.message).toMatch(/403 AccessDenied/);
+      expect((sandbox as any).activeMounts.has('/mnt/data2')).toBe(false);
+    });
+
+    it('unmounts a late-arriving FUSE mount when the script reports timeout', async () => {
+      // Race: the script polls 60x for `mountpoint -q` and exits 3 when none
+      // succeed, but s3fs is daemonised and can complete the mount between
+      // the last poll and our cleanup. The failure path must unmount that
+      // mount instead of leaking it.
+      const issuedCommands: string[] = [];
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          issuedCommands.push(command);
+          const base = {
+            success: true,
+            command,
+            timestamp: new Date().toISOString()
+          };
+          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
+            return {
+              ...base,
+              exitCode: 3,
+              stdout: 'mount took too long',
+              stderr: ''
+            } as any;
+          }
+          return { ...base, exitCode: 0, stdout: '', stderr: '' } as any;
+        }
+      );
+
+      const err = await sandbox
+        .mountBucket('my-bucket', '/mnt/late', mountOptions)
+        .catch((e: Error) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((sandbox as any).activeMounts.has('/mnt/late')).toBe(false);
+      // The cleanup path must issue an unmount conditional on `mountpoint -q`,
+      // so a late-arriving FUSE mount is torn down before we drop the entry.
+      expect(
+        issuedCommands.some(
+          (c) =>
+            c.includes('mountpoint -q') &&
+            c.includes('fusermount -u') &&
+            c.includes('/mnt/late')
+        )
+      ).toBe(true);
+    });
+  });
 });

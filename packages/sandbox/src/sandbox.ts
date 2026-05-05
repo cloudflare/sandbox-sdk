@@ -180,6 +180,59 @@ function calculatePartCount(
   return maxParts;
 }
 
+/**
+ * Tagged template literal that shell-escapes every interpolated value.
+ * Use for composing in-container scripts where the template body is
+ * trusted shell and the interpolations are untrusted strings.
+ */
+function sh(strings: TemplateStringsArray, ...values: unknown[]): string {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    out += shellEscape(String(values[i])) + strings[i + 1];
+  }
+  return out;
+}
+
+/**
+ * Hex string of `bytes` random bytes (length = bytes * 2). Used for short
+ * non-cryptographic identifiers — e.g. tempfile suffixes.
+ */
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Parse an array of `key=value` / bare-flag s3fs options into a Record.
+ * Bare flags become `{ flag: true }`. Later entries overwrite earlier ones.
+ */
+function parseS3fsOptions(entries: string[]): Record<string, string | boolean> {
+  const result: Record<string, string | boolean> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf('=');
+    if (eq === -1) {
+      result[entry] = true;
+    } else {
+      result[entry.slice(0, eq)] = entry.slice(eq + 1);
+    }
+  }
+  return result;
+}
+
+/**
+ * Serialise an s3fs options Record into the comma-separated `-o` argument.
+ * Boolean true emits the bare flag; false drops it.
+ */
+function serializeS3fsOptions(
+  options: Record<string, string | boolean>
+): string {
+  return Object.entries(options)
+    .filter(([, v]) => v !== false)
+    .map(([k, v]) => (v === true ? k : `${k}=${v}`))
+    .join(',');
+}
+
 function getNamespaceConfigurationCache(
   namespace: object
 ): Map<string, CachedSandboxConfiguration> {
@@ -1246,6 +1299,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
     let provider: BucketProvider | null = null;
+    let dirExisted = true; // assume pre-existing so we don't accidentally delete
     try {
       this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
@@ -1291,7 +1345,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
-      // Create mount directory
+      // Check if mount directory already exists before creating it, so we
+      // only remove it on failure if the SDK created it
+      dirExisted =
+        (await this.execInternal(`test -d ${shellEscape(mountPath)}`))
+          .exitCode === 0;
       await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
       // Execute S3FS mount with password file (uses full s3fs source with prefix)
@@ -1310,6 +1368,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Clean up password file on failure
       if (passwordFilePath) {
         await this.deletePasswordFile(passwordFilePath);
+      }
+      // Tear down any mount that may have established between the script's
+      // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
+      // runs as a daemon, so the FUSE mount can flip live in that window;
+      // without this, the throw would leave an orphaned mount with no
+      // `activeMounts` entry to clean up later.
+      try {
+        await this.execInternal(
+          `mountpoint -q ${shellEscape(mountPath)} && fusermount -u ${shellEscape(mountPath)}`
+        );
+      } catch {
+        // best-effort cleanup
+      }
+
+      // Remove the mount directory only if the SDK created it. Runs after
+      // the unmount above so a late-arriving mount doesn't keep the dir busy.
+      if (!dirExisted) {
+        try {
+          await this.execInternal(
+            `rmdir ${shellEscape(mountPath)} 2>/dev/null`
+          );
+        } catch {
+          // best-effort cleanup
+        }
       }
 
       // Clean up reservation on failure
@@ -1499,40 +1581,89 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     passwordFilePath: string,
     sessionId?: string
   ): Promise<void> {
-    // Resolve s3fs options (provider defaults + user overrides)
-    const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
+    // Compose s3fs options as a Record so duplicates collapse cleanly:
+    // SDK defaults + provider defaults first, user overrides next, SDK-required
+    // entries last. Boolean true serialises to a bare flag (e.g. `ro`).
+    //
+    // The logfile path is left in place after the mount completes so
+    // operators can inspect s3fs daemon output for debugging. The user can
+    // override it via `s3fsOptions: ['logfile=/path']`.
+    const logSuffix = randomHex(4);
+    const sdkDefaults: Record<string, string | boolean> = {
+      logfile: `/tmp/.s3fs-log-${logSuffix}`
+    };
+    const s3fsOptions: Record<string, string | boolean> = {
+      ...sdkDefaults,
+      ...parseS3fsOptions(resolveS3fsOptions(provider)),
+      ...parseS3fsOptions(options.s3fsOptions ?? []),
+      passwd_file: passwordFilePath,
+      url: options.endpoint,
+      ...(options.readOnly ? { ro: true } : {})
+    };
+    const logFile = s3fsOptions.logfile as string;
+    const optionsStr = serializeS3fsOptions(s3fsOptions);
 
-    // Build s3fs mount command
-    const s3fsArgs: string[] = [];
+    // s3fs daemonises: the parent forks a FUSE child, then exits 0 once the
+    // child reports its bucket check passed. Run mount + verification as a
+    // single in-container script so the whole flow is one round-trip with
+    // one observable outcome.
+    //
+    // s3fs output is redirected to the logfile (not captured via $()):
+    // the daemon child inherits the redirected stdout/stderr fds, and
+    // command substitution would block on those fds until the daemon
+    // exited (i.e. until unmount), hanging the script for the lifetime
+    // of the mount.
+    //
+    // The whole script runs inside a `( ... )` subshell. execInternal and
+    // execWithSession dispatch into a long-lived bash session shell; a bare
+    // top-level `exit N` would terminate that session and surface as
+    // SESSION_TERMINATED to every subsequent caller. The subshell scopes the
+    // exits so only the subshell exits, and its status becomes the command's
+    // exit code as the caller expects.
+    //
+    // Exit codes consumed by the caller:
+    //   0 — mount established
+    //   2 — s3fs parent failed; stdout carries the s3fs log tail
+    //   3 — mount never appeared; stdout carries the s3fs log tail
+    //
+    // 60 iterations x 100ms = 6s budget for the SigV4 bucket check, which
+    // is comfortable under CI load while still cheap on success (the loop
+    // exits on the first iteration once the FUSE filesystem is live).
+    const script = sh`(
+      s3fs ${bucket} ${mountPath} -o ${optionsStr} >${logFile} 2>&1
+      rc=$?
+      if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
+      for _ in $(seq 1 60); do
+        if mountpoint -q ${mountPath}; then exit 0; fi
+        sleep 0.1
+      done
+      tail -n 20 ${logFile} 2>/dev/null || true
+      exit 3
+    )`;
 
-    // Add password file option FIRST
-    s3fsArgs.push(`passwd_file=${passwordFilePath}`);
+    const exec = sessionId
+      ? (cmd: string) =>
+          this.execWithSession(cmd, sessionId, { origin: 'internal' })
+      : (cmd: string) => this.execInternal(cmd);
 
-    // Add resolved provider-specific and user options
-    s3fsArgs.push(...resolvedOptions);
+    const result = await exec(script);
+    if (result.exitCode === 0) return;
 
-    // Add read-only flag if requested
-    if (options.readOnly) {
-      s3fsArgs.push('ro');
-    }
+    const detail = result.stdout?.trim() || result.stderr?.trim() || '';
 
-    // Add endpoint URL
-    s3fsArgs.push(`url=${options.endpoint}`);
-
-    // Build final command with escaped options
-    const optionsStr = shellEscape(s3fsArgs.join(','));
-    const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
-
-    // Execute mount command
-    const result = sessionId
-      ? await this.execWithSession(mountCmd, sessionId, { origin: 'internal' })
-      : await this.execInternal(mountCmd);
-
-    if (result.exitCode !== 0) {
+    if (result.exitCode === 2) {
       throw new S3FSMountError(
-        `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+        `S3FS mount failed: ${detail || 'Unknown error'}`
       );
     }
+
+    // exit 3 (or anything else): the FUSE filesystem never appeared
+    const diagMessage = detail
+      ? `s3fs log: ${detail}`
+      : 'No s3fs log output captured. The s3fs daemon may have exited before writing logs.';
+    throw new S3FSMountError(
+      `S3FS mount failed: FUSE filesystem never appeared at ${mountPath}. ${diagMessage}`
+    );
   }
 
   /**
