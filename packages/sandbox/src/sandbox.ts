@@ -519,10 +519,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  static outboundHandlers = {
-    r2Mount: r2EgressHandler
-  };
-
   client: SandboxClient | ContainerControlClient;
 
   private codeInterpreter: CodeInterpreter;

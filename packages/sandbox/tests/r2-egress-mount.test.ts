@@ -10,10 +10,33 @@ vi.mock('./interpreter', () => ({
 }));
 
 vi.mock('@cloudflare/containers', () => {
+  const outboundHandlersRegistry = new Map<string, Record<string, unknown>>();
+  const outboundByHostRegistry = new Map<string, Record<string, unknown>>();
+
   const MockContainer = class Container {
     ctx: unknown;
     env: unknown;
     sleepAfter: string | number = '10m';
+
+    static get outboundHandlers(): Record<string, unknown> | undefined {
+      return outboundHandlersRegistry.get(Container.name);
+    }
+
+    static set outboundHandlers(handlers: Record<string, unknown>) {
+      const existing = outboundHandlersRegistry.get(Container.name) ?? {};
+      outboundHandlersRegistry.set(Container.name, {
+        ...existing,
+        ...handlers
+      });
+    }
+
+    static get outboundByHost(): Record<string, unknown> | undefined {
+      return outboundByHostRegistry.get(Container.name);
+    }
+
+    static set outboundByHost(handlers: Record<string, unknown>) {
+      outboundByHostRegistry.set(Container.name, handlers);
+    }
 
     constructor(ctx: unknown, env: unknown) {
       this.ctx = ctx;
@@ -32,10 +55,14 @@ vi.mock('@cloudflare/containers', () => {
 
     renewActivityTimeout() {}
 
-    async setOutboundByHost(
-      _hostname: string,
-      _method: string
-    ): Promise<void> {}
+    async setOutboundByHost(_hostname: string, _method: string): Promise<void> {
+      const handlers = outboundHandlersRegistry.get(this.constructor.name);
+      if (!handlers || !(_method in handlers)) {
+        throw new Error(
+          `Outbound handler method '${_method}' not found in outboundHandlers for ${this.constructor.name}`
+        );
+      }
+    }
 
     async removeOutboundByHost(_hostname: string): Promise<void> {}
   };
@@ -85,7 +112,20 @@ function createMockR2Bucket(): R2Bucket {
     head: vi.fn(async () => null),
     delete: vi.fn(async () => undefined),
     list: vi.fn(async () => ({
-      objects: [],
+      objects: [
+        {
+          key: 'data/run1/fixtures/sample.txt',
+          uploaded: new Date('2024-01-01T00:00:00Z'),
+          httpEtag: '"abc"',
+          size: 10,
+          version: 'v1',
+          etag: 'abc',
+          checksums: {},
+          storageClass: 'Standard',
+          writeHttpMetadata: () => {},
+          customMetadata: {}
+        }
+      ],
       truncated: false,
       delimitedPrefixes: []
     })),
@@ -95,6 +135,31 @@ function createMockR2Bucket(): R2Bucket {
 }
 
 describe('Sandbox R2 egress mounts', () => {
+  it('registers the credential-less R2 outbound handler under the runtime key', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    await expect(
+      (
+        sandbox as unknown as {
+          setOutboundByHost: (
+            hostname: string,
+            method: string
+          ) => Promise<void>;
+        }
+      ).setOutboundByHost('r2.internal', 'r2EgressMount')
+    ).resolves.toBeUndefined();
+
+    expect(
+      (Sandbox as unknown as { outboundHandlers?: Record<string, unknown> })
+        .outboundHandlers
+    ).toMatchObject({
+      r2EgressMount: r2EgressHandler
+    });
+  });
+
   describe('handler prefix translation', () => {
     it('prepends mount prefix to GET key', async () => {
       const bucket = createMockR2Bucket();
