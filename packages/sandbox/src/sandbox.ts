@@ -163,7 +163,11 @@ const BACKUP_DOWNLOAD_MAX_PARTS = 64;
  * Calculate the optimal number of parts for multipart upload/download
  * based on archive size. Larger archives benefit from more parallelism.
  */
-function calculatePartCount(sizeBytes: number, defaultParts: number): number {
+function calculatePartCount(
+  sizeBytes: number,
+  defaultParts: number,
+  maxParts: number
+): number {
   if (sizeBytes < 100 * 1024 * 1024) {
     // < 100 MiB: use default parts
     return defaultParts;
@@ -173,7 +177,7 @@ function calculatePartCount(sizeBytes: number, defaultParts: number): number {
     return Math.min(32, defaultParts * 2);
   }
   // >= 1 GiB: use max parts (64)
-  return BACKUP_MULTIPART_MAX_PARTS;
+  return maxParts;
 }
 
 function getNamespaceConfigurationCache(
@@ -4402,7 +4406,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const targetParts = calculatePartCount(
       sizeBytes,
-      BACKUP_MULTIPART_TARGET_PARTS
+      BACKUP_MULTIPART_TARGET_PARTS,
+      BACKUP_MULTIPART_MAX_PARTS
     );
     const numParts = Math.min(
       targetParts,
@@ -4566,8 +4571,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Download a backup archive from R2 via presigned GET URL.
    * For archives >= BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE, uses BACKUP_DOWNLOAD_PARALLEL_PARTS
    * concurrent curl processes (each downloading a byte-range) to maximise both
-   * network and disk-write throughput. Parts are assembled with cat then
-   * atomically moved to the final path.
+   * network and disk-write throughput. Parts are written into a pre-sized file
+   * with dd using byte offsets, then atomically moved to the final path.
    */
   private async downloadBackupParallel(
     archivePath: string,
@@ -4619,7 +4624,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } else {
       const numParts = calculatePartCount(
         expectedSize,
-        BACKUP_DOWNLOAD_PARALLEL_PARTS
+        BACKUP_DOWNLOAD_PARALLEL_PARTS,
+        BACKUP_DOWNLOAD_MAX_PARTS
       );
       const partSize = Math.floor(expectedSize / numParts);
       const ranges = Array.from({ length: numParts }, (_, i) => {
