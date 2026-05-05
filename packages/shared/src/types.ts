@@ -1094,6 +1094,11 @@ export interface ExecutionSession {
 /**
  * Options for creating a directory backup
  */
+export interface BackupCompressionOptions {
+  format?: 'gzip' | 'lz4' | 'zstd';
+  threads?: number;
+}
+
 export interface BackupOptions {
   /** Directory to back up. Must be absolute and under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`. */
   dir: string;
@@ -1122,6 +1127,13 @@ export interface BackupOptions {
    * When true, the DO resolves BACKUP_BUCKET from its own env as an R2 binding.
    */
   localBucket?: boolean;
+  compression?: BackupCompressionOptions;
+  /**
+   * Use parallel multipart upload to R2 for large archives.
+   * Significantly speeds up uploads for archives over 10 MiB.
+   * Default: true.
+   */
+  multipart?: boolean;
 }
 
 /**

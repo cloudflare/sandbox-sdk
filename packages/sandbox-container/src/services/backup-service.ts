@@ -11,6 +11,14 @@ import type { SessionManager } from './session-manager';
 
 export const BACKUP_WORK_DIR = '/var/backups';
 const BACKUP_MOUNTS_DIR = '/var/backups/mounts';
+const BACKUP_UPLOAD_TIMEOUT_MS = 1_800_000;
+const BACKUP_UPLOAD_MAX_ATTEMPTS = 3;
+const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
+type BackupCompression = (typeof BACKUP_ALLOWED_COMPRESSIONS)[number];
+type BackupCreateCompressionOptions = {
+  format?: BackupCompression;
+  threads?: number;
+};
 
 /**
  * Absolute paths for squashfs/FUSE binaries.
@@ -52,6 +60,10 @@ function validateBackupPaths(dir: string, archivePath: string): string | null {
   if (!isAllowed) {
     return `Directory not in allowed paths (${BACKUP_ALLOWED_PREFIXES.join(', ')}): ${dir}`;
   }
+  return validateArchivePath(archivePath);
+}
+
+function validateArchivePath(archivePath: string): string | null {
   if (!archivePath.startsWith(`${BACKUP_WORK_DIR}/`)) {
     return 'Invalid archivePath: must use designated backup directory';
   }
@@ -61,6 +73,10 @@ function validateBackupPaths(dir: string, archivePath: string): string | null {
   return null;
 }
 
+function isBackupCompression(value: string): value is BackupCompression {
+  return BACKUP_ALLOWED_COMPRESSIONS.includes(value as BackupCompression);
+}
+
 interface CreateArchiveResult {
   sizeBytes: number;
   archivePath: string;
@@ -68,6 +84,18 @@ interface CreateArchiveResult {
 
 interface RestoreArchiveResult {
   dir: string;
+}
+
+interface BackupUploadPart {
+  partNumber: number;
+  url: string;
+  offset: number;
+  size: number;
+}
+
+interface UploadedBackupPart {
+  partNumber: number;
+  etag: string;
 }
 
 /**
@@ -100,11 +128,14 @@ export class BackupService {
     archivePath: string,
     sessionId = 'default',
     gitignore = false,
-    excludes: string[] = []
+    excludes: string[] = [],
+    compression?: BackupCreateCompressionOptions
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
     const excludeFilePath = `${archivePath}.exclude`;
     let shouldCleanupExcludeFile = false;
+    const compressionFormat = compression?.format ?? 'lz4';
+    const compressionThreads = compression?.threads ?? 8;
 
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
@@ -120,6 +151,14 @@ export class BackupService {
           message: pathError,
           code: ErrorCode.INVALID_BACKUP_CONFIG,
           details: { dir, archivePath }
+        });
+      }
+      if (!isBackupCompression(compressionFormat)) {
+        errorMessage = 'Invalid compression algorithm';
+        return serviceError({
+          message: `Invalid compression algorithm: ${compressionFormat}. Expected one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          details: { compression: compressionFormat }
         });
       }
       // Ensure the work directory exists
@@ -225,14 +264,15 @@ export class BackupService {
         shouldCleanupExcludeFile = true;
       }
 
-      // Create squashfs archive with zstd compression
+      // Create squashfs archive with configurable compression
       // -no-progress suppresses progress output
       // -noappend creates a fresh archive (no appending to existing)
       const squashCmdParts = [
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
-        '-comp zstd',
+        `-comp ${compressionFormat}`,
+        `-processors ${Math.max(1, compressionThreads)}`,
         '-no-progress',
         '-noappend'
       ];
@@ -405,6 +445,114 @@ export class BackupService {
    */
   static normalizeMksquashfsPattern(pattern: string): string | null {
     return normalizeBackupExcludePattern(pattern);
+  }
+
+  private async uploadPart(
+    archiveFile: ReturnType<typeof Bun.file>,
+    part: BackupUploadPart
+  ): Promise<UploadedBackupPart> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= BACKUP_UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        const body = archiveFile.slice(part.offset, part.offset + part.size);
+        const response = await fetch(part.url, {
+          method: 'PUT',
+          headers: {
+            'Content-Length': String(part.size),
+            'Content-Type': 'application/octet-stream'
+          },
+          body,
+          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS)
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `part ${part.partNumber} failed with HTTP ${response.status}`
+          );
+        }
+
+        const etag = response.headers.get('etag')?.trim();
+        if (!etag) {
+          throw Object.assign(
+            new Error(
+              `part ${part.partNumber} response did not include an ETag header`
+            ),
+            { retryable: false }
+          );
+        }
+
+        return {
+          partNumber: part.partNumber,
+          etag
+        };
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        if ((error as { retryable?: boolean }).retryable === false) {
+          throw err;
+        }
+        lastError = err;
+        if (attempt < BACKUP_UPLOAD_MAX_ATTEMPTS) {
+          this.logger.warn(
+            `backup upload part ${part.partNumber} failed on attempt ${attempt}, retrying`,
+            { error: err.message }
+          );
+        }
+      }
+    }
+
+    throw lastError ?? new Error(`part ${part.partNumber} failed`);
+  }
+
+  /**
+   * Upload parts of a backup archive to presigned URLs in parallel.
+   * The caller (DO) has already created a multipart upload and generated
+   * presigned PUT URLs for each part. This method uploads each byte range
+   * directly from the local archive using concurrent PUT requests.
+   */
+  async uploadParts(
+    archivePath: string,
+    parts: BackupUploadPart[],
+    _sessionId = 'default'
+  ): Promise<ServiceResult<{ parts: UploadedBackupPart[] }>> {
+    if (parts.length === 0) {
+      return serviceSuccess({ parts: [] });
+    }
+
+    const archivePathError = validateArchivePath(archivePath);
+    if (archivePathError) {
+      return serviceError({
+        message: archivePathError,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        details: { archivePath }
+      });
+    }
+
+    const archiveFile = Bun.file(archivePath);
+    if (!(await archiveFile.exists())) {
+      return serviceError({
+        message: `Backup archive does not exist: ${archivePath}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        details: { archivePath }
+      });
+    }
+
+    let uploadedParts: UploadedBackupPart[];
+    try {
+      uploadedParts = await Promise.all(
+        parts.map((part) => this.uploadPart(archiveFile, part))
+      );
+    } catch (error) {
+      return serviceError({
+        message: `Multipart upload failed: ${error instanceof Error ? error.message : String(error)}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        details: { archivePath }
+      });
+    }
+
+    uploadedParts.sort((a, b) => a.partNumber - b.partNumber);
+
+    return serviceSuccess({ parts: uploadedParts });
   }
 
   /**

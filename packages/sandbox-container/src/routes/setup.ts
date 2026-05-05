@@ -291,6 +291,14 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
+  router.register({
+    method: 'POST',
+    path: '/api/backup/upload-parts',
+    handler: async (req, ctx) =>
+      container.get('backupHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
   // Desktop routes
   router.register({
     method: 'POST',

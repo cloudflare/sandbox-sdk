@@ -1912,7 +1912,14 @@ describe('Sandbox - Automatic Session Management', () => {
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         expect.stringMatching(/^__sandbox_backup_/),
-        { gitignore: false, excludes: [] }
+        {
+          gitignore: false,
+          excludes: [],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
+        }
       );
       expect(bucket.put).toHaveBeenCalled();
     });
@@ -1957,9 +1964,55 @@ describe('Sandbox - Automatic Session Management', () => {
         expect.stringMatching(/^__sandbox_backup_/),
         {
           gitignore: false,
-          excludes: ['node_modules/.cache', '.next/cache', 'dist']
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
         }
       );
+    });
+
+    it('should reject unsupported backup compression before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compression: {
+            format: 'brotli' as unknown as 'gzip'
+          }
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compression\.format must be one of: gzip, lz4, zstd/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid backup compression thread count before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compression: {
+            threads: 0
+          }
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compression\.threads must be a positive integer/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
     });
 
     it('should allow restoring a backup into /app', async () => {
@@ -1988,8 +2041,8 @@ describe('Sandbox - Automatic Session Management', () => {
       const restoreArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
-      const mountBackupR2Spy = vi
-        .spyOn(backupSandbox as any, 'mountBackupR2')
+      const downloadBackupParallelSpy = vi
+        .spyOn(backupSandbox as any, 'downloadBackupParallel')
         .mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '0',
@@ -2009,22 +2062,56 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
-        `/var/backups/r2mount/${backupId}/data.sqsh`,
+        `/var/backups/${backupId}.sqsh`,
         expect.stringMatching(/^__sandbox_backup_/)
       );
-      expect(mountBackupR2Spy).toHaveBeenCalledWith(
-        `/var/backups/r2mount/${backupId}`,
-        `backups/${backupId}/`,
+      expect(downloadBackupParallelSpy).toHaveBeenCalledWith(
+        `/var/backups/${backupId}.sqsh`,
+        `backups/${backupId}/data.sqsh`,
+        42,
+        backupId,
+        '/app/project',
         expect.stringMatching(/^__sandbox_backup_/)
       );
-      expect(
-        (backupSandbox as any).execWithSession.mock.calls.some(
-          ([command]: [string]) =>
-            command.includes(
-              `/usr/bin/fusermount3 -uz '/var/backups/r2mount/${backupId}'`
-            )
-        )
-      ).toBe(true);
+    });
+
+    it('should write parallel restore ranges directly into the temp archive', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const expectedSize = 16 * 1024 * 1024;
+      const execWithSessionSpy = vi
+        .spyOn(backupSandbox as any, 'execWithSession')
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({
+          stdout: String(expectedSize),
+          stderr: '',
+          exitCode: 0
+        })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
+      vi.spyOn(
+        backupSandbox as any,
+        'generatePresignedGetUrl'
+      ).mockResolvedValue('https://example.com/archive');
+
+      await (backupSandbox as any).downloadBackupParallel(
+        '/var/backups/test.sqsh',
+        'backups/test/data.sqsh',
+        expectedSize,
+        'test-backup-id',
+        '/app/project',
+        'backup-session'
+      );
+
+      const downloadCommand = execWithSessionSpy.mock.calls[1][0] as string;
+      expect(downloadCommand).toContain(
+        "truncate -s 16777216 '/var/backups/test.sqsh.tmp'"
+      );
+      expect(downloadCommand).toContain("of='/var/backups/test.sqsh.tmp'");
+      expect(downloadCommand).toContain('oflag=seek_bytes');
+      expect(downloadCommand).toContain('conv=notrunc');
+      expect(downloadCommand).toContain('(set -o pipefail; curl -sSf');
+      expect(downloadCommand).not.toContain('cat ');
+      expect(downloadCommand).not.toContain('.part0.tmp');
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {
