@@ -720,6 +720,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         stub: this,
         port: 3000,
         logger: this.logger,
+        retryTimeoutMs: this.computeRetryTimeoutMs(),
         // Mirrors containerFetch()'s request lifecycle for the RPC transport.
         //
         // The HTTP transport bumps inflightRequests at the top of each
