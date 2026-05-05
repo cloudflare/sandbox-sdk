@@ -64,7 +64,8 @@ import {
   PortNotExposedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
-  SessionAlreadyExistsError
+  SessionAlreadyExistsError,
+  ValidationFailedError
 } from './errors';
 import { collectFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
@@ -2473,6 +2474,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
+      if (sessionId === false) {
+        throw new ValidationFailedError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message:
+            'sessionId: false is not supported with streaming exec. Use sandbox.exec() without stream for isolated foreground execution, or omit sessionId to stream against the default session.',
+          context: {
+            validationErrors: [
+              {
+                field: 'sessionId',
+                message:
+                  'sessionId: false is not supported with streaming exec',
+                code: 'unsupported_with_streaming'
+              }
+            ]
+          },
+          httpStatus: 400,
+          timestamp
+        });
+      }
+
       const stream = await this.client.commands.executeStream(
         command,
         sessionId,
@@ -2516,7 +2537,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               command,
               duration,
               timestamp,
-              sessionId: sessionId === false ? undefined : sessionId
+              sessionId
             };
           }
 

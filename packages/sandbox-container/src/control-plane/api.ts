@@ -188,7 +188,7 @@ class CommandsRPCAPI extends RpcTarget {
 
   async executeStream(
     command: string,
-    sessionId: string | false,
+    sessionId: string,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;

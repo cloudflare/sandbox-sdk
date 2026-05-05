@@ -214,6 +214,22 @@ describe('ProcessService', () => {
       expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
     });
 
+    it('should reject sessionId: false for streaming/background commands', async () => {
+      const result = await processService.startProcess('echo streamed', {
+        sessionId: false
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(result.error.message).toContain('sessionId: false');
+      }
+
+      // Streaming pipeline must never be invoked when sessionId is false
+      expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+      expect(mockProcessStore.create).not.toHaveBeenCalled();
+    });
+
     it('should handle stream execution errors', async () => {
       // Mock SessionManager to throw error
       mocked(mockSessionManager.executeStreamInSession).mockImplementation(

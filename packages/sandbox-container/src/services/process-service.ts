@@ -2,7 +2,8 @@ import { type Logger, logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
-  ProcessNotFoundContext
+  ProcessNotFoundContext,
+  ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type {
@@ -126,6 +127,31 @@ export class ProcessService {
           error: {
             message: validation.error || 'Invalid command',
             code: validation.code || 'INVALID_COMMAND'
+          }
+        };
+      }
+
+      // sessionId: false is reserved for isolated foreground exec; streaming
+      // and background commands run in their own subshells and do not support
+      // opting out of a named session. Reject explicitly so the request never
+      // silently routes to the default session.
+      if (options.sessionId === false) {
+        return {
+          success: false,
+          error: {
+            message:
+              'sessionId: false is not supported for streaming or background commands. Use foreground exec for isolated one-shot execution, or pass a session id (or omit sessionId) to stream against a named session.',
+            code: ErrorCode.VALIDATION_FAILED,
+            details: {
+              validationErrors: [
+                {
+                  field: 'sessionId',
+                  message:
+                    'sessionId: false is not supported for streaming or background commands',
+                  code: 'unsupported_with_streaming'
+                }
+              ]
+            } satisfies ValidationFailedContext
           }
         };
       }

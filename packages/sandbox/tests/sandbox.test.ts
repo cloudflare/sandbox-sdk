@@ -1,6 +1,10 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PortNotExposedError } from '../src/errors';
+import {
+  ErrorCode,
+  PortNotExposedError,
+  ValidationFailedError
+} from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -249,6 +253,27 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(executeStreamSpy).toHaveBeenCalled();
+    });
+
+    it('should reject streaming exec with sessionId: false', async () => {
+      const executeStreamSpy = vi.spyOn(
+        sandbox.client.commands,
+        'executeStream'
+      );
+
+      const result = sandbox.exec('echo streamed', {
+        stream: true,
+        sessionId: false,
+        onOutput: vi.fn()
+      });
+
+      await expect(result).rejects.toMatchObject({
+        code: ErrorCode.VALIDATION_FAILED,
+        name: 'ValidationFailedError'
+      });
+      await expect(result).rejects.toBeInstanceOf(ValidationFailedError);
+
+      expect(executeStreamSpy).not.toHaveBeenCalled();
     });
 
     it('should forward checkChanges options to the watch client', async () => {
