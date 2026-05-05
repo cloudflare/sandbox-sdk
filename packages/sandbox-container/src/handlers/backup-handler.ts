@@ -326,7 +326,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       }
     }
 
-    const sessionId = context.sessionId ?? 'default';
+    const sessionId = body.sessionId ?? context.sessionId ?? 'default';
     const result = await this.backupService.uploadParts(
       body.archivePath,
       body.parts,

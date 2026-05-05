@@ -1055,10 +1055,12 @@ class BackupRPCAPI extends RpcTarget {
       offset: number;
       size: number;
     }>;
+    sessionId?: string;
   }) {
     const result = await this.#svc.uploadParts(
       request.archivePath,
-      request.parts
+      request.parts,
+      request.sessionId ?? 'default'
     );
     const data = extractData<{
       parts: Array<{ partNumber: number; etag: string }>;

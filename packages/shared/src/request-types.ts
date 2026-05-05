@@ -190,6 +190,7 @@ export interface UploadPartsRequest {
   archivePath: string;
   /** Parts to upload in parallel */
   parts: UploadPart[];
+  sessionId?: string;
 }
 
 /**

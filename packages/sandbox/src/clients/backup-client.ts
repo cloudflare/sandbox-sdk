@@ -76,7 +76,13 @@ export class BackupClient extends BaseHttpClient {
     return response;
   }
 
-  async uploadParts(request: UploadPartsRequest): Promise<UploadPartsResponse> {
-    return this.post<UploadPartsResponse>('/api/backup/upload-parts', request);
+  async uploadParts(
+    request: UploadPartsRequest,
+    sessionId?: string
+  ): Promise<UploadPartsResponse> {
+    return this.post<UploadPartsResponse>('/api/backup/upload-parts', {
+      ...request,
+      sessionId: sessionId ?? request.sessionId
+    });
   }
 }

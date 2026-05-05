@@ -4486,7 +4486,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       try {
         uploadResult = await this.client.backup.uploadParts({
           archivePath,
-          parts
+          parts,
+          sessionId: backupSession
         });
       } catch (err) {
         if (

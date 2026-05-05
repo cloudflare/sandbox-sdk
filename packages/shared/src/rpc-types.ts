@@ -254,6 +254,7 @@ export interface SandboxBackupAPI {
       offset: number;
       size: number;
     }>;
+    sessionId?: string;
   }): Promise<UploadPartsResponse>;
 }
 
