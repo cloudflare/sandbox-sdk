@@ -531,7 +531,7 @@ console.log('Terminal server on port ' + port);
           env: body.env,
           cwd: body.cwd,
           timeout: body.timeout,
-          preserveShellState: body.preserveShellState
+          sessionId: body.sessionId
         });
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }

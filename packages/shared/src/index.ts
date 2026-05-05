@@ -194,6 +194,7 @@ export type {
   RenameFileResult,
   RestoreBackupResult,
   // Sandbox configuration options
+  SandboxExecOptions,
   SandboxOptions,
   SandboxTransport,
   // Session management result types

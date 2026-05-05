@@ -8,11 +8,12 @@
  */
 export interface ExecuteRequest {
   command: string;
-  sessionId?: string;
+  sessionId?: string | false;
   background?: boolean;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  /** @deprecated Use sessionId: false for isolated top-level exec. */
   preserveShellState?: boolean;
   origin?: 'user' | 'internal';
 }

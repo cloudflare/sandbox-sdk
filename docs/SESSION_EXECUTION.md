@@ -19,7 +19,7 @@ We use distinct patterns because they have fundamentally different requirements:
 | Mode                    | API                                           | State Persists? | Streaming? | Killable?           |
 | ----------------------- | --------------------------------------------- | --------------- | ---------- | ------------------- |
 | **Foreground**          | default `sandbox.exec()` and `session.exec()` | ✅ Yes          | ❌ No      | ❌ No (use timeout) |
-| **Isolated foreground** | `exec(..., { preserveShellState: false })`    | ❌ No           | ❌ No      | ❌ No (use timeout) |
+| **Isolated foreground** | `sandbox.exec(..., { sessionId: false })`     | ❌ No           | ❌ No      | ❌ No (use timeout) |
 | **Background**          | `execStream()`, `startProcess()`              | ❌ No           | ✅ Yes     | ✅ Yes              |
 
 ### Foreground (`exec`)
@@ -44,10 +44,11 @@ Command ──▶ stdout.tmp, stderr.tmp ──▶ Prefix lines ──▶ log fi
 - Uses `{ cmd }` (group command) not `( cmd )` (subshell)
 - Group commands run in the current shell, so `cd`, `export`, etc. affect subsequent commands
 
-`exec(command, { preserveShellState: false })` uses isolated foreground
-execution. It wraps the command in a subshell so scripts that call `exit`,
-`exec`, or enable `set -e` cannot terminate the persistent session shell. Use
-the default mode when shell state should persist across commands.
+Top-level `sandbox.exec(command, { sessionId: false })` uses isolated
+foreground execution. It runs outside the default persistent session so scripts
+that call `exit`, `exec`, or enable `set -e` cannot terminate or mutate the
+default session shell. Use the default mode when shell state should persist
+across commands.
 
 ### Background (`execStream` / `startProcess`)
 

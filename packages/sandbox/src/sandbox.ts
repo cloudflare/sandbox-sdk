@@ -25,6 +25,7 @@ import type {
   RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
+  SandboxExecOptions,
   SandboxOptions,
   SandboxTransport,
   SessionOptions,
@@ -63,8 +64,7 @@ import {
   PortNotExposedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
-  SessionAlreadyExistsError,
-  ValidationFailedError
+  SessionAlreadyExistsError
 } from './errors';
 import { collectFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
@@ -2343,8 +2343,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
-  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
+  async exec(
+    command: string,
+    options?: SandboxExecOptions
+  ): Promise<ExecResult> {
+    const session =
+      options?.sessionId === false
+        ? false
+        : (options?.sessionId ?? (await this.ensureDefaultSession()));
     return this.execWithSession(command, session, options);
   }
 
@@ -2353,8 +2359,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, {
+    return this.execWithSession(command, false, {
       origin: 'internal',
       preserveShellState: false
     });
@@ -2366,7 +2371,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async execWithSession(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options?: ExecOptions
   ): Promise<ExecResult> {
     const startTime = Date.now();
@@ -2421,7 +2426,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         result = this.mapExecuteResponseToExecResult(
           response,
           duration,
-          sessionId
+          sessionId === false ? undefined : sessionId
         );
       }
 
@@ -2449,7 +2454,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
-        sessionId,
+        sessionId: sessionId === false ? undefined : sessionId,
         origin: options?.origin ?? 'user',
         error: execError ?? undefined,
         errorMessage: execError?.message
@@ -2459,7 +2464,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private async executeWithStreaming(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options: ExecOptions,
     startTime: number,
     timestamp: string
@@ -2468,26 +2473,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
-      if (options.preserveShellState === true) {
-        throw new ValidationFailedError({
-          code: ErrorCode.VALIDATION_FAILED,
-          message:
-            'preserveShellState: true is not supported with streaming exec. Use session.exec() without stream for persistent shell state.',
-          context: {
-            validationErrors: [
-              {
-                field: 'preserveShellState',
-                message:
-                  'preserveShellState: true is not supported with streaming exec',
-                code: 'unsupported_with_streaming'
-              }
-            ]
-          },
-          httpStatus: 400,
-          timestamp
-        });
-      }
-
       const stream = await this.client.commands.executeStream(
         command,
         sessionId,
@@ -2531,7 +2516,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               command,
               duration,
               timestamp,
-              sessionId
+              sessionId: sessionId === false ? undefined : sessionId
             };
           }
 

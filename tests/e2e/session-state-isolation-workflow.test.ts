@@ -296,7 +296,7 @@ describe('Session State Isolation Workflow', () => {
       headers: createTestHeaders(sandboxId!),
       body: JSON.stringify({
         command: 'cd /tmp',
-        preserveShellState: false
+        sessionId: false
       })
     });
     expect(topLevelCwdResponse.status).toBe(200);

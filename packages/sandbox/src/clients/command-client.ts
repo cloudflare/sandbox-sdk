@@ -31,11 +31,12 @@ export class CommandClient extends BaseHttpClient {
    */
   async execute(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      /** @deprecated Use sessionId: false for isolated top-level exec. */
       preserveShellState?: boolean;
       origin?: 'user' | 'internal';
     }
@@ -86,7 +87,7 @@ export class CommandClient extends BaseHttpClient {
    */
   async executeStream(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;

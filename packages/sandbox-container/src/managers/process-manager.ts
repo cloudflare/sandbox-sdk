@@ -49,7 +49,7 @@ export class ProcessManager {
       pid,
       status: 'running',
       startTime: new Date(),
-      sessionId: options.sessionId,
+      sessionId: options.sessionId === false ? undefined : options.sessionId,
       stdout: '',
       stderr: '',
       outputListeners: new Set(),

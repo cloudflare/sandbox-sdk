@@ -37,7 +37,7 @@ export function getSuggestion(
       return `Session "${context.sessionId}" was destroyed. Create a new session to continue executing commands`;
 
     case ErrorCode.SESSION_TERMINATED:
-      return `Session "${context.sessionId}" ended because its shell exited (exit code: ${context.exitCode ?? 'unknown'}). Session-local state (env vars, cwd, shell functions) has been lost. Check for top-level exit, exec, kill, or set -e in the command. Retry to start a fresh session, or use preserveShellState: false for one-shot scripts that should not affect the session shell`;
+      return `Session "${context.sessionId}" ended because its shell exited (exit code: ${context.exitCode ?? 'unknown'}). Session-local state (env vars, cwd, shell functions) has been lost. Check for top-level exit, exec, kill, or set -e in the command. Retry to start a fresh session, or use top-level sandbox.exec(command, { sessionId: false }) for one-shot scripts that should not affect the default session shell`;
 
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;

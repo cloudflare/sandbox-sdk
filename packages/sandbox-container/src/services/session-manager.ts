@@ -1,5 +1,6 @@
 // SessionManager Service - Manages persistent execution sessions
 
+import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
@@ -450,6 +451,79 @@ export class SessionManager {
     }
     this.sessions.delete(sessionId);
     this.creatingLocks.delete(sessionId);
+  }
+
+  /**
+   * Execute a foreground command without using or mutating a caller-visible
+   * persistent session. A transient Session is used only to reuse the existing
+   * FIFO/script execution machinery and is always destroyed after the command.
+   */
+  async executeWithoutSession(
+    command: string,
+    options?: ExecuteInSessionOptions
+  ): Promise<ServiceResult<RawExecResult>> {
+    const { cwd, timeoutMs, env, origin } = options ?? {};
+    const sessionId = `__sandbox_exec_${randomUUID()}`;
+    const session = new Session({
+      id: sessionId,
+      cwd: cwd || '/workspace',
+      commandTimeoutMs: timeoutMs,
+      logger: this.logger
+    });
+
+    try {
+      await session.initialize();
+      const result = await session.exec(command, {
+        cwd,
+        env,
+        timeoutMs,
+        preserveShellState: false,
+        origin
+      });
+
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      const { sessionDestroyed, shellTerminated, shellExitCode } =
+        this.classifyCommandError(error, command, sessionId);
+
+      if (sessionDestroyed) {
+        return {
+          success: false,
+          error: this.sessionDestroyedError(sessionId)
+        };
+      }
+
+      if (shellTerminated) {
+        return {
+          success: false,
+          error: this.sessionTerminatedError(sessionId, shellExitCode)
+        };
+      }
+
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        error: {
+          message: `Failed to execute command '${command}': ${errorMessage}`,
+          code: ErrorCode.COMMAND_EXECUTION_ERROR,
+          details: {
+            command,
+            stderr: errorMessage
+          } satisfies CommandErrorContext
+        }
+      };
+    } finally {
+      await session.destroy().catch((error) => {
+        this.logger.debug('Transient exec session destroy failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
   }
 
   /**

@@ -52,19 +52,27 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<CommandResult>> {
     try {
-      // Always use SessionManager for execution (unified model)
-      const sessionId = options.sessionId || 'default';
-      const result = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        {
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          origin: options.origin,
-          preserveShellState: options.preserveShellState
-        }
-      );
+      // Use persistent sessions by default; sessionId: false opts out of default-session state.
+      const result =
+        options.sessionId === false
+          ? await this.sessionManager.executeWithoutSession(command, {
+              cwd: options.cwd,
+              timeoutMs: options.timeoutMs,
+              env: options.env,
+              origin: options.origin,
+              preserveShellState: false
+            })
+          : await this.sessionManager.executeInSession(
+              options.sessionId || 'default',
+              command,
+              {
+                cwd: options.cwd,
+                timeoutMs: options.timeoutMs,
+                env: options.env,
+                origin: options.origin,
+                preserveShellState: options.preserveShellState
+              }
+            );
 
       if (!result.success) {
         return result as ServiceResult<CommandResult>;

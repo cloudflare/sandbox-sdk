@@ -272,7 +272,7 @@ export type ProcessInfo = ProcessRecord;
 
 // Process options for container-internal execution (includes session routing)
 export interface ProcessOptions {
-  sessionId?: string;
+  sessionId?: string | false;
   processId?: string;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;

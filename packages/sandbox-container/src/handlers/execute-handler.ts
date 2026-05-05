@@ -45,7 +45,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     // Parse request body directly
     const body = await this.parseRequestBody<ExecuteRequest>(request);
-    const sessionId = body.sessionId || context.sessionId;
+    const sessionId =
+      body.sessionId === false ? false : (body.sessionId ?? context.sessionId);
 
     // If this is a background process, start it as a process
     if (body.background) {
@@ -102,7 +103,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       command: body.command,
       duration: 0, // Duration not tracked at service level yet
       timestamp: new Date().toISOString(),
-      sessionId: sessionId
+      ...(typeof sessionId === 'string' && { sessionId })
     };
 
     return this.createTypedResponse(response, context);
@@ -114,18 +115,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     // Parse request body directly
     const body = await this.parseRequestBody<ExecuteRequest>(request);
-    const sessionId = body.sessionId || context.sessionId;
-
-    if (body.preserveShellState === true) {
-      return this.createErrorResponse(
-        {
-          message:
-            'preserveShellState: true is not supported with streaming exec',
-          code: ErrorCode.VALIDATION_FAILED
-        },
-        context
-      );
-    }
+    const sessionId =
+      body.sessionId === false ? false : (body.sessionId ?? context.sessionId);
 
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {

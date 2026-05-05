@@ -153,7 +153,7 @@ class CommandsRPCAPI extends RpcTarget {
 
   async execute(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
@@ -188,7 +188,7 @@ class CommandsRPCAPI extends RpcTarget {
 
   async executeStream(
     command: string,
-    sessionId: string,
+    sessionId: string | false,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;

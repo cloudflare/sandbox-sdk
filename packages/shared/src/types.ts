@@ -42,11 +42,7 @@ export interface BaseExecOptions {
 
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
-  /**
-   * Preserve shell state changes such as `cd`, `export`, and shell functions.
-   * Defaults to true. Set false for one-shot scripts that may use `exit`,
-   * `exec`, or `set -e` without terminating the persistent session shell.
-   */
+  /** @deprecated Use top-level `sandbox.exec(command, { sessionId: false })` for isolated one-shot execution. */
   preserveShellState?: boolean;
 
   /**
@@ -80,6 +76,14 @@ export interface ExecOptions extends BaseExecOptions {
    * Defaults to 'user' when omitted.
    */
   origin?: 'user' | 'internal';
+}
+
+export interface SandboxExecOptions extends ExecOptions {
+  /**
+   * Session to execute against. Omit to use the sandbox default session.
+   * Pass `false` to execute without preserving default-session shell state.
+   */
+  sessionId?: string | false;
 }
 
 export interface ExecResult {
@@ -1273,7 +1277,7 @@ export type MountBucketOptions =
 // Main Sandbox interface
 export interface ISandbox {
   // Command execution
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  exec(command: string, options?: SandboxExecOptions): Promise<ExecResult>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;

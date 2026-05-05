@@ -1,10 +1,6 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ErrorCode,
-  PortNotExposedError,
-  ValidationFailedError
-} from '../src/errors';
+import { PortNotExposedError } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -217,37 +213,42 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should allow top-level exec to opt out of preserving shell state', async () => {
+    it('should allow top-level exec to opt out of the default session', async () => {
       await sandbox.exec('git add . && git commit -m test && git push', {
-        preserveShellState: false
+        sessionId: false
       });
 
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'git add . && git commit -m test && git push',
-        expect.stringMatching(/^sandbox-/),
-        { preserveShellState: false }
+        false,
+        undefined
       );
     });
 
-    it('should reject persistent shell state for streaming exec', async () => {
-      const executeStreamSpy = vi.spyOn(
-        sandbox.client.commands,
-        'executeStream'
-      );
+    it('should allow streaming exec without preserveShellState validation', async () => {
+      const executeStreamSpy = vi
+        .spyOn(sandbox.client.commands, 'executeStream')
+        .mockResolvedValue(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"complete","exitCode":0}\n\n'
+                )
+              );
+              controller.close();
+            }
+          })
+        );
 
-      const result = sandbox.exec('echo streamed', {
+      await sandbox.exec('echo streamed', {
         stream: true,
         preserveShellState: true,
         onOutput: vi.fn()
       });
 
-      await expect(result).rejects.toMatchObject({
-        code: ErrorCode.VALIDATION_FAILED,
-        name: 'ValidationFailedError'
-      });
-      await expect(result).rejects.toBeInstanceOf(ValidationFailedError);
-
-      expect(executeStreamSpy).not.toHaveBeenCalled();
+      expect(executeStreamSpy).toHaveBeenCalled();
     });
 
     it('should forward checkChanges options to the watch client', async () => {
