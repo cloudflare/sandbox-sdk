@@ -1969,6 +1969,44 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('should reject unsupported backup compression before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compression: 'brotli' as unknown as 'gzip'
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compression must be one of: gzip, lz4, zstd/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid backup compression thread count before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compressThreads: 0
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compressThreads must be a positive integer/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
+    });
+
     it('should allow restoring a backup into /app', async () => {
       const { backupSandbox, bucket } = await createBackupSandbox();
       const backupId = crypto.randomUUID();

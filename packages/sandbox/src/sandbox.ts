@@ -4849,6 +4849,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const allowedCompressions = ['gzip', 'lz4', 'zstd'];
+      if (!allowedCompressions.includes(compression)) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compression must be one of: gzip, lz4, zstd',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: 'compression must be one of: gzip, lz4, zstd'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (
+        typeof compressThreads !== 'number' ||
+        !Number.isInteger(compressThreads) ||
+        compressThreads < 1
+      ) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compressThreads must be a positive integer',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: 'compressThreads must be a positive integer'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
       const normalizedExcludes = this.normalizeBackupExcludes(excludes);
 
       backupSession = await this.ensureBackupSession();
@@ -5048,6 +5077,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           code: ErrorCode.INVALID_BACKUP_CONFIG,
           httpStatus: 400,
           context: { reason: 'excludes must be an array of strings' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const allowedCompressions = ['gzip', 'lz4', 'zstd'];
+      if (!allowedCompressions.includes(compression)) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compression must be one of: gzip, lz4, zstd',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: 'compression must be one of: gzip, lz4, zstd'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (
+        typeof compressThreads !== 'number' ||
+        !Number.isInteger(compressThreads) ||
+        compressThreads < 1
+      ) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compressThreads must be a positive integer',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: 'compressThreads must be a positive integer'
+          },
           timestamp: new Date().toISOString()
         });
       }
