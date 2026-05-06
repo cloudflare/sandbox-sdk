@@ -148,6 +148,38 @@ COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javas
 # Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
 COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
+# ============================================================================
+# cloudflared (Cloudflare Tunnel daemon) — enables sandbox.tunnels.*
+# Pinned version with sha256 verification per architecture.
+# Skipped in the musl/Alpine stage (no musl prebuilt).
+# ============================================================================
+ARG CLOUDFLARED_VERSION=2026.3.0
+ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
+ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) suffix=amd64; sha="${CLOUDFLARED_SHA256_AMD64}" ;; \
+      arm64) suffix=arm64; sha="${CLOUDFLARED_SHA256_ARM64}" ;; \
+      *) echo "Unsupported arch for cloudflared: $arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${suffix}"; \
+    curl -fsSL -o /usr/local/bin/cloudflared "$url"; \
+    echo "$sha  /usr/local/bin/cloudflared" | sha256sum -c -; \
+    chmod +x /usr/local/bin/cloudflared; \
+    cloudflared --version
+
+# Inject the host's extra CA bundle when running locally behind a TLS-
+# intercepting proxy (e.g. Cloudflare WARP / Zero Trust). See
+# DOCKER_README.md for the local-dev setup. No-op when the secret
+# isn't passed.
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt && \
+        update-ca-certificates; \
+    fi
+
 RUN mkdir -p /workspace
 
 # Expose the application port (3000 for control)
@@ -202,12 +234,6 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 FROM runtime-base AS opencode
 
-RUN --mount=type=secret,id=wrangler_ca \
-    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
-        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
-        update-ca-certificates; \
-    fi
-
 # Install OpenCode CLI via npm (avoids GitHub API rate limits)
 RUN npm i -g opencode-ai \
     && opencode --version
@@ -231,7 +257,8 @@ RUN mkdir -p /usr/local/share/ca-certificates
 RUN --mount=type=secret,id=wrangler_ca \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
     if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
-        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt; \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt; \
     fi && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/*
