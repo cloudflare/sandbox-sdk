@@ -36,6 +36,33 @@ See the [Getting Started guide](https://developers.cloudflare.com/sandbox/get-st
 
 Each image runs a lightweight HTTP server (port 3000) that the Sandbox SDK communicates with. The server handles command execution, file operations, process management, and port exposure. Images are built for `linux/amd64`.
 
+## Local development behind a TLS-intercepting proxy
+
+If your machine runs Cloudflare WARP / Zero Trust (or any other proxy
+that re-signs TLS with a corporate root), the sandbox container must
+trust that root or outbound HTTPS calls fail with
+`x509: certificate signed by unknown authority`. The Dockerfile accepts
+a `wrangler_ca` build secret that gets appended to the image's CA
+bundle and registered with `update-ca-certificates`:
+
+```bash
+docker build \
+  -f packages/sandbox/Dockerfile \
+  --target default \
+  --secret id=wrangler_ca,src="$NODE_EXTRA_CA_CERTS" \
+  -t my-sandbox-image .
+```
+
+WARP's installer sets `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and
+`REQUESTS_CA_BUNDLE` to a bundle that includes the corporate root, so
+passing `$NODE_EXTRA_CA_CERTS` is the easiest way to wire it through.
+Local builds done via `npm run docker:rebuild` already pass this
+secret — you only need this when invoking `docker build` directly.
+
+When the secret isn't passed (CI, fresh checkout without WARP), the
+build is a no-op and the resulting image trusts only the standard
+public CAs.
+
 ## Documentation
 
 - [Full Documentation](https://developers.cloudflare.com/sandbox/)
