@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.9.4
+
+### Patch Changes
+
+- [#669](https://github.com/cloudflare/sandbox-sdk/pull/669) [`10d3239`](https://github.com/cloudflare/sandbox-sdk/commit/10d323951cd5bba445f4cf9edd060f6a09b99e39) Thanks [@aron-cf](https://github.com/aron-cf)! - Ensure the RPC transport successfully connects once the container has started. This should
+  reduce the likelihood of hitting an `RPCTransportError: WebSocket upgrade failed: 503 Service
+Unavailable` error when interacting with a sandbox before the container is ready.
+
 ## 0.9.3
 
 ### Patch Changes
