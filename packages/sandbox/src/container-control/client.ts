@@ -80,6 +80,7 @@ import type {
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTransport,
+  SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -587,6 +588,9 @@ export class ContainerControlClient {
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
+  }
+  get tunnels(): SandboxTunnelsAPI {
+    return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
   }
 
   setRetryTimeoutMs(_ms: number): void {

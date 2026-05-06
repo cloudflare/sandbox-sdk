@@ -42,7 +42,8 @@ import {
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
-  TraceContext
+  TraceContext,
+  type TunnelInfo
 } from '@repo/shared';
 import {
   BACKUP_ALLOWED_PREFIXES,
@@ -94,6 +95,10 @@ import type {
   LocalSyncMountInfo,
   MountInfo
 } from './storage-mount/types';
+import {
+  createTunnelsHandler,
+  type TunnelsHandler
+} from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
 
 /**
@@ -446,6 +451,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+
+  // Tunnels namespace handler. Lazily constructed on first access via
+  // the `tunnels` getter; holds per-sandbox state (DNS-record ↔ tunnel-id
+  // mappings, zone-name cache). Credentials are read from `env` per call
+  // and never leave the DO.
+  private tunnelsHandler: TunnelsHandler | null = null;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
   // Incremented whenever the container stops. Used to invalidate
@@ -3675,6 +3686,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       ];
     });
+  }
+
+  /**
+   * Namespaced tunnel API.
+   *
+   * - `tunnels.create(port)` — named tunnel when CF credentials are in
+   *   `env` (hostname auto-derived as `<sandbox-id>.<zone-name>`),
+   *   quick tunnel otherwise.
+   * - `tunnels.create(port, { mode: 'named', hostname })` — named tunnel
+   *   with an explicit hostname.
+   * - `tunnels.create(port, { mode: 'quick' })` — force a quick tunnel
+   *   even when credentials are available.
+   * - `tunnels.list()` — tunnels currently running in the container.
+   * - `tunnels.destroy(idOrInfo)` — tear down by id or by the record
+   *   returned from `create()`.
+   *
+   * Reads `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and
+   * `CLOUDFLARE_ZONE_ID` from `env` for named tunnels. Credentials
+   * never leave the DO.
+   */
+  get tunnels(): TunnelsHandler {
+    if (!this.tunnelsHandler) {
+      this.tunnelsHandler = createTunnelsHandler({
+        client: this.client,
+        env: this.env,
+        ctx: this.ctx,
+        sandboxName: this.sandboxName,
+        logger: this.logger
+      });
+    }
+    return this.tunnelsHandler;
   }
 
   async isPortExposed(port: number): Promise<boolean> {
