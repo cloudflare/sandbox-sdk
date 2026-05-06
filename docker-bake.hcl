@@ -9,7 +9,7 @@
 variable "TAG" { default = "dev" }
 variable "SANDBOX_VERSION" { default = "dev" }
 variable "BUN_VERSION" { default = "1.3" }
-variable "NODE_VERSION" { default = "20" }
+variable "NODE_VERSION" { default = "22" }
 variable "CACHE_REPO" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)

@@ -69,7 +69,7 @@ sandboxAddon.connect({ sandboxId: 'shared-terminal', sessionId });
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - Docker (for local development)
 - Cloudflare account with container access
 
