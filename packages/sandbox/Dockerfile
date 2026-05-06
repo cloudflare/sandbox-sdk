@@ -3,6 +3,7 @@ ARG BUN_VERSION=1
 # Node version — override via --build-arg NODE_VERSION=22
 ARG NODE_VERSION=20
 FROM oven/bun:${BUN_VERSION} AS bun-binary
+FROM node:${NODE_VERSION}-slim AS node-runtime
 
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
@@ -10,7 +11,7 @@ FROM oven/bun:${BUN_VERSION} AS bun-binary
 # ============================================================================
 # Stage 1: Prune monorepo to only include necessary packages
 # ============================================================================
-FROM node:${NODE_VERSION}-slim AS pruner
+FROM node-runtime AS pruner
 
 WORKDIR /app
 
@@ -27,7 +28,7 @@ RUN turbo prune @repo/sandbox-container --docker
 # Using glibc-based images (not Alpine) so the standalone binary works on
 # standard Linux distributions (Debian, Ubuntu, RHEL, etc.)
 # ============================================================================
-FROM node:${NODE_VERSION}-slim AS builder
+FROM node-runtime AS builder
 
 WORKDIR /app
 
@@ -98,9 +99,6 @@ FROM ubuntu:22.04 AS runtime-base
 # Accept version as build argument (passed from npm_package_version)
 ARG SANDBOX_VERSION=unknown
 
-# Re-declare NODE_VERSION so COPY --from below can resolve it
-ARG NODE_VERSION=20
-
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -133,8 +131,8 @@ RUN ln -sf /proc/mounts /etc/mtab
 
 # Install Node.js from official Node image (defaults to 20 LTS,
 # override via --build-arg NODE_VERSION=22)
-COPY --from=node:${NODE_VERSION}-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:${NODE_VERSION}-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
