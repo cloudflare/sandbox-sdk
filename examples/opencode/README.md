@@ -1,15 +1,18 @@
 # OpenCode + Sandbox SDK
 
 Run OpenCode inside Cloudflare Sandboxes! Just open the worker URL in your browser to get the full OpenCode web experience.
+This example uses Worker-side egress interception to inject Anthropic credentials, so the real API key never enters the sandbox container.
 
 ## Quick Start
 
-1. Copy `.dev.vars.example` to `.dev.vars` and add your Anthropic API key:
+1. Copy `.dev.vars.example` to `.dev.vars` and add your Anthropic API key for the Worker:
 
 ```bash
 cp .dev.vars.example .dev.vars
 # Edit .dev.vars with your ANTHROPIC_API_KEY
 ```
+
+The Worker reads `ANTHROPIC_API_KEY` from its environment and injects it into intercepted outbound requests. OpenCode inside the container only sees placeholder credentials.
 
 2. Install dependencies and run:
 
@@ -36,11 +39,27 @@ OpenCode handles everything:
 - Web UI (proxied from `desktop.dev.opencode.ai`)
 - WebSocket for terminal
 
+## Credential Flow
+
+Anthropic credentials stay in the Worker runtime:
+
+- The Worker stores the real `ANTHROPIC_API_KEY` in `.dev.vars` locally or as a Wrangler secret in production.
+- OpenCode inside the container is configured with a placeholder API key and a base URL under `https://api.anthropic.com/v1`.
+- `Sandbox.outboundByHost['api.anthropic.com']` intercepts outbound requests from the container, injects the real `x-api-key` header, and forwards the request upstream over HTTPS.
+- The real API key is never exposed to processes running inside the container.
+
+For production, store the key as a secret instead of committing it anywhere:
+
+```bash
+wrangler secret put ANTHROPIC_API_KEY
+```
+
 ## Key Benefits
 
 - **Web UI** - Full browser-based OpenCode experience
 - **Isolated execution** - Code runs in secure sandbox containers
 - **Persistent sessions** - Sessions survive across requests
+- **Credential isolation** - Provider credentials stay in the Worker and are injected through outbound egress handlers
 
 ## Advanced: Cloudflare AI Gateway
 

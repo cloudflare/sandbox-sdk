@@ -5,7 +5,11 @@
  * 1. Web UI - Browse to / for the full OpenCode web experience
  * 2. Programmatic - POST to /api/test for SDK-based automation
  */
-import { getSandbox } from '@cloudflare/sandbox';
+import {
+  Sandbox as BaseSandbox,
+  ContainerProxy,
+  getSandbox
+} from '@cloudflare/sandbox';
 import {
   createOpencode,
   createOpencodeServer,
@@ -14,14 +18,55 @@ import {
 import type { Config, Part } from '@opencode-ai/sdk/v2';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 
-export { Sandbox } from '@cloudflare/sandbox';
+export { ContainerProxy };
 
-const getConfig = (env: Env): Config => ({
+export class Sandbox extends BaseSandbox<Env> {
+  interceptHttps = true;
+}
+
+const PROXY_INJECTED_API_KEY = 'proxy-injected';
+const ANTHROPIC_PROXY_BASE_URL = 'https://api.anthropic.com/v1';
+
+function getRequestBody(request: Request): ReadableStream | null | undefined {
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    return undefined;
+  }
+
+  return request.body;
+}
+
+function buildTargetURL(request: Request, origin: string): string {
+  const url = new URL(request.url);
+  return `${origin}${url.pathname}${url.search}`;
+}
+
+Sandbox.outboundByHost = {
+  'api.anthropic.com': async (request: Request, env: Env) => {
+    if (!env.ANTHROPIC_API_KEY) {
+      return new Response('ANTHROPIC_API_KEY is not configured', {
+        status: 500
+      });
+    }
+
+    const headers = new Headers(request.headers);
+    headers.set('x-api-key', env.ANTHROPIC_API_KEY);
+    headers.delete('authorization');
+
+    return fetch(buildTargetURL(request, 'https://api.anthropic.com'), {
+      method: request.method,
+      headers,
+      body: getRequestBody(request)
+    });
+  }
+};
+
+const getConfig = (): Config => ({
   provider: {
     // Option A: Direct Anthropic provider (requires ANTHROPIC_API_KEY)
     anthropic: {
       options: {
-        apiKey: env.ANTHROPIC_API_KEY
+        apiKey: PROXY_INJECTED_API_KEY,
+        baseURL: ANTHROPIC_PROXY_BASE_URL
       }
     }
 
@@ -48,13 +93,13 @@ export default {
 
     // Programmatic SDK test endpoint
     if (request.method === 'POST' && url.pathname === '/api/test') {
-      return handleSdkTest(sandbox, env);
+      return handleSdkTest(sandbox);
     }
 
     // Everything else: Web UI proxy
     const server = await createOpencodeServer(sandbox, {
       directory: '/home/user/agents',
-      config: getConfig(env)
+      config: getConfig()
       // Optional: Pass custom environment variables (e.g., for tracing/telemetry)
       // env: { TRACEPARENT: '00-abc123-def456-01' },
     });
@@ -66,14 +111,13 @@ export default {
  * Test the programmatic SDK access
  */
 async function handleSdkTest(
-  sandbox: ReturnType<typeof getSandbox>,
-  env: Env
+  sandbox: ReturnType<typeof getSandbox>
 ): Promise<Response> {
   try {
     // Get typed SDK client
     const { client } = await createOpencode<OpencodeClient>(sandbox, {
       directory: '/home/user/agents',
-      config: getConfig(env)
+      config: getConfig()
     });
 
     // Create a session
