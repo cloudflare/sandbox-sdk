@@ -285,4 +285,232 @@ describe('ContainerControlConnection', () => {
       await expect(recv).rejects.toThrow('WebSocket connection failed.');
     });
   });
+
+  describe('503 upgrade retry', () => {
+    /**
+     * Build a fake successful upgrade Response. Mirrors what
+     * Cloudflare's Container base class returns from `stub.fetch()`:
+     * a Response with `status === 101` and a non-standard `webSocket`
+     * property carrying the WebSocket instance.
+     */
+    function makeUpgradeResponse(): Response {
+      const target = new EventTarget();
+      const ws = Object.assign(target, {
+        send: () => {},
+        close: () => {},
+        accept: () => {}
+      }) as unknown as WebSocket;
+      // The workerd test runtime rejects new Response(null, { status: 101 }),
+      // so synthesize a Response-shaped object exposing only the fields
+      // ContainerControlConnection actually reads (status, statusText,
+      // and the non-standard `webSocket` accessor).
+      return {
+        status: 101,
+        statusText: 'Switching Protocols',
+        webSocket: ws
+      } as unknown as Response;
+    }
+
+    function make503(): Response {
+      return new Response('Container is starting.', {
+        status: 503,
+        statusText: 'Service Unavailable'
+      });
+    }
+
+    it('retries 503 upgrade responses until success', async () => {
+      vi.useFakeTimers();
+      try {
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValueOnce(make503())
+          .mockResolvedValueOnce(make503())
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        // First attempt fires synchronously.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        // Backoff is 3s for attempt 1, 6s for attempt 2.
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(6_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('gives up on 503 once the retry budget is exhausted', async () => {
+      vi.useFakeTimers();
+      try {
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValue(make503());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          // 20s budget. Walk-through with MIN_TIME_FOR_RETRY_MS = 15s and
+          // 3s/6s/12s exponential backoff:
+          //   attempt 1 at t=0   (remaining 20s, retry after 3s)
+          //   attempt 2 at t=3s  (remaining 17s, retry after 6s)
+          //   attempt 3 at t=9s  (remaining 11s < 15s, give up)
+          retryTimeoutMs: 20_000
+        });
+
+        const connectPromise = conn.connect();
+        const assertion = expect(connectPromise).rejects.toThrow(
+          'WebSocket upgrade failed: 503'
+        );
+
+        // Run all timers — connect() must settle even with fake timers.
+        await vi.advanceTimersByTimeAsync(60_000);
+        await assertion;
+
+        expect(conn.isConnected()).toBe(false);
+        // Three attempts before remaining < MIN_TIME_FOR_RETRY_MS.
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not retry non-503 upgrade failures', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockResolvedValue(new Response('Not Found', { status: 404 }));
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 120_000
+      });
+
+      await expect(conn.connect()).rejects.toThrow(
+        'WebSocket upgrade failed: 404'
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables retries when retryTimeoutMs is set to 0', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockResolvedValue(
+          new Response('Container is starting.', {
+            status: 503,
+            statusText: 'Service Unavailable'
+          })
+        );
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 0
+      });
+
+      await expect(conn.connect()).rejects.toThrow(
+        'WebSocket upgrade failed: 503'
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a default retry budget when retryTimeoutMs is omitted', async () => {
+      vi.useFakeTimers();
+      try {
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValueOnce(make503())
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock }
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('respects setRetryTimeoutMs() updates made before connect()', async () => {
+      vi.useFakeTimers();
+      try {
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValue(make503());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          // Start with a very large budget — would normally allow many retries.
+          retryTimeoutMs: 600_000
+        });
+
+        // Lower the budget so the very first elapsed-time check gives up.
+        conn.setRetryTimeoutMs(1_000);
+
+        const connectPromise = conn.connect();
+        const assertion = expect(connectPromise).rejects.toThrow(
+          'WebSocket upgrade failed: 503'
+        );
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        await assertion;
+
+        // Budget too small to satisfy MIN_TIME_FOR_RETRY_MS — no retries.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('passes a fresh, non-aborted Request to each retry attempt', async () => {
+      vi.useFakeTimers();
+      try {
+        const seenRequests: Request[] = [];
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockImplementationOnce(async (req) => {
+            seenRequests.push(req);
+            return make503();
+          })
+          .mockImplementationOnce(async (req) => {
+            seenRequests.push(req);
+            if (req.signal.aborted) {
+              throw new Error('retry reused an aborted signal');
+            }
+            return makeUpgradeResponse();
+          });
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(seenRequests).toHaveLength(2);
+        expect(seenRequests[0]).not.toBe(seenRequests[1]);
+        expect(seenRequests[1].signal.aborted).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

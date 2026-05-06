@@ -28,6 +28,9 @@ import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_RETRY_TIMEOUT_MS = 120_000; // 2 minute total budget for 503 retries
+const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to attempt a retry
+const MAX_RETRY_BACKOFF_MS = 30_000; // Cap exponential backoff at 30s
 
 /** Stub that can issue a WebSocket-upgrade fetch through the DO's Container base class. */
 export interface ContainerFetchStub {
@@ -38,6 +41,12 @@ export interface ContainerControlConnectionOptions {
   stub: ContainerFetchStub;
   port?: number;
   logger?: Logger;
+  /**
+   * Total retry budget (ms) for 503 upgrade responses while the container
+   * is starting. Defaults to 120 000 (2 minutes), matching the route-based
+   * `WebSocketTransport`. Set to 0 to disable retries.
+   */
+  retryTimeoutMs?: number;
 }
 
 /**
@@ -57,11 +66,13 @@ export class ContainerControlConnection {
   private readonly containerStub: ContainerFetchStub;
   private readonly port: number;
   private readonly logger: Logger;
+  private retryTimeoutMs: number;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
     this.port = options.port ?? 3000;
     this.logger = options.logger ?? createNoOpLogger();
+    this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(this.transport);
@@ -128,29 +139,22 @@ export class ContainerControlConnection {
     this.connectPromise = null;
   }
 
+  /**
+   * Update the 503 retry budget without recreating the connection. Takes
+   * effect on the next `connect()`; an in-flight connect uses the value
+   * captured at start. Mirrors `WebSocketTransport.setRetryTimeoutMs`.
+   */
+  setRetryTimeoutMs(ms: number): void {
+    this.retryTimeoutMs = ms;
+  }
+
   // -----------------------------------------------------------------------
   // Internal
   // -----------------------------------------------------------------------
 
   private async doConnect(): Promise<void> {
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      DEFAULT_CONNECT_TIMEOUT_MS
-    );
-
     try {
-      const url = `http://localhost:${this.port}/rpc`;
-      const request = new Request(url, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-
-      const response = await this.containerStub.fetch(request);
-      clearTimeout(timeout);
+      const response = await this.fetchUpgradeWithRetry();
 
       if (response.status !== 101) {
         throw new Error(
@@ -187,7 +191,6 @@ export class ContainerControlConnection {
         port: this.port
       });
     } catch (error) {
-      clearTimeout(timeout);
       this.connected = false;
       this.transport.abort(error);
       this.logger.error(
@@ -196,6 +199,79 @@ export class ContainerControlConnection {
       );
       throw error;
     }
+  }
+
+  /**
+   * Issue WebSocket upgrade fetches, retrying transient 503 responses with
+   * exponential backoff (3s → 6s → 12s → … capped at 30s) until either
+   * the upgrade succeeds, a non-503 status is returned, or the retry budget
+   * runs out. Mirrors `WebSocketTransport.fetchUpgradeWithRetry` so both
+   * transports behave the same way during container startup.
+   */
+  private async fetchUpgradeWithRetry(): Promise<Response> {
+    const retryTimeoutMs = this.retryTimeoutMs;
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (true) {
+      const response = await this.fetchUpgradeAttempt();
+
+      if (response.status !== 503) {
+        return response;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const remaining = retryTimeoutMs - elapsed;
+
+      if (remaining <= MIN_TIME_FOR_RETRY_MS) {
+        return response;
+      }
+
+      const delay = Math.min(3000 * 2 ** attempt, MAX_RETRY_BACKOFF_MS);
+
+      this.logger.info(
+        'ContainerControlConnection upgrade returned 503, retrying',
+        {
+          attempt: attempt + 1,
+          delayMs: delay,
+          remainingSec: Math.floor(remaining / 1000)
+        }
+      );
+
+      await this.sleep(delay);
+      attempt++;
+    }
+  }
+
+  /**
+   * Single WebSocket-upgrade fetch attempt. Owns its own AbortController so
+   * each retry gets a fresh per-attempt connect timeout independent of the
+   * total retry budget.
+   */
+  private async fetchUpgradeAttempt(): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      DEFAULT_CONNECT_TIMEOUT_MS
+    );
+
+    try {
+      const url = `http://localhost:${this.port}/rpc`;
+      const request = new Request(url, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        },
+        signal: controller.signal
+      });
+      return await this.containerStub.fetch(request);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
