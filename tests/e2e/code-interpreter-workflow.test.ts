@@ -23,7 +23,6 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-import { createTestHeaders } from './helpers/test-fixtures';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
@@ -441,7 +440,7 @@ for i in range(3):
   // Test 6: Error Handling
   // ============================================================================
 
-  test('error handling: invalid language, non-existent context, Python unavailable', async () => {
+  test('error handling: invalid language and non-existent context', async () => {
     // Invalid language
     const invalidLangResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
@@ -475,12 +474,6 @@ for i in range(3):
     );
 
     // Delete non-existent context
-    await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'true' }),
-      signal: AbortSignal.timeout(10000)
-    });
     const deleteFakeResponse = await fetch(
       `${workerUrl}/api/code/context/fake-id-99999`,
       { method: 'DELETE', headers, signal: AbortSignal.timeout(10000) }
@@ -489,15 +482,24 @@ for i in range(3):
     await expect(deleteFakeResponse.json()).resolves.toEqual(
       expect.objectContaining({ error: expect.anything() })
     );
+  }, 60000);
+});
 
-    // Python unavailable on base image
-    // Use base image headers (without python type) for this specific test
-    const baseImageHeaders = createTestHeaders(sandbox!.sandboxId);
+describe('Code Interpreter Workflow (E2E) - base image', () => {
+  test('error handling: Python unavailable on base image', async ({
+    onTestFinished
+  }) => {
+    // Uses its own base-image sandbox so the cold-start cost is paid in
+    // createTestSandbox() (which runs an init command) rather than inside
+    // the timed assertion below.
+    const sandbox = await createTestSandbox();
+    onTestFinished(() => cleanupTestSandbox(sandbox).catch(() => {}));
+
     const pythonUnavailableResponse = await fetch(
-      `${workerUrl}/api/code/context/create`,
+      `${sandbox.workerUrl}/api/code/context/create`,
       {
         method: 'POST',
-        headers: baseImageHeaders,
+        headers: sandbox.headers(createUniqueSession()),
         body: JSON.stringify({ language: 'python' }),
         signal: AbortSignal.timeout(10000)
       }
