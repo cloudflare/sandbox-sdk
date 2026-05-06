@@ -82,6 +82,7 @@ async function createApplication(): Promise<{
     backupService: container.get('backupService'),
     desktopService: container.get('desktopService'),
     watchService: container.get('watchService'),
+    tunnelService: container.get('tunnelService'),
     sessionManager: container.get('sessionManager'),
     logger
   });
