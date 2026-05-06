@@ -53,9 +53,14 @@ Including `EXPOSE` is still recommended in example Dockerfiles because it docume
      "durable_objects": {
        "bindings": [{ "name": "SANDBOX", "class_name": "YourSandbox" }]
      },
-     "containers": {
-       "image": "your-example:latest"  // must match Dockerfile output tag
-     }
+     "containers": [
+       {
+         "class_name": "YourSandbox",
+         "image": "./Dockerfile",
+         "instance_type": "lite",
+         "max_instances": 1
+       }
+     ]
    }
    ```
 3. Add a `README.md` with an `# H1` title (the README scanner uses it) and a short description.
