@@ -65,6 +65,7 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   desktop: SandboxDesktopAPI;
   watch: SandboxWatchAPI;
+  tunnels: SandboxTunnelsAPI;
 }
 
 export interface SandboxCommandsAPI {
@@ -299,4 +300,61 @@ export interface SandboxDesktopAPI {
 export interface SandboxWatchAPI {
   watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>>;
   checkChanges(request: CheckChangesRequest): Promise<CheckChangesResult>;
+}
+
+/**
+ * Public-facing tunnel record. Discriminated on `mode`.
+ *
+ * `createdAt` is an ISO-8601 string (capnweb does not preserve Date).
+ */
+export type TunnelInfo = QuickTunnelInfo | NamedTunnelInfo;
+
+export interface QuickTunnelInfo {
+  id: string;
+  mode: 'quick';
+  port: number;
+  url: string;
+  hostname: string;
+  createdAt: string;
+}
+
+export interface NamedTunnelInfo {
+  /** Cloudflare tunnel UUID. */
+  id: string;
+  mode: 'named';
+  port: number;
+  url: string;
+  hostname: string;
+  createdAt: string;
+}
+
+/**
+ * Container-side tunnel record. The container does not know hostnames for
+ * token tunnels — the DO enriches these into `TunnelInfo` before returning
+ * to user code.
+ */
+export interface ContainerTunnelRecord {
+  id: string;
+  mode: 'quick' | 'token';
+  port: number;
+  /** Set for quick tunnels (parsed from cloudflared output). */
+  url?: string;
+  /** Set for quick tunnels. */
+  hostname?: string;
+  createdAt: string;
+}
+
+export interface SandboxTunnelsAPI {
+  /** Spawn `cloudflared tunnel --url`. No credentials required. */
+  runQuickTunnel(id: string, port: number): Promise<ContainerTunnelRecord>;
+  /** Spawn `cloudflared tunnel run --token`. Token is opaque to the container. */
+  runTokenTunnel(
+    id: string,
+    token: string,
+    port: number
+  ): Promise<ContainerTunnelRecord>;
+  /** Stop the cloudflared process for the given tunnel id. */
+  destroyTunnel(id: string): Promise<{ success: true; id: string }>;
+  /** List tunnels currently running inside the container. */
+  listTunnels(): Promise<ContainerTunnelRecord[]>;
 }
