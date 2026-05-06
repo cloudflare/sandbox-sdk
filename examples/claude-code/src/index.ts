@@ -1,4 +1,30 @@
-import { getSandbox } from '@cloudflare/sandbox';
+import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
+
+export class Sandbox extends BaseSandbox<Env> {
+  interceptHttps = true;
+}
+
+Sandbox.outboundByHost = {
+  'api.anthropic.com': async (request: Request, env: Env) => {
+    const url = new URL(request.url);
+    const headers = new Headers(request.headers);
+
+    // claude picks the auth header based on which env var it sees in the
+    // container; we mirror that choice here when swapping in the real secret.
+    if (headers.has('x-api-key') && env.ANTHROPIC_API_KEY) {
+      headers.set('x-api-key', env.ANTHROPIC_API_KEY);
+    } else if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+      headers.set('Authorization', `Bearer ${env.CLAUDE_CODE_OAUTH_TOKEN}`);
+      headers.delete('x-api-key');
+    }
+
+    return fetch(`https://api.anthropic.com${url.pathname}${url.search}`, {
+      method: request.method,
+      headers,
+      body: request.body
+    });
+  }
+};
 
 interface CmdOutput {
   success: boolean;
@@ -13,11 +39,16 @@ const EXTRA_SYSTEM =
   'You apply all necessary changes to achieve the user request. You must ensure you DO NOT commit the changes, ' +
   'so the pipeline can read the local `git diff` and apply the change upstream.';
 
-async function runTask(
-  request: Request,
-  env: Env,
-  authVars: Partial<Record<string, string>>
-): Promise<Response> {
+// Pick the placeholder env var based on which secret is configured on the
+// worker. The value is a sentinel -- the real secret is injected by the
+// outbound handler above and never enters the container.
+function placeholderAuthVars(env: Env): Record<string, string> {
+  if (env.ANTHROPIC_API_KEY) return { ANTHROPIC_API_KEY: 'proxy-injected' };
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) return { CLAUDE_CODE_OAUTH_TOKEN: 'proxy-injected' };
+  throw new Error('No Anthropic credential configured (set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
+}
+
+async function runTask(request: Request, env: Env): Promise<Response> {
   try {
     const { repo, task } = await request.json<{
       repo?: string;
@@ -30,16 +61,10 @@ async function runTask(
     const name = repo.split('/').pop() ?? 'tmp';
 
     // open sandbox
-    const sandbox = getSandbox(
-      env.Sandbox,
-      crypto.randomUUID().slice(0, 8)
-    );
+    const sandbox = getSandbox(env.Sandbox, crypto.randomUUID().slice(0, 8));
 
     // git clone repo
     await sandbox.gitCheckout(repo, { targetDir: name });
-
-    // Set only the relevant auth env var for this route
-    await sandbox.setEnvVars(authVars);
 
     // kick off CC with our query
     const cmd = `cd ${name} && claude --append-system-prompt "${EXTRA_SYSTEM}" -p "${task.replaceAll(
@@ -47,8 +72,9 @@ async function runTask(
       '\\"'
     )}" --permission-mode acceptEdits`;
 
-    const logs = getOutput(await sandbox.exec(cmd));
+    const logs = getOutput(await sandbox.exec(cmd, {env: placeholderAuthVars(env)}));
     const diff = getOutput(await sandbox.exec('git diff'));
+
     return Response.json({ logs, diff });
   } catch {
     return new Response('invalid body', { status: 400 });
@@ -57,22 +83,11 @@ async function runTask(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method !== 'POST') return new Response('not found');
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
 
     const { pathname } = new URL(request.url);
+    if (pathname !== '/') return new Response('not found');
 
-    if (pathname === '/') {
-      // API key route (pay-per-token)
-      return runTask(request, env, { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY });
-    }
-
-    if (pathname === '/sub') {
-      // Claude.ai subscription route — get token via `claude setup-token`
-      return runTask(request, env, { CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN });
-    }
-
-    return new Response('not found');
+    return runTask(request, env);
   }
 };
-
-export { Sandbox } from '@cloudflare/sandbox';

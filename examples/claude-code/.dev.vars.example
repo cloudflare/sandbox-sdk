@@ -1,6 +1,8 @@
-# Used by POST / (API key route)
-ANTHROPIC_API_KEY=<YOUR-API-KEY-HERE>
+# Set ONE of the following. The credential stays in the worker;
+# only a placeholder is forwarded into the container.
 
-# Used by POST /sub (subscription route)
-# Get your token by running: claude setup-token
-CLAUDE_CODE_OAUTH_TOKEN=<YOUR-OAUTH-TOKEN-HERE>
+# Pay-per-token
+ANTHROPIC_API_KEY=
+
+# OR Claude.ai subscription. Get a token by running: claude setup-token
+CLAUDE_CODE_OAUTH_TOKEN=
