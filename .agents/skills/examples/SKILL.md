@@ -1,6 +1,6 @@
 ---
 name: examples
-description: Use when working in the examples/ directory, running an example with wrangler dev, adding a new example, or answering questions about EXPOSE directives and the local Docker dev loop. (project)
+description: "Use when running examples with wrangler dev, scaffolding new example projects, debugging the local Docker dev loop, or understanding EXPOSE directives. Guides setup, execution, and troubleshooting of working sample apps in the examples/ directory. (project)"
 ---
 
 # Examples
@@ -45,9 +45,21 @@ Including `EXPOSE` is still recommended in example Dockerfiles because it docume
 ## Adding a New Example
 
 1. Copy `examples/minimal/` as a starting point.
-2. Update `package.json` `name` and any wrangler config (`wrangler.jsonc`) — class names, DO bindings, container image tag.
-3. Add a `README.md` with an `# H1` title (the README scanner uses it) and a short description of what the example demonstrates.
-4. Make sure the example builds and `npm run dev` works from a clean checkout.
+2. Update `package.json` `name` and `wrangler.jsonc` — key fields to change:
+   ```jsonc
+   {
+     "name": "your-example",
+     "main": "src/index.ts",
+     "durable_objects": {
+       "bindings": [{ "name": "SANDBOX", "class_name": "YourSandbox" }]
+     },
+     "containers": {
+       "image": "your-example:latest"  // must match Dockerfile output tag
+     }
+   }
+   ```
+3. Add a `README.md` with an `# H1` title (the README scanner uses it) and a short description.
+4. Run `npm run dev` from the example directory. Verify the dev server starts and responds. If the Docker build fails, check that the image tag in `wrangler.jsonc` matches the Dockerfile output.
 5. If the example demonstrates a new SDK capability, link to it from `packages/sandbox/README.md`.
 
 ## Local Development Tips

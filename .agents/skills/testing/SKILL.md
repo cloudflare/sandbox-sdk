@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Use when writing or running tests for this project. Covers unit vs E2E test decisions, test file locations, mock patterns, and project-specific testing conventions. (project)
+description: "Use when writing, running, or debugging tests. Creates unit and E2E tests, selects the correct test suite, places test files in project-standard locations, and applies mock patterns (mock container, createNoOpLogger). (project)"
 ---
 
 # Testing in Sandbox SDK
@@ -121,8 +121,8 @@ describe('ComponentName', () => {
 
 After making any meaningful code change:
 
-1. `npm run check` - catch type errors first
-2. `npm test` - verify unit tests pass
-3. `npm run test:e2e` - if touching core functionality
+1. `npm run check` — catch type errors first. If this fails, fix type errors before proceeding.
+2. `npm test` — verify unit tests pass. If a test hangs (known vitest-pool-workers issue), the results are still valid; check pass/fail output above the hang.
+3. `npm run test:e2e` — if touching core functionality. If E2E tests fail with connection errors, verify Docker is running and the container image is built (`npm run docker:rebuild` from repo root).
 
-**Build trust**: The monorepo build system handles dependencies automatically. E2E tests always run against latest built code - no manual rebuild needed.
+The monorepo build system handles dependencies automatically. E2E tests always run against latest built code.

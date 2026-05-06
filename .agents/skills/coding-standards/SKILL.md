@@ -1,6 +1,6 @@
 ---
 name: coding-standards
-description: Use when writing or reviewing TypeScript in this repo. Covers the no-`any` rule and where to put new types, the uppercase-acronym style guide, and the rules for code comments (no historical context). (project)
+description: "Use when writing or reviewing TypeScript in this repo. Enforces the no-any typing rule, guides type file placement, applies uppercase-acronym naming conventions (API not Api, URL not Url), and strips historical context from code comments. (project)"
 ---
 
 # Coding Standards
@@ -77,4 +77,12 @@ When adding or modifying SDK methods:
 
 - Use clear, descriptive names that indicate what the method does
 - Validate inputs before passing to container APIs
-- Provide helpful error messages with context (use the custom error classes in `packages/shared/src/errors/`)
+- Throw custom error classes from `packages/shared/src/errors/` with context:
+
+```typescript
+// ✅ Good: specific error class with context
+throw new SandboxError(ErrorCode.INVALID_PATH, `Path must be under /workspace: ${path}`);
+
+// ❌ Bad: generic error, no context
+throw new Error('invalid path');
+```
