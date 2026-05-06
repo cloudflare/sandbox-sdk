@@ -66,11 +66,12 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     // git clone repo
     await sandbox.gitCheckout(repo, { targetDir: name });
 
+    // Wrap a string as a single-quoted POSIX shell argument so user input
+    // can't break out of the command line.
+    const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+
     // kick off CC with our query
-    const cmd = `cd ${name} && claude --append-system-prompt "${EXTRA_SYSTEM}" -p "${task.replaceAll(
-      '"',
-      '\\"'
-    )}" --permission-mode acceptEdits`;
+    const cmd = `cd ${shellQuote(name)} && claude --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} -p ${shellQuote(task)} --permission-mode acceptEdits`;
 
     const logs = getOutput(await sandbox.exec(cmd, {env: placeholderAuthVars(env)}));
     const diff = getOutput(await sandbox.exec('git diff'));
