@@ -22,7 +22,8 @@
       "class_name": "Sandbox",
       "image": "{{IMAGE_SANDBOX}}",
       "name": "{{CONTAINER_NAME}}",
-      "instance_type": "standard-4"
+      "instance_type": "standard-4",
+      "max_instances": 50
     },
     {
       "class_name": "SandboxPython",
