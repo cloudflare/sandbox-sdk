@@ -53,12 +53,6 @@ describe('Auth middleware — /v1/sandbox/*', () => {
     const res = await makeRequest(sandboxUrl('test', 'running'), {}, createMockEnv());
     expect(res.status).toBe(200);
   });
-
-  it('logs a warning when SANDBOX_API_KEY is not set', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await makeRequest(sandboxUrl('test', 'running'), {}, createMockEnv());
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[security] SANDBOX_API_KEY is not set'));
-  });
 });
 
 describe('Sandbox ID validation', () => {

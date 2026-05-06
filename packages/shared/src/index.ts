@@ -105,6 +105,10 @@ export type {
   SessionCreateRequest,
   SessionDeleteRequest,
   StartProcessRequest,
+  UploadedPart,
+  UploadPart,
+  UploadPartsRequest,
+  UploadPartsResponse,
   WriteFileRequest
 } from './request-types.js';
 // RPC interface types (shared between SDK and container)
@@ -129,6 +133,7 @@ export { parseSSEFrames } from './sse.js';
 // Export all types from types.ts
 export type {
   // Backup types
+  BackupCompressionOptions,
   BackupOptions,
   BaseExecOptions,
   // Bucket mounting types
@@ -195,6 +200,7 @@ export type {
   RestoreBackupResult,
   // Sandbox configuration options
   SandboxOptions,
+  SandboxTransport,
   // Session management result types
   SessionCreateResult,
   SessionDeleteResult,

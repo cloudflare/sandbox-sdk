@@ -273,6 +273,30 @@ jobs:
       cache_readonly: true
     secrets: inherit
 
+  # --- Bridge E2E tests (authorized + 'run-e2e-bridge' label) ---
+  # Opt-in: a maintainer applies the 'run-e2e-bridge' label to deploy the
+  # cloudflare-sandbox-bridge Worker for this PR and run the integration
+  # suite against it. The Worker is named with a -bridge-pr-<n> suffix so
+  # capacity tracking can distinguish bridge deployments from the e2e
+  # test-worker fleet.
+  bridge-e2e:
+    needs: [policy, detect-changes, build]
+    permissions:
+      actions: read
+      contents: read
+    if: |
+      needs.policy.outputs.run_privileged == 'true' &&
+      contains(github.event.pull_request.labels.*.name, 'run-e2e-bridge') &&
+      !contains(github.event.pull_request.title, 'Version Packages')
+    uses: ./.github/workflows/reusable-bridge-e2e.yml
+    with:
+      worker_name: sandbox-e2e-test-worker-bridge-pr-${{ github.event.pull_request.number }}
+      image_tag: ci-${{ needs.detect-changes.outputs.docker-hash }}
+      checkout_ref: ${{ github.event.pull_request.head.sha }}
+      checkout_repo: ${{ github.event.pull_request.head.repo.full_name }}
+      cache_readonly: true
+    secrets: inherit
+
   # --- Publish preview packages + Docker images (authorized only) ---
   publish-preview:
     needs: [policy, detect-changes, build]
@@ -432,7 +456,7 @@ jobs:
   gate:
     name: ci/gate
     if: always()
-    needs: [policy, detect-changes, build, e2e, publish-preview]
+    needs: [policy, detect-changes, build, e2e, bridge-e2e, publish-preview]
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 1
@@ -444,6 +468,7 @@ jobs:
           echo "detect-changes: ${{ needs.detect-changes.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "e2e: ${{ needs.e2e.result }}"
+          echo "bridge-e2e: ${{ needs.bridge-e2e.result }}"
           echo "publish-preview: ${{ needs.publish-preview.result }}"
           # Gate 1: Authorization
           if [[ "${{ needs.policy.outputs.authorized }}" != "true" ]]; then
@@ -461,7 +486,7 @@ jobs:
 
           # Gate 3: Privileged jobs must not have failed or been cancelled
           # (skipped is OK — means change detection determined they weren't needed)
-          for result in "${{ needs.build.result }}" "${{ needs.e2e.result }}" "${{ needs.publish-preview.result }}"; do
+          for result in "${{ needs.build.result }}" "${{ needs.e2e.result }}" "${{ needs.bridge-e2e.result }}" "${{ needs.publish-preview.result }}"; do
             if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
               echo "::error::One or more privileged CI jobs failed or were cancelled"
               exit 1

@@ -1,3 +1,14 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#     "openai-agents[cloudflare]==0.14.7",
+#     "boto3>=1.34",
+#     "aiohttp>=3.13.5",
+#     "certifi",
+#     "openai",
+# ]
+# ///
 """Cloudflare Sandbox — Agent QA Test Harness.
 
 Creates a SandboxAgent backed by CloudflareSandboxClient, runs it through seven
@@ -45,7 +56,7 @@ from agents.extensions.sandbox.cloudflare import (
 )
 from agents.run import RunConfig
 from agents.sandbox import Manifest, RemoteSnapshotSpec, SandboxAgent, SandboxRunConfig
-from agents.sandbox.capabilities import ApplyPatch, Shell
+from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.session import Dependencies
 
 from config import Config
@@ -94,7 +105,7 @@ class R2SnapshotClient:
         try:
             self._s3.head_object(Bucket=self._bucket, Key=self._object_key(snapshot_id))
         except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            if exc.response.get("Error", {}).get("Code") in {"403", "404", "NoSuchKey", "NotFound", "Forbidden"}:
                 return False
             raise
         return True
@@ -307,10 +318,9 @@ async def main() -> None:
     agent = SandboxAgent(
         name="QA Sandbox Agent",
         model="gpt-5.2-codex",
-        instructions="Follow the user's QA instructions precisely.",
-        developer_instructions=DEVELOPER_INSTRUCTIONS,
+        instructions=DEVELOPER_INSTRUCTIONS,
         default_manifest=Manifest(root="/workspace"),
-        capabilities=[Shell(), ApplyPatch()],
+        capabilities=[Shell(), Filesystem()],
     )
 
     # ── Build R2 snapshot client and dependencies ──
@@ -323,12 +333,14 @@ async def main() -> None:
     )
     dependencies = Dependencies().bind_value(R2_SNAPSHOT_DEPENDENCY_KEY, r2_client)
 
-    client = CloudflareSandboxClient(dependencies=dependencies)
+    client = CloudflareSandboxClient(
+        dependencies=dependencies,
+        exec_timeout_s=120.0,
+        request_timeout_s=300.0,
+    )
     options = CloudflareSandboxClientOptions(
         worker_url=config.worker_url,
         api_key=config.api_key or None,
-        exec_timeout_s=120.0,
-        request_timeout_s=300.0,
     )
 
     if not args.resume:

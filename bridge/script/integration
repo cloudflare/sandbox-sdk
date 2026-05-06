@@ -589,6 +589,55 @@ async function runTests() {
 // Main
 // ---------------------------------------------------------------------------
 
+function printHelp() {
+  console.log(`Integration tests for the cloudflare-sandbox-bridge Worker.
+
+USAGE
+  script/integration [--help | -h]
+
+  By default, starts \`wrangler dev\` (with containers disabled — no Docker
+  required) on a local port and exercises every API endpoint via real HTTP
+  requests. Set BASE_URL to skip the local server and run against a remote
+  deployment instead.
+
+ENVIRONMENT
+  BASE_URL          Optional. If set, tests run against this URL instead of
+                    starting a local wrangler dev server. Trailing slash is
+                    stripped. Example: https://bridge.example.com
+
+  SANDBOX_API_KEY   Optional. Bearer token used for the Authorization header
+                    on every request. When unset, the suite assumes auth is
+                    disabled and verifies that unauthenticated requests are
+                    accepted. When set, the suite additionally verifies that
+                    requests without / with a wrong token are rejected (401).
+
+  PORT              Optional. Port for the local wrangler dev server.
+                    Default: 18787. Ignored when BASE_URL is set.
+
+RUNTIME
+  Requires Bun (the script uses Bun's WebSocket client with custom headers
+  and a fetch() implementation that preserves the Upgrade header).
+
+EXAMPLES
+  script/integration
+      Local server, auth disabled.
+
+  SANDBOX_API_KEY=secret script/integration
+      Local server, auth enabled.
+
+  BASE_URL=https://bridge.example.com script/integration
+      Remote service, auth disabled.
+
+  BASE_URL=https://bridge.example.com SANDBOX_API_KEY=secret script/integration
+      Remote service, auth enabled.
+`);
+}
+
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  printHelp();
+  process.exit(0);
+}
+
 async function main() {
   let server: ReturnType<typeof spawn> | undefined;
 

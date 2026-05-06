@@ -439,6 +439,8 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
+export type SandboxTransport = 'http' | 'websocket' | 'rpc';
+
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -533,13 +535,13 @@ export interface SandboxOptions {
   };
 
   /**
-   * Transport protocol for communication between the Sandbox DO and the container runtime.
+   * Transport/control path for communication between the Sandbox DO and the
+   * container runtime.
    *
-   * - `"http"` (default): Standard HTTP request/response. Works everywhere.
-   * - `"websocket"`: Multiplexes requests over a single WebSocket connection,
-   *   avoiding sub-request limits in Workers and Durable Objects.
-   * - `"capnweb"`: Direct RPC over a single WebSocket using the capnweb protocol.
-   *   Lowest latency; automatically disconnects when idle to respect `sleepAfter`.
+   * - `"http"` (default): Route-based HTTP compatibility path.
+   * - `"websocket"`: Route-based compatibility path multiplexed over a custom
+   *   WebSocket connection.
+   * - `"rpc"`: Primary container-control path over capnweb RPC.
    *
    * When set via `getSandbox()` options, this overrides the `SANDBOX_TRANSPORT` env var.
    *
@@ -550,7 +552,7 @@ export interface SandboxOptions {
    *
    * @default "http"
    */
-  transport?: 'http' | 'websocket' | 'rpc';
+  transport?: SandboxTransport;
 }
 
 /**
@@ -1092,6 +1094,11 @@ export interface ExecutionSession {
 /**
  * Options for creating a directory backup
  */
+export interface BackupCompressionOptions {
+  format?: 'gzip' | 'lz4' | 'zstd';
+  threads?: number;
+}
+
 export interface BackupOptions {
   /** Directory to back up. Must be absolute and under `/workspace`, `/home`, `/tmp`, `/var/tmp`, or `/app`. */
   dir: string;
@@ -1120,6 +1127,13 @@ export interface BackupOptions {
    * When true, the DO resolves BACKUP_BUCKET from its own env as an R2 binding.
    */
   localBucket?: boolean;
+  compression?: BackupCompressionOptions;
+  /**
+   * Use parallel multipart upload to R2 for large archives.
+   * Significantly speeds up uploads for archives over 10 MiB.
+   * Default: true.
+   */
+  multipart?: boolean;
 }
 
 /**

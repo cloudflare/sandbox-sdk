@@ -3,7 +3,9 @@ import type {
   CreateBackupResponse,
   Logger,
   RestoreBackupRequest,
-  RestoreBackupResponse
+  RestoreBackupResponse,
+  UploadPartsRequest,
+  UploadPartsResponse
 } from '@repo/shared';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 
@@ -13,6 +15,7 @@ import { BACKUP_WORK_DIR } from '../services/backup-service';
 import { BaseHandler } from './base-handler';
 
 type CreateBackupRequestBody = CreateBackupRequest;
+const BACKUP_ALLOWED_COMPRESSIONS = ['gzip', 'lz4', 'zstd'] as const;
 
 export class BackupHandler extends BaseHandler<Request, Response> {
   constructor(
@@ -31,6 +34,8 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         return await this.handleCreate(request, context);
       case '/api/backup/restore':
         return await this.handleRestore(request, context);
+      case '/api/backup/upload-parts':
+        return await this.handleUploadParts(request, context);
       default:
         return this.createErrorResponse(
           {
@@ -84,6 +89,84 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     }
     if (!archivePath.startsWith(`${BACKUP_WORK_DIR}/`)) {
       return 'Invalid archivePath: must use designated backup directory';
+    }
+    return undefined;
+  }
+
+  private static validateCompression(compression: unknown): string | undefined {
+    if (compression === undefined) {
+      return undefined;
+    }
+    if (typeof compression !== 'object' || compression === null) {
+      return 'compression must be an object';
+    }
+    const candidate = compression as {
+      format?: unknown;
+      threads?: unknown;
+    };
+    if (
+      candidate.format !== undefined &&
+      (typeof candidate.format !== 'string' ||
+        !BACKUP_ALLOWED_COMPRESSIONS.includes(
+          candidate.format as (typeof BACKUP_ALLOWED_COMPRESSIONS)[number]
+        ))
+    ) {
+      return `compression.format must be one of: ${BACKUP_ALLOWED_COMPRESSIONS.join(', ')}`;
+    }
+    if (
+      candidate.threads !== undefined &&
+      (typeof candidate.threads !== 'number' ||
+        !Number.isInteger(candidate.threads) ||
+        candidate.threads < 1)
+    ) {
+      return 'compression.threads must be a positive integer';
+    }
+    return undefined;
+  }
+
+  private static validateUploadPart(part: unknown): string | undefined {
+    if (typeof part !== 'object' || part === null) {
+      return 'each part must be an object';
+    }
+
+    const candidate = part as {
+      partNumber?: unknown;
+      url?: unknown;
+      offset?: unknown;
+      size?: unknown;
+    };
+
+    if (
+      typeof candidate.partNumber !== 'number' ||
+      !Number.isInteger(candidate.partNumber) ||
+      candidate.partNumber < 1
+    ) {
+      return 'partNumber must be a positive integer';
+    }
+    if (typeof candidate.url !== 'string') {
+      return 'part url must be a string';
+    }
+    try {
+      const url = new URL(candidate.url);
+      if (url.protocol !== 'https:') {
+        return 'part url must use https';
+      }
+    } catch {
+      return 'part url must be a valid URL';
+    }
+    if (
+      typeof candidate.offset !== 'number' ||
+      !Number.isInteger(candidate.offset) ||
+      candidate.offset < 0
+    ) {
+      return 'part offset must be a non-negative integer';
+    }
+    if (
+      typeof candidate.size !== 'number' ||
+      !Number.isInteger(candidate.size) ||
+      candidate.size < 1
+    ) {
+      return 'part size must be a positive integer';
     }
     return undefined;
   }
@@ -144,6 +227,20 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       }
     }
 
+    const compressionError = BackupHandler.validateCompression(
+      body.compression
+    );
+    if (compressionError) {
+      return this.createErrorResponse(
+        {
+          message: compressionError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.createArchive(
@@ -151,7 +248,8 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       body.archivePath,
       sessionId,
       body.gitignore ?? false,
-      body.excludes ?? []
+      body.excludes ?? [],
+      body.compression
     );
 
     if (result.success) {
@@ -159,6 +257,71 @@ export class BackupHandler extends BaseHandler<Request, Response> {
         success: true,
         sizeBytes: result.data.sizeBytes,
         archivePath: result.data.archivePath
+      };
+      return this.createTypedResponse(response, context);
+    }
+
+    return this.createErrorResponse(
+      result.error,
+      context,
+      Operation.BACKUP_CREATE
+    );
+  }
+
+  private async handleUploadParts(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const body = await this.parseRequestBody<UploadPartsRequest>(request);
+
+    const archiveError = BackupHandler.validateArchivePath(body.archivePath);
+    if (archiveError) {
+      return this.createErrorResponse(
+        {
+          message: archiveError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    if (!Array.isArray(body.parts) || body.parts.length === 0) {
+      return this.createErrorResponse(
+        {
+          message: 'parts must be a non-empty array',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    for (const part of body.parts) {
+      const partError = BackupHandler.validateUploadPart(part);
+      if (partError) {
+        return this.createErrorResponse(
+          {
+            message: partError,
+            code: ErrorCode.INVALID_BACKUP_CONFIG
+          },
+          context,
+          Operation.BACKUP_CREATE
+        );
+      }
+    }
+
+    const sessionId = body.sessionId ?? context.sessionId ?? 'default';
+    const result = await this.backupService.uploadParts(
+      body.archivePath,
+      body.parts,
+      sessionId
+    );
+
+    if (result.success) {
+      const response: UploadPartsResponse = {
+        success: true,
+        parts: result.data.parts
       };
       return this.createTypedResponse(response, context);
     }

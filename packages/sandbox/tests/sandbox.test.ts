@@ -1912,7 +1912,14 @@ describe('Sandbox - Automatic Session Management', () => {
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         expect.stringMatching(/^__sandbox_backup_/),
-        { gitignore: false, excludes: [] }
+        {
+          gitignore: false,
+          excludes: [],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
+        }
       );
       expect(bucket.put).toHaveBeenCalled();
     });
@@ -1957,9 +1964,55 @@ describe('Sandbox - Automatic Session Management', () => {
         expect.stringMatching(/^__sandbox_backup_/),
         {
           gitignore: false,
-          excludes: ['node_modules/.cache', '.next/cache', 'dist']
+          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
+          compression: {
+            format: 'lz4',
+            threads: 8
+          }
         }
       );
+    });
+
+    it('should reject unsupported backup compression before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compression: {
+            format: 'brotli' as unknown as 'gzip'
+          }
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compression\.format must be one of: gzip, lz4, zstd/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid backup compression thread count before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      await expect(
+        backupSandbox.createBackup({
+          dir: '/app/project',
+          compression: {
+            threads: 0
+          }
+        })
+      ).rejects.toThrow(
+        /BackupOptions\.compression\.threads must be a positive integer/
+      );
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
     });
 
     it('should allow restoring a backup into /app', async () => {
@@ -1988,8 +2041,8 @@ describe('Sandbox - Automatic Session Management', () => {
       const restoreArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
-      const mountBackupR2Spy = vi
-        .spyOn(backupSandbox as any, 'mountBackupR2')
+      const downloadBackupParallelSpy = vi
+        .spyOn(backupSandbox as any, 'downloadBackupParallel')
         .mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '0',
@@ -2009,22 +2062,56 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
-        `/var/backups/r2mount/${backupId}/data.sqsh`,
+        `/var/backups/${backupId}.sqsh`,
         expect.stringMatching(/^__sandbox_backup_/)
       );
-      expect(mountBackupR2Spy).toHaveBeenCalledWith(
-        `/var/backups/r2mount/${backupId}`,
-        `backups/${backupId}/`,
+      expect(downloadBackupParallelSpy).toHaveBeenCalledWith(
+        `/var/backups/${backupId}.sqsh`,
+        `backups/${backupId}/data.sqsh`,
+        42,
+        backupId,
+        '/app/project',
         expect.stringMatching(/^__sandbox_backup_/)
       );
-      expect(
-        (backupSandbox as any).execWithSession.mock.calls.some(
-          ([command]: [string]) =>
-            command.includes(
-              `/usr/bin/fusermount3 -uz '/var/backups/r2mount/${backupId}'`
-            )
-        )
-      ).toBe(true);
+    });
+
+    it('should write parallel restore ranges directly into the temp archive', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const expectedSize = 16 * 1024 * 1024;
+      const execWithSessionSpy = vi
+        .spyOn(backupSandbox as any, 'execWithSession')
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({
+          stdout: String(expectedSize),
+          stderr: '',
+          exitCode: 0
+        })
+        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
+      vi.spyOn(
+        backupSandbox as any,
+        'generatePresignedGetUrl'
+      ).mockResolvedValue('https://example.com/archive');
+
+      await (backupSandbox as any).downloadBackupParallel(
+        '/var/backups/test.sqsh',
+        'backups/test/data.sqsh',
+        expectedSize,
+        'test-backup-id',
+        '/app/project',
+        'backup-session'
+      );
+
+      const downloadCommand = execWithSessionSpy.mock.calls[1][0] as string;
+      expect(downloadCommand).toContain(
+        "truncate -s 16777216 '/var/backups/test.sqsh.tmp'"
+      );
+      expect(downloadCommand).toContain("of='/var/backups/test.sqsh.tmp'");
+      expect(downloadCommand).toContain('oflag=seek_bytes');
+      expect(downloadCommand).toContain('conv=notrunc');
+      expect(downloadCommand).toContain('(set -o pipefail; curl -sSf');
+      expect(downloadCommand).not.toContain('cat ');
+      expect(downloadCommand).not.toContain('.part0.tmp');
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {
@@ -2481,6 +2568,122 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(second.calls()).toBe(1);
       second.resolve();
       await secondCall;
+    });
+  });
+
+  describe('mountBucket FUSE verification', () => {
+    const mountOptions = {
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      credentials: {
+        accessKeyId: 'AKID',
+        secretAccessKey: 'SECRET'
+      }
+    };
+
+    /**
+     * The mount + verification flow runs as a single in-container script.
+     * Match it by the `s3fs ` prefix inside the script body and return the
+     * exit code the caller would see for each scenario.
+     */
+    function mockMountScript(result: {
+      exitCode: number;
+      stdout?: string;
+      stderr?: string;
+    }) {
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          const base = {
+            success: true,
+            command,
+            timestamp: new Date().toISOString()
+          };
+          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
+            return {
+              ...base,
+              stdout: '',
+              stderr: '',
+              ...result
+            } as any;
+          }
+          return { ...base, exitCode: 0, stdout: '', stderr: '' } as any;
+        }
+      );
+    }
+
+    it('succeeds when the mount script reports the mount is live', async () => {
+      mockMountScript({ exitCode: 0 });
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws when the s3fs parent exits non-zero', async () => {
+      mockMountScript({ exitCode: 2, stdout: 'fuse: bad mount point' });
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).rejects.toThrow('S3FS mount failed: fuse: bad mount point');
+    });
+
+    it('throws with the s3fs log tail when the mount never appears', async () => {
+      mockMountScript({
+        exitCode: 3,
+        stdout: '[ERR] check_bucket_access: 403 AccessDenied'
+      });
+
+      const err = await sandbox
+        .mountBucket('my-bucket', '/mnt/data2', mountOptions)
+        .catch((e: Error) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/FUSE filesystem never appeared/);
+      expect(err!.message).toMatch(/403 AccessDenied/);
+      expect((sandbox as any).activeMounts.has('/mnt/data2')).toBe(false);
+    });
+
+    it('unmounts a late-arriving FUSE mount when the script reports timeout', async () => {
+      // Race: the script polls 60x for `mountpoint -q` and exits 3 when none
+      // succeed, but s3fs is daemonised and can complete the mount between
+      // the last poll and our cleanup. The failure path must unmount that
+      // mount instead of leaking it.
+      const issuedCommands: string[] = [];
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          issuedCommands.push(command);
+          const base = {
+            success: true,
+            command,
+            timestamp: new Date().toISOString()
+          };
+          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
+            return {
+              ...base,
+              exitCode: 3,
+              stdout: 'mount took too long',
+              stderr: ''
+            } as any;
+          }
+          return { ...base, exitCode: 0, stdout: '', stderr: '' } as any;
+        }
+      );
+
+      const err = await sandbox
+        .mountBucket('my-bucket', '/mnt/late', mountOptions)
+        .catch((e: Error) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((sandbox as any).activeMounts.has('/mnt/late')).toBe(false);
+      // The cleanup path must issue an unmount conditional on `mountpoint -q`,
+      // so a late-arriving FUSE mount is torn down before we drop the entry.
+      expect(
+        issuedCommands.some(
+          (c) =>
+            c.includes('mountpoint -q') &&
+            c.includes('fusermount -u') &&
+            c.includes('/mnt/late')
+        )
+      ).toBe(true);
     });
   });
 });

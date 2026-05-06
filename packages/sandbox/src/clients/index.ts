@@ -26,6 +26,7 @@ export { WatchClient } from './watch-client';
 
 export type {
   ITransport,
+  RouteTransportMode,
   TransportConfig,
   TransportMode,
   TransportOptions

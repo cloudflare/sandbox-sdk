@@ -23,7 +23,7 @@ import type {
   Logger,
   OutputMessage,
   Result,
-  SandboxAPI as SandboxAPIInterface,
+  SandboxAPI,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -92,13 +92,13 @@ function extractData<T>(result: ServiceResult<any, any>): T {
 }
 
 /**
- * Native RPC API exposed to capnweb clients.
+ * Container control-plane API exposed over capnweb.
  *
  * Each domain is exposed as a nested RpcTarget so the client can access
- * them directly as `rpc.commands`, `rpc.files`, etc. Top-level methods
- * handle utility and session management.
+ * them directly as `commands`, `files`, etc. Top-level methods handle
+ * utility and session management.
  */
-export class SandboxAPI extends RpcTarget implements SandboxAPIInterface {
+export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   #deps: SandboxAPIDeps;
 
   constructor(deps: SandboxAPIDeps) {
@@ -1015,14 +1015,22 @@ class BackupRPCAPI extends RpcTarget {
     dir: string,
     archivePath: string,
     sessionId: string,
-    options?: { excludes?: string[]; gitignore?: boolean }
+    options?: {
+      excludes?: string[];
+      gitignore?: boolean;
+      compression?: {
+        format?: 'gzip' | 'lz4' | 'zstd';
+        threads?: number;
+      };
+    }
   ) {
     const result = await this.#svc.createArchive(
       dir,
       archivePath,
       sessionId,
       options?.gitignore ?? false,
-      options?.excludes ?? []
+      options?.excludes ?? [],
+      options?.compression
     );
     const data = extractData<{ sizeBytes: number; archivePath: string }>(
       result
@@ -1038,6 +1046,27 @@ class BackupRPCAPI extends RpcTarget {
     const result = await this.#svc.restoreArchive(dir, archivePath, sessionId);
     throwIfError(result);
     return { success: true, dir };
+  }
+
+  async uploadParts(request: {
+    archivePath: string;
+    parts: Array<{
+      partNumber: number;
+      url: string;
+      offset: number;
+      size: number;
+    }>;
+    sessionId?: string;
+  }) {
+    const result = await this.#svc.uploadParts(
+      request.archivePath,
+      request.parts,
+      request.sessionId ?? 'default'
+    );
+    const data = extractData<{
+      parts: Array<{ partNumber: number; etag: string }>;
+    }>(result);
+    return { success: true, parts: data.parts };
   }
 }
 
