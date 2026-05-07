@@ -185,6 +185,7 @@ jobs:
       - name: Run performance tests
         env:
           PERF_DEPLOYED_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

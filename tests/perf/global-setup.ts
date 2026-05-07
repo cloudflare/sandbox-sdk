@@ -40,6 +40,9 @@ function ensureWranglerConfig(): void {
 
 export async function setup() {
   console.log('\n[PerfSetup] Initializing performance test suite...');
+  console.log(
+    `[PerfSetup] CI=${process.env.CI ?? '<unset>'} TEST_WORKER_URL=${process.env.TEST_WORKER_URL ?? '<unset>'} PERF_DEPLOYED_WORKER_URL=${process.env.PERF_DEPLOYED_WORKER_URL ?? '<unset>'}`
+  );
 
   // Clean up stale state from crashed runs
   if (existsSync(PERF_STATE_FILE)) {
@@ -51,13 +54,24 @@ export async function setup() {
 
   // Ensure wrangler config exists for local mode
   if (!process.env.TEST_WORKER_URL) {
+    console.log(
+      '[PerfSetup] TEST_WORKER_URL is not set; local wrangler dev mode is enabled'
+    );
     ensureWranglerConfig();
+  } else {
+    console.log(
+      '[PerfSetup] TEST_WORKER_URL is set; deployed worker mode is enabled'
+    );
   }
 
   // Get worker URL (spawns wrangler dev locally if TEST_WORKER_URL not set)
   const result = await getTestWorkerUrl();
   runner = result.runner;
   const workerUrl = result.url;
+  console.log(`[PerfSetup] Resolved worker URL: ${workerUrl}`);
+  console.log(
+    `[PerfSetup] Wrangler dev runner started: ${runner ? 'yes' : 'no'}`
+  );
 
   // Verify worker is accessible
   try {
