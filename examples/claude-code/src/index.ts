@@ -1,7 +1,6 @@
 import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
-import { escape } from 'querystring';
 
-export { ContainerProxy } from "@cloudflare/sandbox";
+export { ContainerProxy } from '@cloudflare/sandbox';
 
 export class Sandbox extends BaseSandbox<Env> {
   interceptHttps = true;
@@ -56,8 +55,11 @@ const EXTRA_SYSTEM =
 // outbound handler above and never enters the container.
 function placeholderAuthVars(env: Env): Record<string, string> {
   if (env.ANTHROPIC_API_KEY) return { ANTHROPIC_API_KEY: 'proxy-injected' };
-  if (env.CLAUDE_CODE_OAUTH_TOKEN) return { CLAUDE_CODE_OAUTH_TOKEN: 'proxy-injected' };
-  throw new Error('No Anthropic credential configured (set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
+  if (env.CLAUDE_CODE_OAUTH_TOKEN)
+    return { CLAUDE_CODE_OAUTH_TOKEN: 'proxy-injected' };
+  throw new Error(
+    'No Anthropic credential configured (set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)'
+  );
 }
 
 async function runTask(request: Request, env: Env): Promise<Response> {
@@ -66,14 +68,16 @@ async function runTask(request: Request, env: Env): Promise<Response> {
       repo?: string;
       task?: string;
     }>();
-    if (!repo || !task)
-      return new Response('invalid body', { status: 400 });
+    if (!repo || !task) return new Response('invalid body', { status: 400 });
 
     // get the repo name
     const name = repo.split('/').pop() ?? 'tmp';
 
     // derive a stable sandbox id from the repo name (sha-256, first 8 hex chars)
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(repo));
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(repo)
+    );
     const sandboxId = Array.from(new Uint8Array(digest))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('')
@@ -89,7 +93,11 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     // Kick off CC with our query.
     const cmd = `claude --print --permission-mode bypassPermissions --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} ${shellQuote(task)}`;
 
-    const logs = getOutput(await sandbox.exec(cmd, {env: {IS_SANDBOX: "1", ...placeholderAuthVars(env)}}));
+    const logs = getOutput(
+      await sandbox.exec(cmd, {
+        env: { IS_SANDBOX: '1', ...placeholderAuthVars(env) }
+      })
+    );
     const diff = getOutput(await sandbox.exec('git diff'));
 
     return Response.json({ logs, diff });
@@ -100,7 +108,8 @@ async function runTask(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    if (request.method !== 'POST')
+      return new Response('method not allowed', { status: 405 });
 
     const { pathname } = new URL(request.url);
     if (pathname !== '/') return new Response('not found');
