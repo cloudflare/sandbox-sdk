@@ -20,7 +20,7 @@
     "@cloudflare/vitest-pool-workers": "^0.12.5",
     "@cloudflare/workers-types": "^4.20251126.0",
     "@types/node": "^24.10.1",
-    "hono": "^4.7.11",
+    "hono": "^4.12.18",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
     "wrangler": "^4.76.0"
