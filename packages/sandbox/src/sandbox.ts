@@ -66,7 +66,7 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
-import { collectFile } from './file-stream';
+import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { proxyTerminal } from './pty';
@@ -5287,19 +5287,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      // Step 2: Read archive from container via file streaming, upload to R2 via binding
+      // Step 2: Read archive from container and stream it into R2 via binding.
+      // readFileStream returns SSE-framed base64 chunks, so we pipe it through
+      // streamFile (which decodes SSE frames + base64 on the fly) into a
+      // FixedLengthStream backed by the known archive size. This avoids
+      // buffering the whole archive in Worker memory.
       const archiveStream = await this.client.files.readFileStream(
         archivePath,
         backupSession
       );
-      const { content } = await collectFile(archiveStream);
-      const archiveData =
-        content instanceof Uint8Array
-          ? content
-          : new TextEncoder().encode(content);
-      await bucket.put(r2Key, archiveData);
+      const sseDecoded = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            for await (const chunk of streamFile(archiveStream)) {
+              if (chunk instanceof Uint8Array) {
+                controller.enqueue(chunk);
+              }
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        }
+      });
+      const fixedStream = new FixedLengthStream(createResult.sizeBytes);
+      sseDecoded.pipeTo(fixedStream.writable).catch(() => {});
+      await bucket.put(r2Key, fixedStream.readable);
 
-      // Verify upload
+      // Verify upload — size comes from createArchive result, not the stream.
       const head = await bucket.head(r2Key);
       if (!head || head.size !== createResult.sizeBytes) {
         throw new BackupCreateError({
@@ -5720,42 +5735,57 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       backupSession = await this.ensureBackupSession();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      const archiveBuffer = await archiveObject.arrayBuffer();
-      const base64Content = Buffer.from(archiveBuffer).toString('base64');
-
       // Ensure backup directory exists
       await this.execWithSession(
         `mkdir -p ${BACKUP_CONTAINER_DIR}`,
         backupSession,
-        {
-          origin: 'internal'
+        { origin: 'internal' }
+      );
+
+      // Write the archive into the container.
+      // On the rpc transport, stream R2ObjectBody.body directly via
+      // writeFileStream to avoid base64-encoding the whole archive in Worker
+      // memory and hitting workerd's 32 MiB RPC payload cap.
+      // On http/websocket transports, fall back to the base64 writeFile path
+      // (those transports send via HTTP POST to the container, no RPC cap).
+      if (this.transport === 'rpc') {
+        const body = archiveObject.body;
+        if (!body) {
+          throw new BackupRestoreError({
+            message: `R2 archive object has no body stream for backup ${id}`,
+            code: ErrorCode.BACKUP_RESTORE_FAILED,
+            httpStatus: 500,
+            context: { dir, backupId: id },
+            timestamp: new Date().toISOString()
+          });
         }
-      );
-
-      const writeResult = await this.client.files.writeFile(
-        archivePath,
-        base64Content,
-        backupSession,
-        { encoding: 'base64' }
-      );
-
-      if (!writeResult.success) {
-        const writeErrorMessage =
-          'error' in writeResult &&
-          typeof writeResult.error === 'object' &&
-          writeResult.error !== null &&
-          'message' in writeResult.error &&
-          typeof writeResult.error.message === 'string'
-            ? writeResult.error.message
-            : `File write returned success: false for '${archivePath}'`;
-
-        throw new BackupRestoreError({
-          message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId: id },
-          timestamp: new Date().toISOString()
-        });
+        await this.client.writeFileStream(archivePath, body, backupSession);
+      } else {
+        const archiveBuffer = await archiveObject.arrayBuffer();
+        const base64Content = Buffer.from(archiveBuffer).toString('base64');
+        const writeResult = await this.client.files.writeFile(
+          archivePath,
+          base64Content,
+          backupSession,
+          { encoding: 'base64' }
+        );
+        if (!writeResult.success) {
+          const writeErrorMessage =
+            'error' in writeResult &&
+            typeof writeResult.error === 'object' &&
+            writeResult.error !== null &&
+            'message' in writeResult.error &&
+            typeof writeResult.error.message === 'string'
+              ? writeResult.error.message
+              : `File write returned success: false for '${archivePath}'`;
+          throw new BackupRestoreError({
+            message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
+            code: ErrorCode.BACKUP_RESTORE_FAILED,
+            httpStatus: 500,
+            context: { dir, backupId: id },
+            timestamp: new Date().toISOString()
+          });
+        }
       }
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
