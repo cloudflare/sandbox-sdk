@@ -1,7 +1,15 @@
 import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
+import { escape } from 'querystring';
+
+export { ContainerProxy } from "@cloudflare/sandbox";
 
 export class Sandbox extends BaseSandbox<Env> {
   interceptHttps = true;
+  // Block general internet access; only allow what we explicitly need.
+  // `github.com` for `git clone`, `api.anthropic.com` for the intercepted
+  // claude traffic (allowedHosts gates outboundByHost when internet is off).
+  enableInternet = false;
+  allowedHosts = ['github.com', 'api.anthropic.com'];
 }
 
 Sandbox.outboundByHost = {
@@ -34,6 +42,10 @@ interface CmdOutput {
 // helper to read the outputs from `.exec` results
 const getOutput = (res: CmdOutput) => (res.success ? res.stdout : res.stderr);
 
+// Wrap a string as a single-quoted POSIX shell argument so user input
+// can't break out of the command line.
+const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+
 const EXTRA_SYSTEM =
   'You are an automatic feature-implementer/bug-fixer.' +
   'You apply all necessary changes to achieve the user request. You must ensure you DO NOT commit the changes, ' +
@@ -60,20 +72,24 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     // get the repo name
     const name = repo.split('/').pop() ?? 'tmp';
 
+    // derive a stable sandbox id from the repo name (sha-256, first 8 hex chars)
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(repo));
+    const sandboxId = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 8);
+
     // open sandbox
-    const sandbox = getSandbox(env.Sandbox, crypto.randomUUID().slice(0, 8));
+    const sandbox = getSandbox(env.Sandbox, sandboxId);
 
     // git clone repo
     await sandbox.gitCheckout(repo, { targetDir: name });
+    await sandbox.exec(`cd ${shellQuote(name)}`);
 
-    // Wrap a string as a single-quoted POSIX shell argument so user input
-    // can't break out of the command line.
-    const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+    // Kick off CC with our query.
+    const cmd = `claude --print --permission-mode bypassPermissions --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} ${shellQuote(task)}`;
 
-    // kick off CC with our query
-    const cmd = `cd ${shellQuote(name)} && claude --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} -p ${shellQuote(task)} --permission-mode acceptEdits`;
-
-    const logs = getOutput(await sandbox.exec(cmd, {env: placeholderAuthVars(env)}));
+    const logs = getOutput(await sandbox.exec(cmd, {env: {IS_SANDBOX: "1", ...placeholderAuthVars(env)}}));
     const diff = getOutput(await sandbox.exec('git diff'));
 
     return Response.json({ logs, diff });

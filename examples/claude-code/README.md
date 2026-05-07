@@ -11,6 +11,13 @@ Run Claude Code on Cloudflare Sandboxes! This example shows a basic setup that d
 
 The Anthropic credential never enters the container. The worker subclasses `Sandbox` with `interceptHttps = true` and registers an `outboundByHost` handler for `api.anthropic.com` that swaps a placeholder header for the real secret on its way out. Inside the container, claude only sees `ANTHROPIC_API_KEY=proxy-injected` (or `CLAUDE_CODE_OAUTH_TOKEN=proxy-injected`) -- enough to make it pick the right auth header, but useless if leaked.
 
+## Network isolation
+
+Internet access is disabled inside the container, bar the Anthropic and GitHub APIs, this allows Claude Code to run headlessly without needing to ask for permissions.
+
+> [!NOTE]
+> The `IS_SANDBOX=1` flag needs to be in the environment to allow `claude` to be run as root with the `--permission-mode bypassPermissions` flag.
+
 ## Setup
 
 Copy `.dev.vars.example` to `.dev.vars` and fill in **one** of:
