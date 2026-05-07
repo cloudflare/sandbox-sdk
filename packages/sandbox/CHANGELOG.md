@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.10.0
+
+### Minor Changes
+
+- [#659](https://github.com/cloudflare/sandbox-sdk/pull/659) [`7c09e87`](https://github.com/cloudflare/sandbox-sdk/commit/7c09e874e24dbf6147d3cc6da16b5e327b66cdd8) Thanks [@mvanhorn](https://github.com/mvanhorn)! - Update the default sandbox image runtime from Node.js 20 to Node.js 24 so published images use the current Node.js LTS release. If your workload needs a different Node.js version, build a custom image with the `NODE_VERSION` Docker build argument.
+
+### Patch Changes
+
+- [#679](https://github.com/cloudflare/sandbox-sdk/pull/679) [`21a5a2e`](https://github.com/cloudflare/sandbox-sdk/commit/21a5a2e2032b684ba0f112601195db6ddaf7091b) Thanks [@aron-cf](https://github.com/aron-cf)! - Fixed `createBackup` and `restoreBackup` with `localBucket: true` failing on the `rpc` transport for archives larger than ~24 MiB.
+
+- [#659](https://github.com/cloudflare/sandbox-sdk/pull/659) [`7c09e87`](https://github.com/cloudflare/sandbox-sdk/commit/7c09e874e24dbf6147d3cc6da16b5e327b66cdd8) Thanks [@mvanhorn](https://github.com/mvanhorn)! - Add `NODE_VERSION` build arg to the Dockerfile, allowing operators to customize the Node.js version used in sandbox container images.
+
 ## 0.9.4
 
 ### Patch Changes
