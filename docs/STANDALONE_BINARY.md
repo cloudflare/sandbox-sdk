@@ -5,7 +5,7 @@ Add Cloudflare Sandbox capabilities to any Docker image by copying the `/sandbox
 ## Basic Usage
 
 ```dockerfile
-FROM node:22-slim
+FROM node:24-slim
 
 # Required: install 'file' for SDK file operations
 RUN apt-get update && apt-get install -y --no-install-recommends file \

@@ -2,7 +2,7 @@
  * Standalone Binary Workflow Test
  *
  * Tests the standalone binary pattern where users copy the /sandbox binary
- * into an arbitrary Docker image (node:22-slim in this case).
+ * into an arbitrary Docker image (node:24-slim in this case).
  *
  * Key behaviors validated:
  * - Binary works on non-Ubuntu base images
