@@ -18,10 +18,10 @@ If the API behaves unexpectedly, read those before guessing.
 
 When the host provides them, two environment variables are set in your shell:
 
-| Variable             | Purpose                                       |
-| -------------------- | --------------------------------------------- |
-| `SANDBOX_WORKER_URL` | Base URL of the bridge worker (https).        |
-| `SANDBOX_API_KEY`    | Bearer token for `Authorization` header.      |
+| Variable             | Purpose                                  |
+| -------------------- | ---------------------------------------- |
+| `SANDBOX_WORKER_URL` | Base URL of the bridge worker (https).   |
+| `SANDBOX_API_KEY`    | Bearer token for `Authorization` header. |
 
 If either is unset, the bridge isn't available for this session — fall back to `wrangler dev` against an example, or ask the user to enable it.
 
@@ -61,12 +61,12 @@ curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \
 
 Events emitted:
 
-| Event    | `data` payload                          | Notes                              |
-| -------- | --------------------------------------- | ---------------------------------- |
-| `stdout` | base64-encoded chunk of stdout          | May fire many times.               |
-| `stderr` | base64-encoded chunk of stderr          | May fire many times.               |
-| `exit`   | `{"exit_code": N}` (JSON)               | Terminal — stream closes after.    |
-| `error`  | `{"error":"...","code":"..."}` (JSON)   | Terminal — replaces `exit`.        |
+| Event    | `data` payload                        | Notes                           |
+| -------- | ------------------------------------- | ------------------------------- |
+| `stdout` | base64-encoded chunk of stdout        | May fire many times.            |
+| `stderr` | base64-encoded chunk of stderr        | May fire many times.            |
+| `exit`   | `{"exit_code": N}` (JSON)             | Terminal — stream closes after. |
+| `error`  | `{"error":"...","code":"..."}` (JSON) | Terminal — replaces `exit`.     |
 
 Decode stdout/stderr with `base64 -d`. Optional request fields: `timeout_ms` (per-call timeout) and `cwd` (must resolve under `/workspace`).
 
@@ -161,14 +161,14 @@ The default session cannot be deleted (`502 session_error`). Sessions also disap
 
 These exist on the bridge — consult `/v1/openapi.json` for full schemas before using them:
 
-| Path                              | Purpose                                           |
-| --------------------------------- | ------------------------------------------------- |
-| `/health`                         | Liveness probe.                                   |
-| `/v1/pool/{prime,stats,shutdown-prewarmed}` | Pre-warm pool management.               |
-| `/v1/sandbox/{id}/pty`            | Interactive PTY stream.                           |
-| `/v1/sandbox/{id}/running`        | List running processes.                           |
-| `/v1/sandbox/{id}/{mount,unmount}` | Mount / unmount S3-compatible buckets via FUSE.  |
-| `/v1/sandbox/{id}/{hydrate,persist}` | Workspace persistence ops.                     |
+| Path                                        | Purpose                                         |
+| ------------------------------------------- | ----------------------------------------------- |
+| `/health`                                   | Liveness probe.                                 |
+| `/v1/pool/{prime,stats,shutdown-prewarmed}` | Pre-warm pool management.                       |
+| `/v1/sandbox/{id}/pty`                      | Interactive PTY stream.                         |
+| `/v1/sandbox/{id}/running`                  | List running processes.                         |
+| `/v1/sandbox/{id}/{mount,unmount}`          | Mount / unmount S3-compatible buckets via FUSE. |
+| `/v1/sandbox/{id}/{hydrate,persist}`        | Workspace persistence ops.                      |
 
 ## Error Codes
 
