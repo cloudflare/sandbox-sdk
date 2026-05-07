@@ -8,6 +8,7 @@ import {
   vi
 } from 'bun:test';
 import type { Logger } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import {
   FileService,
@@ -1312,6 +1313,114 @@ describe('FileService', () => {
       // Should have error event
       expect(sseEvents[0].type).toBe('error');
       expect(sseEvents[0].error).toContain('File not found');
+    });
+  });
+
+  describe('readFileBinaryStream', () => {
+    it('returns a raw binary ReadableStream with metadata for an existing file', async () => {
+      const fileBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+      mockBunFile({
+        exists: true,
+        size: fileBytes.byteLength,
+        type: 'image/png',
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue(fileBytes);
+            controller.close();
+          }
+        })
+      });
+
+      const result = await fileService.readFileBinaryStream(
+        '/tmp/image.png',
+        'session-1'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      const { content, size, mimeType } = result.data;
+
+      expect(size).toBe(fileBytes.byteLength);
+      expect(mimeType).toBe('image/png');
+
+      const reader = content.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const assembled = new Uint8Array(
+        chunks.reduce((acc, c) => acc + c.byteLength, 0)
+      );
+      let offset = 0;
+      for (const c of chunks) {
+        assembled.set(c, offset);
+        offset += c.byteLength;
+      }
+
+      expect(assembled).toEqual(fileBytes);
+    });
+
+    it('returns FILE_NOT_FOUND when the file does not exist', async () => {
+      mockBunFile({ exists: false });
+
+      const result = await fileService.readFileBinaryStream(
+        '/tmp/nonexistent.bin',
+        'session-1'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error.code).toBe(ErrorCode.FILE_NOT_FOUND);
+      expect(result.error.message).toContain('nonexistent.bin');
+    });
+
+    it('returns VALIDATION_FAILED for invalid paths', async () => {
+      mocked(mockSecurityService.validatePath).mockReturnValue({
+        isValid: false,
+        errors: ['Path traversal detected']
+      });
+
+      const result = await fileService.readFileBinaryStream(
+        '/tmp/../etc/passwd',
+        'session-1'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error.code).toBe(ErrorCode.VALIDATION_FAILED);
+      expect(result.error.message).toContain('Path traversal detected');
+    });
+
+    it('resolves relative paths via session working directory', async () => {
+      const fileBytes = new Uint8Array([1, 2, 3, 4]);
+      mockBunFile({
+        exists: true,
+        size: fileBytes.byteLength,
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue(fileBytes);
+            controller.close();
+          }
+        })
+      });
+
+      // pwd returns /workspace, so 'blob.bin' resolves to '/workspace/blob.bin'
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: { exitCode: 0, stdout: '/workspace', stderr: '' } as RawExecResult
+      });
+
+      const result = await fileService.readFileBinaryStream(
+        'blob.bin',
+        'session-1'
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.content).toBeInstanceOf(ReadableStream);
+      // Bun.file should have been called with the resolved absolute path
+      expect(bunFileSpy).toHaveBeenCalledWith('/workspace/blob.bin');
     });
   });
 });

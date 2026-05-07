@@ -696,6 +696,18 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // File read-binary: readFile({ encoding: 'none' }) — rpc transport only.
+      // Returns raw binary response so the test can sha256 the collected bytes.
+      if (
+        url.pathname === '/api/file/read-binary' &&
+        request.method === 'POST'
+      ) {
+        const result = await executor.readFile(body.path, { encoding: 'none' });
+        return new Response(result.content, {
+          headers: { 'Content-Type': result.mimeType }
+        });
+      }
+
       // File mkdir
       if (url.pathname === '/api/file/mkdir' && request.method === 'POST') {
         await executor.mkdir(body.path, { recursive: body.recursive });

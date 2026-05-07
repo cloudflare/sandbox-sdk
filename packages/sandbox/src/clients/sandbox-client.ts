@@ -115,28 +115,6 @@ export class SandboxClient {
   }
 
   /**
-   * Stream a file directly to the container over a binary RPC channel.
-   *
-   * Requires the container-control path (`transport: 'rpc'`). Calling this
-   * method with the HTTP or WebSocket route transports throws an error because
-   * those transports do not support binary streaming.
-   */
-  writeFileStream(
-    _path: string,
-    _content: ReadableStream<Uint8Array>,
-    _sessionId: string
-  ): Promise<{
-    success: boolean;
-    path: string;
-    bytesWritten: number;
-    timestamp: string;
-  }> {
-    throw new Error(
-      'writeFileStream requires the RPC transport. Enable it with transport: "rpc" in sandbox options.'
-    );
-  }
-
-  /**
    * Connect WebSocket transport (no-op in HTTP mode)
    * Called automatically on first request, but can be called explicitly
    * to establish connection upfront.

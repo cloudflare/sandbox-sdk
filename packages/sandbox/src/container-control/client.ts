@@ -563,7 +563,10 @@ export class ContainerControlClient {
     return wrapStub(this.getConnection().rpc().commands, this.renewActivity);
   }
   get files(): SandboxFilesAPI {
-    return wrapStub(this.getConnection().rpc().files, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().files,
+      this.renewActivity
+    ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
     return wrapStub(this.getConnection().rpc().processes, this.renewActivity);
@@ -614,19 +617,6 @@ export class ContainerControlClient {
 
   disconnect(): void {
     this.destroyConnection();
-  }
-
-  async writeFileStream(
-    path: string,
-    stream: ReadableStream<Uint8Array>,
-    sessionId: string
-  ): Promise<{
-    success: boolean;
-    path: string;
-    bytesWritten: number;
-    timestamp: string;
-  }> {
-    return this.files.writeFileStream(path, stream, sessionId);
   }
 }
 

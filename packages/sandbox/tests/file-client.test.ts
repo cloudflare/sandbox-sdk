@@ -828,4 +828,22 @@ database:
       expect(fullOptionsClient).toBeDefined();
     });
   });
+
+  describe('writeFileStream', () => {
+    it('throws on http transport with a clear message', () => {
+      expect(() =>
+        client.writeFileStream('/tmp/foo', new ReadableStream(), 'session-1')
+      ).toThrow('writeFileStream requires the rpc transport');
+    });
+  });
+
+  describe("readFile with encoding: 'none'", () => {
+    it('throws on http transport with a clear message', async () => {
+      await expect(
+        client.readFile('/tmp/foo', 'session-1', { encoding: 'none' })
+      ).rejects.toThrow(
+        "readFile with encoding: 'none' requires the rpc transport"
+      );
+    });
+  });
 });

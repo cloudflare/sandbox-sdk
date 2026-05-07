@@ -43,18 +43,39 @@ vi.mock('@cloudflare/containers', () => {
 function createMockR2Bucket() {
   const store = new Map<string, { data: ArrayBuffer; size: number }>();
   return {
-    put: vi.fn(async (key: string, data: string | ArrayBuffer | Uint8Array) => {
-      let bytes: Uint8Array;
-      if (typeof data === 'string') {
-        bytes = new TextEncoder().encode(data);
-      } else if (data instanceof Uint8Array) {
-        bytes = new Uint8Array(data);
-      } else {
-        bytes = new Uint8Array(data);
+    put: vi.fn(
+      async (
+        key: string,
+        data: string | ArrayBuffer | Uint8Array | ReadableStream<Uint8Array>
+      ) => {
+        let bytes: Uint8Array;
+        if (typeof data === 'string') {
+          bytes = new TextEncoder().encode(data);
+        } else if (data instanceof ReadableStream) {
+          // Collect stream chunks — mirrors what Miniflare/R2 does at the boundary
+          const reader = data.getReader();
+          const chunks: Uint8Array[] = [];
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) chunks.push(value);
+          }
+          const totalLength = chunks.reduce((n, c) => n + c.byteLength, 0);
+          bytes = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const c of chunks) {
+            bytes.set(c, offset);
+            offset += c.byteLength;
+          }
+        } else if (data instanceof Uint8Array) {
+          bytes = new Uint8Array(data);
+        } else {
+          bytes = new Uint8Array(data);
+        }
+        const buffer = bytes.buffer as ArrayBuffer;
+        store.set(key, { data: buffer, size: bytes.byteLength });
       }
-      const buffer = bytes.buffer as ArrayBuffer;
-      store.set(key, { data: buffer, size: bytes.byteLength });
-    }),
+    ),
     get: vi.fn(async (key: string) => {
       const entry = store.get(key);
       if (!entry) return null;
@@ -226,7 +247,7 @@ describe('Local Backup & Restore', () => {
       // Verify archive was uploaded to R2 via binding
       expect(mockBucket.put).toHaveBeenCalledWith(
         expect.stringMatching(/^backups\/.*\/data\.sqsh$/),
-        expect.any(Uint8Array)
+        expect.any(ReadableStream)
       );
 
       // Verify metadata was written

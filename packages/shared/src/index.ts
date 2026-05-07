@@ -155,6 +155,7 @@ export type {
   ExecutionSession,
   // File streaming types
   FileChunk,
+  FileEncoding,
   FileExistsResult,
   FileInfo,
   FileMetadata,
@@ -195,6 +196,7 @@ export type {
   ProcessStartResult,
   ProcessStatus,
   ReadFileResult,
+  ReadFileStreamResult,
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,

@@ -18,6 +18,7 @@ import type {
   DesktopStatusResult,
   DesktopStopResult,
   ExecutionError,
+  FileEncoding,
   FileInfo,
   ListFilesOptions,
   Logger,
@@ -293,8 +294,50 @@ class FilesRPCAPI extends RpcTarget {
   async readFile(
     path: string,
     sessionId: string,
-    options?: { encoding?: string }
+    options: { encoding: 'none' }
+  ): Promise<{
+    success: true;
+    content: ReadableStream<Uint8Array>;
+    path: string;
+    size: number;
+    mimeType: string;
+    timestamp: string;
+  }>;
+  async readFile(
+    path: string,
+    sessionId: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
+  ): Promise<{
+    success: true;
+    content: string;
+    path: string;
+    encoding: 'utf-8' | 'base64';
+    isBinary: boolean | undefined;
+    size: number;
+    mimeType: string;
+    timestamp: string;
+  }>;
+  async readFile(
+    path: string,
+    sessionId: string,
+    options?: { encoding?: FileEncoding }
   ) {
+    if (options?.encoding === 'none') {
+      const result = await this.#svc.readFileBinaryStream(path, sessionId);
+      const { content, size, mimeType } = extractData<{
+        content: ReadableStream<Uint8Array>;
+        size: number;
+        mimeType: string;
+      }>(result);
+      return {
+        success: true,
+        content,
+        path,
+        size,
+        mimeType,
+        timestamp: new Date().toISOString()
+      };
+    }
     const result = await this.#svc.readFile(path, options, sessionId);
     const content = extractData<string>(result);
     const metadata = (
