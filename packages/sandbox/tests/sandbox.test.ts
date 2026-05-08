@@ -230,6 +230,32 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('should run top-level exec without the default session when disabled', async () => {
+      await sandbox.setDefaultSession(false);
+
+      await sandbox.exec('git add . && git commit -m test && git push');
+
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'git add . && git commit -m test && git push',
+        false,
+        undefined
+      );
+    });
+
+    it('should let explicit sessionId override disabled default session', async () => {
+      await sandbox.setDefaultSession(false);
+
+      await sandbox.exec('echo explicit', { sessionId: 'explicit-session' });
+
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo explicit',
+        'explicit-session',
+        undefined
+      );
+    });
+
     it('should allow streaming exec without preserveShellState validation', async () => {
       const executeStreamSpy = vi
         .spyOn(sandbox.client.commands, 'executeStream')

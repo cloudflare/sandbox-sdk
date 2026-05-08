@@ -290,6 +290,35 @@ describe('Session State Isolation Workflow', () => {
     expect(newPwd2Data.stdout.trim()).toBe('/workspace/test/unit');
   }, 90000);
 
+  test('exec can disable the default session at sandbox creation', async () => {
+    const isolatedSandboxId = `${sandboxId}-no-default-session`;
+    const isolatedHeaders = {
+      ...createTestHeaders(isolatedSandboxId),
+      'X-Sandbox-Default-Session': 'false'
+    };
+
+    const setCwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: isolatedHeaders,
+      body: JSON.stringify({ command: 'cd /tmp' })
+    });
+    expect(setCwdResponse.status).toBe(200);
+    const setCwdData = (await setCwdResponse.json()) as ExecResult;
+    expect(setCwdData.success).toBe(true);
+
+    const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: isolatedHeaders,
+      body: JSON.stringify({ command: 'pwd' })
+    });
+    expect(pwdResponse.status).toBe(200);
+    const pwdData = (await pwdResponse.json()) as ExecResult;
+    expect(pwdData.success).toBe(true);
+    expect(pwdData.stdout.trim()).not.toBe('/tmp');
+
+    await cleanupSandbox(workerUrl, isolatedSandboxId);
+  }, 90000);
+
   test('exec can opt out of shell-state persistence, while sessions still persist it', async () => {
     const topLevelCwdResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',

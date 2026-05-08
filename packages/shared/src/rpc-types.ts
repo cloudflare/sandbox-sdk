@@ -75,7 +75,7 @@ export interface SandboxCommandsAPI {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      /** @deprecated Use sessionId: false for isolated top-level exec. */
+      /** @deprecated Use defaultSession: false or sessionId: false for isolated top-level exec. */
       preserveShellState?: boolean;
     }
   ): Promise<{

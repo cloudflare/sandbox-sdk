@@ -212,6 +212,13 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
+    const defaultSessionHeader = request.headers.get(
+      'X-Sandbox-Default-Session'
+    );
+    const defaultSession =
+      defaultSessionHeader === null
+        ? undefined
+        : defaultSessionHeader === 'true';
 
     // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
@@ -233,7 +240,8 @@ export default {
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
       transport,
-      ...(sleepAfter !== null && { sleepAfter })
+      ...(sleepAfter !== null && { sleepAfter }),
+      ...(defaultSession !== undefined && { defaultSession })
     });
 
     // Get session ID from header (optional)

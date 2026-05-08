@@ -42,7 +42,7 @@ export interface BaseExecOptions {
 
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
-  /** @deprecated Use top-level `sandbox.exec(command, { sessionId: false })` for isolated one-shot execution. */
+  /** @deprecated Use `getSandbox(..., { defaultSession: false })` or top-level `sandbox.exec(command, { sessionId: false })` for isolated one-shot execution. */
   preserveShellState?: boolean;
 
   /**
@@ -544,6 +544,22 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
+
+  /**
+   * Whether top-level Sandbox methods use an implicit persistent default session.
+   *
+   * - `true` (default): top-level `sandbox.exec()` and related APIs preserve shell
+   *   state such as `cd`, exported variables, aliases, and shell options across calls.
+   * - `false`: top-level `sandbox.exec()` runs as a one-shot command without
+   *   preserving default-session shell state. Explicit sessions created with
+   *   `sandbox.createSession()` are unchanged.
+   *
+   * This is an opt-in compatibility mode while the API moves toward making
+   * persistent shell state explicit through sessions.
+   *
+   * @default true
+   */
+  defaultSession?: boolean;
 
   /**
    * Transport/control path for communication between the Sandbox DO and the

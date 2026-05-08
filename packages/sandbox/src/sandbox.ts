@@ -115,6 +115,7 @@ type SandboxConfiguration = {
   };
   sleepAfter?: string | number;
   keepAlive?: boolean;
+  defaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -124,6 +125,7 @@ type CachedSandboxConfiguration = {
   normalizeId?: boolean;
   sleepAfter?: string | number;
   keepAlive?: boolean;
+  defaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -133,6 +135,7 @@ type ConfigurableSandboxStub = {
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
   setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
   setKeepAlive?: (keepAlive: boolean) => Promise<void>;
+  setDefaultSession?: (enabled: boolean) => Promise<void>;
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
@@ -207,6 +210,13 @@ function buildSandboxConfiguration(
   }
 
   if (
+    options?.defaultSession !== undefined &&
+    cached?.defaultSession !== options.defaultSession
+  ) {
+    configuration.defaultSession = options.defaultSession;
+  }
+
+  if (
     options?.containerTimeouts &&
     !sameContainerTimeouts(cached?.containerTimeouts, options.containerTimeouts)
   ) {
@@ -228,6 +238,7 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sandboxName !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
+    configuration.defaultSession !== undefined ||
     configuration.containerTimeouts !== undefined ||
     configuration.transport !== undefined
   );
@@ -248,6 +259,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.keepAlive !== undefined && {
       keepAlive: configuration.keepAlive
+    }),
+    ...(configuration.defaultSession !== undefined && {
+      defaultSession: configuration.defaultSession
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
@@ -286,6 +300,13 @@ function applySandboxConfiguration(
   if (configuration.keepAlive !== undefined) {
     operations.push(
       stub.setKeepAlive?.(configuration.keepAlive) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.defaultSession !== undefined) {
+    operations.push(
+      stub.setDefaultSession?.(configuration.defaultSession) ??
+        Promise.resolve()
     );
   }
 
@@ -450,6 +471,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
+  private defaultSessionEnabled = true;
   // Incremented whenever the container stops. Used to invalidate
   // in-flight default-session initialization that started against a
   // now-dead container.
@@ -740,6 +762,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<boolean>('normalizeId')) ?? false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
+      this.defaultSessionEnabled =
+        (await this.ctx.storage.get<boolean>('defaultSessionEnabled')) ?? true;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
 
@@ -826,6 +850,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.setKeepAlive(configuration.keepAlive);
     }
 
+    if (configuration.defaultSession !== undefined) {
+      await this.setDefaultSession(configuration.defaultSession);
+    }
+
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
@@ -857,6 +885,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!keepAlive) {
       this.renewActivityTimeout();
     }
+  }
+
+  async setDefaultSession(enabled: boolean): Promise<void> {
+    if (this.defaultSessionEnabled === enabled) return;
+    await this.ctx.storage.put('defaultSessionEnabled', enabled);
+    this.defaultSessionEnabled = enabled;
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -2348,11 +2382,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     options?: SandboxExecOptions
   ): Promise<ExecResult> {
-    const session =
-      options?.sessionId === false
-        ? false
-        : (options?.sessionId ?? (await this.ensureDefaultSession()));
+    const session = await this.resolveExecSession(options?.sessionId);
     return this.execWithSession(command, session, options);
+  }
+
+  private async resolveExecSession(
+    sessionId: string | false | undefined
+  ): Promise<string | false> {
+    if (sessionId !== undefined) return sessionId;
+    if (!this.defaultSessionEnabled) return false;
+    return this.ensureDefaultSession();
   }
 
   /**

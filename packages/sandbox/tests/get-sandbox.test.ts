@@ -29,6 +29,7 @@ describe('getSandbox', () => {
         (configuration: {
           sandboxName?: { name: string; normalizeId?: boolean };
           sleepAfter?: string | number;
+          defaultSession?: boolean;
         }) => {
           if (configuration.sleepAfter !== undefined) {
             mockStub.sleepAfter = configuration.sleepAfter;
@@ -40,7 +41,8 @@ describe('getSandbox', () => {
       setSleepAfter: vi.fn((value: string | number) => {
         mockStub.sleepAfter = value;
       }),
-      setKeepAlive: vi.fn()
+      setKeepAlive: vi.fn(),
+      setDefaultSession: vi.fn()
     };
 
     // Mock getContainer to return our stub
@@ -143,6 +145,61 @@ describe('getSandbox', () => {
         name: 'test-sandbox',
         normalizeId: undefined
       }
+    });
+  });
+
+  it('should apply defaultSession option when provided as false', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox', {
+      defaultSession: false
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      defaultSession: false
+    });
+  });
+
+  it('should apply defaultSession option when provided as true', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'test-sandbox', {
+      defaultSession: true
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      defaultSession: true
+    });
+  });
+
+  it('should skip repeated defaultSession configuration for the same sandbox', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', { defaultSession: false });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { defaultSession: false });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reconfigure when defaultSession changes', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', { defaultSession: true });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { defaultSession: false });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(2);
+    expect(mockStub.configure).toHaveBeenNthCalledWith(2, {
+      defaultSession: false
     });
   });
 

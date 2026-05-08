@@ -16,11 +16,11 @@ This document explains the **architecture and design decisions** for command exe
 
 We use distinct patterns because they have fundamentally different requirements:
 
-| Mode                    | API                                           | State Persists? | Streaming? | Killable?           |
-| ----------------------- | --------------------------------------------- | --------------- | ---------- | ------------------- |
-| **Foreground**          | default `sandbox.exec()` and `session.exec()` | ✅ Yes          | ❌ No      | ❌ No (use timeout) |
-| **Isolated foreground** | `sandbox.exec(..., { sessionId: false })`     | ❌ No           | ❌ No      | ❌ No (use timeout) |
-| **Background**          | `execStream()`, `startProcess()`              | ❌ No           | ✅ Yes     | ✅ Yes              |
+| Mode                    | API                                                                | State Persists? | Streaming? | Killable?           |
+| ----------------------- | ------------------------------------------------------------------ | --------------- | ---------- | ------------------- |
+| **Foreground**          | default `sandbox.exec()` and `session.exec()`                      | ✅ Yes          | ❌ No      | ❌ No (use timeout) |
+| **Isolated foreground** | `getSandbox(..., { defaultSession: false })` or `sessionId: false` | ❌ No           | ❌ No      | ❌ No (use timeout) |
+| **Background**          | `execStream()`, `startProcess()`                                   | ❌ No           | ✅ Yes     | ✅ Yes              |
 
 ### Foreground (`exec`)
 
@@ -44,11 +44,13 @@ Command ──▶ stdout.tmp, stderr.tmp ──▶ Prefix lines ──▶ log fi
 - Uses `{ cmd }` (group command) not `( cmd )` (subshell)
 - Group commands run in the current shell, so `cd`, `export`, etc. affect subsequent commands
 
-Top-level `sandbox.exec(command, { sessionId: false })` uses isolated
-foreground execution. It runs outside the default persistent session so scripts
-that call `exit`, `exec`, or enable `set -e` cannot terminate or mutate the
-default session shell. Use the default mode when shell state should persist
-across commands.
+Top-level `sandbox.exec()` can use isolated foreground execution when the
+sandbox is created with `getSandbox(env.Sandbox, id, { defaultSession: false })`.
+A single call can also opt out with `sandbox.exec(command, { sessionId: false })`.
+Both paths run outside the default persistent session so scripts that call
+`exit`, `exec`, or enable `set -e` cannot terminate or mutate the default
+session shell. Use explicit sessions when shell state should persist across
+commands.
 
 ### Background (`execStream` / `startProcess`)
 

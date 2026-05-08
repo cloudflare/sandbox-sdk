@@ -36,7 +36,7 @@ await session.exec('export API_KEY=x'); // Set environment variable
 await session.exec('node server.js'); // Should run in /app with API_KEY set
 ```
 
-The naive session approach would be to spawn a new shell for each command. But then every command starts fresh - the `cd` is forgotten, the `export` is lost. Sessions need a **persistent shell** that stays alive across commands. For generated one-shot scripts that may call `exit`, `exec`, or `set -e`, use top-level `sandbox.exec(command, { sessionId: false })` to run outside the default persistent session.
+The naive session approach would be to spawn a new shell for each command. But then every command starts fresh - the `cd` is forgotten, the `export` is lost. Sessions need a **persistent shell** that stays alive across commands. For generated one-shot scripts that may call `exit`, `exec`, or `set -e`, create the sandbox with `getSandbox(env.Sandbox, id, { defaultSession: false })` or use top-level `sandbox.exec(command, { sessionId: false })` to run outside the default persistent session.
 
 ### Problem 2: stdout/stderr Separation
 
