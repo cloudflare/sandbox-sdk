@@ -1,0 +1,56 @@
+name: Bridge
+
+# Runs on PRs that touch the cloudflare-sandbox-bridge Worker (bridge/**) or
+# this workflow itself. The bridge Worker depends on @cloudflare/sandbox via
+# its built dist/ output, so the SDK is built first and the bridge unit tests
+# (bridge/worker, vitest + @cloudflare/vitest-pool-workers) are then run
+# against it.
+
+on:
+  pull_request:
+    paths:
+      - 'bridge/**'
+      - '.github/workflows/bridge.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  worker-tests:
+    name: bridge/worker unit tests
+    runs-on: ubuntu-24.04-4core
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            bridge/worker/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      # The bridge Worker imports from @cloudflare/sandbox/bridge, which
+      # resolves to packages/sandbox/dist/. Build the SDK before running tests.
+      - name: Build @cloudflare/sandbox
+        run: npx turbo run build --filter=@cloudflare/sandbox
+
+      - name: Worker unit tests
+        run: npm test -w @cloudflare/sandbox-bridge

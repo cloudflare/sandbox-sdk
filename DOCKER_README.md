@@ -8,7 +8,7 @@ All images are published as tags on `cloudflare/sandbox`:
 
 | Tag                  | Base         | Description                                                    |
 | -------------------- | ------------ | -------------------------------------------------------------- |
-| `<version>`          | Ubuntu 22.04 | Default — Node.js 20, Bun, Git, curl, jq, and common utilities |
+| `<version>`          | Ubuntu 22.04 | Default — Node.js 24, Bun, Git, curl, jq, and common utilities |
 | `<version>-python`   | Ubuntu 22.04 | Default + Python 3.11 with matplotlib, numpy, pandas, ipython  |
 | `<version>-opencode` | Ubuntu 22.04 | Default + [OpenCode](https://opencode.ai) CLI                  |
 | `<version>-musl`     | Alpine 3.21  | Minimal Alpine-based image with Git, curl, and bash            |
@@ -19,7 +19,7 @@ All images are published as tags on `cloudflare/sandbox`:
 These images are designed to be used with the [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) SDK. Reference them in your project's `Dockerfile`:
 
 ```dockerfile
-FROM cloudflare/sandbox:0.9.2-python
+FROM cloudflare/sandbox:0.10.0-python
 ```
 
 Then configure your `wrangler.toml` to use the image:
@@ -31,6 +31,18 @@ max_instances = 1
 ```
 
 See the [Getting Started guide](https://developers.cloudflare.com/sandbox/get-started/) for a complete walkthrough.
+
+## Custom Node.js versions
+
+Published sandbox images include Node.js 24 by default. If your workload requires a different Node.js version, build a custom image with the `NODE_VERSION` Docker build argument:
+
+```bash
+docker buildx build \
+  --build-arg NODE_VERSION=22 \
+  --target default \
+  -f packages/sandbox/Dockerfile \
+  .
+```
 
 ## Architecture
 

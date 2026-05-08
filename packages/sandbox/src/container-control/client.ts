@@ -393,7 +393,8 @@ export class ContainerControlClient {
     this.connOptions = {
       stub: options.stub,
       port: options.port,
-      logger: options.logger
+      logger: options.logger,
+      retryTimeoutMs: options.retryTimeoutMs
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
@@ -589,8 +590,14 @@ export class ContainerControlClient {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
   }
 
-  setRetryTimeoutMs(_ms: number): void {
-    // RPC transport does not use HTTP retry budgets
+  /**
+   * Update the 503 upgrade-retry budget. Applies to the current connection
+   * (if any) and is remembered for any future connections created after the
+   * client is torn down and reconnected.
+   */
+  setRetryTimeoutMs(ms: number): void {
+    this.connOptions.retryTimeoutMs = ms;
+    this.conn?.setRetryTimeoutMs(ms);
   }
 
   getTransportMode(): SandboxTransport {

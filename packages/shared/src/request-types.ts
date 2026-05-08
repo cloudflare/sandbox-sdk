@@ -1,3 +1,5 @@
+import type { BackupCompressionOptions } from './types.js';
+
 /**
  * Request types for API calls to the container
  * Single source of truth for the contract between SDK clients and container handlers
@@ -161,7 +163,51 @@ export interface CreateBackupRequest {
   gitignore?: boolean;
   /** Glob patterns to exclude from the backup */
   excludes?: string[];
+  compression?: BackupCompressionOptions;
   sessionId?: string;
+}
+
+/**
+ * A single part to upload in a multipart upload.
+ * The container reads the byte range from the local archive and PUTs it
+ * to the presigned URL.
+ */
+export interface UploadPart {
+  partNumber: number;
+  /** Presigned PUT URL for this part */
+  url: string;
+  /** Byte offset within the archive file */
+  offset: number;
+  /** Number of bytes in this part */
+  size: number;
+}
+
+/**
+ * Request to upload parts of a backup archive directly from the container to R2.
+ * Used for parallel multipart upload of large archives.
+ */
+export interface UploadPartsRequest {
+  /** Path to the archive file in the container */
+  archivePath: string;
+  /** Parts to upload in parallel */
+  parts: UploadPart[];
+  sessionId?: string;
+}
+
+/**
+ * Result for a single uploaded part (ETag returned by R2).
+ */
+export interface UploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
+/**
+ * Response after the container has uploaded all parts.
+ */
+export interface UploadPartsResponse {
+  success: boolean;
+  parts: UploadedPart[];
 }
 
 /**

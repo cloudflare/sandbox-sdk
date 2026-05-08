@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.9.2
+FROM docker.io/cloudflare/sandbox:0.10.0
 
 WORKDIR /app
 COPY sandbox-app/package.json ./

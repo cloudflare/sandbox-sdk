@@ -1,6 +1,9 @@
 # Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
 ARG BUN_VERSION=1
+# Node version — override via --build-arg NODE_VERSION=24
+ARG NODE_VERSION=24
 FROM oven/bun:${BUN_VERSION} AS bun-binary
+FROM node:${NODE_VERSION}-slim AS node-runtime
 
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
@@ -8,7 +11,7 @@ FROM oven/bun:${BUN_VERSION} AS bun-binary
 # ============================================================================
 # Stage 1: Prune monorepo to only include necessary packages
 # ============================================================================
-FROM node:20-slim AS pruner
+FROM node-runtime AS pruner
 
 WORKDIR /app
 
@@ -25,7 +28,7 @@ RUN turbo prune @repo/sandbox-container --docker
 # Using glibc-based images (not Alpine) so the standalone binary works on
 # standard Linux distributions (Debian, Ubuntu, RHEL, etc.)
 # ============================================================================
-FROM node:20-slim AS builder
+FROM node-runtime AS builder
 
 WORKDIR /app
 
@@ -126,9 +129,10 @@ RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 # fusermount requires /etc/mtab to locate active mounts
 RUN ln -sf /proc/mounts /etc/mtab
 
-# Install Node.js 20 LTS from official Node image
-COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+# Install Node.js from official Node image (defaults to 24 LTS,
+# override via --build-arg NODE_VERSION=<version>)
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 

@@ -26,9 +26,12 @@ import type {
 } from './interpreter-types.js';
 import type {
   CreateBackupResponse,
-  RestoreBackupResponse
+  RestoreBackupResponse,
+  UploadedPart,
+  UploadPartsResponse
 } from './request-types.js';
 import type {
+  BackupCompressionOptions,
   CheckChangesRequest,
   CheckChangesResult,
   DeleteFileResult,
@@ -234,14 +237,30 @@ export interface SandboxBackupAPI {
     dir: string,
     archivePath: string,
     sessionId: string,
-    options?: { excludes?: string[]; gitignore?: boolean }
+    options?: {
+      excludes?: string[];
+      gitignore?: boolean;
+      compression?: BackupCompressionOptions;
+    }
   ): Promise<CreateBackupResponse>;
   restoreArchive(
     dir: string,
     archivePath: string,
     sessionId: string
   ): Promise<RestoreBackupResponse>;
+  uploadParts(request: {
+    archivePath: string;
+    parts: Array<{
+      partNumber: number;
+      url: string;
+      offset: number;
+      size: number;
+    }>;
+    sessionId?: string;
+  }): Promise<UploadPartsResponse>;
 }
+
+export type { UploadedPart, UploadPartsResponse };
 
 export interface SandboxDesktopAPI {
   start(options?: {

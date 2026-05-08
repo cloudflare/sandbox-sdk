@@ -64,10 +64,11 @@ import {
   PortNotExposedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
+  SandboxError,
   SessionAlreadyExistsError,
   ValidationFailedError
 } from './errors';
-import { collectFile } from './file-stream';
+import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { proxyTerminal } from './pty';
@@ -153,6 +154,89 @@ const BACKUP_CONTAINER_DIR = '/var/backups';
 const BACKUP_STORAGE_PREFIX = 'backups';
 const BACKUP_ARCHIVE_OBJECT_NAME = 'data.sqsh';
 const BACKUP_METADATA_OBJECT_NAME = 'meta.json';
+const BACKUP_DEFAULT_COMPRESSION = 'lz4';
+const BACKUP_DEFAULT_COMPRESS_THREADS = 8;
+const BACKUP_MULTIPART_MIN_SIZE = 10 * 1024 * 1024;
+const BACKUP_MULTIPART_TARGET_PARTS = 16;
+const BACKUP_MULTIPART_MIN_PART_SIZE = 5 * 1024 * 1024;
+const BACKUP_MULTIPART_MAX_PARTS = 64;
+const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
+const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
+const BACKUP_DOWNLOAD_MAX_PARTS = 64;
+
+/**
+ * Calculate the optimal number of parts for multipart upload/download
+ * based on archive size. Larger archives benefit from more parallelism.
+ */
+function calculatePartCount(
+  sizeBytes: number,
+  defaultParts: number,
+  maxParts: number
+): number {
+  if (sizeBytes < 100 * 1024 * 1024) {
+    // < 100 MiB: use default parts
+    return defaultParts;
+  }
+  if (sizeBytes < 1024 * 1024 * 1024) {
+    // 100 MiB - 1 GiB: scale up to 32 parts
+    return Math.min(32, defaultParts * 2);
+  }
+  // >= 1 GiB: use max parts (64)
+  return maxParts;
+}
+
+/**
+ * Tagged template literal that shell-escapes every interpolated value.
+ * Use for composing in-container scripts where the template body is
+ * trusted shell and the interpolations are untrusted strings.
+ */
+function sh(strings: TemplateStringsArray, ...values: unknown[]): string {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    out += shellEscape(String(values[i])) + strings[i + 1];
+  }
+  return out;
+}
+
+/**
+ * Hex string of `bytes` random bytes (length = bytes * 2). Used for short
+ * non-cryptographic identifiers — e.g. tempfile suffixes.
+ */
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Parse an array of `key=value` / bare-flag s3fs options into a Record.
+ * Bare flags become `{ flag: true }`. Later entries overwrite earlier ones.
+ */
+function parseS3fsOptions(entries: string[]): Record<string, string | boolean> {
+  const result: Record<string, string | boolean> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf('=');
+    if (eq === -1) {
+      result[entry] = true;
+    } else {
+      result[entry.slice(0, eq)] = entry.slice(eq + 1);
+    }
+  }
+  return result;
+}
+
+/**
+ * Serialise an s3fs options Record into the comma-separated `-o` argument.
+ * Boolean true emits the bare flag; false drops it.
+ */
+function serializeS3fsOptions(
+  options: Record<string, string | boolean>
+): string {
+  return Object.entries(options)
+    .filter(([, v]) => v !== false)
+    .map(([k, v]) => (v === true ? k : `${k}=${v}`))
+    .join(',');
+}
 
 function getNamespaceConfigurationCache(
   namespace: object
@@ -660,6 +744,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         stub: this,
         port: 3000,
         logger: this.logger,
+        retryTimeoutMs: this.computeRetryTimeoutMs(),
         // Mirrors containerFetch()'s request lifecycle for the RPC transport.
         //
         // The HTTP transport bumps inflightRequests at the top of each
@@ -1251,6 +1336,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
     let provider: BucketProvider | null = null;
+    let dirExisted = true; // assume pre-existing so we don't accidentally delete
     try {
       this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
@@ -1296,7 +1382,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
-      // Create mount directory
+      // Check if mount directory already exists before creating it, so we
+      // only remove it on failure if the SDK created it
+      dirExisted =
+        (await this.execInternal(`test -d ${shellEscape(mountPath)}`))
+          .exitCode === 0;
       await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
       // Execute S3FS mount with password file (uses full s3fs source with prefix)
@@ -1315,6 +1405,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Clean up password file on failure
       if (passwordFilePath) {
         await this.deletePasswordFile(passwordFilePath);
+      }
+      // Tear down any mount that may have established between the script's
+      // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
+      // runs as a daemon, so the FUSE mount can flip live in that window;
+      // without this, the throw would leave an orphaned mount with no
+      // `activeMounts` entry to clean up later.
+      try {
+        await this.execInternal(
+          `mountpoint -q ${shellEscape(mountPath)} && fusermount -u ${shellEscape(mountPath)}`
+        );
+      } catch {
+        // best-effort cleanup
+      }
+
+      // Remove the mount directory only if the SDK created it. Runs after
+      // the unmount above so a late-arriving mount doesn't keep the dir busy.
+      if (!dirExisted) {
+        try {
+          await this.execInternal(
+            `rmdir ${shellEscape(mountPath)} 2>/dev/null`
+          );
+        } catch {
+          // best-effort cleanup
+        }
       }
 
       // Clean up reservation on failure
@@ -1504,40 +1618,89 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     passwordFilePath: string,
     sessionId?: string
   ): Promise<void> {
-    // Resolve s3fs options (provider defaults + user overrides)
-    const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
+    // Compose s3fs options as a Record so duplicates collapse cleanly:
+    // SDK defaults + provider defaults first, user overrides next, SDK-required
+    // entries last. Boolean true serialises to a bare flag (e.g. `ro`).
+    //
+    // The logfile path is left in place after the mount completes so
+    // operators can inspect s3fs daemon output for debugging. The user can
+    // override it via `s3fsOptions: ['logfile=/path']`.
+    const logSuffix = randomHex(4);
+    const sdkDefaults: Record<string, string | boolean> = {
+      logfile: `/tmp/.s3fs-log-${logSuffix}`
+    };
+    const s3fsOptions: Record<string, string | boolean> = {
+      ...sdkDefaults,
+      ...parseS3fsOptions(resolveS3fsOptions(provider)),
+      ...parseS3fsOptions(options.s3fsOptions ?? []),
+      passwd_file: passwordFilePath,
+      url: options.endpoint,
+      ...(options.readOnly ? { ro: true } : {})
+    };
+    const logFile = s3fsOptions.logfile as string;
+    const optionsStr = serializeS3fsOptions(s3fsOptions);
 
-    // Build s3fs mount command
-    const s3fsArgs: string[] = [];
+    // s3fs daemonises: the parent forks a FUSE child, then exits 0 once the
+    // child reports its bucket check passed. Run mount + verification as a
+    // single in-container script so the whole flow is one round-trip with
+    // one observable outcome.
+    //
+    // s3fs output is redirected to the logfile (not captured via $()):
+    // the daemon child inherits the redirected stdout/stderr fds, and
+    // command substitution would block on those fds until the daemon
+    // exited (i.e. until unmount), hanging the script for the lifetime
+    // of the mount.
+    //
+    // The whole script runs inside a `( ... )` subshell. execInternal and
+    // execWithSession dispatch into a long-lived bash session shell; a bare
+    // top-level `exit N` would terminate that session and surface as
+    // SESSION_TERMINATED to every subsequent caller. The subshell scopes the
+    // exits so only the subshell exits, and its status becomes the command's
+    // exit code as the caller expects.
+    //
+    // Exit codes consumed by the caller:
+    //   0 — mount established
+    //   2 — s3fs parent failed; stdout carries the s3fs log tail
+    //   3 — mount never appeared; stdout carries the s3fs log tail
+    //
+    // 60 iterations x 100ms = 6s budget for the SigV4 bucket check, which
+    // is comfortable under CI load while still cheap on success (the loop
+    // exits on the first iteration once the FUSE filesystem is live).
+    const script = sh`(
+      s3fs ${bucket} ${mountPath} -o ${optionsStr} >${logFile} 2>&1
+      rc=$?
+      if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
+      for _ in $(seq 1 60); do
+        if mountpoint -q ${mountPath}; then exit 0; fi
+        sleep 0.1
+      done
+      tail -n 20 ${logFile} 2>/dev/null || true
+      exit 3
+    )`;
 
-    // Add password file option FIRST
-    s3fsArgs.push(`passwd_file=${passwordFilePath}`);
+    const exec = sessionId
+      ? (cmd: string) =>
+          this.execWithSession(cmd, sessionId, { origin: 'internal' })
+      : (cmd: string) => this.execInternal(cmd);
 
-    // Add resolved provider-specific and user options
-    s3fsArgs.push(...resolvedOptions);
+    const result = await exec(script);
+    if (result.exitCode === 0) return;
 
-    // Add read-only flag if requested
-    if (options.readOnly) {
-      s3fsArgs.push('ro');
-    }
+    const detail = result.stdout?.trim() || result.stderr?.trim() || '';
 
-    // Add endpoint URL
-    s3fsArgs.push(`url=${options.endpoint}`);
-
-    // Build final command with escaped options
-    const optionsStr = shellEscape(s3fsArgs.join(','));
-    const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
-
-    // Execute mount command
-    const result = sessionId
-      ? await this.execWithSession(mountCmd, sessionId, { origin: 'internal' })
-      : await this.execInternal(mountCmd);
-
-    if (result.exitCode !== 0) {
+    if (result.exitCode === 2) {
       throw new S3FSMountError(
-        `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+        `S3FS mount failed: ${detail || 'Unknown error'}`
       );
     }
+
+    // exit 3 (or anything else): the FUSE filesystem never appeared
+    const diagMessage = detail
+      ? `s3fs log: ${detail}`
+      : 'No s3fs log output captured. The s3fs daemon may have exited before writing logs.';
+    throw new S3FSMountError(
+      `S3FS mount failed: FUSE filesystem never appeared at ${mountPath}. ${diagMessage}`
+    );
   }
 
   /**
@@ -4230,6 +4393,70 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return normalizedExcludes;
   }
 
+  private resolveBackupCompression(compression: unknown): {
+    format: 'gzip' | 'lz4' | 'zstd';
+    threads: number;
+  } {
+    if (compression !== undefined) {
+      if (typeof compression !== 'object' || compression === null) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.compression must be an object',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'compression must be an object' },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    const compressionOptions = compression as
+      | { format?: unknown; threads?: unknown }
+      | undefined;
+    const format = compressionOptions?.format ?? BACKUP_DEFAULT_COMPRESSION;
+    const threads =
+      compressionOptions?.threads ?? BACKUP_DEFAULT_COMPRESS_THREADS;
+    const allowedCompressions = ['gzip', 'lz4', 'zstd'];
+
+    if (
+      typeof format !== 'string' ||
+      !allowedCompressions.includes(
+        format as (typeof allowedCompressions)[number]
+      )
+    ) {
+      throw new InvalidBackupConfigError({
+        message:
+          'BackupOptions.compression.format must be one of: gzip, lz4, zstd',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason: 'compression.format must be one of: gzip, lz4, zstd'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (
+      typeof threads !== 'number' ||
+      !Number.isInteger(threads) ||
+      threads < 1
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.compression.threads must be a positive integer',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason: 'compression.threads must be a positive integer'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return {
+      format: format as 'gzip' | 'lz4' | 'zstd',
+      threads
+    };
+  }
+
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
@@ -4277,6 +4504,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       accountId: this.r2AccountId,
       bucketName: this.backupBucketName
     };
+  }
+
+  /**
+   * Generate a presigned GET URL for downloading an object from R2.
+   * The container can curl this URL directly without credentials.
+   */
+  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+
+    const signed = await client.sign(new Request(url), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
   }
 
   /**
@@ -4373,68 +4627,375 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Mount a backup archive from R2 via s3fs so squashfuse can read it lazily.
+   * Generate a presigned PUT URL for a single part in a multipart upload.
    */
-  private async mountBackupR2(
-    mountPath: string,
-    prefix: string,
+  private async generatePresignedPartUrl(
+    r2Key: string,
+    uploadId: string,
+    partNumber: number
+  ): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+    url.searchParams.set('partNumber', String(partNumber));
+    url.searchParams.set('uploadId', uploadId);
+
+    const signed = await client.sign(new Request(url, { method: 'PUT' }), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
+  }
+
+  /**
+   * Upload a backup archive to R2 using parallel multipart upload.
+   * Uses the S3-compatible API exclusively for create/complete/abort so that
+   * the uploadId is in the same namespace as the presigned part PUT URLs.
+   */
+  private async uploadBackupMultipart(
+    archivePath: string,
+    r2Key: string,
+    sizeBytes: number,
+    backupId: string,
+    dir: string,
     backupSession: string
   ): Promise<void> {
-    const { accountId, bucketName } = this.requirePresignedUrlSupport();
-    const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
-    const normalizedPrefix = prefix.startsWith('/') ? prefix : `/${prefix}`;
-    const options: RemoteMountBucketOptions = {
-      endpoint,
-      provider: 'r2',
-      readOnly: true,
-      prefix: normalizedPrefix,
-      s3fsOptions: ['use_path_request_style']
-    };
-    const passwordFilePath = this.generatePasswordFilePath();
-    const s3fsSource = buildS3fsSource(bucketName, normalizedPrefix);
-    const envObj = this.env as Record<string, unknown>;
-    const envCredentials = {
-      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
-      R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
-      R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
-    };
-    const credentials = detectCredentials(options, {
-      ...envCredentials,
-      ...this.envVars
-    });
-    const mountInfo: FuseMountInfo = {
-      mountType: 'fuse',
-      bucket: s3fsSource,
-      mountPath,
-      endpoint,
-      provider: 'r2',
-      passwordFilePath,
-      mounted: false
-    };
+    const targetParts = calculatePartCount(
+      sizeBytes,
+      BACKUP_MULTIPART_TARGET_PARTS,
+      BACKUP_MULTIPART_MAX_PARTS
+    );
+    const numParts = Math.min(
+      targetParts,
+      Math.floor(sizeBytes / BACKUP_MULTIPART_MIN_PART_SIZE)
+    );
 
-    this.activeMounts.set(mountPath, mountInfo);
-
-    try {
-      await this.createPasswordFile(passwordFilePath, bucketName, credentials);
-      await this.execWithSession(
-        `mkdir -p ${shellEscape(mountPath)}`,
-        backupSession,
-        { origin: 'internal' }
-      );
-      await this.executeS3FSMount(
-        s3fsSource,
-        mountPath,
-        options,
-        'r2',
-        passwordFilePath,
+    if (numParts <= 1) {
+      return this.uploadBackupPresigned(
+        archivePath,
+        r2Key,
+        sizeBytes,
+        backupId,
+        dir,
         backupSession
       );
-      mountInfo.mounted = true;
+    }
+
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const objectUrl = `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`;
+
+    const createResp = await client.fetch(`${objectUrl}?uploads`, {
+      method: 'POST'
+    });
+    if (!createResp.ok) {
+      throw new BackupCreateError({
+        message: `Failed to initiate multipart upload: HTTP ${createResp.status}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const createXml = await createResp.text();
+    const uploadIdMatch = createXml.match(/<UploadId>([^<]+)<\/UploadId>/);
+    const uploadId = uploadIdMatch?.[1];
+    if (!uploadId) {
+      throw new BackupCreateError({
+        message: 'Multipart upload response did not contain an UploadId',
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const abortMultipart = async () => {
+      await client
+        .fetch(`${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`, {
+          method: 'DELETE'
+        })
+        .catch(() => {});
+    };
+
+    try {
+      const partSize = Math.ceil(sizeBytes / numParts);
+      const parts = await Promise.all(
+        Array.from({ length: numParts }, (_, i) => ({
+          partNumber: i + 1,
+          url: '',
+          offset: i * partSize,
+          size: i === numParts - 1 ? sizeBytes - i * partSize : partSize
+        })).map(async (part) => ({
+          ...part,
+          url: await this.generatePresignedPartUrl(
+            r2Key,
+            uploadId,
+            part.partNumber
+          )
+        }))
+      );
+
+      let uploadResult: Awaited<
+        ReturnType<typeof this.client.backup.uploadParts>
+      >;
+      try {
+        uploadResult = await this.client.backup.uploadParts({
+          archivePath,
+          parts,
+          sessionId: backupSession
+        });
+      } catch (err) {
+        if (
+          err instanceof SandboxError &&
+          err.errorResponse.httpStatus === 404
+        ) {
+          await abortMultipart();
+          return this.uploadBackupPresigned(
+            archivePath,
+            r2Key,
+            sizeBytes,
+            backupId,
+            dir,
+            backupSession
+          );
+        }
+        throw err;
+      }
+
+      if (!uploadResult.success || uploadResult.parts.length !== numParts) {
+        throw new BackupCreateError({
+          message: `Multipart upload returned ${uploadResult.parts.length} of ${numParts} parts`,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const completeXml = [
+        '<CompleteMultipartUpload>',
+        ...uploadResult.parts.map(
+          (p: { partNumber: number; etag: string }) =>
+            `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`
+        ),
+        '</CompleteMultipartUpload>'
+      ].join('');
+
+      const completeResp = await client.fetch(
+        `${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/xml' },
+          body: completeXml
+        }
+      );
+
+      if (!completeResp.ok) {
+        const body = await completeResp.text().catch(() => '');
+        throw new BackupCreateError({
+          message: `Multipart upload completion failed: HTTP ${completeResp.status} ${body}`,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const head = await this.requireBackupBucket().head(r2Key);
+      if (!head || head.size !== sizeBytes) {
+        throw new BackupCreateError({
+          message: `Multipart upload verification failed: expected ${sizeBytes} bytes, got ${head?.size ?? 0}`,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
-      await this.deletePasswordFile(passwordFilePath);
-      this.activeMounts.delete(mountPath);
+      await abortMultipart();
       throw error;
+    }
+  }
+
+  /**
+   * Download a backup archive from R2 via presigned GET URL.
+   * For archives >= BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE, uses BACKUP_DOWNLOAD_PARALLEL_PARTS
+   * concurrent curl processes (each downloading a byte-range) to maximise both
+   * network and disk-write throughput. Parts are written into a pre-sized file
+   * with dd using byte offsets, then atomically moved to the final path.
+   */
+  private async downloadBackupParallel(
+    archivePath: string,
+    r2Key: string,
+    expectedSize: number,
+    backupId: string,
+    dir: string,
+    backupSession: string
+  ): Promise<void> {
+    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
+    await this.execWithSession(
+      `mkdir -p ${BACKUP_CONTAINER_DIR}`,
+      backupSession,
+      { origin: 'internal' }
+    );
+
+    const tmpPath = `${archivePath}.tmp`;
+
+    if (expectedSize < BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE) {
+      const curlCmd = [
+        'curl -sSf',
+        '--connect-timeout 10',
+        '--max-time 1800',
+        '--retry 2',
+        '--retry-max-time 60',
+        `-o ${shellEscape(tmpPath)}`,
+        shellEscape(presignedUrl)
+      ].join(' ');
+
+      const result = await this.execWithSession(curlCmd, backupSession, {
+        timeout: 1810_000,
+        origin: 'internal'
+      });
+
+      if (result.exitCode !== 0) {
+        await this.execWithSession(
+          `rm -f ${shellEscape(tmpPath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+        throw new BackupRestoreError({
+          message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+    } else {
+      const numParts = calculatePartCount(
+        expectedSize,
+        BACKUP_DOWNLOAD_PARALLEL_PARTS,
+        BACKUP_DOWNLOAD_MAX_PARTS
+      );
+      const partSize = Math.floor(expectedSize / numParts);
+      const ranges = Array.from({ length: numParts }, (_, i) => {
+        const start = i * partSize;
+        const end = i < numParts - 1 ? start + partSize - 1 : expectedSize - 1;
+        return { start, range: `${start}-${end}` };
+      });
+
+      const curlCmds = ranges.map(({ start, range }) =>
+        [
+          'curl -sSf',
+          '--connect-timeout 10',
+          '--max-time 1800',
+          `-H ${shellEscape(`Range: bytes=${range}`)}`,
+          shellEscape(presignedUrl),
+          '|',
+          'dd',
+          `of=${shellEscape(tmpPath)}`,
+          'oflag=seek_bytes',
+          `seek=${start}`,
+          'conv=notrunc',
+          '2>/dev/null'
+        ].join(' ')
+      );
+
+      const startLines = curlCmds.map(
+        (cmd, i) => `(set -o pipefail; ${cmd}) & J${i}=$!`
+      );
+      const waitLines = Array.from(
+        { length: numParts },
+        (_, i) => `wait $J${i}; E${i}=$?`
+      );
+      const exitVars = Array.from({ length: numParts }, (_, i) => `$E${i}`);
+
+      const script = [
+        `rm -f ${shellEscape(tmpPath)}`,
+        `truncate -s ${expectedSize} ${shellEscape(tmpPath)}`,
+        ...startLines,
+        ...waitLines,
+        `FAILED=$(( ${exitVars.join(' + ')} ))`,
+        `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
+      ].join('; ');
+
+      const result = await this.execWithSession(script, backupSession, {
+        timeout: 1810_000,
+        origin: 'internal'
+      });
+
+      if (result.exitCode !== 0) {
+        await this.execWithSession(
+          `rm -f ${shellEscape(tmpPath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+        throw new BackupRestoreError({
+          message: `Parallel download failed (exit code ${result.exitCode}): ${result.stderr}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    const sizeCheck = await this.execWithSession(
+      `stat -c %s ${shellEscape(tmpPath)}`,
+      backupSession,
+      { origin: 'internal' }
+    );
+    const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
+    if (actualSize !== expectedSize) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession,
+        { origin: 'internal' }
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const mvResult = await this.execWithSession(
+      `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
+      backupSession,
+      { origin: 'internal' }
+    );
+    if (mvResult.exitCode !== 0) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession,
+        { origin: 'internal' }
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
     }
   }
 
@@ -4489,7 +5050,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       name,
       ttl = BACKUP_DEFAULT_TTL_SECONDS,
       gitignore = false,
-      excludes = []
+      excludes = [],
+      compression,
+      multipart = true
     } = options;
 
     const backupStartTime = Date.now();
@@ -4558,6 +5121,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const resolvedCompression = this.resolveBackupCompression(compression);
+
       const normalizedExcludes = this.normalizeBackupExcludes(excludes);
 
       backupSession = await this.ensureBackupSession();
@@ -4568,7 +5133,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        { gitignore, excludes: normalizedExcludes }
+        {
+          gitignore,
+          excludes: normalizedExcludes,
+          compression: resolvedCompression
+        }
       );
 
       if (!createResult.success) {
@@ -4585,15 +5154,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
-      await this.uploadBackupPresigned(
-        archivePath,
-        r2Key,
-        createResult.sizeBytes,
-        backupId,
-        dir,
-        backupSession
-      );
+      // Step 2: Upload archive to R2
+      if (multipart && createResult.sizeBytes >= BACKUP_MULTIPART_MIN_SIZE) {
+        await this.uploadBackupMultipart(
+          archivePath,
+          r2Key,
+          createResult.sizeBytes,
+          backupId,
+          dir,
+          backupSession
+        );
+      } else {
+        await this.uploadBackupPresigned(
+          archivePath,
+          r2Key,
+          createResult.sizeBytes,
+          backupId,
+          dir,
+          backupSession
+        );
+      }
 
       // Step 3: Write metadata alongside the archive
       const metadata = {
@@ -4662,7 +5242,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       name,
       ttl = BACKUP_DEFAULT_TTL_SECONDS,
       gitignore = false,
-      excludes = []
+      excludes = [],
+      compression
     } = options;
 
     const backupStartTime = Date.now();
@@ -4743,6 +5324,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const resolvedCompression = this.resolveBackupCompression(compression);
+
       const normalizedExcludes = this.normalizeBackupExcludes(excludes);
 
       backupSession = await this.ensureBackupSession();
@@ -4754,7 +5337,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         archivePath,
         backupSession,
-        { gitignore, excludes: normalizedExcludes }
+        {
+          gitignore,
+          excludes: normalizedExcludes,
+          compression: resolvedCompression
+        }
       );
 
       if (!createResult.success) {
@@ -4771,19 +5358,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      // Step 2: Read archive from container via file streaming, upload to R2 via binding
+      // Step 2: Read archive from container and stream it into R2 via binding.
+      // readFileStream returns SSE-framed base64 chunks, so we pipe it through
+      // streamFile (which decodes SSE frames + base64 on the fly) into a
+      // FixedLengthStream backed by the known archive size. This avoids
+      // buffering the whole archive in Worker memory.
       const archiveStream = await this.client.files.readFileStream(
         archivePath,
         backupSession
       );
-      const { content } = await collectFile(archiveStream);
-      const archiveData =
-        content instanceof Uint8Array
-          ? content
-          : new TextEncoder().encode(content);
-      await bucket.put(r2Key, archiveData);
+      const sseDecoded = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            for await (const chunk of streamFile(archiveStream)) {
+              if (chunk instanceof Uint8Array) {
+                controller.enqueue(chunk);
+              }
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        }
+      });
+      const fixedStream = new FixedLengthStream(createResult.sizeBytes);
+      sseDecoded.pipeTo(fixedStream.writable).catch(() => {});
+      await bucket.put(r2Key, fixedStream.readable);
 
-      // Verify upload
+      // Verify upload — size comes from createArchive result, not the stream.
       const head = await bucket.head(r2Key);
       if (!head || head.size !== createResult.sizeBytes) {
         throw new BackupCreateError({
@@ -4974,7 +5576,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      // Step 2: Check archive exists via HEAD (no body stream)
+      // Step 2: Check archive exists and get its size via HEAD (no body stream)
       const r2Key = `${BACKUP_STORAGE_PREFIX}/${id}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
       const archiveHead = await bucket.head(r2Key);
       if (!archiveHead) {
@@ -4990,13 +5592,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       backupSession = await this.ensureBackupSession();
-      const r2MountPath = `${BACKUP_CONTAINER_DIR}/r2mount/${id}`;
-      const archivePath = `${r2MountPath}/data.sqsh`;
+      const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      // Step 3: Tear down existing restore mounts before replacing the backing
-      // R2 mount. squashfuse reads the archive lazily through the s3fs mount,
-      // so the overlay and lower mounts must come down before the bucket mount.
-      const mountGlob = `/var/backups/mounts/r2mount/${id}/data`;
+      // Step 3: Tear down existing FUSE mounts before overwriting the archive.
+      // squashfuse holds the .sqsh file open; writing a new archive to the same
+      // path while the old mount is active corrupts the backing store.
+      // Unmount the overlay on dir, then iterate over all mount bases for this
+      // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
+      // their squashfuse lower dirs.
+      const mountGlob = `${BACKUP_CONTAINER_DIR}/mounts/${id}`;
       await this.execWithSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
         backupSession,
@@ -5007,21 +5611,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupSession,
         { origin: 'internal' }
       ).catch(() => {});
-      await this.execWithSession(
-        `/usr/bin/fusermount3 -u ${shellEscape(r2MountPath)} 2>/dev/null; /usr/bin/fusermount3 -uz ${shellEscape(r2MountPath)} 2>/dev/null; true`,
+
+      // Step 4: Write archive to the container (skip if already present and
+      // same size — avoids overwriting a file that a lazily-unmounted
+      // squashfuse may still hold open).
+      const sizeCheck = await this.execWithSession(
+        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
         backupSession,
         { origin: 'internal' }
-      ).catch(() => {});
+      ).catch(() => ({ stdout: '0' }));
+      const existingSize = Number.parseInt(
+        (sizeCheck.stdout ?? '0').trim(),
+        10
+      );
 
-      const previousBackupMount = this.activeMounts.get(r2MountPath);
-      if (previousBackupMount?.mountType === 'fuse') {
-        previousBackupMount.mounted = false;
-        this.activeMounts.delete(r2MountPath);
-        await this.deletePasswordFile(previousBackupMount.passwordFilePath);
+      if (existingSize !== archiveHead.size) {
+        await this.downloadBackupParallel(
+          archivePath,
+          r2Key,
+          archiveHead.size,
+          id,
+          dir,
+          backupSession
+        );
       }
-
-      // Step 4: Mount the backup archive from R2 and restore directly from it.
-      await this.mountBackupR2(r2MountPath, `backups/${id}/`, backupSession);
 
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
@@ -5048,6 +5661,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
+      if (id && backupSession) {
+        const cleanupPath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
+        await this.execWithSession(
+          `rm -f ${shellEscape(cleanupPath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+      }
       throw error;
     } finally {
       if (backupSession) {
@@ -5185,42 +5806,57 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       backupSession = await this.ensureBackupSession();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      const archiveBuffer = await archiveObject.arrayBuffer();
-      const base64Content = Buffer.from(archiveBuffer).toString('base64');
-
       // Ensure backup directory exists
       await this.execWithSession(
         `mkdir -p ${BACKUP_CONTAINER_DIR}`,
         backupSession,
-        {
-          origin: 'internal'
+        { origin: 'internal' }
+      );
+
+      // Write the archive into the container.
+      // On the rpc transport, stream R2ObjectBody.body directly via
+      // writeFileStream to avoid base64-encoding the whole archive in Worker
+      // memory and hitting workerd's 32 MiB RPC payload cap.
+      // On http/websocket transports, fall back to the base64 writeFile path
+      // (those transports send via HTTP POST to the container, no RPC cap).
+      if (this.transport === 'rpc') {
+        const body = archiveObject.body;
+        if (!body) {
+          throw new BackupRestoreError({
+            message: `R2 archive object has no body stream for backup ${id}`,
+            code: ErrorCode.BACKUP_RESTORE_FAILED,
+            httpStatus: 500,
+            context: { dir, backupId: id },
+            timestamp: new Date().toISOString()
+          });
         }
-      );
-
-      const writeResult = await this.client.files.writeFile(
-        archivePath,
-        base64Content,
-        backupSession,
-        { encoding: 'base64' }
-      );
-
-      if (!writeResult.success) {
-        const writeErrorMessage =
-          'error' in writeResult &&
-          typeof writeResult.error === 'object' &&
-          writeResult.error !== null &&
-          'message' in writeResult.error &&
-          typeof writeResult.error.message === 'string'
-            ? writeResult.error.message
-            : `File write returned success: false for '${archivePath}'`;
-
-        throw new BackupRestoreError({
-          message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId: id },
-          timestamp: new Date().toISOString()
-        });
+        await this.client.writeFileStream(archivePath, body, backupSession);
+      } else {
+        const archiveBuffer = await archiveObject.arrayBuffer();
+        const base64Content = Buffer.from(archiveBuffer).toString('base64');
+        const writeResult = await this.client.files.writeFile(
+          archivePath,
+          base64Content,
+          backupSession,
+          { encoding: 'base64' }
+        );
+        if (!writeResult.success) {
+          const writeErrorMessage =
+            'error' in writeResult &&
+            typeof writeResult.error === 'object' &&
+            writeResult.error !== null &&
+            'message' in writeResult.error &&
+            typeof writeResult.error.message === 'string'
+              ? writeResult.error.message
+              : `File write returned success: false for '${archivePath}'`;
+          throw new BackupRestoreError({
+            message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
+            code: ErrorCode.BACKUP_RESTORE_FAILED,
+            httpStatus: 500,
+            context: { dir, backupId: id },
+            timestamp: new Date().toISOString()
+          });
+        }
       }
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)

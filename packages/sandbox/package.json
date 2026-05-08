@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/cloudflare/sandbox-sdk"
@@ -11,7 +11,7 @@
     "@cloudflare/containers": "^0.3.0",
     "aws4fetch": "^1.0.20",
     "capnweb": "^0.6.1",
-    "hono": "^4.7.11"
+    "hono": "^4.12.18"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",

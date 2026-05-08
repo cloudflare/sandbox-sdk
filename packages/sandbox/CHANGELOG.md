@@ -1,5 +1,71 @@
 # @cloudflare/sandbox
 
+## 0.10.0
+
+### Minor Changes
+
+- [#659](https://github.com/cloudflare/sandbox-sdk/pull/659) [`7c09e87`](https://github.com/cloudflare/sandbox-sdk/commit/7c09e874e24dbf6147d3cc6da16b5e327b66cdd8) Thanks [@mvanhorn](https://github.com/mvanhorn)! - Update the default sandbox image runtime from Node.js 20 to Node.js 24 so published images use the current Node.js LTS release. If your workload needs a different Node.js version, build a custom image with the `NODE_VERSION` Docker build argument.
+
+### Patch Changes
+
+- [#679](https://github.com/cloudflare/sandbox-sdk/pull/679) [`21a5a2e`](https://github.com/cloudflare/sandbox-sdk/commit/21a5a2e2032b684ba0f112601195db6ddaf7091b) Thanks [@aron-cf](https://github.com/aron-cf)! - Fixed `createBackup` and `restoreBackup` with `localBucket: true` failing on the `rpc` transport for archives larger than ~24 MiB.
+
+- [#659](https://github.com/cloudflare/sandbox-sdk/pull/659) [`7c09e87`](https://github.com/cloudflare/sandbox-sdk/commit/7c09e874e24dbf6147d3cc6da16b5e327b66cdd8) Thanks [@mvanhorn](https://github.com/mvanhorn)! - Add `NODE_VERSION` build arg to the Dockerfile, allowing operators to customize the Node.js version used in sandbox container images.
+
+## 0.9.4
+
+### Patch Changes
+
+- [#669](https://github.com/cloudflare/sandbox-sdk/pull/669) [`10d3239`](https://github.com/cloudflare/sandbox-sdk/commit/10d323951cd5bba445f4cf9edd060f6a09b99e39) Thanks [@aron-cf](https://github.com/aron-cf)! - Ensure the RPC transport successfully connects once the container has started. This should
+  reduce the likelihood of hitting an `RPCTransportError: WebSocket upgrade failed: 503 Service
+Unavailable` error when interacting with a sandbox before the container is ready.
+
+## 0.9.3
+
+### Patch Changes
+
+- [#666](https://github.com/cloudflare/sandbox-sdk/pull/666) [`e8f57c8`](https://github.com/cloudflare/sandbox-sdk/commit/e8f57c86896a6740aa434c794986b6e2b53c96dd) Thanks [@scuffi](https://github.com/scuffi)! - Speed up backup and restore for larger archives with faster default compression, multipart R2 uploads, and parallel range downloads that write directly into the restored archive.
+
+- [#647](https://github.com/cloudflare/sandbox-sdk/pull/647) [`68c4f9b`](https://github.com/cloudflare/sandbox-sdk/commit/68c4f9b9262179af4bae3e74125bbce36ab51dca) Thanks [@aron-cf](https://github.com/aron-cf)! - Introduce new `rpc` transport to consolidate `http` and `websocket` transports.
+
+  The intention is to replace `http` and `websocket` transports with a single implementation.
+  - No sub-request limitations (currently affects the `http` transport).
+  - No limit on write file size (currently affects both `http` and `websocket` transports).
+
+  To enable the transport set `SANDBOX_TRANSPORT` to `rpc` in your wrangler config.
+
+  A `ReadableStream` instance can now be passed to `sandbox.writeFile()` when using the `rpc` transport to avoid the 32mb file limit.
+
+  ```js
+  {
+    fetch(req, env) {
+      const sandbox = getSandbox(env.Sandbox, "my-sandbox");
+
+      // A ReadableStream can be passed as the content to writeFile().
+      sandbox.writeFile("/workspace/archive.tar.gz", req.body);
+
+      return new Response("OK");
+    }
+  }
+  ```
+
+- [#653](https://github.com/cloudflare/sandbox-sdk/pull/653) [`e18ba4d`](https://github.com/cloudflare/sandbox-sdk/commit/e18ba4d51e6bebb4c87e03756c4588c7fe3d8272) Thanks [@ask-bonk](https://github.com/apps/ask-bonk)! - Surface s3fs mount failures from `mountBucket()`. Mount errors (bad credentials, wrong bucket name, network failures) now throw `S3FSMountError` with the underlying `s3fs` log output, instead of silently returning success and leaving no filesystem attached.
+
+  ```ts
+  import { S3FSMountError } from '@cloudflare/sandbox';
+
+  try {
+    await sandbox.mountBucket('my-bucket', '/mnt/data', {
+      endpoint,
+      credentials
+    });
+  } catch (err) {
+    if (err instanceof S3FSMountError) {
+      // err.message includes the s3fs log tail, e.g. "403 AccessDenied"
+    }
+  }
+  ```
+
 ## 0.9.2
 
 ### Patch Changes

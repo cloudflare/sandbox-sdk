@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
@@ -28,6 +28,9 @@ const mockSessionManager = {
   withSession: vi.fn()
 } as unknown as SessionManager;
 
+const mockFetch = vi.fn();
+let originalFetch: typeof fetch;
+
 function execResult(
   exitCode: number,
   stdout = '',
@@ -55,7 +58,14 @@ describe('BackupService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalFetch = global.fetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
     service = new BackupService(mockLogger, mockSessionManager);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it('allows creating an archive from /app', async () => {
@@ -117,6 +127,197 @@ describe('BackupService', () => {
     const result = await service.restoreArchive(dir, archivePath);
 
     expect(result.success).toBe(true);
+  });
+
+  describe('uploadParts', () => {
+    it('uploads archive parts with Bun file slices and returns sorted etags', async () => {
+      const archivePath = '/var/backups/test.sqsh';
+      const sliceA = new Blob(['part-a']);
+      const sliceB = new Blob(['part-b']);
+      const bunFile = {
+        exists: async () => true,
+        slice: vi.fn().mockReturnValueOnce(sliceA).mockReturnValueOnce(sliceB)
+      } as unknown as ReturnType<typeof Bun.file>;
+      vi.spyOn(Bun, 'file').mockReturnValue(bunFile);
+
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 200,
+            headers: { etag: '"etag-2"' }
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 200,
+            headers: { etag: '"etag-1"' }
+          })
+        );
+
+      const result = await service.uploadParts(archivePath, [
+        {
+          partNumber: 2,
+          url: 'https://example.com/part-2',
+          offset: 10,
+          size: 5
+        },
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(true);
+      expect(bunFile.slice).toHaveBeenNthCalledWith(1, 10, 15);
+      expect(bunFile.slice).toHaveBeenNthCalledWith(2, 0, 10);
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        'https://example.com/part-2',
+        expect.objectContaining({
+          method: 'PUT',
+          body: sliceA,
+          headers: {
+            'Content-Length': '5',
+            'Content-Type': 'application/octet-stream'
+          }
+        })
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://example.com/part-1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: sliceB,
+          headers: {
+            'Content-Length': '10',
+            'Content-Type': 'application/octet-stream'
+          }
+        })
+      );
+      expect(result).toEqual({
+        success: true,
+        data: {
+          parts: [
+            { partNumber: 1, etag: '"etag-1"' },
+            { partNumber: 2, etag: '"etag-2"' }
+          ]
+        }
+      });
+    });
+
+    it('fails when the archive does not exist', async () => {
+      vi.spyOn(Bun, 'file').mockReturnValue({
+        exists: async () => false,
+        slice: vi.fn()
+      } as unknown as ReturnType<typeof Bun.file>);
+
+      const result = await service.uploadParts('/var/backups/missing.sqsh', [
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+      if (!result.success) {
+        expect(result.error.message).toContain('Backup archive does not exist');
+      }
+    });
+
+    it('retries a failed part upload and succeeds when a later attempt returns an etag', async () => {
+      const slice = new Blob(['part-a']);
+      vi.spyOn(Bun, 'file').mockReturnValue({
+        exists: async () => true,
+        slice: vi.fn().mockReturnValue(slice)
+      } as unknown as ReturnType<typeof Bun.file>);
+      mockFetch
+        .mockRejectedValueOnce(new Error('socket reset'))
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 200,
+            headers: { etag: '"etag-1"' }
+          })
+        );
+
+      const result = await service.uploadParts('/var/backups/test.sqsh', [
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({
+        success: true,
+        data: {
+          parts: [{ partNumber: 1, etag: '"etag-1"' }]
+        }
+      });
+    });
+
+    it('fails when a part upload does not include an etag header', async () => {
+      vi.spyOn(Bun, 'file').mockReturnValue({
+        exists: async () => true,
+        slice: vi.fn().mockReturnValue(new Blob(['part-a']))
+      } as unknown as ReturnType<typeof Bun.file>);
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 200
+        })
+      );
+
+      const result = await service.uploadParts('/var/backups/test.sqsh', [
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      if (!result.success) {
+        expect(result.error.message).toContain(
+          'response did not include an ETag header'
+        );
+      }
+    });
+
+    it('fails the entire upload when a part exhausts all retry attempts', async () => {
+      vi.spyOn(Bun, 'file').mockReturnValue({
+        exists: async () => true,
+        slice: vi.fn().mockReturnValue(new Blob(['part-a']))
+      } as unknown as ReturnType<typeof Bun.file>);
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 503
+        })
+      );
+
+      const result = await service.uploadParts('/var/backups/test.sqsh', [
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      if (!result.success) {
+        expect(result.error.message).toContain('part 1 failed with HTTP 503');
+      }
+    });
   });
 
   it('uses wildcard exclude mode for gitignore-derived excludes', async () => {

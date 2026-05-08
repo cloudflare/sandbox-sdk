@@ -2,7 +2,9 @@ import type {
   CreateBackupRequest,
   CreateBackupResponse,
   RestoreBackupRequest,
-  RestoreBackupResponse
+  RestoreBackupResponse,
+  UploadPartsRequest,
+  UploadPartsResponse
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
@@ -24,13 +26,18 @@ export class BackupClient extends BaseHttpClient {
     dir: string,
     archivePath: string,
     sessionId: string,
-    options?: { excludes?: string[]; gitignore?: boolean }
+    options?: {
+      excludes?: string[];
+      gitignore?: boolean;
+      compression?: CreateBackupRequest['compression'];
+    }
   ): Promise<CreateBackupResponse> {
     const data: CreateBackupRequest = {
       dir,
       archivePath,
       gitignore: options?.gitignore ?? false,
       excludes: options?.excludes ?? [],
+      compression: options?.compression,
       sessionId
     };
 
@@ -65,5 +72,15 @@ export class BackupClient extends BaseHttpClient {
     );
 
     return response;
+  }
+
+  async uploadParts(
+    request: UploadPartsRequest,
+    sessionId?: string
+  ): Promise<UploadPartsResponse> {
+    return this.post<UploadPartsResponse>('/api/backup/upload-parts', {
+      ...request,
+      sessionId: sessionId ?? request.sessionId
+    });
   }
 }

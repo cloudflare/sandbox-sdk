@@ -9,6 +9,13 @@ This repository uses [changesets](https://github.com/changesets/changesets) to d
 
 ## Creating a Changeset
 
+A changeset should be created when there is a change that is observable to a consumer of the
+`@cloudflare/sandbox` package. This includes:
+
+- Changes to the API surface area, new methods, deprecations or removals.
+- Changes to the performance or security characteristics of the SDK.
+- Bug fixes that are user visible.
+
 Create a new file in `.changeset/` (e.g. `.changeset/your-feature-name.md`):
 
 ```markdown
@@ -31,17 +38,23 @@ Brief description of your change
 
 ## Writing the Description
 
-**Write for end users, not for yourself.** Changeset descriptions show up in GitHub releases — they're user-facing documentation. Focus on the problem solved and the benefit, not on internal implementation. Include how to enable or use the feature when applicable.
+**Important:** Changeset files should only reference `@cloudflare/sandbox`, never `@repo/shared` or `@repo/sandbox-container`. These internal packages should not be versioned independently - changes to them flow through the public package. Pre-commit hooks and CI will validate this rule.
+
+**Important: Write for end users.** Changeset descriptions appear in GitHub releases - they're user-facing documentation, not internal notes.
+
+- Focus on the problem solved and the benefit, not technical implementation details.
+- Keep it short. Each changeset entry should aim to be a couple of sentences, no more than a single paragraph.
+- Include a code example showing how to enable or use the feature when applicable.
 
 ```markdown
-# ❌ Bad — technical/internal focused
+# Bad - technical/internal focused
 
 Add WebSocket transport for request multiplexing over a single connection
 
-# ✅ Good — user-focused with clear benefit and usage
+# Good - user-focused with clear benefit and usage
 
-Add WebSocket transport to avoid sub-request limits in Workers and Durable
-Objects. Enable with `useWebSocket: true` in sandbox options.
+Add WebSocket transport to avoid sub-request limits in Workers and Durable Objects.
+Enable with `useWebSocket: true` in sandbox options.
 ```
 
 ## Release Automation
