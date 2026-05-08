@@ -57,7 +57,6 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           timeoutMs: body.timeoutMs,
           env: body.env,
           cwd: body.cwd,
-          preserveShellState: body.preserveShellState,
           origin: body.origin
         }
       );
@@ -85,7 +84,6 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
-      preserveShellState: body.preserveShellState,
       origin: body.origin
     });
 

@@ -15,8 +15,6 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
-  /** @deprecated Use defaultSession: false or sessionId: false for isolated top-level exec. */
-  preserveShellState?: boolean;
   origin?: 'user' | 'internal';
 }
 

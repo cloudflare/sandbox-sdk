@@ -256,7 +256,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should allow streaming exec without preserveShellState validation', async () => {
+    it('should allow streaming exec with output callbacks', async () => {
       const executeStreamSpy = vi
         .spyOn(sandbox.client.commands, 'executeStream')
         .mockResolvedValue(
@@ -274,7 +274,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.exec('echo streamed', {
         stream: true,
-        preserveShellState: true,
         onOutput: vi.fn()
       });
 

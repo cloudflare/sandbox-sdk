@@ -42,9 +42,6 @@ export interface BaseExecOptions {
 
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
-  /** @deprecated Use `getSandbox(..., { defaultSession: false })` or top-level `sandbox.exec(command, { sessionId: false })` for isolated one-shot execution. */
-  preserveShellState?: boolean;
-
   /**
    * Enable real-time output streaming via callbacks
    */

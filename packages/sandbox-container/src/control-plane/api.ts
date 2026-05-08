@@ -158,7 +158,6 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      preserveShellState?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -172,8 +171,7 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd,
-      preserveShellState: options?.preserveShellState
+      cwd: options?.cwd
     });
     const data = extractData<CommandResult>(result);
     return {

@@ -2563,8 +2563,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async execInternal(command: string): Promise<ExecResult> {
     return this.execWithSession(command, false, {
-      origin: 'internal',
-      preserveShellState: false
+      origin: 'internal'
     });
   }
 
@@ -2608,13 +2607,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           (options.timeout !== undefined ||
             options.env !== undefined ||
             options.cwd !== undefined ||
-            options.preserveShellState !== undefined ||
             options.origin !== undefined)
             ? {
                 timeoutMs: options.timeout,
                 env: options.env,
                 cwd: options.cwd,
-                preserveShellState: options.preserveShellState,
                 origin: options.origin
               }
             : undefined;

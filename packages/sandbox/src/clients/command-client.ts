@@ -36,8 +36,6 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      /** @deprecated Use defaultSession: false or sessionId: false for isolated top-level exec. */
-      preserveShellState?: boolean;
       origin?: 'user' | 'internal';
     }
   ): Promise<ExecuteResponse> {
@@ -50,9 +48,6 @@ export class CommandClient extends BaseHttpClient {
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
-        ...(options?.preserveShellState !== undefined && {
-          preserveShellState: options.preserveShellState
-        }),
         ...(options?.origin !== undefined && { origin: options.origin })
       };
 
