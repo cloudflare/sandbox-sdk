@@ -1192,6 +1192,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       validatePrefix(options.prefix);
     }
 
+    if (mountPath === '/workspace' || mountPath.startsWith('/workspace/')) {
+      this.logger.warn(
+        'Mounting a bucket at /workspace overlays the active workspace in production; prefer /data, /storage, or /mnt/* for bucket mounts.',
+        {
+          bucket,
+          mountPath,
+          localBucket: 'localBucket' in options && options.localBucket === true
+        }
+      );
+    }
+
     if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;

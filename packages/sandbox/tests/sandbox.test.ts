@@ -2618,6 +2618,24 @@ describe('Sandbox - Automatic Session Management', () => {
       ).resolves.toBeUndefined();
     });
 
+    it('warns when mounting a bucket at /workspace', async () => {
+      mockMountScript({ exitCode: 0 });
+      const warnSpy = vi.spyOn((sandbox as any).logger, 'warn');
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/workspace', mountOptions)
+      ).resolves.toBeUndefined();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Mounting a bucket at /workspace overlays the active workspace in production; prefer /data, /storage, or /mnt/* for bucket mounts and use backup/restore for workspace persistence.',
+        {
+          bucket: 'my-bucket',
+          mountPath: '/workspace',
+          localBucket: false
+        }
+      );
+    });
+
     it('throws when the s3fs parent exits non-zero', async () => {
       mockMountScript({ exitCode: 2, stdout: 'fuse: bad mount point' });
 
