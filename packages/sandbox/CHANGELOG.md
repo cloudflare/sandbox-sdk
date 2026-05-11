@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.10.1
+
+### Patch Changes
+
+- [#683](https://github.com/cloudflare/sandbox-sdk/pull/683) [`718d4e7`](https://github.com/cloudflare/sandbox-sdk/commit/718d4e77def490af3250de1a073cc71dbedc13e7) Thanks [@aron-cf](https://github.com/aron-cf)! - `readFile` now accepts `encoding: 'none'` on the `rpc` transport, returning a result whose `content` is a `ReadableStream<Uint8Array>` of raw binary data with no base64 encoding or buffering. Mirrors the existing `writeFile` support for `ReadableStream` input.
+
+  ```ts
+  // Stream a binary file without buffering or base64 overhead (rpc transport only)
+  const { content, size, mimeType } = await sandbox.readFile(
+    '/workspace/image.png',
+    { encoding: 'none' }
+  );
+  ```
+
 ## 0.10.0
 
 ### Minor Changes
