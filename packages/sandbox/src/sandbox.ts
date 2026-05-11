@@ -13,6 +13,7 @@ import type {
   ExecResult,
   ExecutionResult,
   ExecutionSession,
+  FileEncoding,
   ISandbox,
   LocalMountBucketOptions,
   LogEvent,
@@ -22,6 +23,8 @@ import type {
   ProcessOptions,
   ProcessStatus,
   PtyOptions,
+  ReadFileResult,
+  ReadFileStreamResult,
   RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
@@ -3441,7 +3444,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
 
     if (content instanceof ReadableStream) {
-      return this.client.writeFileStream(path, content, session);
+      return this.client.files.writeFileStream(path, content, session);
     }
 
     return this.client.files.writeFile(path, content, session, {
@@ -3468,11 +3471,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.moveFile(sourcePath, destinationPath, session);
   }
 
+  /**
+   * Read a file from the sandbox.
+   *
+   * @param encoding - How to encode the returned content:
+   *   - `undefined` (default): auto-detect from MIME type (text → UTF-8 string, binary → base64 string)
+   *   - `'utf-8'` / `'utf8'`: always return as UTF-8 string
+   *   - `'base64'`: always return as base64-encoded string
+   *   - `'none'`: return a result whose `content` is a raw binary `ReadableStream<Uint8Array>`
+   *              with no encoding overhead. **Requires `SANDBOX_TRANSPORT=rpc`.** Throws on HTTP/WebSocket transports.
+   */
   async readFile(
     path: string,
-    options: { encoding?: string; sessionId?: string } = {}
-  ) {
+    options: { encoding: 'none'; sessionId?: string }
+  ): Promise<ReadFileStreamResult>;
+  async readFile(
+    path: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string }
+  ): Promise<ReadFileResult>;
+  async readFile(
+    path: string,
+    options: { encoding?: FileEncoding; sessionId?: string } = {}
+  ): Promise<ReadFileResult | ReadFileStreamResult> {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
+    if (options.encoding === 'none') {
+      return this.client.files.readFile(path, session, { encoding: 'none' });
+    }
     return this.client.files.readFile(path, session, {
       encoding: options.encoding
     });
@@ -4103,8 +4127,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // File operations - pass sessionId via options or parameter
       writeFile: (path, content, options) =>
         this.writeFile(path, content, { ...options, sessionId }),
-      readFile: (path, options) =>
-        this.readFile(path, { ...options, sessionId }),
+      readFile: ((
+        path: string,
+        options?: { encoding?: FileEncoding; sessionId?: string }
+      ) => {
+        const encoding = options?.encoding;
+        if (encoding === 'none') {
+          return this.readFile(path, { encoding: 'none', sessionId });
+        }
+        return this.readFile(path, { encoding, sessionId });
+      }) as ExecutionSession['readFile'],
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
       watch: (path, options) => this.watch(path, { ...options, sessionId }),
       checkChanges: (path, options) =>
@@ -5759,7 +5791,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             timestamp: new Date().toISOString()
           });
         }
-        await this.client.writeFileStream(archivePath, body, backupSession);
+        await this.client.files.writeFileStream(
+          archivePath,
+          body,
+          backupSession
+        );
       } else {
         const archiveBuffer = await archiveObject.arrayBuffer();
         const base64Content = Buffer.from(archiveBuffer).toString('base64');

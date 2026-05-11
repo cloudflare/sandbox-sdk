@@ -414,3 +414,64 @@ describe.skipIf(!isRPCTransport)('File Streaming Write (rpc)', () => {
     expect(Number.parseInt(result.stdout.trim(), 10)).toBe(256 * 1024);
   });
 });
+
+describe.skipIf(!isRPCTransport)('File Binary Read (rpc)', () => {
+  let sandbox: TestSandbox | null = null;
+  let workerUrl: string;
+  let headers: Record<string, string>;
+
+  beforeAll(async () => {
+    sandbox = await createTestSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.headers(createUniqueSession());
+  }, 60000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
+  }, 60000);
+
+  test('readFile({ encoding: "none" }) returns raw bytes matching sha256 of original', async () => {
+    const testPath = sandbox!.uniquePath('binary-read-test.bin');
+
+    // Write 10 MiB of incompressible random data entirely inside the container
+    const seedResult = (await (
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `mkdir -p $(dirname ${testPath})`,
+            `dd if=/dev/urandom of=${testPath} bs=1M count=10 status=none`,
+            `sha256sum ${testPath}`
+          ].join(' && ')
+        })
+      })
+    ).json()) as { stdout: string; exitCode: number };
+    expect(seedResult.exitCode).toBe(0);
+    const [originalSha] = seedResult.stdout.trim().split(/\s+/);
+    expect(originalSha).toMatch(/^[0-9a-f]{64}$/);
+
+    // Read back via encoding: 'none' — raw binary, no base64
+    const readResponse = await fetch(`${workerUrl}/api/file/read-binary`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testPath })
+    });
+    expect(readResponse.status).toBe(200);
+    expect(readResponse.headers.get('content-type')).toBe(
+      'application/octet-stream'
+    );
+
+    // Collect and sha256 the response bytes in JS
+    const bytes = new Uint8Array(await readResponse.arrayBuffer());
+    expect(bytes.byteLength).toBe(10 * 1024 * 1024);
+
+    // Use crypto.subtle to sha256 the collected bytes
+    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+    const restoredSha = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    expect(restoredSha).toBe(originalSha);
+  }, 60000);
+});

@@ -1,11 +1,13 @@
 import type {
   DeleteFileResult,
+  FileEncoding,
   FileExistsResult,
   ListFilesOptions,
   ListFilesResult,
   MkdirResult,
   MoveFileResult,
   ReadFileResult,
+  ReadFileStreamResult,
   RenameFileResult,
   WriteFileResult
 } from '@repo/shared';
@@ -97,16 +99,36 @@ export class FileClient extends BaseHttpClient {
   }
 
   /**
-   * Read content from a file
+   * Read content from a file.
+   *
    * @param path - File path to read from
    * @param sessionId - The session ID for this operation
    * @param options - Optional settings (encoding)
+   *
+   * When `encoding` is `'none'`, returns a `ReadFileStreamResult` whose
+   * `content` is a raw `ReadableStream<Uint8Array>`. This variant only works
+   * on the `rpc` transport; HTTP and WebSocket transports throw at runtime.
    */
   async readFile(
     path: string,
     sessionId: string,
-    options?: { encoding?: string }
-  ): Promise<ReadFileResult> {
+    options: { encoding: 'none' }
+  ): Promise<ReadFileStreamResult>;
+  async readFile(
+    path: string,
+    sessionId: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
+  ): Promise<ReadFileResult>;
+  async readFile(
+    path: string,
+    sessionId: string,
+    options?: { encoding?: FileEncoding }
+  ): Promise<ReadFileResult | ReadFileStreamResult> {
+    if (options?.encoding === 'none') {
+      throw new Error(
+        "readFile with encoding: 'none' requires the rpc transport. Set SANDBOX_TRANSPORT=rpc."
+      );
+    }
     const data = {
       path,
       sessionId,
@@ -223,5 +245,24 @@ export class FileClient extends BaseHttpClient {
     const response = await this.post<FileExistsResult>('/api/exists', data);
 
     return response;
+  }
+
+  /**
+   * Write a file via a raw binary stream over the RPC transport.
+   * Throws on HTTP and WebSocket transports — use writeFile() with a string instead.
+   */
+  writeFileStream(
+    _path: string,
+    _content: ReadableStream<Uint8Array>,
+    _sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }> {
+    throw new Error(
+      'writeFileStream requires the rpc transport. Set SANDBOX_TRANSPORT=rpc.'
+    );
   }
 }

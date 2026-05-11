@@ -576,6 +576,16 @@ export interface WriteFileResult {
   exitCode?: number;
 }
 
+/**
+ * Valid `encoding` values accepted by `readFile` / `writeFile` options.
+ *
+ * - `'utf-8'` / `'utf8'` — treat content as text.
+ * - `'base64'` — treat content as base64-encoded binary.
+ * - `'none'` — RPC-only streaming variant of `readFile`, returns a
+ *   `ReadableStream<Uint8Array>` of raw bytes (see `ReadFileStreamResult`).
+ */
+export type FileEncoding = 'utf-8' | 'utf8' | 'base64' | 'none';
+
 export interface ReadFileResult {
   success: boolean;
   path: string;
@@ -602,6 +612,22 @@ export interface ReadFileResult {
    * File size in bytes
    */
   size?: number;
+}
+
+/**
+ * Result of `readFile()` with `encoding: 'none'` on the RPC transport.
+ *
+ * `content` is a raw binary `ReadableStream<Uint8Array>` delivered directly
+ * over the capnp channel — no base64 encoding, no SSE framing, no buffering.
+ * Only supported on the `rpc` transport; HTTP/WebSocket transports throw.
+ */
+export interface ReadFileStreamResult {
+  success: true;
+  path: string;
+  content: ReadableStream<Uint8Array>;
+  size: number;
+  mimeType: string;
+  timestamp: string;
 }
 
 export interface DeleteFileResult {
@@ -1027,7 +1053,11 @@ export interface ExecutionSession {
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
-    options?: { encoding?: string }
+    options: { encoding: 'none' }
+  ): Promise<ReadFileStreamResult>;
+  readFile(
+    path: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
@@ -1311,7 +1341,11 @@ export interface ISandbox {
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
-    options?: { encoding?: string }
+    options: { encoding: 'none' }
+  ): Promise<ReadFileStreamResult>;
+  readFile(
+    path: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(

@@ -1686,6 +1686,97 @@ export class FileService implements FileSystemOperations {
    * Resolve a complete path in the context of the session's current working directory.  If the
    * provided path is relative, we append the session's current working directory to it.
    */
+  /**
+   * Stream raw binary file contents without SSE framing or base64 encoding.
+   * Intended for the RPC transport where the stream passes directly to the
+   * caller over the capnp binary channel — no encoding overhead.
+   *
+   * Validates the path, resolves relative paths via the session's cwd, then
+   * returns Bun's native file stream alongside the file size and MIME type.
+   *
+   * Returns a `ServiceResult` so callers receive typed `ErrorCode` values
+   * (e.g. `FILE_NOT_FOUND`, `VALIDATION_FAILED`) rather than plain throws.
+   */
+  async readFileBinaryStream(
+    path: string,
+    sessionId = 'default'
+  ): Promise<
+    ServiceResult<{
+      content: ReadableStream<Uint8Array>;
+      size: number;
+      mimeType: string;
+    }>
+  > {
+    // Validate path for security.
+    const validation = this.security.validatePath(path);
+    if (!validation.isValid) {
+      return {
+        success: false,
+        error: {
+          message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+          code: ErrorCode.VALIDATION_FAILED,
+          details: {
+            validationErrors: validation.errors.map((e) => ({
+              field: 'path',
+              message: e,
+              code: 'INVALID_PATH'
+            }))
+          } satisfies ValidationFailedContext
+        }
+      };
+    }
+
+    // Resolve relative paths via the session's working directory.
+    let resolvedPath = path;
+    if (!path.startsWith('/')) {
+      const result = await this.sessionManager.withSession(
+        sessionId,
+        async (exec) => this.resolvePathInSession(path, exec)
+      );
+      if (!result.success) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to resolve path '${path}'`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: 'withSession failed'
+            } satisfies FileSystemContext
+          }
+        };
+      }
+      resolvedPath = result.data as string;
+    }
+
+    // Check existence and return the stream.
+    const file = Bun.file(resolvedPath);
+    const exists = await file.exists();
+    if (!exists) {
+      return {
+        success: false,
+        error: {
+          message: `File not found: ${resolvedPath}`,
+          code: ErrorCode.FILE_NOT_FOUND,
+          details: {
+            path: resolvedPath,
+            operation: Operation.FILE_READ
+          } satisfies FileNotFoundContext
+        }
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        content: file.stream(),
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream'
+      }
+    };
+  }
+
   private async resolvePathInSession(
     path: string,
     exec: (

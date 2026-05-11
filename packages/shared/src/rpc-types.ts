@@ -35,6 +35,7 @@ import type {
   CheckChangesRequest,
   CheckChangesResult,
   DeleteFileResult,
+  FileEncoding,
   FileExistsResult,
   GitCheckoutResult,
   ListFilesOptions,
@@ -52,6 +53,7 @@ import type {
   ProcessLogsResult,
   ProcessStartResult,
   ReadFileResult,
+  ReadFileStreamResult,
   RenameFileResult,
   WatchRequest,
   WriteFileResult
@@ -102,7 +104,12 @@ export interface SandboxFilesAPI {
   readFile(
     path: string,
     sessionId: string,
-    options?: { encoding?: string }
+    options: { encoding: 'none' }
+  ): Promise<ReadFileStreamResult>;
+  readFile(
+    path: string,
+    sessionId: string,
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
   readFileStream(
     path: string,
