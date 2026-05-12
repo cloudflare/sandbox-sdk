@@ -64,6 +64,12 @@ function normalizeObjectKey(value: string): string {
   return value.replace(/^\/+/, '');
 }
 
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === '/') end--;
+  return s.slice(0, end);
+}
+
 function parsePath(pathname: string): ParsedPath | null {
   const stripped = pathname.startsWith('/') ? pathname.slice(1) : pathname;
   if (!stripped) return null;
@@ -227,8 +233,14 @@ interface UploadedPart {
 
 function parseCompleteMultipartUploadBody(body: string): UploadedPart[] {
   const parts: UploadedPart[] = [];
-  const partSegments = body.match(/<Part>[\s\S]*?<\/Part>/g) ?? [];
-  for (const segment of partSegments) {
+  let pos = 0;
+  while (pos < body.length) {
+    const start = body.indexOf('<Part>', pos);
+    if (start === -1) break;
+    const end = body.indexOf('</Part>', start + 6);
+    if (end === -1) break;
+    const segment = body.slice(start, end + 7);
+    pos = end + 7;
     const numMatch = /<PartNumber>(\d+)<\/PartNumber>/.exec(segment);
     const etagMatch = /<ETag>("?[^<]+"?)<\/ETag>/.exec(segment);
     if (numMatch && etagMatch) {
@@ -607,7 +619,7 @@ export const r2EgressHandler: OutboundHandler<
   const bucketParams = ctx.params.buckets[bucketName];
   const rawPrefix = bucketParams.prefix;
   const mountPrefix = rawPrefix
-    ? normalizeObjectKey(rawPrefix).replace(/\/+$/, '')
+    ? trimTrailingSlashes(normalizeObjectKey(rawPrefix))
     : undefined;
   const readOnly = bucketParams.readOnly ?? false;
 
