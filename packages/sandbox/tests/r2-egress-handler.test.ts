@@ -219,9 +219,7 @@ function makeEnv(bucket: R2Bucket, bindingName = 'MY_BUCKET'): Cloudflare.Env {
   return { [bindingName]: bucket } as unknown as Cloudflare.Env;
 }
 
-function makeCtx(
-  params: R2EgressParams = { buckets: { MY_BUCKET: undefined } }
-) {
+function makeCtx(params: R2EgressParams = { buckets: { MY_BUCKET: {} } }) {
   return { containerId: 'test-container', className: 'Sandbox', params };
 }
 
@@ -552,6 +550,62 @@ describe('r2EgressHandler', () => {
         makeCtx()
       );
       expect(abortRes.status).toBe(204);
+    });
+  });
+
+  describe('read-only mounts', () => {
+    const readOnlyCtx = () =>
+      makeCtx({ buckets: { MY_BUCKET: { readOnly: true } } });
+
+    it('allows read operations', async () => {
+      const store = new Map<string, MockObject>([
+        ['readable.txt', { body: 'read me' }]
+      ]);
+      const r2 = createMockR2Bucket(store);
+
+      const res = await r2EgressHandler(
+        req('GET', '/MY_BUCKET/readable.txt'),
+        makeEnv(r2),
+        readOnlyCtx()
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('read me');
+    });
+
+    it.each([
+      ['PUT', '/MY_BUCKET/new-file.txt'],
+      ['DELETE', '/MY_BUCKET/existing.txt'],
+      ['POST', '/MY_BUCKET/big-file.bin?uploads'],
+      ['POST', '/MY_BUCKET/big-file.bin?uploadId=upload-1'],
+      ['DELETE', '/MY_BUCKET/big-file.bin?uploadId=upload-1']
+    ])('rejects mutating operation %s %s', async (method, path) => {
+      const r2 = createMockR2Bucket(new Map());
+
+      const res = await r2EgressHandler(
+        req(method, path, method === 'POST' ? '<xml />' : undefined),
+        makeEnv(r2),
+        readOnlyCtx()
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toContain('read-only');
+    });
+
+    it('rejects copy object requests', async () => {
+      const r2 = createMockR2Bucket(new Map());
+
+      const res = await r2EgressHandler(
+        new Request('http://r2.internal/MY_BUCKET/copied.txt', {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': '/MY_BUCKET/source.txt' }
+        }),
+        makeEnv(r2),
+        readOnlyCtx()
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toContain('read-only');
     });
   });
 

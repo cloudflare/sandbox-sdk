@@ -5,6 +5,12 @@
  * (e.g. the Python `CloudflareSandboxClient`) and the bridge worker.
  */
 
+import type {
+  BucketCredentials,
+  MountBucketOptions,
+  R2BindingMountBucketOptions,
+  RemoteMountBucketOptions
+} from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 
 // ---------------------------------------------------------------------------
@@ -106,25 +112,20 @@ export interface ErrorResponse {
   code: string;
 }
 
-/** Credentials for mounting an S3-compatible bucket. */
-export interface MountBucketCredentials {
-  accessKeyId: string;
-  secretAccessKey: string;
-}
+/** JSON mount options accepted by the bridge; mirrors the SDK mount option variants. */
+export type MountBucketRequestOptions =
+  | Pick<
+      RemoteMountBucketOptions,
+      'endpoint' | 'readOnly' | 'prefix' | 'credentials' | 's3fsOptions'
+    >
+  | Pick<R2BindingMountBucketOptions, 'readOnly' | 'prefix' | 's3fsOptions'>;
 
-/** Options nested inside a MountBucketRequest. */
-export interface MountBucketRequestOptions {
-  /** S3-compatible endpoint URL. Omit to mount a Worker R2 binding with the same name as `bucket`. */
-  endpoint?: string;
-  /** Mount filesystem as read-only (default: false). */
-  readOnly?: boolean;
-  /** Optional prefix/subdirectory within the bucket to mount. */
-  prefix?: string;
-  /** Explicit credentials. Omit to use auto-detected Worker secrets. */
-  credentials?: MountBucketCredentials;
-  /** Advanced: Override or extend s3fs options (R2 binding mounts only). */
-  s3fsOptions?: string[];
-}
+export type {
+  BucketCredentials as MountBucketCredentials,
+  MountBucketOptions,
+  R2BindingMountBucketOptions,
+  RemoteMountBucketOptions
+};
 
 /** Sent by the client for /mount requests. */
 export interface MountBucketRequest {
@@ -132,7 +133,7 @@ export interface MountBucketRequest {
   bucket: string;
   /** Absolute path in the container to mount at. */
   mountPath: string;
-  /** Mount configuration. */
+  /** Mount configuration. Omit `endpoint` to mount a Worker R2 binding named by `bucket`. */
   options: MountBucketRequestOptions;
 }
 

@@ -134,6 +134,20 @@ function createMockR2Bucket(): R2Bucket {
   } as unknown as R2Bucket;
 }
 
+function createExecResult(
+  command: string,
+  overrides?: Partial<{ stdout: string; stderr: string; exitCode: number }>
+) {
+  return {
+    success: (overrides?.exitCode ?? 0) === 0,
+    stdout: overrides?.stdout ?? '',
+    stderr: overrides?.stderr ?? '',
+    exitCode: overrides?.exitCode ?? 0,
+    command,
+    timestamp: new Date().toISOString()
+  };
+}
+
 describe('Sandbox R2 egress mounts', () => {
   it('registers the credential-less R2 outbound handler under the runtime key', async () => {
     const sandbox = new Sandbox(
@@ -164,7 +178,9 @@ describe('Sandbox R2 egress mounts', () => {
     it('prepends mount prefix to GET key', async () => {
       const bucket = createMockR2Bucket();
       const mockEnv = { MY_BUCKET: bucket } as unknown as Cloudflare.Env;
-      const params: R2EgressParams = { buckets: { MY_BUCKET: '/data/run1' } };
+      const params: R2EgressParams = {
+        buckets: { MY_BUCKET: { prefix: '/data/run1' } }
+      };
       await r2EgressHandler(
         new Request('http://r2.internal/MY_BUCKET/fixtures/sample.txt'),
         mockEnv,
@@ -194,7 +210,9 @@ describe('Sandbox R2 egress mounts', () => {
         truncated: false
       });
       const mockEnv = { MY_BUCKET: bucket } as unknown as Cloudflare.Env;
-      const params: R2EgressParams = { buckets: { MY_BUCKET: '/data/run1' } };
+      const params: R2EgressParams = {
+        buckets: { MY_BUCKET: { prefix: '/data/run1' } }
+      };
       const res = await r2EgressHandler(
         new Request(
           'http://r2.internal/MY_BUCKET/?list-type=2&prefix=fixtures%2F&delimiter=%2F'
@@ -214,13 +232,27 @@ describe('Sandbox R2 egress mounts', () => {
     it('does not modify keys when no prefix is registered', async () => {
       const bucket = createMockR2Bucket();
       const mockEnv = { MY_BUCKET: bucket } as unknown as Cloudflare.Env;
-      const params: R2EgressParams = { buckets: { MY_BUCKET: undefined } };
+      const params: R2EgressParams = { buckets: { MY_BUCKET: {} } };
       await r2EgressHandler(
         new Request('http://r2.internal/MY_BUCKET/sample.txt'),
         mockEnv,
         { containerId: 'ctr-3', className: 'Sandbox', params }
       );
       expect(bucket.get).toHaveBeenCalledWith('sample.txt');
+    });
+
+    it('strips trailing slash from prefix to avoid double-slash in key', async () => {
+      const bucket = createMockR2Bucket();
+      const mockEnv = { MY_BUCKET: bucket } as unknown as Cloudflare.Env;
+      const params: R2EgressParams = {
+        buckets: { MY_BUCKET: { prefix: '/data/run1/' } }
+      };
+      await r2EgressHandler(
+        new Request('http://r2.internal/MY_BUCKET/file.txt'),
+        mockEnv,
+        { containerId: 'ctr-4', className: 'Sandbox', params }
+      );
+      expect(bucket.get).toHaveBeenCalledWith('data/run1/file.txt');
     });
   });
 
@@ -254,7 +286,9 @@ describe('Sandbox R2 egress mounts', () => {
       }
 
       if (command.includes('s3fs ')) {
-        const params: R2EgressParams = { buckets: { MY_BUCKET: '/uploads' } };
+        const params: R2EgressParams = {
+          buckets: { MY_BUCKET: { prefix: '/uploads' } }
+        };
         const probe = await r2EgressHandler(
           new Request('http://r2.internal/MY_BUCKET?location', {
             method: 'GET'
@@ -311,7 +345,137 @@ describe('Sandbox R2 egress mounts', () => {
     expect(setOutboundByHost).toHaveBeenCalledWith(
       'r2.internal',
       'r2EgressMount',
-      { buckets: { MY_BUCKET: '/uploads' } }
+      { buckets: { MY_BUCKET: { prefix: '/uploads', readOnly: true } } }
     );
   });
+
+  it('rejects a second mount of the same R2 binding with a different prefix', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) return createExecResult(command);
+      if (command.startsWith('mountpoint')) {
+        return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValueOnce('/tmp/.s3fs-one')
+        .mockReturnValueOnce('/tmp/.s3fs-two'),
+      setOutboundByHost: vi.fn().mockResolvedValue(undefined),
+      removeOutboundByHost: vi.fn().mockResolvedValue(undefined)
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/one', {
+      prefix: '/one'
+    } as any);
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/two', {
+        prefix: '/two'
+      } as any)
+    ).rejects.toThrow('already mounted');
+  });
+
+  it('deletes the password file when R2 egress mount fails', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) {
+        return createExecResult(command, {
+          exitCode: 1,
+          stderr: 'mount failed'
+        });
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile,
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-failed'),
+      setOutboundByHost: vi.fn().mockResolvedValue(undefined),
+      removeOutboundByHost: vi.fn().mockResolvedValue(undefined)
+    });
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/fail', {} as any)
+    ).rejects.toThrow('S3FS mount failed');
+
+    expect(deletePasswordFile).toHaveBeenCalledWith('/tmp/.s3fs-failed');
+  });
+
+  it('throws when s3fs exits 0 but mountpoint check does not confirm mount', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('mkdir -p ')) return createExecResult(command);
+        if (command.includes('s3fs ')) return createExecResult(command);
+        if (command.startsWith('mountpoint')) {
+          return createExecResult(command, { stdout: 'NOT_FUSE_MOUNTED' });
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      }),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile,
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-check-fail'),
+      setOutboundByHost: vi.fn().mockResolvedValue(undefined),
+      removeOutboundByHost: vi.fn().mockResolvedValue(undefined)
+    });
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/check-fail', {} as any)
+    ).rejects.toThrow('mount was not established');
+
+    expect(deletePasswordFile).toHaveBeenCalledWith('/tmp/.s3fs-check-fail');
+  });
+
+  it.each(['passwd_file=/tmp/creds', 'url=https://example.com'])(
+    'rejects protected s3fs option override: %s',
+    async (option) => {
+      const sandbox = new Sandbox(
+        createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+        { MY_BUCKET: createMockR2Bucket() }
+      );
+
+      const createPasswordFile = vi.fn().mockResolvedValue(undefined);
+      Object.assign(sandbox as object, {
+        execInternal: vi.fn(),
+        createPasswordFile,
+        deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+        generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-unused'),
+        setOutboundByHost: vi.fn().mockResolvedValue(undefined),
+        removeOutboundByHost: vi.fn().mockResolvedValue(undefined)
+      });
+
+      await expect(
+        sandbox.mountBucket('MY_BUCKET', '/mnt/data', {
+          s3fsOptions: [option]
+        } as any)
+      ).rejects.toThrow('cannot be overridden');
+
+      expect(createPasswordFile).not.toHaveBeenCalled();
+    }
+  );
 });

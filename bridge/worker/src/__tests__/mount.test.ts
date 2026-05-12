@@ -135,6 +135,23 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
   });
 
+  it('passes s3fsOptions for remote mounts', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: ['nomultipart']
+      }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('my-bucket', '/mnt/data', {
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      s3fsOptions: ['nomultipart']
+    });
+  });
+
   it('rejects missing bucket', async () => {
     const res = await mountRequest({
       mountPath: '/mnt/data',
@@ -176,6 +193,17 @@ describe('POST /v1/sandbox/:id/mount', () => {
     expect(body.error).toContain('options');
   });
 
+  it('rejects array options', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: [] as unknown as Record<string, unknown>
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('options');
+  });
+
   it('rejects non-string endpoint values', async () => {
     const res = await mountRequest({
       bucket: 'my-bucket',
@@ -185,6 +213,76 @@ describe('POST /v1/sandbox/:id/mount', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('endpoint');
+  });
+
+  it('rejects non-array s3fsOptions values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: 'nomultipart'
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('s3fsOptions');
+  });
+
+  it('rejects non-string s3fsOptions entries', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: ['nomultipart', 123]
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('s3fsOptions');
+  });
+
+  it('rejects non-boolean readOnly values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        readOnly: 'true'
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('readOnly');
+  });
+
+  it('rejects non-string prefix values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        prefix: 123
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('prefix');
+  });
+
+  it('rejects malformed credentials', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID' }
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('credentials');
   });
 
   it('rejects invalid JSON body', async () => {

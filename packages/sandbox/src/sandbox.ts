@@ -155,6 +155,11 @@ const sandboxConfigurationCache = new WeakMap<
   Map<string, CachedSandboxConfiguration>
 >();
 
+const R2_DEFAULT_S3FS_OPTIONS: readonly string[] = [
+  'stat_cache_expire=60',
+  'enable_noobj_cache'
+];
+
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -1294,13 +1299,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private getR2EgressParams(): R2EgressParams {
-    const buckets: Record<string, string | undefined> = {};
+    const buckets: R2EgressParams['buckets'] = {};
     for (const [, m] of this.activeMounts) {
       if (m.mountType === 'r2-egress') {
-        buckets[m.bucket] = m.prefix;
+        buckets[m.bucket] = {
+          prefix: m.prefix,
+          readOnly: m.readOnly
+        };
       }
     }
     return { buckets };
+  }
+
+  private validateR2EgressS3fsOptions(options?: string[]): void {
+    if (!options) return;
+
+    const protectedOptions = new Set(['passwd_file', 'url']);
+    for (const option of options) {
+      const [key] = option.split('=');
+      if (protectedOptions.has(key)) {
+        throw new InvalidMountConfigError(
+          `s3fs option "${key}" cannot be overridden for R2 binding mounts`
+        );
+      }
+    }
   }
 
   /**
@@ -1320,6 +1342,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       validateBucketBindingName(bucket, mountPath);
       this.validateMountPath(mountPath);
+      this.validateR2EgressS3fsOptions(options.s3fsOptions);
+
+      for (const [existingMountPath, mountInfo] of this.activeMounts) {
+        if (
+          mountInfo.mountType === 'r2-egress' &&
+          mountInfo.bucket === bucket &&
+          mountInfo.prefix !== prefix
+        ) {
+          throw new InvalidMountConfigError(
+            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different prefix. ` +
+              'Mount the same binding only once, or use the same prefix for additional mounts.'
+          );
+        }
+      }
 
       const passwordFilePath = this.generatePasswordFilePath();
       await this.createPasswordFile(passwordFilePath, bucket, {
@@ -1333,7 +1369,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         mountPath,
         passwordFilePath,
         mounted: false,
-        prefix
+        prefix,
+        readOnly: options.readOnly ?? false
       };
       this.activeMounts.set(mountPath, mountInfo);
 
@@ -1348,6 +1385,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const s3fsSource = bucket;
       const s3fsArgMap = new Map<string, string>();
       s3fsArgMap.set('passwd_file', `passwd_file=${passwordFilePath}`);
+      for (const arg of R2_DEFAULT_S3FS_OPTIONS) {
+        const [key] = arg.split('=');
+        s3fsArgMap.set(key, arg);
+      }
       for (const arg of resolveS3fsOptions('r2', options.s3fsOptions)) {
         const [key] = arg.split('=');
         s3fsArgMap.set(key, arg);
@@ -1381,11 +1422,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: mountpointCheck.exitCode
       });
 
+      if (mountpointCheck.stdout.trim() !== 'FUSE_MOUNTED') {
+        throw new S3FSMountError(
+          `s3fs exited 0 but mount was not established at ${mountPath}`
+        );
+      }
+
       mountInfo.mounted = true;
       mountOutcome = 'success';
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
+      const failedMount = this.activeMounts.get(mountPath);
       this.activeMounts.delete(mountPath);
+      if (failedMount?.mountType === 'r2-egress') {
+        await this.deletePasswordFile(failedMount.passwordFilePath).catch(
+          () => {}
+        );
+      }
       const remainingParams = this.getR2EgressParams();
       if (Object.keys(remainingParams.buckets).length === 0) {
         await this.removeOutboundByHost('r2.internal').catch(() => {});

@@ -33,6 +33,7 @@ import type {
   BridgeEnv,
   ExecRequest,
   MountBucketRequest,
+  MountBucketRequestOptions,
   RunningResponse,
   UnmountBucketRequest,
   WriteResponse
@@ -64,6 +65,115 @@ function getSandbox<T extends Sandbox<any>>(
   containerUUID: string
 ): BridgeSandbox {
   return _getSandbox(ns, containerUUID) as unknown as BridgeSandbox;
+}
+
+function hasEndpoint(
+  options: MountBucketRequestOptions
+): options is MountBucketRequestOptions & { endpoint: string } {
+  return 'endpoint' in options && typeof options.endpoint === 'string';
+}
+
+function hasCredentials(
+  options: MountBucketRequestOptions
+): options is MountBucketRequestOptions & {
+  credentials: { accessKeyId: string; secretAccessKey: string };
+} {
+  return 'credentials' in options && options.credentials !== undefined;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === 'string')
+  );
+}
+
+function validateMountOptions(
+  options: MountBucketRequestOptions
+): Response | null {
+  if ('endpoint' in options && !hasEndpoint(options)) {
+    return errorJson(
+      'options.endpoint must be a string when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (
+    options.s3fsOptions !== undefined &&
+    !isStringArray(options.s3fsOptions)
+  ) {
+    return errorJson(
+      'options.s3fsOptions must be an array of strings when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (options.readOnly !== undefined && typeof options.readOnly !== 'boolean') {
+    return errorJson(
+      'options.readOnly must be a boolean when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (options.prefix !== undefined && typeof options.prefix !== 'string') {
+    return errorJson(
+      'options.prefix must be a string when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (
+    'credentials' in options &&
+    options.credentials !== undefined &&
+    (typeof options.credentials !== 'object' ||
+      options.credentials === null ||
+      typeof options.credentials.accessKeyId !== 'string' ||
+      typeof options.credentials.secretAccessKey !== 'string')
+  ) {
+    return errorJson(
+      'options.credentials must include string accessKeyId and secretAccessKey',
+      'invalid_request',
+      400
+    );
+  }
+  return null;
+}
+
+function toSDKMountOptions(
+  options: MountBucketRequestOptions
+): MountBucketOptions {
+  if (hasEndpoint(options)) {
+    const remoteOptions: RemoteMountBucketOptions = {
+      endpoint: options.endpoint
+    };
+    if (options.readOnly !== undefined) {
+      remoteOptions.readOnly = options.readOnly;
+    }
+    if (options.prefix !== undefined) {
+      remoteOptions.prefix = options.prefix;
+    }
+    if (hasCredentials(options)) {
+      remoteOptions.credentials = {
+        accessKeyId: options.credentials.accessKeyId,
+        secretAccessKey: options.credentials.secretAccessKey
+      };
+    }
+    if (options.s3fsOptions !== undefined) {
+      remoteOptions.s3fsOptions = options.s3fsOptions;
+    }
+    return remoteOptions;
+  }
+
+  const r2BindingOptions: R2BindingMountBucketOptions = {};
+  if (options.readOnly !== undefined) {
+    r2BindingOptions.readOnly = options.readOnly;
+  }
+  if (options.prefix !== undefined) {
+    r2BindingOptions.prefix = options.prefix;
+  }
+  if (options.s3fsOptions !== undefined) {
+    r2BindingOptions.s3fsOptions = options.s3fsOptions;
+  }
+  return r2BindingOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -686,53 +796,18 @@ export function createBridgeApp(
         400
       );
     }
-    if (!body.options || typeof body.options !== 'object') {
+    if (
+      !body.options ||
+      typeof body.options !== 'object' ||
+      Array.isArray(body.options)
+    ) {
       return errorJson('options must be an object', 'invalid_request', 400);
     }
-    if (
-      body.options.endpoint !== undefined &&
-      typeof body.options.endpoint !== 'string'
-    ) {
-      return errorJson(
-        'options.endpoint must be a string when provided',
-        'invalid_request',
-        400
-      );
-    }
+    const optionsError = validateMountOptions(body.options);
+    if (optionsError) return optionsError;
 
     const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
-
-    let sdkOptions: MountBucketOptions;
-    if (body.options.endpoint) {
-      const remoteOptions: RemoteMountBucketOptions = {
-        endpoint: body.options.endpoint
-      };
-      if (body.options.readOnly !== undefined) {
-        remoteOptions.readOnly = body.options.readOnly;
-      }
-      if (body.options.prefix !== undefined) {
-        remoteOptions.prefix = body.options.prefix;
-      }
-      if (body.options.credentials) {
-        remoteOptions.credentials = {
-          accessKeyId: body.options.credentials.accessKeyId,
-          secretAccessKey: body.options.credentials.secretAccessKey
-        };
-      }
-      sdkOptions = remoteOptions;
-    } else {
-      const r2BindingOptions: R2BindingMountBucketOptions = {};
-      if (body.options.readOnly !== undefined) {
-        r2BindingOptions.readOnly = body.options.readOnly;
-      }
-      if (body.options.prefix !== undefined) {
-        r2BindingOptions.prefix = body.options.prefix;
-      }
-      if (body.options.s3fsOptions !== undefined) {
-        r2BindingOptions.s3fsOptions = body.options.s3fsOptions;
-      }
-      sdkOptions = r2BindingOptions;
-    }
+    const sdkOptions = toSDKMountOptions(body.options);
 
     try {
       await sandbox.mountBucket(body.bucket, body.mountPath, sdkOptions);

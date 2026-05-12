@@ -113,8 +113,8 @@ export const OPENAPI_SCHEMA = {
           prefix: {
             type: 'string',
             description:
-              'Optional prefix/subdirectory within the bucket to mount. Must start and end with `/`.',
-            example: '/uploads/images/'
+              'Optional prefix/subdirectory within the bucket to mount. Must start with `/`. Trailing slashes are stripped automatically.',
+            example: '/uploads/images'
           },
           credentials: {
             $ref: '#/components/schemas/MountBucketCredentials',

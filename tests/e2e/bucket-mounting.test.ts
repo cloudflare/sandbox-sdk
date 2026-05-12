@@ -221,6 +221,7 @@ describe('Bucket Mounting E2E', () => {
     let workerUrl: string;
     let headers: Record<string, string>;
 
+    const TEST_BUCKET = 'TEST_BUCKET';
     const MOUNT_PATH = '/mnt/r2-egress-test';
     const PRE_EXISTING_FILE = `r2-egress-pre-${Date.now()}.txt`;
     const PRE_EXISTING_CONTENT = 'Written to R2 before egress mount';
@@ -254,7 +255,7 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            bucket: 'TEST_BUCKET',
+            bucket: TEST_BUCKET,
             mountPath: MOUNT_PATH,
             options: {}
           })

@@ -26,7 +26,7 @@ import { isR2Bucket } from './validation';
 // ---------------------------------------------------------------------------
 
 export type R2EgressParams = {
-  buckets: Record<string, string | undefined>;
+  buckets: Record<string, { prefix?: string; readOnly?: boolean }>;
 };
 
 // ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ async function handleListObjects(
   const queryPrefix = normalizeObjectKey(url.searchParams.get('prefix') ?? '');
   const delimiter = url.searchParams.get('delimiter') ?? '';
   const maxKeys = Math.min(
-    parseInt(url.searchParams.get('max-keys') ?? '1000', 10),
+    parseInt(url.searchParams.get('max-keys') ?? '1000', 10) || 1000,
     1000
   );
   const continuationToken =
@@ -346,11 +346,6 @@ async function handleListObjects(
   };
 
   const result = await r2.list(listOpts);
-  console.log('[r2-egress] LIST result', {
-    r2Prefix,
-    count: result.objects.length,
-    objects: result.objects.map((o) => ({ key: o.key, size: o.size }))
-  });
 
   const stripKey = mountPrefix
     ? (k: string): string =>
@@ -383,10 +378,8 @@ async function handleListObjects(
 async function handleHeadObject(r2: R2Bucket, key: string): Promise<Response> {
   const obj = await r2.head(key);
   if (!obj) {
-    console.log('[r2-egress] HEAD 404', { key });
     return new Response(null, { status: 404 });
   }
-  console.log('[r2-egress] HEAD 200', { key, size: obj.size });
   // NOTE: The outbound proxy rewrites Content-Length to 0 for bodiless
   // responses. s3fs stat cache must be pre-populated from LIST (readdir)
   // so that getattr never falls through to HEAD for file size information.
@@ -406,11 +399,9 @@ async function handleGetObject(
   if (!range) {
     const obj = await r2.get(key);
     if (!obj) {
-      console.log('[r2-egress] GET 404', { key });
       return new Response(null, { status: 404 });
     }
     const body = await obj.arrayBuffer();
-    console.log('[r2-egress] GET 200', { key, bytes: body.byteLength });
     return new Response(body, {
       status: 200,
       headers: buildResponseHeaders(obj)
@@ -599,13 +590,6 @@ export const r2EgressHandler: OutboundHandler<
   const url = new URL(request.url);
   const parsed = parsePath(url.pathname);
 
-  console.log('[r2-egress] incoming request', {
-    method: request.method,
-    url: request.url,
-    containerId: ctx.containerId,
-    paramBuckets: ctx.params ? Object.keys(ctx.params.buckets) : null
-  });
-
   if (!parsed) {
     return new Response('Bad Request: empty path', { status: 400 });
   }
@@ -613,11 +597,6 @@ export const r2EgressHandler: OutboundHandler<
   const { bucket: bucketName, key } = parsed;
 
   if (!ctx.params?.buckets || !(bucketName in ctx.params.buckets)) {
-    console.log('[r2-egress] 403: bucket not in params', {
-      bucketName,
-      containerId: ctx.containerId,
-      paramBuckets: ctx.params ? Object.keys(ctx.params.buckets) : null
-    });
     return new Response(
       `Access to R2 bucket "${bucketName}" is not permitted. ` +
         'Call mountBucket() with this bucket before accessing it.',
@@ -625,15 +604,12 @@ export const r2EgressHandler: OutboundHandler<
     );
   }
 
-  const rawPrefix = ctx.params.buckets[bucketName];
-  const mountPrefix = rawPrefix ? normalizeObjectKey(rawPrefix) : undefined;
-
-  console.log('[r2-egress] resolved', {
-    bucketName,
-    key,
-    rawPrefix,
-    mountPrefix
-  });
+  const bucketParams = ctx.params.buckets[bucketName];
+  const rawPrefix = bucketParams.prefix;
+  const mountPrefix = rawPrefix
+    ? normalizeObjectKey(rawPrefix).replace(/\/+$/, '')
+    : undefined;
+  const readOnly = bucketParams.readOnly ?? false;
 
   const r2 = resolveR2Bucket(env, bucketName);
   if (!r2) {
@@ -663,6 +639,18 @@ export const r2EgressHandler: OutboundHandler<
 
   const fullKey = mountPrefix ? `${mountPrefix}/${key}` : key;
   const permitted = new Set(Object.keys(ctx.params.buckets));
+
+  if (
+    readOnly &&
+    (method === 'PUT' ||
+      method === 'DELETE' ||
+      (method === 'POST' &&
+        (url.searchParams.has('uploads') || url.searchParams.has('uploadId'))))
+  ) {
+    return new Response('Forbidden: bucket mount is read-only', {
+      status: 403
+    });
+  }
 
   // Multipart upload: POST /bucket/key?uploads — initiate
   if (method === 'POST' && url.searchParams.has('uploads')) {

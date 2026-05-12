@@ -35,4 +35,5 @@ export interface R2EgressMountInfo {
   passwordFilePath: string;
   mounted: boolean;
   prefix?: string;
+  readOnly: boolean;
 }
