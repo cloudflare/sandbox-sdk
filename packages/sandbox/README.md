@@ -98,6 +98,40 @@ export default {
 };
 ```
 
+## Quick tunnels
+
+`sandbox.tunnels.create(port)` exposes a service running inside the
+sandbox on a randomly-assigned `*.trycloudflare.com` URL. No Cloudflare
+account or DNS setup required — cloudflared opens a persistent QUIC
+connection to Cloudflare's edge and Cloudflare hands back a hostname.
+
+```ts
+// Inside a Worker with an RPC-transport sandbox:
+const tunnel = await sandbox.tunnels.create(8080);
+console.log(tunnel.url);
+// → https://random-words-here.trycloudflare.com
+
+// Later:
+await sandbox.tunnels.destroy(tunnel);
+```
+
+Notes:
+
+- Requires the RPC transport. The route-based transport's `tunnels`
+  stub throws "RPC transport required".
+- Hostnames are assigned per `create()` call — restarting a sandbox or
+  calling `create()` twice yields different URLs.
+- The first fetch can take a few seconds while DNS propagates, even
+  after `create()` resolves.
+- `*.trycloudflare.com` buffers `text/event-stream` responses. WebSockets
+  work fine.
+- The musl/Alpine image variant does not ship cloudflared (no upstream
+  musl prebuilt); `sandbox.tunnels` is unavailable on that variant.
+- Local builds behind a TLS-intercepting proxy (e.g. Cloudflare WARP)
+  need the host CA bundle injected at build time — see
+  [DOCKER_README.md](../../DOCKER_README.md).
+
+
 ## Documentation
 
 **📖 [Full Documentation](https://developers.cloudflare.com/sandbox/)**
@@ -115,6 +149,7 @@ export default {
 - **File System Access** - Read, write, and manage files
 - **Command Execution** - Run any command with streaming support
 - **Preview URLs** - Expose services with public URLs
+- **Quick tunnels** - Zero-config `*.trycloudflare.com` URLs via `sandbox.tunnels.create(port)`
 - **Git Integration** - Clone repositories directly
 
 ## Contributing

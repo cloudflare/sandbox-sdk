@@ -80,6 +80,7 @@ import type {
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTransport,
+  SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -588,6 +589,9 @@ export class ContainerControlClient {
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);
+  }
+  get tunnels(): SandboxTunnelsAPI {
+    return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);

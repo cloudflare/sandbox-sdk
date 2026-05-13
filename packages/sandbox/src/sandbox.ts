@@ -98,6 +98,10 @@ import type {
   LocalSyncMountInfo,
   MountInfo
 } from './storage-mount/types';
+import {
+  createTunnelsHandler,
+  type TunnelsHandler
+} from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
 
 /**
@@ -533,6 +537,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+  // Tunnels namespace handler. Lazily constructed on first access via the
+  // `tunnels` getter; holds an in-memory map of tunnels created through
+  // this Sandbox instance.
+  private tunnelsHandler: TunnelsHandler | null = null;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
   // Incremented whenever the container stops. Used to invalidate
@@ -3862,6 +3870,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       ];
     });
+  }
+
+  /**
+   * Namespaced tunnel API. Currently supports zero-config *quick tunnels*
+   * (Cloudflare's trycloudflare service):
+   *
+   * - `tunnels.create(port)` — spawn cloudflared, return a
+   *   `https://<words>.trycloudflare.com` URL pointing at `localhost:<port>`.
+   * - `tunnels.list()` — tunnels currently running in the container.
+   * - `tunnels.destroy(idOrInfo)` — tear down by id or by the record
+   *   returned from `create()`.
+   *
+   * Requires the RPC transport. Calling this on a route-based transport
+   * throws "RPC transport required".
+   */
+  get tunnels(): TunnelsHandler {
+    if (!this.tunnelsHandler) {
+      this.tunnelsHandler = createTunnelsHandler({
+        client: this.client,
+        logger: this.logger
+      });
+    }
+    return this.tunnelsHandler;
   }
 
   async isPortExposed(port: number): Promise<boolean> {

@@ -37,6 +37,14 @@ export class SandboxClient {
   public readonly desktop: DesktopClient;
   public readonly watch: WatchClient;
 
+  /**
+   * Tunnels are RPC-only — the route-based transport does not implement them.
+   * This getter exists so the `PublicKeys<SandboxClient> satisfies
+   * PublicKeys<SandboxAPI>` compile-time check holds. Calling any method on
+   * the returned proxy throws a clear `RPC transport required` error.
+   */
+  public readonly tunnels: never = createTunnelsNotImplemented() as never;
+
   private transport: ITransport | null = null;
 
   constructor(options: HttpClientOptions) {
@@ -141,3 +149,18 @@ export class SandboxClient {
 // intentionally have different concrete method shapes.
 type PublicKeys<T> = { [K in keyof T]: unknown };
 void (0 as unknown as PublicKeys<SandboxClient> satisfies PublicKeys<SandboxAPI>);
+
+function createTunnelsNotImplemented(): unknown {
+  const message =
+    'sandbox.tunnels.* requires the RPC transport. Enable it with transport: "rpc" in sandbox options.';
+  return new Proxy(
+    {},
+    {
+      get() {
+        return () => {
+          throw new Error(message);
+        };
+      }
+    }
+  );
+}
