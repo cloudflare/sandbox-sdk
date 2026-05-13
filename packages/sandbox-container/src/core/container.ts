@@ -25,6 +25,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { TunnelService } from '../services/tunnel-service';
 import { WatchService } from '../services/watch-service';
 
 export interface Dependencies {
@@ -37,6 +38,7 @@ export interface Dependencies {
   backupService: BackupService;
   desktopService: DesktopService;
   watchService: WatchService;
+  tunnelService: TunnelService;
 
   // Infrastructure
   logger: Logger;
@@ -130,6 +132,7 @@ export class Container {
     const backupService = new BackupService(logger, sessionManager);
     const desktopService = new DesktopService(logger);
     const watchService = new WatchService(logger);
+    const tunnelService = new TunnelService(logger);
 
     // Initialize handlers
     const backupHandler = new BackupHandler(backupService, logger);
@@ -163,6 +166,7 @@ export class Container {
       backupService,
       desktopService,
       watchService,
+      tunnelService,
 
       // Infrastructure
       logger,

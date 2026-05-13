@@ -1,0 +1,106 @@
+/**
+ * TunnelService - container-side orchestration for cloudflared quick tunnels.
+ *
+ * Owns the in-memory registry of tunnels running inside this container and
+ * delegates the actual subprocess supervision to `TunnelManager`. No
+ * Cloudflare API calls happen here; quick tunnels need no credentials.
+ *
+ * The SDK mints all tunnel ids and passes them in so the SDK can store the
+ * id without waiting for the create round-trip to resolve.
+ */
+
+import type { Logger, TunnelInfo } from '@repo/shared';
+import type { ServiceResult } from '../core/types';
+import { serviceError, serviceSuccess } from '../core/types';
+import { TunnelManager } from '../managers/tunnel-manager';
+
+
+export interface RunQuickTunnelOptions {
+  /** Override the readiness timeout. Forwarded to TunnelManager. */
+  readyTimeoutMs?: number;
+  /** Override the SIGTERM→SIGKILL grace period. Forwarded to TunnelManager. */
+  stopGraceMs?: number;
+}
+
+interface TunnelRecord {
+  info: TunnelInfo;
+  manager: TunnelManager;
+}
+
+export class TunnelService {
+  private readonly tunnels = new Map<string, TunnelRecord>();
+
+  constructor(private readonly logger: Logger) {}
+
+  async runQuickTunnel(
+    id: string,
+    port: number,
+    options?: RunQuickTunnelOptions
+  ): Promise<ServiceResult<TunnelInfo>> {
+    if (this.tunnels.has(id)) {
+      return serviceError({
+        message: `Tunnel ${id} is already running`,
+        code: 'TUNNEL_ALREADY_RUNNING',
+        details: { tunnelId: id }
+      });
+    }
+
+    const manager = new TunnelManager({
+      port,
+      logger: this.logger,
+      readyTimeoutMs: options?.readyTimeoutMs,
+      stopGraceMs: options?.stopGraceMs
+    });
+
+    try {
+      const { url } = await manager.start();
+      const hostname = new URL(url).hostname;
+      const info: TunnelInfo = {
+        id,
+        port,
+        url,
+        hostname,
+        createdAt: new Date().toISOString()
+      };
+      this.tunnels.set(id, { info, manager });
+      this.logger.info('Quick tunnel running', { id, port, url });
+      return serviceSuccess(info);
+    } catch (err) {
+      await manager.stop().catch(() => {});
+      const message = err instanceof Error ? err.message : String(err);
+      return serviceError({
+        message: `Failed to run quick tunnel: ${message}`,
+        code: 'TUNNEL_START_ERROR',
+        details: { tunnelId: id, port }
+      });
+    }
+  }
+
+  async destroyTunnel(id: string): Promise<ServiceResult<void>> {
+    const record = this.tunnels.get(id);
+    if (!record) {
+      return serviceError({
+        message: `Tunnel ${id} is not running`,
+        code: 'TUNNEL_NOT_FOUND',
+        details: { tunnelId: id }
+      });
+    }
+    try {
+      await record.manager.stop();
+    } finally {
+      this.tunnels.delete(id);
+    }
+    this.logger.info('Tunnel destroyed', { id });
+    return { success: true };
+  }
+
+  list(): TunnelInfo[] {
+    return Array.from(this.tunnels.values()).map((r) => r.info);
+  }
+
+  /** Stop every tunnel. Called on container shutdown. */
+  async destroyAll(): Promise<void> {
+    const ids = Array.from(this.tunnels.keys());
+    await Promise.all(ids.map((id) => this.destroyTunnel(id)));
+  }
+}
