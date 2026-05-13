@@ -987,6 +987,52 @@ console.log('Terminal server on port ' + port);
         }
       }
 
+      // Tunnels (RPC-only)
+      if (url.pathname === '/api/tunnel/create' && request.method === 'POST') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const info = await sandbox.tunnels.create(body.port);
+        return new Response(JSON.stringify(info), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/tunnel/list' && request.method === 'GET') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const tunnels = await sandbox.tunnels.list();
+        return new Response(JSON.stringify({ tunnels }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/tunnel/') &&
+        request.method === 'DELETE'
+      ) {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const id = decodeURIComponent(
+          url.pathname.slice('/api/tunnel/'.length)
+        );
+        await sandbox.tunnels.destroy(id);
+        return new Response(JSON.stringify({ success: true, id }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Environment variables
       if (url.pathname === '/api/env/set' && request.method === 'POST') {
         await executor.setEnvVars(body.envVars);
