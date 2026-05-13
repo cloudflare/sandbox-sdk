@@ -553,6 +553,16 @@ export interface SandboxOptions {
    * @default "http"
    */
   transport?: SandboxTransport;
+
+  /**
+   * When false, methods that do not receive an explicit session run in
+   * isolated per-operation sessions instead of the persistent default session.
+   *
+   * Explicit sessions created with createSession() are unchanged.
+   *
+   * @default true
+   */
+  enableDefaultSession?: boolean;
 }
 
 /**

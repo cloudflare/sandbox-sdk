@@ -75,11 +75,12 @@ export interface SandboxAPI {
 export interface SandboxCommandsAPI {
   execute(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sessionless?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -91,11 +92,12 @@ export interface SandboxCommandsAPI {
   }>;
   executeStream(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>>;
 }

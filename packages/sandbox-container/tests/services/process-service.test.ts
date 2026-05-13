@@ -151,6 +151,19 @@ describe('ProcessService', () => {
         expect(result.error.code).toBe('SESSION_ERROR');
       }
     });
+
+    it('should execute sessionless commands without SessionManager', async () => {
+      const result = await processService.executeCommand('exit 7', {
+        sessionless: true
+      });
+
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.success).toBe(false);
+        expect(result.data.exitCode).toBe(7);
+      }
+    });
   });
 
   describe('startProcess', () => {
@@ -212,6 +225,20 @@ describe('ProcessService', () => {
 
       // Verify SessionManager was not called
       expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+    });
+
+    it('should start sessionless streaming commands without SessionManager', async () => {
+      const result = await processService.startProcess('printf stream-output', {
+        sessionless: true
+      });
+
+      expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        await result.data.streamingComplete;
+        expect(result.data.stdout).toBe('stream-output');
+        expect(result.data.exitCode).toBe(0);
+      }
     });
 
     it('should handle stream execution errors', async () => {

@@ -154,11 +154,12 @@ class CommandsRPCAPI extends RpcTarget {
 
   async execute(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sessionless?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -172,7 +173,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      sessionless: options?.sessionless
     });
     const data = extractData<CommandResult>(result);
     return {
@@ -187,11 +189,12 @@ class CommandsRPCAPI extends RpcTarget {
 
   async executeStream(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
@@ -199,7 +202,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      sessionless: options?.sessionless
     });
 
     if (!result.success) {

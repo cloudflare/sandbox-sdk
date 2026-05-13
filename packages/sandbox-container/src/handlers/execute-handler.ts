@@ -80,6 +80,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // For non-background commands, execute and return result
     const result = await this.processService.executeCommand(body.command, {
       sessionId,
+      sessionless: body.sessionless,
       timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
@@ -117,6 +118,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {
       sessionId,
+      sessionless: body.sessionless,
+      timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
       origin: body.origin

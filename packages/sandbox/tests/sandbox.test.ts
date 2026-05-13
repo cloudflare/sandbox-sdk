@@ -149,6 +149,23 @@ describe('Sandbox - Automatic Session Management', () => {
       timestamp: new Date().toISOString()
     } as any);
 
+    vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({
+                type: 'complete',
+                exitCode: 0,
+                timestamp: new Date().toISOString()
+              })}\n\n`
+            )
+          );
+          controller.close();
+        }
+      })
+    );
+
     vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
       success: true,
       path: '/test.txt',
@@ -245,6 +262,113 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(firstSessionId).toBe(fileSessionId);
       expect(firstSessionId).toBe(secondSessionId);
+    });
+
+    it('should use sessionless exec when default sessions are disabled', async () => {
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        sessionId: 'sandbox-ephemeral-test',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await sandbox.setEnableDefaultSession(false);
+
+      await sandbox.exec('echo test1');
+      await sandbox.writeFile('/test.txt', 'content');
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledTimes(1);
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
+        'defaultSession',
+        expect.any(String)
+      );
+
+      const firstSessionId = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[0][1];
+      const fileSessionId = vi.mocked(sandbox.client.files.writeFile).mock
+        .calls[0][2];
+
+      expect(firstSessionId).toBeUndefined();
+      expect(fileSessionId).toMatch(/^sandbox-ephemeral-/);
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo test1',
+        undefined,
+        expect.objectContaining({ sessionless: true })
+      );
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
+        fileSessionId
+      );
+    });
+
+    it('should merge sandbox env vars into sessionless exec', async () => {
+      await sandbox.setEnvVars({ SANDBOX_ONLY: 'sandbox-value' });
+      await sandbox.setEnableDefaultSession(false);
+
+      await sandbox.exec('echo $SANDBOX_ONLY', {
+        env: { CALL_ONLY: 'call-value', SANDBOX_ONLY: 'override-value' }
+      });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo $SANDBOX_ONLY',
+        undefined,
+        expect.objectContaining({
+          sessionless: true,
+          env: {
+            SANDBOX_ONLY: 'override-value',
+            CALL_ONLY: 'call-value'
+          }
+        })
+      );
+    });
+
+    it('should use sessionless execStream when default sessions are disabled', async () => {
+      await sandbox.setEnableDefaultSession(false);
+
+      await sandbox.execStream('echo stream');
+
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo stream',
+        undefined,
+        expect.objectContaining({ sessionless: true })
+      );
+    });
+
+    it('should merge sandbox env vars into sessionless execStream', async () => {
+      await sandbox.setEnvVars({ SANDBOX_ONLY: 'sandbox-value' });
+      await sandbox.setEnableDefaultSession(false);
+
+      await sandbox.execStream('echo stream', {
+        env: { CALL_ONLY: 'call-value', SANDBOX_ONLY: 'override-value' }
+      });
+
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo stream',
+        undefined,
+        expect.objectContaining({
+          sessionless: true,
+          env: {
+            SANDBOX_ONLY: 'override-value',
+            CALL_ONLY: 'call-value'
+          }
+        })
+      );
+    });
+
+    it('should use sessionless streaming exec when default sessions are disabled', async () => {
+      await sandbox.setEnableDefaultSession(false);
+
+      await sandbox.exec('echo stream', {
+        stream: true,
+        onOutput: vi.fn()
+      });
+
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo stream',
+        undefined,
+        expect.objectContaining({ sessionless: true })
+      );
     });
 
     it('should use default session for process management', async () => {
@@ -375,6 +499,147 @@ describe('Sandbox - Automatic Session Management', () => {
       vi.mocked(mockCtx.storage.put).mockResolvedValue(undefined);
       await sandbox.exec('echo two');
 
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears stale default session state when disabling default sessions', async () => {
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockImplementation(
+        async (sessionId: string) =>
+          ({
+            success: true,
+            sessionId,
+            timestamp: new Date().toISOString()
+          }) as any
+      );
+
+      await sandbox.exec('echo initial');
+
+      const defaultSessionId = (sandbox as any).defaultSession;
+      expect(defaultSessionId).toBeTruthy();
+
+      await sandbox.setEnableDefaultSession(false);
+
+      expect((sandbox as any).defaultSession).toBeNull();
+      expect(mockCtx.storage.delete).toHaveBeenCalledWith('defaultSession');
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
+        defaultSessionId
+      );
+
+      await expect(sandbox.deleteSession(defaultSessionId)).resolves.toEqual({
+        success: true,
+        sessionId: defaultSessionId,
+        timestamp: expect.any(String)
+      });
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledTimes(2);
+
+      await sandbox.setEnvVars({ AFTER_DISABLE: '1' });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledTimes(1);
+
+      await sandbox.exec('echo after disable');
+
+      expect(sandbox.client.commands.execute).toHaveBeenLastCalledWith(
+        'echo after disable',
+        undefined,
+        expect.objectContaining({
+          sessionless: true,
+          env: { AFTER_DISABLE: '1' }
+        })
+      );
+    });
+
+    it('does not revive stale shell state after disable then re-enable', async () => {
+      const sessionState = new Map<string, Map<string, string>>();
+
+      vi.mocked(sandbox.client.utils.createSession).mockImplementation(
+        async (request) => {
+          sessionState.set(request.id, new Map());
+          return {
+            success: true,
+            id: request.id,
+            message: 'Created'
+          } as any;
+        }
+      );
+
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockImplementation(
+        async (sessionId: string) => {
+          sessionState.delete(sessionId);
+          return {
+            success: true,
+            sessionId,
+            timestamp: new Date().toISOString()
+          } as any;
+        }
+      );
+
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command, sessionId) => {
+          const timestamp = new Date().toISOString();
+          const state = sessionId
+            ? (sessionState.get(sessionId) ?? new Map<string, string>())
+            : new Map<string, string>();
+
+          if (sessionId && !sessionState.has(sessionId)) {
+            sessionState.set(sessionId, state);
+          }
+
+          const exportMatch = command.match(/^export ([A-Z_][A-Z0-9_]*)=(.+)$/);
+          if (exportMatch) {
+            state.set(exportMatch[1], exportMatch[2]);
+            return {
+              success: true,
+              stdout: '',
+              stderr: '',
+              exitCode: 0,
+              command,
+              timestamp
+            } as any;
+          }
+
+          const echoMatch = command.match(
+            /^echo "\$\{([A-Z_][A-Z0-9_]*):-EMPTY\}"$/
+          );
+          if (echoMatch) {
+            return {
+              success: true,
+              stdout: `${state.get(echoMatch[1]) ?? 'EMPTY'}
+`,
+              stderr: '',
+              exitCode: 0,
+              command,
+              timestamp
+            } as any;
+          }
+
+          return {
+            success: true,
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            command,
+            timestamp
+          } as any;
+        }
+      );
+
+      await sandbox.exec('export REVIVED=stale_value');
+
+      const beforeDisable = await sandbox.exec('echo "${REVIVED:-EMPTY}"');
+      expect(beforeDisable.stdout.trim()).toBe('stale_value');
+
+      const originalDefaultSessionId = (sandbox as any).defaultSession;
+      expect(originalDefaultSessionId).toBeTruthy();
+
+      await sandbox.setEnableDefaultSession(false);
+      await sandbox.setEnableDefaultSession(true);
+
+      const afterReenable = await sandbox.exec('echo "${REVIVED:-EMPTY}"');
+
+      expect(afterReenable.stdout.trim()).toBe('EMPTY');
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
+        originalDefaultSessionId
+      );
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
 
@@ -1899,7 +2164,7 @@ describe('Sandbox - Automatic Session Management', () => {
       vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
         undefined
       );
-      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+      vi.spyOn(backupSandbox as any, 'executeInSession').mockResolvedValue({
         stdout: '',
         stderr: '',
         exitCode: 0
@@ -1947,7 +2212,7 @@ describe('Sandbox - Automatic Session Management', () => {
       vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
         undefined
       );
-      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+      vi.spyOn(backupSandbox as any, 'executeInSession').mockResolvedValue({
         stdout: '',
         stderr: '',
         exitCode: 0
@@ -2044,7 +2309,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const downloadBackupParallelSpy = vi
         .spyOn(backupSandbox as any, 'downloadBackupParallel')
         .mockResolvedValue(undefined);
-      vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
+      vi.spyOn(backupSandbox as any, 'executeInSession').mockResolvedValue({
         stdout: '0',
         stderr: '',
         exitCode: 0
@@ -2078,8 +2343,8 @@ describe('Sandbox - Automatic Session Management', () => {
     it('should write parallel restore ranges directly into the temp archive', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const expectedSize = 16 * 1024 * 1024;
-      const execWithSessionSpy = vi
-        .spyOn(backupSandbox as any, 'execWithSession')
+      const executeInSessionSpy = vi
+        .spyOn(backupSandbox as any, 'executeInSession')
         .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
         .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
         .mockResolvedValueOnce({
@@ -2102,7 +2367,7 @@ describe('Sandbox - Automatic Session Management', () => {
         'backup-session'
       );
 
-      const downloadCommand = execWithSessionSpy.mock.calls[1][0] as string;
+      const downloadCommand = executeInSessionSpy.mock.calls[1][0] as string;
       expect(downloadCommand).toContain(
         "truncate -s 16777216 '/var/backups/test.sqsh.tmp'"
       );
@@ -2532,6 +2797,9 @@ describe('Sandbox - Automatic Session Management', () => {
       const second = sandbox.destroy();
       const third = sandbox.destroy();
 
+      // Wait for the async doDestroy() work to reach super.destroy().
+      await vi.waitFor(() => expect(superDestroy.calls()).toBe(1));
+
       // All three callers are awaiting the same underlying work; the parent
       // container destroy must only be invoked once.
       expect(superDestroy.calls()).toBe(1);
@@ -2549,6 +2817,8 @@ describe('Sandbox - Automatic Session Management', () => {
       const first = sandbox.destroy();
       const second = sandbox.destroy();
 
+      // Wait for doDestroy() to reach super.destroy() before rejecting it.
+      await vi.waitFor(() => expect(superDestroy.calls()).toBe(1));
       superDestroy.reject(new Error('container teardown failed'));
 
       await expect(first).rejects.toThrow('container teardown failed');
@@ -2558,14 +2828,14 @@ describe('Sandbox - Automatic Session Management', () => {
     it('runs a fresh teardown for a later destroy() after the previous one settles', async () => {
       const first = stubSuperDestroy();
       const firstCall = sandbox.destroy();
-      expect(first.calls()).toBe(1);
+      await vi.waitFor(() => expect(first.calls()).toBe(1));
       first.resolve();
       await firstCall;
 
       // Re-stub to track the second teardown independently.
       const second = stubSuperDestroy();
       const secondCall = sandbox.destroy();
-      expect(second.calls()).toBe(1);
+      await vi.waitFor(() => expect(second.calls()).toBe(1));
       second.resolve();
       await secondCall;
     });

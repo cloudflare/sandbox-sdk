@@ -31,20 +31,24 @@ export class CommandClient extends BaseHttpClient {
    */
   async execute(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
       origin?: 'user' | 'internal';
+      sessionless?: boolean;
     }
   ): Promise<ExecuteResponse> {
     try {
       const data: ExecuteRequest = {
         command,
-        sessionId,
+        ...(sessionId !== undefined && { sessionId }),
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
+        }),
+        ...(options?.sessionless !== undefined && {
+          sessionless: options.sessionless
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
@@ -82,20 +86,24 @@ export class CommandClient extends BaseHttpClient {
    */
   async executeStream(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
       origin?: 'user' | 'internal';
+      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
       const data = {
         command,
-        sessionId,
+        ...(sessionId !== undefined && { sessionId }),
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
+        }),
+        ...(options?.sessionless !== undefined && {
+          sessionless: options.sessionless
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),

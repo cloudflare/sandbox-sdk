@@ -35,7 +35,8 @@ import type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchOptions
+  WatchOptions,
+  WriteFileResult
 } from '@repo/shared';
 import {
   createLogger,
@@ -119,6 +120,7 @@ type SandboxConfiguration = {
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
+  enableDefaultSession?: boolean;
 };
 
 type CachedSandboxConfiguration = {
@@ -128,6 +130,7 @@ type CachedSandboxConfiguration = {
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
+  enableDefaultSession?: boolean;
 };
 
 type ConfigurableSandboxStub = {
@@ -139,6 +142,12 @@ type ConfigurableSandboxStub = {
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
   setTransport?: (transport: SandboxTransport) => Promise<void>;
+  setEnableDefaultSession?: (enableDefaultSession: boolean) => Promise<void>;
+};
+
+type ResolvedImplicitSession = {
+  sessionId: string;
+  cleanup: () => Promise<void>;
 };
 
 const sandboxConfigurationCache = new WeakMap<
@@ -305,6 +314,13 @@ function buildSandboxConfiguration(
     configuration.transport = options.transport;
   }
 
+  if (
+    options?.enableDefaultSession !== undefined &&
+    cached?.enableDefaultSession !== options.enableDefaultSession
+  ) {
+    configuration.enableDefaultSession = options.enableDefaultSession;
+  }
+
   return configuration;
 }
 
@@ -314,7 +330,8 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
     configuration.containerTimeouts !== undefined ||
-    configuration.transport !== undefined
+    configuration.transport !== undefined ||
+    configuration.enableDefaultSession !== undefined
   );
 }
 
@@ -339,6 +356,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.transport !== undefined && {
       transport: configuration.transport
+    }),
+    ...(configuration.enableDefaultSession !== undefined && {
+      enableDefaultSession: configuration.enableDefaultSession
     })
   };
 }
@@ -384,6 +404,13 @@ function applySandboxConfiguration(
   if (configuration.transport !== undefined) {
     operations.push(
       stub.setTransport?.(configuration.transport) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.enableDefaultSession !== undefined) {
+    operations.push(
+      stub.setEnableDefaultSession?.(configuration.enableDefaultSession) ??
+        Promise.resolve()
     );
   }
 
@@ -539,6 +566,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // in-flight default-session initialization that started against a
   // now-dead container.
   private containerGeneration = 0;
+  // Incremented whenever the default session is explicitly disabled via
+  // setEnableDefaultSession(false). Persisted so that re-enabling always
+  // produces a fresh session ID that cannot collide with the just-deleted one.
+  private defaultSessionRevision: number = 0;
   private defaultSessionInit: {
     sessionId: string;
     generation: number;
@@ -547,6 +578,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
+  private enableDefaultSession: boolean = true;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: SandboxTransport = 'http';
 
@@ -828,6 +860,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
+      this.enableDefaultSession =
+        (await this.ctx.storage.get<boolean>('enableDefaultSession')) ?? true;
+      this.defaultSessionRevision =
+        (await this.ctx.storage.get<number>('defaultSessionRevision')) ?? 0;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -919,6 +955,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (configuration.transport !== undefined) {
       await this.setTransport(configuration.transport);
     }
+
+    if (configuration.enableDefaultSession !== undefined) {
+      await this.setEnableDefaultSession(configuration.enableDefaultSession);
+    }
   }
 
   // RPC method to set the sleep timeout. Idempotent: re-applying the same
@@ -943,6 +983,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!keepAlive) {
       this.renewActivityTimeout();
     }
+  }
+
+  async setEnableDefaultSession(enableDefaultSession: boolean): Promise<void> {
+    if (this.enableDefaultSession === enableDefaultSession) return;
+    await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
+    if (!enableDefaultSession) {
+      const defaultSessionId = this.defaultSession;
+      this.containerGeneration++;
+      this.defaultSessionRevision++;
+      this.defaultSession = null;
+      this.defaultSessionInit = null;
+      await this.ctx.storage.delete('defaultSession');
+      await this.ctx.storage.put(
+        'defaultSessionRevision',
+        this.defaultSessionRevision
+      );
+
+      if (defaultSessionId) {
+        await this.client.utils.deleteSession(defaultSessionId).catch(() => {});
+      }
+    }
+    this.enableDefaultSession = enableDefaultSession;
+    // Note: changing this at runtime while exec/execStream calls are in flight
+    // is safe — each call captures its execution path at call-start — but the
+    // intended use is to set this once during sandbox initialisation.
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -1647,7 +1712,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const exec = sessionId
       ? (cmd: string) =>
-          this.execWithSession(cmd, sessionId, { origin: 'internal' })
+          this.executeInSession(cmd, sessionId, { origin: 'internal' })
       : (cmd: string) => this.execInternal(cmd);
 
     const result = await exec(script);
@@ -2408,7 +2473,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * in-flight initialization promise.
    */
   private async ensureDefaultSession(): Promise<string> {
-    const sessionId = `sandbox-${this.sandboxName || 'default'}`;
+    const base = `sandbox-${this.sandboxName || 'default'}`;
+    const sessionId =
+      this.defaultSessionRevision === 0
+        ? base
+        : `${base}-r${this.defaultSessionRevision}`;
 
     // Fast path: session already initialized in this instance
     if (this.defaultSession === sessionId) {
@@ -2471,6 +2540,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Fail the attempt so the next caller starts fresh against the new
     // container.
     if (generation !== this.containerGeneration) {
+      await this.client.utils.deleteSession(sessionId).catch(() => {});
       throw new Error(
         'Default session initialization was invalidated by a container stop'
       );
@@ -2483,6 +2553,80 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = sessionId;
     this.logger.debug('Default session initialized', { sessionId });
     return sessionId;
+  }
+
+  private async resolveImplicitSession(): Promise<ResolvedImplicitSession> {
+    if (this.enableDefaultSession) {
+      const sessionId = await this.ensureDefaultSession();
+      return {
+        sessionId,
+        cleanup: async () => {}
+      };
+    }
+
+    const sessionId = `sandbox-ephemeral-${randomHex(8)}`;
+    await this.client.utils.createSession({
+      id: sessionId,
+      env: this.envVars || {},
+      cwd: '/workspace'
+    });
+
+    return {
+      sessionId,
+      cleanup: async () => {
+        await this.client.utils.deleteSession(sessionId);
+      }
+    };
+  }
+
+  private async withImplicitSession<T>(
+    operation: (sessionId: string) => Promise<T>
+  ): Promise<T> {
+    const session = await this.resolveImplicitSession();
+    try {
+      return await operation(session.sessionId);
+    } finally {
+      await session.cleanup().catch(() => {});
+    }
+  }
+
+  private streamWithCleanup<T>(
+    stream: ReadableStream<T>,
+    cleanup: () => Promise<void>
+  ): ReadableStream<T> {
+    let reader: ReadableStreamDefaultReader<T> | undefined;
+    let cleanupDone = false;
+    const runCleanup = async () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      await cleanup();
+    };
+
+    return new ReadableStream<T>({
+      async start(controller) {
+        reader = stream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        } finally {
+          reader.releaseLock();
+          await runCleanup();
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader?.cancel(reason);
+        } finally {
+          await runCleanup();
+        }
+      }
+    });
   }
 
   /**
@@ -2509,8 +2653,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, options);
+    if (!this.enableDefaultSession) {
+      return this.execSessionless(command, options);
+    }
+
+    return this.execWithImplicitSession(command, options);
   }
 
   /**
@@ -2518,15 +2665,101 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, { origin: 'internal' });
+    if (!this.enableDefaultSession) {
+      return this.execSessionless(command, { origin: 'internal' });
+    }
+
+    return this.execWithImplicitSession(command, { origin: 'internal' });
   }
 
-  /**
-   * Internal session-aware exec implementation
-   * Used by both public exec() and session wrappers
-   */
-  private async execWithSession(
+  private async execWithImplicitSession(
+    command: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    return this.withImplicitSession((session) =>
+      this.executeInSession(command, session, options)
+    );
+  }
+
+  private async execSessionless(
+    command: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    if (options?.stream && options.onOutput) {
+      return this.executeWithSessionlessStreaming(command, options);
+    }
+
+    return this.executeSessionless(command, options);
+  }
+
+  private async executeSessionless(
+    command: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    const startTime = Date.now();
+    const sessionId = undefined;
+    const env = this.resolveCommandEnv(options?.env);
+    let execOutcome: { exitCode: number; success: boolean } | undefined;
+    let execError: Error | undefined;
+
+    try {
+      if (options?.signal?.aborted) {
+        throw new Error('Operation was aborted');
+      }
+
+      const response = await this.client.commands.execute(command, sessionId, {
+        timeoutMs: options?.timeout,
+        env,
+        cwd: options?.cwd,
+        origin: options?.origin,
+        sessionless: true
+      });
+
+      const result = this.mapExecuteResponseToExecResult(
+        response,
+        Date.now() - startTime,
+        sessionId
+      );
+      execOutcome = { exitCode: result.exitCode, success: result.success };
+
+      if (options?.onComplete) {
+        options.onComplete(result);
+      }
+
+      return result;
+    } catch (error) {
+      execError = error instanceof Error ? error : new Error(String(error));
+      if (options?.onError && error instanceof Error) {
+        options.onError(error);
+      }
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.exec',
+        outcome: execError ? 'error' : 'success',
+        command,
+        exitCode: execOutcome?.exitCode,
+        durationMs: Date.now() - startTime,
+        sessionId,
+        origin: options?.origin ?? 'user',
+        error: execError ?? undefined,
+        errorMessage: execError?.message
+      });
+    }
+  }
+
+  private resolveCommandEnv(
+    env?: Record<string, string | undefined>
+  ): Record<string, string | undefined> | undefined {
+    const mergedEnv = {
+      ...this.envVars,
+      ...(env ?? {})
+    };
+
+    return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+  }
+
+  private async executeInSession(
     command: string,
     sessionId: string,
     options?: ExecOptions
@@ -2534,7 +2767,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    let timeoutId: NodeJS.Timeout | undefined;
     let execOutcome: { exitCode: number; success: boolean } | undefined;
     let execError: Error | undefined;
 
@@ -2557,19 +2789,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } else {
         // Regular execution with session
-        const commandOptions =
-          options &&
-          (options.timeout !== undefined ||
-            options.env !== undefined ||
-            options.cwd !== undefined ||
-            options.origin !== undefined)
-            ? {
-                timeoutMs: options.timeout,
-                env: options.env,
-                cwd: options.cwd,
-                origin: options.origin
-              }
-            : undefined;
+        const commandOptions = options
+          ? {
+              timeoutMs: options?.timeout,
+              env: options?.env,
+              cwd: options?.cwd,
+              origin: options?.origin
+            }
+          : undefined;
 
         const response = await this.client.commands.execute(
           command,
@@ -2600,9 +2827,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
       throw error;
     } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: execError ? 'error' : 'success',
@@ -2619,10 +2843,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private async executeWithStreaming(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options: ExecOptions,
     startTime: number,
-    timestamp: string
+    timestamp: string,
+    sessionless = false
   ): Promise<ExecResult> {
     let stdout = '';
     let stderr = '';
@@ -2635,7 +2860,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timeoutMs: options.timeout,
           env: options.env,
           cwd: options.cwd,
-          origin: options.origin
+          origin: options.origin,
+          ...(sessionless && { sessionless: true })
         }
       );
 
@@ -2690,6 +2916,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  private async executeWithSessionlessStreaming(
+    command: string,
+    options: ExecOptions
+  ): Promise<ExecResult> {
+    return this.executeWithStreaming(
+      command,
+      undefined,
+      {
+        ...options,
+        env: this.resolveCommandEnv(options.env)
+      },
+      Date.now(),
+      new Date().toISOString(),
+      true
+    );
+  }
+
   private mapExecuteResponseToExecResult(
     response: ExecuteResponse,
     duration: number,
@@ -2722,7 +2965,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       endTime?: string | Date;
       exitCode?: number;
     },
-    sessionId: string
+    sessionId?: string
   ): Process {
     return {
       id: data.id,
@@ -3169,8 +3412,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     sessionId?: string
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
+    const resolvedSession = sessionId
+      ? { sessionId, cleanup: async () => {} }
+      : await this.resolveImplicitSession();
+    const session = resolvedSession.sessionId;
+    let cleanupOwned = false;
     try {
-      const session = sessionId ?? (await this.ensureDefaultSession());
       const requestOptions = {
         ...(options?.processId !== undefined && {
           processId: options.processId
@@ -3211,15 +3458,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Start background streaming if output/exit callbacks are provided
       if (options?.onOutput || options?.onExit) {
         // Fire and forget - don't await, let it run in background
-        this.startProcessCallbackStream(response.processId, options).catch(
-          () => {
-            // Error already handled in startProcessCallbackStream
-          }
-        );
+        cleanupOwned = true;
+        this.startProcessCallbackStream(
+          response.processId,
+          options,
+          resolvedSession.cleanup
+        ).catch(() => {
+          // Error already handled in startProcessCallbackStream
+        });
+      } else if (!sessionId && !this.enableDefaultSession) {
+        cleanupOwned = true;
+        this.cleanupProcessSessionOnExit(
+          response.processId,
+          resolvedSession.cleanup
+        ).catch(() => {});
       }
 
       return processObj;
     } catch (error) {
+      if (!cleanupOwned) {
+        await resolvedSession.cleanup().catch(() => {});
+      }
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
@@ -3234,7 +3493,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async startProcessCallbackStream(
     processId: string,
-    options: ProcessOptions
+    options: ProcessOptions,
+    cleanup: () => Promise<void> = async () => {}
   ): Promise<void> {
     try {
       const stream = await this.client.processes.streamProcessLogs(processId);
@@ -3275,11 +3535,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error instanceof Error ? error : new Error(String(error)),
         { processId }
       );
+    } finally {
+      await cleanup();
+    }
+  }
+
+  private async cleanupProcessSessionOnExit(
+    processId: string,
+    cleanup: () => Promise<void>
+  ): Promise<void> {
+    try {
+      const stream = await this.client.processes.streamProcessLogs(processId);
+      for await (const event of parseSSEStream<LogEvent>(stream)) {
+        if (event.type === 'exit') {
+          return;
+        }
+      }
+    } finally {
+      await cleanup();
     }
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const resolvedId =
+      sessionId ??
+      (this.enableDefaultSession
+        ? await this.ensureDefaultSession()
+        : undefined);
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -3293,14 +3575,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           endTime: processData.endTime,
           exitCode: processData.exitCode
         },
-        session
+        resolvedId
       )
     );
   }
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes.getProcess(id);
+    const resolvedId =
+      sessionId ??
+      (this.enableDefaultSession
+        ? await this.ensureDefaultSession()
+        : undefined);
+    let response: Awaited<ReturnType<typeof this.client.processes.getProcess>>;
+    try {
+      response = await this.client.processes.getProcess(id);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.toLowerCase().includes('not found')) {
+        return null;
+      }
+      throw error;
+    }
+
     if (!response.process) {
       return null;
     }
@@ -3316,7 +3612,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         endTime: processData.endTime,
         exitCode: processData.exitCode
       },
-      session
+      resolvedId
     );
   }
 
@@ -3361,13 +3657,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session, {
-      timeoutMs: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd
-    });
+    if (!this.enableDefaultSession) {
+      const env = this.resolveCommandEnv(options?.env);
+      return this.client.commands.executeStream(command, undefined, {
+        timeoutMs: options?.timeout,
+        env,
+        cwd: options?.cwd,
+        sessionless: true
+      });
+    }
+
+    const session = await this.resolveImplicitSession();
+    const stream = await this.client.commands.executeStream(
+      command,
+      session.sessionId,
+      {
+        timeoutMs: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      }
+    );
+    return this.streamWithCleanup(stream, session.cleanup);
   }
 
   /**
@@ -3417,7 +3727,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cloneTimeoutMs?: number;
     }
   ) {
-    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    if (!options?.sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.git.checkout(repoUrl, session, {
+          branch: options?.branch,
+          targetDir: options?.targetDir,
+          depth: options?.depth,
+          timeoutMs: options?.cloneTimeoutMs
+        })
+      );
+    }
+
+    const session = options.sessionId;
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
       targetDir: options?.targetDir,
@@ -3430,7 +3751,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    if (!options.sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.files.mkdir(path, session, {
+          recursive: options.recursive
+        })
+      );
+    }
+
+    const session = options.sessionId;
     return this.client.files.mkdir(path, session, {
       recursive: options.recursive
     });
@@ -3441,7 +3770,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    if (!options.sessionId) {
+      return this.withImplicitSession<WriteFileResult>((session) =>
+        content instanceof ReadableStream
+          ? this.client.files.writeFileStream(path, content, session)
+          : this.client.files.writeFile(path, content, session, {
+              encoding: options.encoding
+            })
+      );
+    }
+
+    const session = options.sessionId;
 
     if (content instanceof ReadableStream) {
       return this.client.files.writeFileStream(path, content, session);
@@ -3453,13 +3792,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async deleteFile(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.deleteFile(path, session);
+    if (!sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.files.deleteFile(path, session)
+      );
+    }
+    return this.client.files.deleteFile(path, sessionId);
   }
 
   async renameFile(oldPath: string, newPath: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.renameFile(oldPath, newPath, session);
+    if (!sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.files.renameFile(oldPath, newPath, session)
+      );
+    }
+    return this.client.files.renameFile(oldPath, newPath, sessionId);
   }
 
   async moveFile(
@@ -3467,8 +3814,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     sessionId?: string
   ) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.moveFile(sourcePath, destinationPath, session);
+    if (!sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.files.moveFile(sourcePath, destinationPath, session)
+      );
+    }
+    return this.client.files.moveFile(sourcePath, destinationPath, sessionId);
   }
 
   /**
@@ -3493,7 +3844,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { encoding?: FileEncoding; sessionId?: string } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    if (!options.sessionId) {
+      return this.withImplicitSession<ReadFileResult | ReadFileStreamResult>(
+        (session) => {
+          if (options.encoding === 'none') {
+            return this.client.files.readFile(path, session, {
+              encoding: 'none'
+            });
+          }
+          return this.client.files.readFile(path, session, {
+            encoding: options.encoding
+          });
+        }
+      );
+    }
+
+    const session = options.sessionId;
     if (options.encoding === 'none') {
       return this.client.files.readFile(path, session, { encoding: 'none' });
     }
@@ -3512,21 +3878,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.readFileStream(path, session);
+    if (options.sessionId) {
+      return this.client.files.readFileStream(path, options.sessionId);
+    }
+
+    const session = await this.resolveImplicitSession();
+    const stream = await this.client.files.readFileStream(
+      path,
+      session.sessionId
+    );
+    return this.streamWithCleanup(stream, session.cleanup);
   }
 
   async listFiles(
     path: string,
     options?: { recursive?: boolean; includeHidden?: boolean }
   ) {
-    const session = await this.ensureDefaultSession();
-    return this.client.files.listFiles(path, session, options);
+    return this.withImplicitSession((session) =>
+      this.client.files.listFiles(path, session, options)
+    );
   }
 
   async exists(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.exists(path, session);
+    if (!sessionId) {
+      return this.withImplicitSession((session) =>
+        this.client.files.exists(path, session)
+      );
+    }
+    return this.client.files.exists(path, sessionId);
   }
 
   /**
@@ -3614,14 +3993,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.watch.watch({
+    if (options.sessionId) {
+      return this.client.watch.watch({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        sessionId: options.sessionId
+      });
+    }
+
+    const session = await this.resolveImplicitSession();
+    const stream = await this.client.watch.watch({
       path,
       recursive: options.recursive,
       include: options.include,
       exclude: options.exclude,
-      sessionId
+      sessionId: session.sessionId
     });
+    return this.streamWithCleanup(stream, session.cleanup);
   }
 
   /**
@@ -3638,15 +4028,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.watch.checkChanges({
-      path,
-      recursive: options.recursive,
-      include: options.include,
-      exclude: options.exclude,
-      since: options.since,
-      sessionId
-    });
+    if (options.sessionId) {
+      return this.client.watch.checkChanges({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        since: options.since,
+        sessionId: options.sessionId
+      });
+    }
+
+    return this.withImplicitSession((sessionId) =>
+      this.client.watch.checkChanges({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        since: options.since,
+        sessionId
+      })
+    );
   }
 
   /**
@@ -3730,8 +4132,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
         );
       }
-      const sessionId = await this.ensureDefaultSession();
-      await this.client.ports.exposePort(port, sessionId, options?.name);
+      await this.withImplicitSession((sessionId) =>
+        this.client.ports.exposePort(port, sessionId, options?.name)
+      );
 
       tokens[port.toString()] = { token, name: options?.name };
       await this.ctx.storage.put('portTokens', tokens);
@@ -3790,9 +4193,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('portTokens', tokens);
       }
 
-      const sessionId = await this.ensureDefaultSession();
       try {
-        await this.client.ports.unexposePort(port, sessionId);
+        await this.withImplicitSession((sessionId) =>
+          this.client.ports.unexposePort(port, sessionId)
+        );
       } catch (error) {
         // A container that was asleep when we entered wakes with an
         // empty exposed-port registry; restoreExposedPorts() has
@@ -3820,8 +4224,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getExposedPorts(hostname: string) {
-    const sessionId = await this.ensureDefaultSession();
-    const response = await this.client.ports.getExposedPorts(sessionId);
+    const response = await this.withImplicitSession((sessionId) =>
+      this.client.ports.getExposedPorts(sessionId)
+    );
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
@@ -3866,8 +4271,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async isPortExposed(port: number): Promise<boolean> {
     try {
-      const sessionId = await this.ensureDefaultSession();
-      const response = await this.client.ports.getExposedPorts(sessionId);
+      const response = await this.withImplicitSession((sessionId) =>
+        this.client.ports.getExposedPorts(sessionId)
+      );
       return response.ports.some((exposedPort) => exposedPort.port === port);
     } catch (error) {
       this.logger.error(
@@ -4108,7 +4514,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       terminal: null as unknown as ExecutionSession['terminal'],
 
       exec: (command, options) =>
-        this.execWithSession(command, sessionId, options),
+        this.executeInSession(command, sessionId, options),
       execStream: (command, options) =>
         this.execStreamWithSession(command, sessionId, options),
 
@@ -4548,7 +4954,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       shellEscape(presignedUrl)
     ].join(' ');
 
-    const result = await this.execWithSession(curlCmd, backupSession, {
+    const result = await this.executeInSession(curlCmd, backupSession, {
       timeout: 1810_000,
       origin: 'internal'
     });
@@ -4811,7 +5217,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     backupSession: string
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedGetUrl(r2Key);
-    await this.execWithSession(
+    await this.executeInSession(
       `mkdir -p ${BACKUP_CONTAINER_DIR}`,
       backupSession,
       { origin: 'internal' }
@@ -4830,13 +5236,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         shellEscape(presignedUrl)
       ].join(' ');
 
-      const result = await this.execWithSession(curlCmd, backupSession, {
+      const result = await this.executeInSession(curlCmd, backupSession, {
         timeout: 1810_000,
         origin: 'internal'
       });
 
       if (result.exitCode !== 0) {
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(tmpPath)}`,
           backupSession,
           { origin: 'internal' }
@@ -4897,13 +5303,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
       ].join('; ');
 
-      const result = await this.execWithSession(script, backupSession, {
+      const result = await this.executeInSession(script, backupSession, {
         timeout: 1810_000,
         origin: 'internal'
       });
 
       if (result.exitCode !== 0) {
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(tmpPath)}`,
           backupSession,
           { origin: 'internal' }
@@ -4918,14 +5324,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    const sizeCheck = await this.execWithSession(
+    const sizeCheck = await this.executeInSession(
       `stat -c %s ${shellEscape(tmpPath)}`,
       backupSession,
       { origin: 'internal' }
     );
     const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
     if (actualSize !== expectedSize) {
-      await this.execWithSession(
+      await this.executeInSession(
         `rm -f ${shellEscape(tmpPath)}`,
         backupSession,
         { origin: 'internal' }
@@ -4939,13 +5345,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    const mvResult = await this.execWithSession(
+    const mvResult = await this.executeInSession(
       `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
       backupSession,
       { origin: 'internal' }
     );
     if (mvResult.exitCode !== 0) {
-      await this.execWithSession(
+      await this.executeInSession(
         `rm -f ${shellEscape(tmpPath)}`,
         backupSession,
         { origin: 'internal' }
@@ -5150,7 +5556,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       outcome = 'success';
 
       // Clean up the local archive in the container
-      await this.execWithSession(
+      await this.executeInSession(
         `rm -f ${shellEscape(archivePath)}`,
         backupSession,
         { origin: 'internal' }
@@ -5164,7 +5570,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(archivePath)}`,
           backupSession,
           { origin: 'internal' }
@@ -5372,7 +5778,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       outcome = 'success';
 
       // Clean up local archive
-      await this.execWithSession(
+      await this.executeInSession(
         `rm -f ${shellEscape(archivePath)}`,
         backupSession,
         { origin: 'internal' }
@@ -5385,7 +5791,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(archivePath)}`,
           backupSession,
           { origin: 'internal' }
@@ -5562,12 +5968,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
       // their squashfuse lower dirs.
       const mountGlob = `${BACKUP_CONTAINER_DIR}/mounts/${id}`;
-      await this.execWithSession(
+      await this.executeInSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
         backupSession,
         { origin: 'internal' }
       ).catch(() => {});
-      await this.execWithSession(
+      await this.executeInSession(
         `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
         backupSession,
         { origin: 'internal' }
@@ -5576,7 +5982,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Step 4: Write archive to the container (skip if already present and
       // same size — avoids overwriting a file that a lazily-unmounted
       // squashfuse may still hold open).
-      const sizeCheck = await this.execWithSession(
+      const sizeCheck = await this.executeInSession(
         `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
         backupSession,
         { origin: 'internal' }
@@ -5624,7 +6030,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id && backupSession) {
         const cleanupPath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(cleanupPath)}`,
           backupSession,
           { origin: 'internal' }
@@ -5768,7 +6174,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Ensure backup directory exists
-      await this.execWithSession(
+      await this.executeInSession(
         `mkdir -p ${BACKUP_CONTAINER_DIR}`,
         backupSession,
         { origin: 'internal' }
@@ -5825,7 +6231,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
-      const extractResult = await this.execWithSession(
+      const extractResult = await this.executeInSession(
         `/usr/bin/unsquashfs -f -d ${shellEscape(dir)} ${shellEscape(archivePath)}`,
         backupSession,
         { origin: 'internal' }
@@ -5842,7 +6248,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Clean up archive after extraction (no FUSE mount holds it open)
-      await this.execWithSession(
+      await this.executeInSession(
         `rm -f ${shellEscape(archivePath)}`,
         backupSession,
         { origin: 'internal' }
@@ -5859,7 +6265,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id && backupSession) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.execWithSession(
+        await this.executeInSession(
           `rm -f ${shellEscape(archivePath)}`,
           backupSession,
           { origin: 'internal' }
