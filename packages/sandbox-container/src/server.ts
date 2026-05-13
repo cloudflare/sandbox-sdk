@@ -284,6 +284,7 @@ export async function startServer(): Promise<ServerInstance> {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
+        const tunnelService = app.container.get('tunnelService');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -295,6 +296,7 @@ export async function startServer(): Promise<ServerInstance> {
         await desktopService.destroy();
         await processService.destroy();
         portService.destroy();
+        await tunnelService.destroyAll();
 
         logger.info('Services cleaned up successfully');
       } catch (error) {

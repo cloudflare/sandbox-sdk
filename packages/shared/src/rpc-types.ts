@@ -70,6 +70,7 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   desktop: SandboxDesktopAPI;
   watch: SandboxWatchAPI;
+  tunnels: SandboxTunnelsAPI;
 }
 
 export interface SandboxCommandsAPI {
@@ -325,4 +326,32 @@ export interface SandboxDesktopAPI {
 export interface SandboxWatchAPI {
   watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>>;
   checkChanges(request: CheckChangesRequest): Promise<CheckChangesResult>;
+}
+
+/**
+ * Public-facing tunnel record.
+ *
+ * Today only quick tunnels (`*.trycloudflare.com`) are supported. Future
+ * PRs will add named tunnels, which will carry a `name: string` field;
+ * `TunnelInfo` will then become a discriminated union keyed on the
+ * presence of `name`. The quick variant declares `name?: never` so the
+ * narrowing works without a breaking change here.
+ */
+export interface TunnelInfo {
+  id: string;
+  port: number;
+  url: string;
+  hostname: string;
+  createdAt: string;
+  /** Reserved for the named-tunnel variant in a future PR. */
+  name?: never;
+}
+
+export interface SandboxTunnelsAPI {
+  /** Spawn `cloudflared tunnel --url`. No credentials required. */
+  runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
+  /** Stop the cloudflared process for the given tunnel id. */
+  destroyTunnel(id: string): Promise<{ success: true; id: string }>;
+  /** List tunnels currently running inside the container. */
+  listTunnels(): Promise<TunnelInfo[]>;
 }
