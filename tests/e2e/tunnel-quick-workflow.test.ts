@@ -116,7 +116,7 @@ console.log("Server listening on port " + server.port);
       expect(tunnel.port).toBe(TUNNEL_TEST_PORT);
       expect(tunnel.url).toMatch(/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/);
       expect(tunnel.hostname).toMatch(/\.trycloudflare\.com$/);
-      expect(tunnel.id).toMatch(/^quick-[0-9a-f]{16}$/);
+      expect(tunnel.id).toMatch(/^quick-[0-9a-f]{8}$/);
 
       try {
         // 3. Confirm list() round-trips the tunnel.
