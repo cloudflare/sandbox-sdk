@@ -125,7 +125,7 @@ export const OPENAPI_SCHEMA = {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Advanced: Override or extend s3fs mount options. Only applies to R2 binding mounts (when endpoint is omitted).',
+              'Advanced: Override or extend s3fs mount options for both remote mounts and R2 binding mounts.',
             example: ['nomultipart']
           }
         }

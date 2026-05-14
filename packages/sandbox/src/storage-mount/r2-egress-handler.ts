@@ -231,6 +231,17 @@ interface UploadedPart {
   etag: string;
 }
 
+function extractXmlTagContent(segment: string, tagName: string): string | null {
+  const openTag = `<${tagName}>`;
+  const closeTag = `</${tagName}>`;
+  const start = segment.indexOf(openTag);
+  if (start === -1) return null;
+  const contentStart = start + openTag.length;
+  const end = segment.indexOf(closeTag, contentStart);
+  if (end === -1) return null;
+  return segment.slice(contentStart, end);
+}
+
 function parseCompleteMultipartUploadBody(body: string): UploadedPart[] {
   const parts: UploadedPart[] = [];
   let pos = 0;
@@ -241,12 +252,13 @@ function parseCompleteMultipartUploadBody(body: string): UploadedPart[] {
     if (end === -1) break;
     const segment = body.slice(start, end + 7);
     pos = end + 7;
-    const numMatch = /<PartNumber>(\d+)<\/PartNumber>/.exec(segment);
-    const etagMatch = /<ETag>("?[^<]+"?)<\/ETag>/.exec(segment);
-    if (numMatch && etagMatch) {
+    const partNumberText = extractXmlTagContent(segment, 'PartNumber');
+    const etagText = extractXmlTagContent(segment, 'ETag');
+    const partNumber = partNumberText ? parseInt(partNumberText, 10) : NaN;
+    if (Number.isFinite(partNumber) && etagText) {
       parts.push({
-        partNumber: parseInt(numMatch[1], 10),
-        etag: etagMatch[1].replace(/^"|"$/g, '')
+        partNumber,
+        etag: etagText.replace(/^"|"$/g, '')
       });
     }
   }
@@ -290,6 +302,19 @@ function buildContentRange(range: R2Range, totalSize: number): string {
   const end =
     range.length !== undefined ? start + range.length - 1 : totalSize - 1;
   return `bytes ${start}-${end}/${totalSize}`;
+}
+
+function getRangeContentLength(range: R2Range, totalSize: number): number {
+  if ('suffix' in range) {
+    return Math.min(range.suffix, totalSize);
+  }
+  const start = range.offset ?? 0;
+  if (start >= totalSize) {
+    return 0;
+  }
+  const requestedLength =
+    range.length !== undefined ? range.length : totalSize - start;
+  return Math.min(requestedLength, totalSize - start);
 }
 
 function extractHttpMetadata(request: Request): R2HTTPMetadata {
@@ -431,7 +456,10 @@ async function handleGetObject(
   const rangeBody = await rangeObj.arrayBuffer();
   const headers = buildResponseHeaders(rangeObj);
   headers.set('Content-Range', buildContentRange(range, headObj.size));
-  headers.set('Content-Length', String(rangeBody.byteLength));
+  headers.set(
+    'Content-Length',
+    String(getRangeContentLength(range, headObj.size))
+  );
 
   return new Response(rangeBody, { status: 206, headers });
 }
@@ -540,10 +568,8 @@ async function handleUploadPart(
     });
   }
   const upload = r2.resumeMultipartUpload(key, uploadId);
-  const part = await upload.uploadPart(
-    partNumber,
-    request.body as ReadableStream
-  );
+  const body = await request.arrayBuffer();
+  const part = await upload.uploadPart(partNumber, body);
   const headers = new Headers();
   headers.set('ETag', `"${part.etag}"`);
   return new Response(null, { status: 200, headers });

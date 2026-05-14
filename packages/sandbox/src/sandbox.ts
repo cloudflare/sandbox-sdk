@@ -1196,7 +1196,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const remoteOptions = options as RemoteMountBucketOptions;
-    if (!remoteOptions.endpoint) {
+    if (remoteOptions.endpoint === undefined) {
       const envObj = this.env as Record<string, unknown>;
       const binding = envObj[bucket];
       if (isR2Bucket(binding)) {
@@ -1335,7 +1335,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: R2BindingMountBucketOptions
   ): Promise<void> {
     const mountStartTime = Date.now();
-    const prefix = options.prefix || undefined;
+    const prefix = options.prefix;
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
 
@@ -1473,7 +1473,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: RemoteMountBucketOptions
   ): Promise<void> {
     const mountStartTime = Date.now();
-    const prefix = options.prefix || undefined;
+    const prefix = options.prefix;
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;

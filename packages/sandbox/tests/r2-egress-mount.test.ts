@@ -349,6 +349,19 @@ describe('Sandbox R2 egress mounts', () => {
     );
   });
 
+  it('treats an empty endpoint string as a remote mount configuration error', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/data', {
+        endpoint: ''
+      } as unknown as Parameters<Sandbox['mountBucket']>[2])
+    ).rejects.toThrow('Invalid endpoint URL');
+  });
+
   it('rejects a second mount of the same R2 binding with a different prefix', async () => {
     const sandbox = new Sandbox(
       createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
