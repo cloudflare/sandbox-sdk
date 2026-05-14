@@ -6,6 +6,7 @@ import type {
   ServiceResult
 } from '@sandbox-container/core/types';
 import { DEFAULT_GIT_CLONE_TIMEOUT_MS } from '@sandbox-container/managers/git-manager';
+import { ExecutionService } from '@sandbox-container/services/execution-service.js';
 import {
   GitService,
   type SecurityService
@@ -45,6 +46,7 @@ const mockSessionManager = {
 
 describe('GitService', () => {
   let gitService: GitService;
+  let executionService: ExecutionService;
 
   beforeEach(async () => {
     // Reset all mocks before each test
@@ -102,9 +104,10 @@ describe('GitService', () => {
       }
     );
 
+    executionService = new ExecutionService(mockSessionManager);
     gitService = new GitService(
       mockSecurityService,
-      mockSessionManager,
+      executionService,
       mockLogger
     );
   });

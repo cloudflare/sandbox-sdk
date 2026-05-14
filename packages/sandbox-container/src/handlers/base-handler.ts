@@ -8,10 +8,12 @@ import {
   type OperationType
 } from '@repo/shared/errors';
 import type { Handler, RequestContext, ServiceError } from '../core/types';
+import { canonicalizeExecutionSessionId } from '../services/execution-service';
 
-export abstract class BaseHandler<TRequest, TResponse>
-  implements Handler<TRequest, TResponse>
-{
+export abstract class BaseHandler<TRequest, TResponse> implements Handler<
+  TRequest,
+  TResponse
+> {
   constructor(protected logger: Logger) {}
 
   abstract handle(
@@ -103,6 +105,13 @@ export abstract class BaseHandler<TRequest, TResponse>
   protected extractQueryParam(request: Request, param: string): string | null {
     const url = new URL(request.url);
     return url.searchParams.get(param);
+  }
+
+  protected resolveExecutionSessionId(options: {
+    sessionId?: string;
+    fallbackSessionId?: string;
+  }): string {
+    return canonicalizeExecutionSessionId(options);
   }
 
   /**

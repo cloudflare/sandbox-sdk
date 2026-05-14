@@ -232,6 +232,24 @@ export interface SessionData {
   cwd?: string;
 }
 
+export type ExecutionMode = 'session' | 'sessionless';
+
+export interface ExecutionTarget {
+  mode: ExecutionMode;
+  sessionId?: string;
+}
+
+export type ProcessCommandHandle =
+  | {
+      mode: 'session';
+      sessionId: string;
+      commandId: string;
+    }
+  | {
+      mode: 'sessionless';
+      pid: number;
+    };
+
 // Process types (enhanced from existing)
 export type ProcessStatus =
   | 'starting'
@@ -255,10 +273,7 @@ export interface ProcessRecord {
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
   // Unified execution model: All processes use SessionManager
-  commandHandle?: {
-    sessionId: string;
-    commandId: string;
-  };
+  commandHandle?: ProcessCommandHandle;
   // Promise that resolves when all streaming events have been processed
   streamingComplete?: Promise<void>;
   // For isolation layer (file-based IPC)
@@ -273,7 +288,6 @@ export type ProcessInfo = ProcessRecord;
 // Process options for container-internal execution (includes session routing)
 export interface ProcessOptions {
   sessionId?: string;
-  sessionless?: boolean;
   processId?: string;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;

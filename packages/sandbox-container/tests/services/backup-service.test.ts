@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
+import { ExecutionService } from '@sandbox-container/services/execution-service.js';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
@@ -55,12 +56,14 @@ function execSuccess(stdout = '', stderr = ''): ServiceResult<RawExecResult> {
 
 describe('BackupService', () => {
   let service: BackupService;
+  let executionService: ExecutionService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalFetch = global.fetch;
     global.fetch = mockFetch as unknown as typeof fetch;
-    service = new BackupService(mockLogger, mockSessionManager);
+    executionService = new ExecutionService(mockSessionManager);
+    service = new BackupService(mockLogger, executionService);
   });
 
   afterEach(() => {

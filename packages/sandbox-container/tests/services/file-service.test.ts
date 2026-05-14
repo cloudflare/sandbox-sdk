@@ -10,6 +10,7 @@ import {
 import type { Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '@sandbox-container/core/types';
+import { ExecutionService } from '@sandbox-container/services/execution-service.js';
 import {
   FileService,
   type SecurityService
@@ -88,6 +89,7 @@ const mockBunFile = (options: MockFileOptions = {}) => {
 
 describe('FileService', () => {
   let fileService: FileService;
+  let executionService: ExecutionService;
 
   afterEach(() => {
     bunFileSpy?.mockRestore();
@@ -140,11 +142,11 @@ describe('FileService', () => {
       }
     );
 
-    // Create service with mocked SessionManager
+    executionService = new ExecutionService(mockSessionManager);
     fileService = new FileService(
       mockSecurityService,
       mockLogger,
-      mockSessionManager
+      executionService
     );
   });
 

@@ -135,7 +135,7 @@ describe('FileHandler', () => {
         {
           encoding: undefined
         },
-        undefined
+        'session-456'
       );
     });
 
@@ -206,7 +206,7 @@ describe('FileHandler', () => {
       );
     });
 
-    it('should pass undefined sessionId when not provided', async () => {
+    it('should fall back to the request context sessionId when not provided', async () => {
       const writeFileData = {
         path: '/tmp/output.txt',
         content: 'Hello, File!'
@@ -229,7 +229,7 @@ describe('FileHandler', () => {
         '/tmp/output.txt',
         'Hello, File!',
         {},
-        undefined
+        'session-456'
       );
     });
 
@@ -290,7 +290,8 @@ describe('FileHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       expect(mockFileService.deleteFile).toHaveBeenCalledWith(
-        '/tmp/delete-me.txt'
+        '/tmp/delete-me.txt',
+        'session-456'
       );
     });
 
@@ -350,7 +351,8 @@ describe('FileHandler', () => {
 
       expect(mockFileService.renameFile).toHaveBeenCalledWith(
         '/tmp/old-name.txt',
-        '/tmp/new-name.txt'
+        '/tmp/new-name.txt',
+        'session-456'
       );
     });
 
@@ -413,7 +415,8 @@ describe('FileHandler', () => {
 
       expect(mockFileService.moveFile).toHaveBeenCalledWith(
         '/tmp/source.txt',
-        '/tmp/destination.txt'
+        '/tmp/destination.txt',
+        'session-456'
       );
     });
 
@@ -478,7 +481,8 @@ describe('FileHandler', () => {
         '/tmp/new-directory',
         {
           recursive: true
-        }
+        },
+        'session-456'
       );
     });
 
@@ -511,7 +515,8 @@ describe('FileHandler', () => {
         '/tmp/simple-dir',
         {
           recursive: undefined
-        }
+        },
+        'session-456'
       );
     });
 

@@ -288,12 +288,12 @@ describe('Sandbox - Automatic Session Management', () => {
       const fileSessionId = vi.mocked(sandbox.client.files.writeFile).mock
         .calls[0][2];
 
-      expect(firstSessionId).toBeUndefined();
+      expect(firstSessionId).toBe('none');
       expect(fileSessionId).toMatch(/^sandbox-ephemeral-/);
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test1',
-        undefined,
-        expect.objectContaining({ sessionless: true })
+        'none',
+        expect.any(Object)
       );
       expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
         fileSessionId
@@ -310,9 +310,8 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo $SANDBOX_ONLY',
-        undefined,
+        'none',
         expect.objectContaining({
-          sessionless: true,
           env: {
             SANDBOX_ONLY: 'override-value',
             CALL_ONLY: 'call-value'
@@ -329,8 +328,8 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
         'echo stream',
-        undefined,
-        expect.objectContaining({ sessionless: true })
+        'none',
+        expect.any(Object)
       );
     });
 
@@ -344,9 +343,8 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
         'echo stream',
-        undefined,
+        'none',
         expect.objectContaining({
-          sessionless: true,
           env: {
             SANDBOX_ONLY: 'override-value',
             CALL_ONLY: 'call-value'
@@ -366,8 +364,8 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
         'echo stream',
-        undefined,
-        expect.objectContaining({ sessionless: true })
+        'none',
+        expect.any(Object)
       );
     });
 
@@ -540,9 +538,8 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenLastCalledWith(
         'echo after disable',
-        undefined,
+        'none',
         expect.objectContaining({
-          sessionless: true,
           env: { AFTER_DISABLE: '1' }
         })
       );

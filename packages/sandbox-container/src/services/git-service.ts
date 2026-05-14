@@ -15,7 +15,7 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
 import { GitManager, gitCloneTimeoutSeconds } from '../managers/git-manager';
-import type { SessionManager } from './session-manager';
+import type { ExecutionService } from './execution-service';
 
 export interface SecurityService {
   validateGitUrl(url: string): { isValid: boolean; errors: string[] };
@@ -27,7 +27,7 @@ export class GitService {
 
   constructor(
     private security: SecurityService,
-    private sessionManager: SessionManager,
+    private executionService: ExecutionService,
     private logger: Logger
   ) {
     this.manager = new GitManager();
@@ -69,7 +69,11 @@ export class GitService {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let errorMessage: string | undefined;
-    const sessionId = options.sessionId || 'default';
+    const target = this.executionService.resolveTarget({
+      sessionId: options.sessionId
+    });
+    const sessionId =
+      this.executionService.targetToSessionId(target) ?? 'default';
 
     try {
       // Validate repository URL
@@ -137,70 +141,73 @@ export class GitService {
       );
       const command = this.buildCommand(args);
 
-      const result = await this.sessionManager
-        .withSession(sessionId, async (exec) => {
-          // Execute git clone
-          const cloneResult = await exec(command, { origin: 'internal' });
+      const result = await this.executionService
+        .withExecution(
+          async (exec) => {
+            // Execute git clone
+            const cloneResult = await exec(command, { origin: 'internal' });
 
-          if (cloneResult.exitCode !== 0) {
-            if (cloneResult.exitCode === 124) {
+            if (cloneResult.exitCode !== 0) {
+              if (cloneResult.exitCode === 124) {
+                throw {
+                  message: `Git clone timed out after ${gitCloneTimeoutSeconds(
+                    cloneTimeoutMs
+                  )} seconds for '${redactCommand(repoUrl)}'`,
+                  code: ErrorCode.GIT_NETWORK_ERROR,
+                  details: {
+                    repository: redactCommand(repoUrl),
+                    targetDir: targetDirectory,
+                    exitCode: 124,
+                    stderr: 'Operation timed out'
+                  } satisfies GitErrorContext
+                };
+              }
+
+              const errorCode = this.manager.determineErrorCode(
+                'clone',
+                cloneResult.stderr || 'Unknown error',
+                cloneResult.exitCode
+              );
               throw {
-                message: `Git clone timed out after ${gitCloneTimeoutSeconds(
-                  cloneTimeoutMs
-                )} seconds for '${redactCommand(repoUrl)}'`,
-                code: ErrorCode.GIT_NETWORK_ERROR,
+                message: `Failed to clone repository '${redactCommand(repoUrl)}': ${
+                  redactCommand(cloneResult.stderr || '') ||
+                  `exit code ${cloneResult.exitCode}`
+                }`,
+                code: errorCode,
                 details: {
                   repository: redactCommand(repoUrl),
                   targetDir: targetDirectory,
-                  exitCode: 124,
-                  stderr: 'Operation timed out'
+                  exitCode: cloneResult.exitCode,
+                  stderr: redactCommand(cloneResult.stderr || '')
                 } satisfies GitErrorContext
               };
             }
 
-            const errorCode = this.manager.determineErrorCode(
-              'clone',
-              cloneResult.stderr || 'Unknown error',
-              cloneResult.exitCode
-            );
-            throw {
-              message: `Failed to clone repository '${redactCommand(repoUrl)}': ${
-                redactCommand(cloneResult.stderr || '') ||
-                `exit code ${cloneResult.exitCode}`
-              }`,
-              code: errorCode,
-              details: {
-                repository: redactCommand(repoUrl),
-                targetDir: targetDirectory,
-                exitCode: cloneResult.exitCode,
-                stderr: redactCommand(cloneResult.stderr || '')
-              } satisfies GitErrorContext
+            // Determine the actual branch that was checked out by querying Git
+            // This ensures we always return the true current branch, whether it was
+            // explicitly specified or defaulted to the repository's HEAD
+            const branchArgs = this.manager.buildGetCurrentBranchArgs();
+            const branchCommand = this.buildCommand(branchArgs);
+            const branchResult = await exec(branchCommand, {
+              cwd: targetDirectory,
+              origin: 'internal'
+            });
+
+            let actualBranch: string;
+            if (branchResult.exitCode === 0 && branchResult.stdout.trim()) {
+              actualBranch = branchResult.stdout.trim();
+            } else {
+              // Fallback: use the requested branch or 'unknown'
+              actualBranch = options.branch || 'unknown';
+            }
+
+            return {
+              path: targetDirectory,
+              branch: actualBranch
             };
-          }
-
-          // Determine the actual branch that was checked out by querying Git
-          // This ensures we always return the true current branch, whether it was
-          // explicitly specified or defaulted to the repository's HEAD
-          const branchArgs = this.manager.buildGetCurrentBranchArgs();
-          const branchCommand = this.buildCommand(branchArgs);
-          const branchResult = await exec(branchCommand, {
-            cwd: targetDirectory,
-            origin: 'internal'
-          });
-
-          let actualBranch: string;
-          if (branchResult.exitCode === 0 && branchResult.stdout.trim()) {
-            actualBranch = branchResult.stdout.trim();
-          } else {
-            // Fallback: use the requested branch or 'unknown'
-            actualBranch = options.branch || 'unknown';
-          }
-
-          return {
-            path: targetDirectory,
-            branch: actualBranch
-          };
-        })
+          },
+          { target }
+        )
         .then((r) => {
           if (!r.success) {
             return r as ServiceResult<{ path: string; branch: string }>;
@@ -252,6 +259,9 @@ export class GitService {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let errorMessage: string | undefined;
+    const target = this.executionService.resolveTarget({ sessionId });
+    const resolvedSessionId =
+      this.executionService.targetToSessionId(target) ?? 'default';
 
     try {
       // Validate repository path
@@ -295,11 +305,11 @@ export class GitService {
       const command = this.buildCommand(args);
 
       // Execute git checkout (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+      const execResult = await this.executionService.execute(command, {
+        target,
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         outcome = 'error';
@@ -353,7 +363,7 @@ export class GitService {
         durationMs: Date.now() - startTime,
         repoPath,
         branch,
-        sessionId,
+        sessionId: resolvedSessionId,
         errorMessage,
         error: caughtError
       });
@@ -364,6 +374,7 @@ export class GitService {
     repoPath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<string>> {
+    const target = this.executionService.resolveTarget({ sessionId });
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -385,12 +396,11 @@ export class GitService {
       const args = this.manager.buildGetCurrentBranchArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+      const execResult = await this.executionService.execute(command, {
+        target,
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<string>;
@@ -439,6 +449,7 @@ export class GitService {
     repoPath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<string[]>> {
+    const target = this.executionService.resolveTarget({ sessionId });
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -460,12 +471,11 @@ export class GitService {
       const args = this.manager.buildListBranchesArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+      const execResult = await this.executionService.execute(command, {
+        target,
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<string[]>;

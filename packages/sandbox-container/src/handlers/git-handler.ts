@@ -41,7 +41,10 @@ export class GitHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<GitCheckoutRequest>(request);
-    const sessionId = body.sessionId || context.sessionId;
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.gitService.cloneRepository(body.repoUrl, {
       branch: body.branch,

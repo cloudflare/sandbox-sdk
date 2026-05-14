@@ -45,7 +45,10 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     // Parse request body directly
     const body = await this.parseRequestBody<ExecuteRequest>(request);
-    const sessionId = body.sessionId || context.sessionId;
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     // If this is a background process, start it as a process
     if (body.background) {
@@ -80,7 +83,6 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // For non-background commands, execute and return result
     const result = await this.processService.executeCommand(body.command, {
       sessionId,
-      sessionless: body.sessionless,
       timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,
@@ -113,12 +115,14 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     // Parse request body directly
     const body = await this.parseRequestBody<ExecuteRequest>(request);
-    const sessionId = body.sessionId || context.sessionId;
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {
       sessionId,
-      sessionless: body.sessionless,
       timeoutMs: body.timeoutMs,
       env: body.env,
       cwd: body.cwd,

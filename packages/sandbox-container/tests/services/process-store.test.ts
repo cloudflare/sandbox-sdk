@@ -27,6 +27,7 @@ const createMockProcess = (
   outputListeners: new Set(),
   statusListeners: new Set(),
   commandHandle: {
+    mode: 'session',
     sessionId: 'default',
     commandId: 'proc-123'
   },

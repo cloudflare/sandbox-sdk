@@ -37,7 +37,6 @@ export class CommandClient extends BaseHttpClient {
       env?: Record<string, string | undefined>;
       cwd?: string;
       origin?: 'user' | 'internal';
-      sessionless?: boolean;
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -46,9 +45,6 @@ export class CommandClient extends BaseHttpClient {
         ...(sessionId !== undefined && { sessionId }),
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
-        }),
-        ...(options?.sessionless !== undefined && {
-          sessionless: options.sessionless
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
@@ -92,7 +88,6 @@ export class CommandClient extends BaseHttpClient {
       env?: Record<string, string | undefined>;
       cwd?: string;
       origin?: 'user' | 'internal';
-      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
@@ -101,9 +96,6 @@ export class CommandClient extends BaseHttpClient {
         ...(sessionId !== undefined && { sessionId }),
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
-        }),
-        ...(options?.sessionless !== undefined && {
-          sessionless: options.sessionless
         }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),

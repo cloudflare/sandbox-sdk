@@ -1,22 +1,21 @@
-import { existsSync } from 'node:fs';
-import { type Logger, logCanonicalEvent } from '@repo/shared';
+import { type ExecEvent, type Logger, logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
   ProcessNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import { spawn } from 'bun';
 import type {
   CommandResult,
+  ExecutionTarget,
   ProcessOptions,
   ProcessRecord,
   ProcessStatus,
   ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
+import type { ExecutionService } from './execution-service';
 import type { ProcessStore } from './process-store';
-import type { SessionManager } from './session-manager';
 
 // Re-export types for use by ProcessStore implementations
 export type { ProcessRecord, ProcessStatus } from '../core/types';
@@ -32,9 +31,15 @@ export class ProcessService {
   constructor(
     private store: ProcessStore,
     private logger: Logger,
-    private sessionManager: SessionManager
+    private executionService: ExecutionService
   ) {
     this.manager = new ProcessManager();
+  }
+
+  private resolveExecutionTarget(options: ProcessOptions): ExecutionTarget {
+    return this.executionService.resolveTarget({
+      sessionId: options.sessionId
+    });
   }
 
   /**
@@ -53,23 +58,14 @@ export class ProcessService {
     command: string,
     options: ProcessOptions = {}
   ): Promise<ServiceResult<CommandResult>> {
-    if (options.sessionless) {
-      return this.executeCommandOneShot(command, options);
-    }
-
     try {
-      // Always use SessionManager for execution (unified model)
-      const sessionId = options.sessionId || 'default';
-      const result = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        {
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          origin: options.origin
-        }
-      );
+      const result = await this.executionService.execute(command, {
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        timeoutMs: options.timeoutMs,
+        env: options.env,
+        origin: options.origin
+      });
 
       if (!result.success) {
         return result as ServiceResult<CommandResult>;
@@ -105,109 +101,6 @@ export class ProcessService {
     }
   }
 
-  private async executeCommandOneShot(
-    command: string,
-    options: ProcessOptions
-  ): Promise<ServiceResult<CommandResult>> {
-    const validation = this.manager.validateCommand(command);
-    if (!validation.valid) {
-      return {
-        success: false,
-        error: {
-          message: validation.error || 'Invalid command',
-          code: validation.code || 'INVALID_COMMAND'
-        }
-      };
-    }
-
-    const controller = new AbortController();
-    const timeout =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => controller.abort(), options.timeoutMs);
-
-    try {
-      const env = Object.fromEntries(
-        Object.entries(options.env ?? {}).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
-      );
-      const subprocess = spawn({
-        cmd: ['bash', '-lc', command],
-        cwd:
-          options.cwd ??
-          (existsSync('/workspace') ? '/workspace' : process.cwd()),
-        env: {
-          ...process.env,
-          ...env
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-        stdin: 'ignore',
-        signal: controller.signal
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(subprocess.stdout).text(),
-        new Response(subprocess.stderr).text(),
-        subprocess.exited
-      ]);
-
-      if (controller.signal.aborted) {
-        return {
-          success: true,
-          data: {
-            success: false,
-            exitCode: 124,
-            stdout: '',
-            stderr: `Command timed out after ${options.timeoutMs}ms`
-          }
-        };
-      }
-
-      return {
-        success: true,
-        data: {
-          success: exitCode === 0,
-          exitCode,
-          stdout,
-          stderr
-        }
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      if (controller.signal.aborted) {
-        return {
-          success: true,
-          data: {
-            success: false,
-            exitCode: 124,
-            stdout: '',
-            stderr: `Command timed out after ${options.timeoutMs}ms`
-          }
-        };
-      }
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to execute command '${command}': ${errorMessage}`,
-          code: ErrorCode.COMMAND_EXECUTION_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-    }
-  }
-
   /**
    * Execute a command with streaming output via SessionManager
    * Used by both execStream() and startProcess()
@@ -216,11 +109,9 @@ export class ProcessService {
     command: string,
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
-    if (options.sessionless) {
-      return this.executeCommandStreamOneShot(command, options);
-    }
-
     const startTime = Date.now();
+    const target = this.resolveExecutionTarget(options);
+    const resolvedSessionId = this.executionService.targetToSessionId(target);
     try {
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
@@ -238,30 +129,22 @@ export class ProcessService {
       const processRecordData = this.manager.createProcessRecord(
         command,
         undefined,
-        options
+        {
+          ...options,
+          sessionId: resolvedSessionId
+        }
       );
 
-      // 3. Build full process record with commandHandle instead of subprocess
-      const sessionId = options.sessionId || 'default';
       const processRecord: ProcessRecord = {
-        ...processRecordData,
-        commandHandle: {
-          sessionId,
-          commandId: processRecordData.id // Use process ID as command ID
-        }
+        ...processRecordData
       };
 
-      // 4. Store record (data layer)
+      // 3. Store record (data layer)
       await this.store.create(processRecord);
 
-      // 5. Execute command via SessionManager with streaming
-      // Pass process ID as commandId for tracking and killing
-      // CRITICAL: Await the initial result to ensure command is tracked before returning
-      const streamResult = await this.sessionManager.executeStreamInSession(
-        sessionId,
+      const streamResult = await this.executionService.executeStream(
         command,
-        async (event) => {
-          // Route events to process record listeners
+        async (event: ExecEvent) => {
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
@@ -272,7 +155,7 @@ export class ProcessService {
               pid: event.pid,
               durationMs: Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: resolvedSessionId,
               origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
@@ -305,15 +188,10 @@ export class ProcessService {
                   ? endTime.getTime() - processRecord.startTime.getTime()
                   : Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: resolvedSessionId,
               origin: options.origin
             });
 
-            processRecord.statusListeners.forEach((listener) => {
-              listener(status);
-            });
-
-            // Await store update to ensure consistency before next event
             try {
               await this.store.update(processRecord.id, {
                 status,
@@ -329,43 +207,72 @@ export class ProcessService {
                 }
               );
             }
-          } else if (event.type === 'error') {
-            processRecord.status = 'error';
-            processRecord.endTime = new Date();
+
             processRecord.statusListeners.forEach((listener) => {
-              listener('error');
+              listener(status);
             });
+          } else if (event.type === 'error') {
+            const endTime = new Date();
+            processRecord.status = 'error';
+            processRecord.endTime = endTime;
+            if (event.exitCode !== undefined) {
+              processRecord.exitCode = event.exitCode;
+            }
 
             logCanonicalEvent(this.logger, {
               event: 'process.error',
               outcome: 'error',
               command,
               processId: processRecord.id,
-              sessionId,
+              sessionId: resolvedSessionId,
               durationMs: Date.now() - startTime,
               errorMessage: event.error,
-              error: new Error(event.error),
+              error: new Error(event.error ?? 'Unknown error'),
               origin: options.origin
+            });
+
+            try {
+              await this.store.update(processRecord.id, {
+                status: 'error',
+                endTime,
+                ...(event.exitCode !== undefined && {
+                  exitCode: event.exitCode
+                })
+              });
+            } catch (error) {
+              this.logger.error(
+                'Failed to update process status',
+                error instanceof Error ? error : undefined,
+                {
+                  processId: processRecord.id
+                }
+              );
+            }
+
+            processRecord.statusListeners.forEach((listener) => {
+              listener('error');
             });
           }
         },
         {
+          target,
           cwd: options.cwd,
           env: options.env,
-          origin: options.origin
-        },
-        processRecordData.id, // Pass process ID as commandId for tracking and killing
-        { background: true } // Release lock after startup
+          timeoutMs: options.timeoutMs,
+          origin: options.origin,
+          commandId: processRecordData.id,
+          background: true
+        }
       );
 
       if (!streamResult.success) {
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
-      // Store streaming promise so getLogs() can await it for completed processes
-      // This ensures all output is captured before returning logs
+      processRecord.commandHandle = streamResult.data.commandHandle;
+
       processRecord.streamingComplete =
-        streamResult.data.continueStreaming.catch((error) => {
+        streamResult.data.continueStreaming.catch((error: unknown) => {
           this.logger.debug('process.streamComplete', {
             processId: processRecord.id,
             outcome: 'error',
@@ -378,214 +285,6 @@ export class ProcessService {
         data: processRecord
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to start streaming command '${command}': ${errorMessage}`,
-          code: ErrorCode.STREAM_START_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    }
-  }
-
-  private async executeCommandStreamOneShot(
-    command: string,
-    options: ProcessOptions
-  ): Promise<ServiceResult<ProcessRecord>> {
-    const startTime = Date.now();
-    const validation = this.manager.validateCommand(command);
-    if (!validation.valid) {
-      return {
-        success: false,
-        error: {
-          message: validation.error || 'Invalid command',
-          code: validation.code || 'INVALID_COMMAND'
-        }
-      };
-    }
-
-    const controller = new AbortController();
-    const timeout =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => controller.abort(), options.timeoutMs);
-
-    try {
-      const processRecordData = this.manager.createProcessRecord(
-        command,
-        undefined,
-        options
-      );
-      const processRecord: ProcessRecord = {
-        ...processRecordData,
-        sessionId: options.sessionId
-      };
-
-      const env = Object.fromEntries(
-        Object.entries(options.env ?? {}).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
-      );
-      const subprocess = spawn({
-        cmd: ['bash', '-lc', command],
-        cwd:
-          options.cwd ??
-          (existsSync('/workspace') ? '/workspace' : process.cwd()),
-        env: {
-          ...process.env,
-          ...env
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-        stdin: 'ignore',
-        signal: controller.signal
-      });
-
-      processRecord.pid = subprocess.pid;
-      await this.store.create(processRecord);
-
-      logCanonicalEvent(this.logger, {
-        event: 'process.start',
-        outcome: 'success',
-        command,
-        pid: subprocess.pid,
-        durationMs: Date.now() - startTime,
-        processId: processRecord.id,
-        sessionId: options.sessionId,
-        origin: options.origin
-      });
-
-      const emitOutput = (stream: 'stdout' | 'stderr', data: string) => {
-        if (stream === 'stdout') {
-          processRecord.stdout += data;
-        } else {
-          processRecord.stderr += data;
-        }
-        processRecord.outputListeners.forEach((listener) => {
-          listener(stream, data);
-        });
-      };
-
-      const streamOutput = async (
-        stream: ReadableStream<Uint8Array> | null,
-        type: 'stdout' | 'stderr'
-      ) => {
-        if (!stream) {
-          return;
-        }
-
-        const decoder = new TextDecoder();
-        const reader = stream.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            emitOutput(type, decoder.decode(value, { stream: true }));
-          }
-
-          const remaining = decoder.decode();
-          if (remaining) {
-            emitOutput(type, remaining);
-          }
-        } finally {
-          reader.releaseLock();
-        }
-      };
-
-      // Note: streamingComplete is assigned after store.create, so a concurrent
-      // getProcess call in the brief window between create and this assignment
-      // will see streamingComplete as undefined and skip the wait. This is a
-      // known race shared with the session-based path; in practice the window
-      // is sub-millisecond and harmless for the current use-cases.
-      processRecord.streamingComplete = Promise.all([
-        streamOutput(subprocess.stdout, 'stdout'),
-        streamOutput(subprocess.stderr, 'stderr'),
-        subprocess.exited
-      ])
-        .then(async ([, , exitCode]) => {
-          clearTimeout(timeout);
-          const status = this.manager.interpretExitCode(exitCode);
-          const endTime = new Date();
-          processRecord.status = status;
-          processRecord.endTime = endTime;
-          processRecord.exitCode = exitCode;
-
-          await this.store.update(processRecord.id, {
-            status,
-            endTime,
-            exitCode
-          });
-
-          logCanonicalEvent(this.logger, {
-            event: 'process.exit',
-            outcome: 'success',
-            command,
-            pid: processRecord.pid,
-            exitCode,
-            durationMs:
-              processRecord.startTime instanceof Date
-                ? endTime.getTime() - processRecord.startTime.getTime()
-                : Date.now() - startTime,
-            processId: processRecord.id,
-            sessionId: options.sessionId,
-            origin: options.origin
-          });
-
-          processRecord.statusListeners.forEach((listener) => {
-            listener(status);
-          });
-        })
-        .catch(async (error) => {
-          clearTimeout(timeout);
-          const timedOut = controller.signal.aborted;
-          const endTime = new Date();
-          processRecord.status = 'error';
-          processRecord.endTime = endTime;
-          if (timedOut) {
-            processRecord.exitCode = 124;
-          }
-          await this.store.update(processRecord.id, {
-            status: 'error',
-            endTime,
-            ...(timedOut && { exitCode: 124 })
-          });
-          processRecord.statusListeners.forEach((listener) => {
-            listener('error');
-          });
-
-          const errorMessage = timedOut
-            ? `Command timed out after ${options.timeoutMs}ms`
-            : error instanceof Error
-              ? error.message
-              : String(error);
-          logCanonicalEvent(this.logger, {
-            event: 'process.error',
-            outcome: 'error',
-            command,
-            processId: processRecord.id,
-            sessionId: options.sessionId,
-            durationMs: Date.now() - startTime,
-            errorMessage,
-            error: error instanceof Error ? error : new Error(errorMessage),
-            origin: options.origin
-          });
-        });
-
-      return {
-        success: true,
-        data: processRecord
-      };
-    } catch (error) {
-      clearTimeout(timeout);
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
 
@@ -700,10 +399,7 @@ export class ProcessService {
         };
       }
 
-      const result = await this.sessionManager.killCommand(
-        process.commandHandle.sessionId,
-        process.commandHandle.commandId
-      );
+      const result = await this.executionService.kill(process.commandHandle);
 
       if (result.success) {
         await this.store.update(id, {

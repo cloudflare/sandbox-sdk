@@ -71,13 +71,17 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.fileService.readFile(
       body.path,
       {
         encoding: body.encoding
       },
-      body.sessionId
+      sessionId
     );
 
     if (result.success) {
@@ -103,12 +107,16 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     try {
       // Create SSE stream (handles metadata fetching and errors internally)
       const stream = await this.fileService.readFileStreamOperation(
         body.path,
-        body.sessionId
+        sessionId
       );
 
       return new Response(stream, {
@@ -160,6 +168,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<WriteFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const options =
       body.encoding !== undefined ? { encoding: body.encoding } : {};
@@ -168,7 +180,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
       body.path,
       body.content,
       options,
-      body.sessionId
+      sessionId
     );
 
     if (result.success) {
@@ -189,8 +201,12 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<DeleteFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
-    const result = await this.fileService.deleteFile(body.path);
+    const result = await this.fileService.deleteFile(body.path, sessionId);
 
     if (result.success) {
       const response: DeleteFileResult = {
@@ -210,10 +226,15 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<RenameFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.fileService.renameFile(
       body.oldPath,
-      body.newPath
+      body.newPath,
+      sessionId
     );
 
     if (result.success) {
@@ -235,10 +256,15 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<MoveFileRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.fileService.moveFile(
       body.sourcePath,
-      body.destinationPath
+      body.destinationPath,
+      sessionId
     );
 
     if (result.success) {
@@ -260,10 +286,18 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<MkdirRequest>(request);
-
-    const result = await this.fileService.createDirectory(body.path, {
-      recursive: body.recursive
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
     });
+
+    const result = await this.fileService.createDirectory(
+      body.path,
+      {
+        recursive: body.recursive
+      },
+      sessionId
+    );
 
     if (result.success) {
       const response: MkdirResult = {
@@ -284,11 +318,15 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<ListFilesRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.fileService.listFiles(
       body.path,
       body.options || {},
-      body.sessionId
+      sessionId
     );
 
     if (result.success) {
@@ -311,8 +349,12 @@ export class FileHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<FileExistsRequest>(request);
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
-    const result = await this.fileService.exists(body.path, body.sessionId);
+    const result = await this.fileService.exists(body.path, sessionId);
 
     if (result.success) {
       const response: FileExistsResult = {

@@ -241,7 +241,10 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    const sessionId = body.sessionId ?? context.sessionId ?? 'default';
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.backupService.createArchive(
       body.dir,
@@ -311,7 +314,10 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       }
     }
 
-    const sessionId = body.sessionId ?? context.sessionId ?? 'default';
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
     const result = await this.backupService.uploadParts(
       body.archivePath,
       body.parts,
@@ -362,7 +368,10 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    const sessionId = body.sessionId ?? context.sessionId ?? 'default';
+    const sessionId = this.resolveExecutionSessionId({
+      sessionId: body.sessionId,
+      fallbackSessionId: context.sessionId
+    });
 
     const result = await this.backupService.restoreArchive(
       body.dir,

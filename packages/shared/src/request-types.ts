@@ -11,7 +11,6 @@ import type { BackupCompressionOptions } from './types.js';
 export interface ExecuteRequest {
   command: string;
   sessionId?: string;
-  sessionless?: boolean;
   background?: boolean;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;

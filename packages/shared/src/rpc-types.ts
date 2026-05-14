@@ -80,7 +80,6 @@ export interface SandboxCommandsAPI {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sessionless?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -97,7 +96,6 @@ export interface SandboxCommandsAPI {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>>;
 }

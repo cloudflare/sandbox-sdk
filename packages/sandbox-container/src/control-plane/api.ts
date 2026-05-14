@@ -37,6 +37,7 @@ import type {
 } from '../core/types';
 import type { BackupService } from '../services/backup-service';
 import type { DesktopService } from '../services/desktop-service';
+import { canonicalizeExecutionSessionId } from '../services/execution-service';
 import type { FileService } from '../services/file-service';
 import type { GitService } from '../services/git-service';
 import type {
@@ -90,6 +91,10 @@ function throwIfError(result: ServiceResult<any, any>): void {
 function extractData<T>(result: ServiceResult<any, any>): T {
   throwIfError(result);
   return (result as { data: T }).data;
+}
+
+function resolveRPCSessionId(options: { sessionId?: string }): string {
+  return canonicalizeExecutionSessionId(options);
 }
 
 /**
@@ -159,7 +164,6 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sessionless?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -169,12 +173,14 @@ class CommandsRPCAPI extends RpcTarget {
     command: string;
     timestamp: string;
   }> {
+    const resolvedSessionId = resolveRPCSessionId({
+      sessionId
+    });
     const result = await this.#svc.executeCommand(command, {
-      sessionId,
+      sessionId: resolvedSessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd,
-      sessionless: options?.sessionless
+      cwd: options?.cwd
     });
     const data = extractData<CommandResult>(result);
     return {
@@ -194,16 +200,17 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sessionless?: boolean;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
+    const resolvedSessionId = resolveRPCSessionId({
+      sessionId
+    });
     const result = await this.#svc.startProcess(command, {
-      sessionId,
+      sessionId: resolvedSessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd,
-      sessionless: options?.sessionless
+      cwd: options?.cwd
     });
 
     if (!result.success) {
@@ -227,7 +234,7 @@ class CommandsRPCAPI extends RpcTarget {
       start(controller) {
         controller.enqueue(
           encoder.encode(
-            `event: start\ndata: ${JSON.stringify({ type: 'start', command, sessionId, pid: proc.pid, timestamp: new Date().toISOString() })}\n\n`
+            `event: start\ndata: ${JSON.stringify({ type: 'start', command, sessionId: resolvedSessionId, pid: proc.pid, timestamp: new Date().toISOString() })}\n\n`
           )
         );
         if (proc.stdout) {
@@ -326,8 +333,12 @@ class FilesRPCAPI extends RpcTarget {
     sessionId: string,
     options?: { encoding?: FileEncoding }
   ) {
+    const resolvedSessionId = resolveRPCSessionId({ sessionId });
     if (options?.encoding === 'none') {
-      const result = await this.#svc.readFileBinaryStream(path, sessionId);
+      const result = await this.#svc.readFileBinaryStream(
+        path,
+        resolvedSessionId
+      );
       const { content, size, mimeType } = extractData<{
         content: ReadableStream<Uint8Array>;
         size: number;
@@ -342,7 +353,7 @@ class FilesRPCAPI extends RpcTarget {
         timestamp: new Date().toISOString()
       };
     }
-    const result = await this.#svc.readFile(path, options, sessionId);
+    const result = await this.#svc.readFile(path, options, resolvedSessionId);
     const content = extractData<string>(result);
     const metadata = (
       result as {
@@ -372,7 +383,10 @@ class FilesRPCAPI extends RpcTarget {
     path: string,
     sessionId: string
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.#svc.readFileStreamOperation(path, sessionId);
+    return this.#svc.readFileStreamOperation(
+      path,
+      resolveRPCSessionId({ sessionId })
+    );
   }
 
   async writeFile(
@@ -381,7 +395,12 @@ class FilesRPCAPI extends RpcTarget {
     sessionId: string,
     options?: { encoding?: string; permissions?: string }
   ) {
-    const result = await this.#svc.writeFile(path, content, options, sessionId);
+    const result = await this.#svc.writeFile(
+      path,
+      content,
+      options,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     return {
       success: true,
@@ -396,7 +415,11 @@ class FilesRPCAPI extends RpcTarget {
     stream: ReadableStream<Uint8Array>,
     sessionId: string
   ) {
-    const result = await this.#svc.writeFileStream(path, stream, sessionId);
+    const result = await this.#svc.writeFileStream(
+      path,
+      stream,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     const data = (result as { data?: { bytesWritten: number } }).data;
     return {
@@ -408,13 +431,20 @@ class FilesRPCAPI extends RpcTarget {
   }
 
   async deleteFile(path: string, sessionId: string) {
-    const result = await this.#svc.deleteFile(path, sessionId);
+    const result = await this.#svc.deleteFile(
+      path,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     return { success: true, path, timestamp: new Date().toISOString() };
   }
 
   async renameFile(oldPath: string, newPath: string, sessionId: string) {
-    const result = await this.#svc.renameFile(oldPath, newPath, sessionId);
+    const result = await this.#svc.renameFile(
+      oldPath,
+      newPath,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     return {
       success: true,
@@ -433,7 +463,7 @@ class FilesRPCAPI extends RpcTarget {
     const result = await this.#svc.moveFile(
       sourcePath,
       destinationPath,
-      sessionId
+      resolveRPCSessionId({ sessionId })
     );
     throwIfError(result);
     return {
@@ -449,7 +479,11 @@ class FilesRPCAPI extends RpcTarget {
     sessionId: string,
     options?: { recursive?: boolean }
   ) {
-    const result = await this.#svc.createDirectory(path, options, sessionId);
+    const result = await this.#svc.createDirectory(
+      path,
+      options,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     return {
       success: true,
@@ -470,7 +504,11 @@ class FilesRPCAPI extends RpcTarget {
     path: string;
     timestamp: string;
   }> {
-    const result = await this.#svc.listFiles(path, options, sessionId);
+    const result = await this.#svc.listFiles(
+      path,
+      options,
+      resolveRPCSessionId({ sessionId })
+    );
     const files = extractData<FileInfo[]>(result);
     return {
       success: true,
@@ -482,7 +520,10 @@ class FilesRPCAPI extends RpcTarget {
   }
 
   async exists(path: string, sessionId: string) {
-    const result = await this.#svc.exists(path, sessionId);
+    const result = await this.#svc.exists(
+      path,
+      resolveRPCSessionId({ sessionId })
+    );
     const exists = extractData<boolean>(result);
     return { success: true, exists, path, timestamp: new Date().toISOString() };
   }
@@ -504,8 +545,9 @@ class ProcessesRPCAPI extends RpcTarget {
     sessionId: string,
     options?: { processId?: string; timeoutMs?: number }
   ) {
+    const resolvedSessionId = resolveRPCSessionId({ sessionId });
     const result = await this.#svc.startProcess(command, {
-      sessionId,
+      sessionId: resolvedSessionId,
       ...options
     });
     const proc = extractData<ProcessRecord>(result);
@@ -804,7 +846,7 @@ class GitRPCAPI extends RpcTarget {
       targetDir: options?.targetDir,
       depth: options?.depth,
       timeoutMs: options?.timeoutMs,
-      sessionId
+      sessionId: resolveRPCSessionId({ sessionId })
     });
     const data = extractData<{ path: string; branch: string }>(result);
     return {
@@ -1074,7 +1116,7 @@ class BackupRPCAPI extends RpcTarget {
     const result = await this.#svc.createArchive(
       dir,
       archivePath,
-      sessionId,
+      resolveRPCSessionId({ sessionId }),
       options?.gitignore ?? false,
       options?.excludes ?? [],
       options?.compression
@@ -1090,7 +1132,11 @@ class BackupRPCAPI extends RpcTarget {
   }
 
   async restoreArchive(dir: string, archivePath: string, sessionId: string) {
-    const result = await this.#svc.restoreArchive(dir, archivePath, sessionId);
+    const result = await this.#svc.restoreArchive(
+      dir,
+      archivePath,
+      resolveRPCSessionId({ sessionId })
+    );
     throwIfError(result);
     return { success: true, dir };
   }
@@ -1108,7 +1154,7 @@ class BackupRPCAPI extends RpcTarget {
     const result = await this.#svc.uploadParts(
       request.archivePath,
       request.parts,
-      request.sessionId ?? 'default'
+      resolveRPCSessionId({ sessionId: request.sessionId })
     );
     const data = extractData<{
       parts: Array<{ partNumber: number; etag: string }>;

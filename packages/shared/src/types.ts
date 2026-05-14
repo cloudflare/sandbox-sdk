@@ -384,7 +384,7 @@ export interface ExecEvent {
 }
 
 export interface LogEvent {
-  type: 'stdout' | 'stderr' | 'exit' | 'error';
+  type: 'stdout' | 'stderr' | 'exit' | 'complete' | 'error';
   timestamp: string;
   data: string;
   processId: string;

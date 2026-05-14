@@ -101,6 +101,8 @@ import type {
 } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
+const SESSIONLESS_SESSION_ID = 'none';
+
 /**
  * Persisted record for a single exposed port. `token` authorizes preview
  * URL requests; `name` is the optional friendly name the caller passed to
@@ -985,6 +987,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  /**
+   * Toggle whether implicit operations use a persistent default session.
+   *
+   * When `false`:
+   * - `exec()` and `execStream()` run as true sessionless one-shot subprocesses
+   *   via `SESSIONLESS_SESSION_ID = 'none'` — no shell state is preserved between calls.
+   * - `startProcess()` (without an explicit `sessionId`) still creates a real
+   *   ephemeral shell session per call so the background process has a stable
+   *   environment. That session is cleaned up automatically when the process exits.
+   *
+   * Intended to be set once during sandbox initialisation. Changing this while
+   * `exec`/`execStream` calls are in flight is safe (each call captures its path
+   * at call-start), but the behaviour is unspecified for in-flight `startProcess`.
+   */
   async setEnableDefaultSession(enableDefaultSession: boolean): Promise<void> {
     if (this.enableDefaultSession === enableDefaultSession) return;
     await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
@@ -2697,7 +2713,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options?: ExecOptions
   ): Promise<ExecResult> {
     const startTime = Date.now();
-    const sessionId = undefined;
+    const sessionId = SESSIONLESS_SESSION_ID;
     const env = this.resolveCommandEnv(options?.env);
     let execOutcome: { exitCode: number; success: boolean } | undefined;
     let execError: Error | undefined;
@@ -2711,8 +2727,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         timeoutMs: options?.timeout,
         env,
         cwd: options?.cwd,
-        origin: options?.origin,
-        sessionless: true
+        origin: options?.origin
       });
 
       const result = this.mapExecuteResponseToExecResult(
@@ -2846,8 +2861,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     sessionId: string | undefined,
     options: ExecOptions,
     startTime: number,
-    timestamp: string,
-    sessionless = false
+    timestamp: string
   ): Promise<ExecResult> {
     let stdout = '';
     let stderr = '';
@@ -2860,8 +2874,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timeoutMs: options.timeout,
           env: options.env,
           cwd: options.cwd,
-          origin: options.origin,
-          ...(sessionless && { sessionless: true })
+          origin: options.origin
         }
       );
 
@@ -2922,14 +2935,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<ExecResult> {
     return this.executeWithStreaming(
       command,
-      undefined,
+      SESSIONLESS_SESSION_ID,
       {
         ...options,
         env: this.resolveCommandEnv(options.env)
       },
       Date.now(),
-      new Date().toISOString(),
-      true
+      new Date().toISOString()
     );
   }
 
@@ -3122,7 +3134,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
 
           // Process exited - do final check before throwing
-          if (event.type === 'exit') {
+          if (event.type === 'exit' || event.type === 'complete') {
             // Final check in case pattern arrived in last chunk
             const result = checkPattern();
             if (result) return result;
@@ -3283,7 +3295,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const streamProcessor = async (): Promise<WaitForExitResult> => {
         for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'exit') {
+          if (event.type === 'exit' || event.type === 'complete') {
             return {
               exitCode: event.exitCode ?? 1
             };
@@ -3547,7 +3559,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const stream = await this.client.processes.streamProcessLogs(processId);
       for await (const event of parseSSEStream<LogEvent>(stream)) {
-        if (event.type === 'exit') {
+        if (event.type === 'exit' || event.type === 'complete') {
           return;
         }
       }
@@ -3557,11 +3569,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const resolvedId =
-      sessionId ??
-      (this.enableDefaultSession
-        ? await this.ensureDefaultSession()
-        : undefined);
+    const resolvedId = sessionId;
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -3581,11 +3589,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const resolvedId =
-      sessionId ??
-      (this.enableDefaultSession
-        ? await this.ensureDefaultSession()
-        : undefined);
+    const resolvedId = sessionId;
     let response: Awaited<ReturnType<typeof this.client.processes.getProcess>>;
     try {
       response = await this.client.processes.getProcess(id);
@@ -3659,12 +3663,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (!this.enableDefaultSession) {
       const env = this.resolveCommandEnv(options?.env);
-      return this.client.commands.executeStream(command, undefined, {
-        timeoutMs: options?.timeout,
-        env,
-        cwd: options?.cwd,
-        sessionless: true
-      });
+      return this.client.commands.executeStream(
+        command,
+        SESSIONLESS_SESSION_ID,
+        {
+          timeoutMs: options?.timeout,
+          env,
+          cwd: options?.cwd
+        }
+      );
     }
 
     const session = await this.resolveImplicitSession();

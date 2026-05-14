@@ -5,6 +5,10 @@ import type {
   ServiceResult
 } from '@sandbox-container/core/types';
 import {
+  ExecutionService,
+  SESSIONLESS_SESSION_ID
+} from '@sandbox-container/services/execution-service.js';
+import {
   type ProcessFilters,
   ProcessService,
   type ProcessStore
@@ -58,6 +62,7 @@ const createMockProcess = (
   outputListeners: new Set(),
   statusListeners: new Set(),
   commandHandle: {
+    mode: 'session',
     sessionId: 'default',
     commandId: 'proc-123'
   },
@@ -66,16 +71,17 @@ const createMockProcess = (
 
 describe('ProcessService', () => {
   let processService: ProcessService;
+  let executionService: ExecutionService;
 
   beforeEach(async () => {
     // Reset all mocks before each test
     vi.clearAllMocks();
 
-    // Create service with mocked SessionManager
+    executionService = new ExecutionService(mockSessionManager);
     processService = new ProcessService(
       mockProcessStore,
       mockLogger,
-      mockSessionManager
+      executionService
     );
   });
 
@@ -154,7 +160,7 @@ describe('ProcessService', () => {
 
     it('should execute sessionless commands without SessionManager', async () => {
       const result = await processService.executeCommand('exit 7', {
-        sessionless: true
+        sessionId: SESSIONLESS_SESSION_ID
       });
 
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
@@ -187,6 +193,7 @@ describe('ProcessService', () => {
         expect(result.data.command).toBe('sleep 10');
         expect(result.data.status).toBe('running');
         expect(result.data.commandHandle).toEqual({
+          mode: 'session',
           sessionId: 'session-123',
           commandId: result.data.id
         });
@@ -229,7 +236,7 @@ describe('ProcessService', () => {
 
     it('should start sessionless streaming commands without SessionManager', async () => {
       const result = await processService.startProcess('printf stream-output', {
-        sessionless: true
+        sessionId: SESSIONLESS_SESSION_ID
       });
 
       expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
@@ -294,6 +301,7 @@ describe('ProcessService', () => {
       const mockProcess = createMockProcess({
         command: 'sleep 10',
         commandHandle: {
+          mode: 'session',
           sessionId: 'default',
           commandId: 'proc-123'
         }
@@ -377,12 +385,20 @@ describe('ProcessService', () => {
         createMockProcess({
           id: 'proc-1',
           command: 'sleep 10',
-          commandHandle: { sessionId: 'default', commandId: 'proc-1' }
+          commandHandle: {
+            mode: 'session',
+            sessionId: 'default',
+            commandId: 'proc-1'
+          }
         }),
         createMockProcess({
           id: 'proc-2',
           command: 'sleep 20',
-          commandHandle: { sessionId: 'default', commandId: 'proc-2' }
+          commandHandle: {
+            mode: 'session',
+            sessionId: 'default',
+            commandId: 'proc-2'
+          }
         })
       ];
 
