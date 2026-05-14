@@ -1,0 +1,22 @@
+{
+  "name": "@cloudflare/sandbox-codex-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "A minimal example of using OpenAI Codex with Sandbox SDK",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "types": "wrangler types --env-file .dev.vars.example",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.76.0"
+  },
+  "author": "",
+  "license": "MIT"
+}
