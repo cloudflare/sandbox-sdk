@@ -988,14 +988,14 @@ console.log('Terminal server on port ' + port);
       }
 
       // Tunnels (RPC-only)
-      if (url.pathname === '/api/tunnel/create' && request.method === 'POST') {
+      if (url.pathname === '/api/tunnel/get' && request.method === 'POST') {
         if (transport !== 'rpc') {
           return new Response(
             JSON.stringify({ error: 'Tunnels require transport=rpc' }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        const info = await sandbox.tunnels.create(body.port);
+        const info = await sandbox.tunnels.get(body.port);
         return new Response(JSON.stringify(info), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1024,11 +1024,16 @@ console.log('Terminal server on port ' + port);
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        const id = decodeURIComponent(
-          url.pathname.slice('/api/tunnel/'.length)
-        );
-        await sandbox.tunnels.destroy(id);
-        return new Response(JSON.stringify({ success: true, id }), {
+        const portStr = url.pathname.slice('/api/tunnel/'.length);
+        const port = Number.parseInt(portStr, 10);
+        if (!Number.isFinite(port)) {
+          return new Response(
+            JSON.stringify({ error: `Invalid port: ${portStr}` }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        await sandbox.tunnels.destroy(port);
+        return new Response(JSON.stringify({ success: true, port }), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

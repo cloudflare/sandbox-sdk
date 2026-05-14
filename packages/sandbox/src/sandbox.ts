@@ -871,6 +871,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.codeInterpreter = new CodeInterpreter(
           () => this.client.interpreter
         );
+        // Drop the tunnels handler; the lazy getter rebinds it to the
+        // new client on next access. Same rationale as codeInterpreter.
+        this.tunnelsHandler = null;
         previousClient.disconnect();
       }
       if (storedTransport) {
@@ -1089,6 +1092,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.hasStoredTransport = true;
     this.client = this.createClientForTransport(transport);
     this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
+    // Drop the tunnels handler so the lazy getter rebinds it to the
+    // new client on next access. Storage is unchanged: existing
+    // tunnels are still backed by their cloudflared processes since the
+    // container did not restart.
+    this.tunnelsHandler = null;
     previousClient.disconnect();
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
@@ -1793,6 +1801,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // still not atomic against concurrent writers, but the preview URL
       // authorization path is race-free.
       await this.ctx.storage.delete('portTokens');
+      // Tunnels storage is the SDK's source of truth for which
+      // *.trycloudflare.com URLs are live. Clearing it ensures any
+      // post-destroy get() reads see an empty cache and a destroyed
+      // sandbox's URLs are not resurrected after a new container
+      // takes the same DO id.
+      await this.ctx.storage.delete('tunnels');
 
       // Disconnect transport after all cleanup commands have completed
       this.client.disconnect();
@@ -1838,6 +1852,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       this.logger.error(
         'Failed to restore exposed ports after container start',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
+    // Tunnels are NOT restored across container restart. Every
+    // cloudflared process the container was running died with it, so
+    // every stored *.trycloudflare.com URL is dead. Clearing storage
+    // here means the next get(port) call takes the miss branch and
+    // spawns a fresh tunnel with a new URL. We do this inside onStart's
+    // blockConcurrencyWhile gate so any get() that arrived during the
+    // startup window sees the empty cache by the time it runs.
+    try {
+      await this.ctx.storage.delete('tunnels');
+    } catch (error) {
+      this.logger.error(
+        'Failed to clear tunnel storage after container start',
         error instanceof Error ? error : new Error(String(error))
       );
     }
@@ -3873,14 +3903,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Namespaced tunnel API. Currently supports zero-config *quick tunnels*
-   * (Cloudflare's trycloudflare service):
+   * Namespaced tunnel API. Quick tunnels are zero-config preview URLs
+   * backed by Cloudflare's trycloudflare service.
    *
-   * - `tunnels.create(port)` — spawn cloudflared, return a
-   *   `https://<words>.trycloudflare.com` URL pointing at `localhost:<port>`.
-   * - `tunnels.list()` — tunnels currently running in the container.
-   * - `tunnels.destroy(idOrInfo)` — tear down by id or by the record
-   *   returned from `create()`.
+   * - `tunnels.get(port)` — idempotent. Returns the cached tunnel for
+   *   `port` if one exists in DO storage, otherwise spawns a fresh
+   *   cloudflared process and persists the record.
+   * - `tunnels.list()` — records currently known to this sandbox, from
+   *   DO storage.
+   * - `tunnels.destroy(portOrInfo)` — tear down by port number or by
+   *   the record returned from `get()`.
+   *
+   * Storage is cleared on container restart (`onStart`), so URLs do
+   * not survive a container restart — the next `get(port)` call will
+   * spawn a fresh tunnel with a new URL.
    *
    * Requires the RPC transport. Calling this on a route-based transport
    * throws "RPC transport required".
@@ -3889,6 +3925,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!this.tunnelsHandler) {
       this.tunnelsHandler = createTunnelsHandler({
         client: this.client,
+        storage: this.ctx.storage,
         logger: this.logger
       });
     }

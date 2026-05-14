@@ -1,15 +1,18 @@
 /**
  * SDK tunnels handler unit tests.
  *
- * Mocks the container RPC client so we exercise the handler's validation,
- * id minting, registry, and log-event paths without standing up a real
- * container.
+ * Exercises validation, id minting, DO-storage caching, inflight
+ * coalescing, and log-event paths against a mocked RPC client and a
+ * lightweight in-memory `ctx.storage` shim.
  */
 
 import type { Logger, TunnelInfo } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
-import { createTunnelsHandler } from '../src/tunnels/tunnels-handler';
+import {
+  createTunnelsHandler,
+  type TunnelsStorage
+} from '../src/tunnels/tunnels-handler';
 
 function makeLogger(): Logger {
   const log: Logger = {
@@ -40,9 +43,42 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   };
 }
 
+/**
+ * Minimal in-memory shim covering only the storage subset the handler
+ * uses. `transaction()` serializes closures via a chained promise so
+ * concurrent read-modify-write callers observe a consistent map —
+ * mirrors the real DO's optimistic-concurrency contract from the
+ * caller's perspective.
+ */
+function makeStorage(initial?: Record<string, TunnelInfo>): TunnelsStorage {
+  let value: Record<string, TunnelInfo> | undefined = initial
+    ? { ...initial }
+    : undefined;
+  let txQueue: Promise<unknown> = Promise.resolve();
+  const storage = {
+    get: vi.fn(async () => value),
+    put: vi.fn(async (_key: string, next: Record<string, TunnelInfo>) => {
+      value = { ...next };
+    }),
+    delete: vi.fn(async () => {
+      value = undefined;
+      return true;
+    }),
+    transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
+      const next = txQueue.then(() => closure(storage));
+      // Swallow rejection on the chain so a failed closure doesn't
+      // poison subsequent transactions; the original promise still
+      // rejects to the caller.
+      txQueue = next.catch(() => undefined);
+      return next;
+    })
+  } as unknown as TunnelsStorage;
+  return storage;
+}
+
 function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   return {
-    id: 'quick-abcdef01',
+    id: 'quick-0123456789abcdef',
     port: 8080,
     url: 'https://stub.trycloudflare.com',
     hostname: 'stub.trycloudflare.com',
@@ -51,7 +87,20 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   };
 }
 
-describe('tunnels handler > create', () => {
+function makeHandler() {
+  const { client } = makeClient();
+  const storage = makeStorage();
+  const handler = createTunnelsHandler({
+    client: client as unknown as Parameters<
+      typeof createTunnelsHandler
+    >[0]['client'],
+    storage,
+    logger: makeLogger()
+  });
+  return { client, storage, handler };
+}
+
+describe('tunnels handler > get', () => {
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -60,17 +109,13 @@ describe('tunnels handler > create', () => {
     warn.mockRestore();
   });
 
-  it('mints a `quick-<8 hex>` id and forwards it to the RPC client', async () => {
-    const { client } = makeClient();
+  it('mints a `quick-<8 hex>` id and forwards it to the RPC client on cache miss', async () => {
+    const { client, storage, handler } = makeHandler();
     client.tunnels.runQuickTunnel.mockImplementation(
       async (id: string, port: number) => makeRecord({ id, port })
     );
-    const handler = createTunnelsHandler({
-      client: client as any,
-      logger: makeLogger()
-    });
 
-    const info = await handler.create(8080);
+    const info = await handler.get(8080);
 
     expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
     const [id, port] = client.tunnels.runQuickTunnel.mock.calls[0];
@@ -78,37 +123,154 @@ describe('tunnels handler > create', () => {
     expect(id).toMatch(/^quick-[0-9a-f]{8}$/);
     expect(info.id).toBe(id);
     expect(info.name).toBeUndefined();
-    expect(info.url).toBe('https://stub.trycloudflare.com');
-    expect(info.hostname).toBe('stub.trycloudflare.com');
+
+    // Storage is written under the port key.
+    expect(storage.put).toHaveBeenCalledTimes(1);
+    const [, stored] = (storage.put as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(stored).toEqual({ '8080': info });
   });
 
-  it('rejects out-of-range ports with SandboxSecurityError', async () => {
+  it('cache hit: returns the stored record without any container RPC', async () => {
+    const record = makeRecord({ id: 'quick-cached0000cached', port: 8080 });
     const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
     const handler = createTunnelsHandler({
-      client: client as any,
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
       logger: makeLogger()
     });
 
-    await expect(handler.create(80)).rejects.toBeInstanceOf(
+    const info = await handler.get(8080);
+
+    expect(info).toEqual(record);
+    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it('after storage is cleared (simulating container restart), behaves like cache miss', async () => {
+    const record = makeRecord({ id: 'quick-stale00000000stale', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const handler = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    // Simulate the onStart() clear.
+    await storage.delete('tunnels');
+
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) =>
+        makeRecord({
+          id,
+          port,
+          url: 'https://fresh.trycloudflare.com',
+          hostname: 'fresh.trycloudflare.com'
+        })
+    );
+
+    const info = await handler.get(8080);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    const [id] = client.tunnels.runQuickTunnel.mock.calls[0];
+    expect(id).not.toBe(record.id); // fresh id
+    expect(info.url).toBe('https://fresh.trycloudflare.com');
+  });
+
+  it('coalesces concurrent get() calls for the same port', async () => {
+    const { client, handler } = makeHandler();
+    let resolveRun: (info: TunnelInfo) => void = () => {};
+    client.tunnels.runQuickTunnel.mockImplementation(
+      (id: string, port: number) =>
+        new Promise<TunnelInfo>((resolve) => {
+          resolveRun = () => resolve(makeRecord({ id, port }));
+        })
+    );
+
+    const a = handler.get(8080);
+    const b = handler.get(8080);
+    // Wait until runQuickTunnel is invoked so we know the work promise
+    // is past the storage-read await and ready to resolve.
+    for (let i = 0; i < 50; i++) {
+      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    resolveRun(makeRecord({ id: 'ignored', port: 8080 }));
+    const [resolvedA, resolvedB] = await Promise.all([a, b]);
+
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(resolvedA).toEqual(resolvedB);
+  });
+
+  it('does not coalesce different ports', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    const [a, b] = await Promise.all([handler.get(8080), handler.get(8081)]);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+    expect(a.port).toBe(8080);
+    expect(b.port).toBe(8081);
+  });
+
+  it('writes through storage.transaction() so concurrent miss-path writes do not clobber each other', async () => {
+    const { client, storage, handler } = makeHandler();
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    await Promise.all([handler.get(8080), handler.get(8081)]);
+
+    // One transaction per miss-path write.
+    expect(
+      (storage.transaction as ReturnType<typeof vi.fn>).mock.calls.length
+    ).toBe(2);
+    // Both entries land in storage — the second writer did not clobber
+    // the first.
+    const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(Object.keys(final ?? {})).toEqual(
+      expect.arrayContaining(['8080', '8081'])
+    );
+  });
+
+  it('clears the inflight slot when the spawn fails', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.runQuickTunnel.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(handler.get(8080)).rejects.toThrow('boom');
+
+    // Subsequent calls retry rather than re-resolving the failed promise.
+    client.tunnels.runQuickTunnel.mockImplementationOnce(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+    const info = await handler.get(8080);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+    expect(info.port).toBe(8080);
+  });
+
+  it('rejects out-of-range ports with SandboxSecurityError', async () => {
+    const { client, handler } = makeHandler();
+
+    await expect(handler.get(80)).rejects.toBeInstanceOf(SandboxSecurityError);
+    await expect(handler.get(100000)).rejects.toBeInstanceOf(
       SandboxSecurityError
     );
-    await expect(handler.create(100000)).rejects.toBeInstanceOf(
-      SandboxSecurityError
-    );
-    await expect(handler.create(1.5)).rejects.toBeInstanceOf(
-      SandboxSecurityError
-    );
+    await expect(handler.get(1.5)).rejects.toBeInstanceOf(SandboxSecurityError);
     expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
   });
 
   it('rejects the reserved control-plane port 3000', async () => {
-    const { client } = makeClient();
-    const handler = createTunnelsHandler({
-      client: client as any,
-      logger: makeLogger()
-    });
+    const { client, handler } = makeHandler();
 
-    await expect(handler.create(3000)).rejects.toBeInstanceOf(
+    await expect(handler.get(3000)).rejects.toBeInstanceOf(
       SandboxSecurityError
     );
     expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
@@ -116,83 +278,164 @@ describe('tunnels handler > create', () => {
 });
 
 describe('tunnels handler > destroy', () => {
-  it('forwards the id from a string argument to the RPC client', async () => {
+  it('clears storage and calls destroyTunnel(id) for a known port', async () => {
+    const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
     const { client } = makeClient();
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
-    );
+    const storage = makeStorage({ '8080': record });
+    const handler = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
     client.tunnels.destroyTunnel.mockResolvedValue({
       success: true,
-      id: 'quick-abcdef01'
+      id: record.id
     });
-    const handler = createTunnelsHandler({
-      client: client as any,
-      logger: makeLogger()
-    });
-    const info = await handler.create(8080);
 
-    await handler.destroy(info.id);
+    await handler.destroy(8080);
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(info.id);
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
+    // Storage entry is removed before the RPC.
+    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0][1]).toEqual({});
   });
 
-  it('accepts a TunnelInfo object and resolves the id from it', async () => {
+  it('wraps the read-modify-write in storage.transaction()', async () => {
+    const record = makeRecord({ id: 'quick-tx0000tx0000tx', port: 8080 });
     const { client } = makeClient();
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
-    );
-    client.tunnels.destroyTunnel.mockResolvedValue({ success: true, id: '' });
+    const storage = makeStorage({ '8080': record });
     const handler = createTunnelsHandler({
-      client: client as any,
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
       logger: makeLogger()
     });
-    const info = await handler.create(8080);
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: record.id
+    });
 
-    await handler.destroy(info);
+    await handler.destroy(8080);
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(info.id);
+    expect(
+      (storage.transaction as ReturnType<typeof vi.fn>).mock.calls.length
+    ).toBe(1);
   });
 
-  it('propagates TUNNEL_NOT_FOUND from the RPC client', async () => {
+  it('accepts a TunnelInfo object and resolves the port from it', async () => {
+    const record = makeRecord({ id: 'quick-info0000info00', port: 8080 });
     const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const handler = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: record.id
+    });
+
+    await handler.destroy(record);
+
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
+  });
+
+  it('is a no-op success on unknown port', async () => {
+    const { client, storage, handler } = makeHandler();
+
+    await expect(handler.destroy(9999)).resolves.toBeUndefined();
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(storage.put).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+  });
+
+  it('swallows TUNNEL_NOT_FOUND from the container (already gone)', async () => {
+    const record = makeRecord({ id: 'quick-gone0000gone00', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const handler = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
     client.tunnels.destroyTunnel.mockRejectedValue(
-      new Error('TUNNEL_NOT_FOUND: tunnel ghost is not running')
+      new Error('TUNNEL_NOT_FOUND: tunnel quick-gone is not running')
     );
+
+    await expect(handler.destroy(8080)).resolves.toBeUndefined();
+    // Storage is still cleared.
+    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0][1]).toEqual({});
+  });
+
+  it('does not roll back storage when the container call fails with a non-NOT_FOUND error', async () => {
+    const record = makeRecord({ id: 'quick-err000000err000', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
     const handler = createTunnelsHandler({
-      client: client as any,
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
       logger: makeLogger()
     });
+    client.tunnels.destroyTunnel.mockRejectedValue(new Error('boom'));
 
-    await expect(handler.destroy('ghost')).rejects.toThrow(/TUNNEL_NOT_FOUND/);
+    await expect(handler.destroy(8080)).rejects.toThrow('boom');
+    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    // Storage was cleared before the RPC and is not restored on failure.
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0][1]).toEqual({});
   });
 });
 
 describe('tunnels handler > list', () => {
-  it('returns the records as the RPC client surfaces them', async () => {
+  it('returns the values from storage (no container round-trip)', async () => {
+    const a = makeRecord({ id: 'quick-aaaa1111aaaa1111', port: 8080 });
+    const b = makeRecord({
+      id: 'quick-bbbb2222bbbb2222',
+      port: 8081,
+      url: 'https://b.trycloudflare.com',
+      hostname: 'b.trycloudflare.com'
+    });
     const { client } = makeClient();
-    const records: TunnelInfo[] = [
-      makeRecord({ id: 'quick-aaaaaaaa', port: 8080 }),
-      makeRecord({ id: 'quick-bbbbbbbb', port: 8081 })
-    ];
-    client.tunnels.listTunnels.mockResolvedValue(records);
+    const storage = makeStorage({ '8080': a, '8081': b });
     const handler = createTunnelsHandler({
-      client: client as any,
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
       logger: makeLogger()
     });
 
     const tunnels = await handler.list();
+    expect(tunnels).toEqual(expect.arrayContaining([a, b]));
+    expect(tunnels).toHaveLength(2);
+    expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
+  });
 
-    expect(tunnels).toEqual(records);
+  it('returns an empty array when storage is empty', async () => {
+    const { handler } = makeHandler();
+    await expect(handler.list()).resolves.toEqual([]);
   });
 });
 
 describe('route-based SandboxClient.tunnels placeholder', () => {
   it('throws "RPC transport required" from any method on the proxy', async () => {
-    // Late import so this only loads when the test runs.
     const { SandboxClient } = await import('../src/clients/sandbox-client');
     const client = new SandboxClient({ baseUrl: 'http://test.invalid' });
     expect(() =>
-      (client.tunnels as unknown as { create: () => void }).create()
+      (client.tunnels as unknown as { get: () => void }).get()
     ).toThrow(/RPC transport/);
     expect(() =>
       (client.tunnels as unknown as { list: () => void }).list()

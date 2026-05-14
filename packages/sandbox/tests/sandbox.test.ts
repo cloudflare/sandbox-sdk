@@ -1440,6 +1440,38 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('tunnels lifecycle storage', () => {
+    it('onStart() clears the tunnels storage key', async () => {
+      const deletedKeys: string[] = [];
+      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
+        deletedKeys.push(String(key));
+        return true;
+      });
+      // restoreExposedPorts reads portTokens; make it a no-op so the
+      // tunnels-clear branch is reachable.
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue(undefined as any);
+
+      await (sandbox as any).onStart();
+
+      expect(deletedKeys).toContain('tunnels');
+    });
+
+    it('destroy() deletes the tunnels storage key', async () => {
+      const deletedKeys: string[] = [];
+      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
+        deletedKeys.push(String(key));
+        return true;
+      });
+      vi.spyOn(Container.prototype, 'destroy').mockImplementation(
+        async () => {}
+      );
+
+      await sandbox.destroy();
+
+      expect(deletedKeys).toContain('tunnels');
+    });
+  });
+
   describe('validatePortToken', () => {
     beforeEach(() => {
       // Spy on getExposedPorts so a regression that reintroduces the
