@@ -14,6 +14,7 @@ interface MockObject {
   customMetadata?: Record<string, string>;
   etag?: string;
   storageClass?: 'Standard' | 'InfrequentAccess';
+  failArrayBuffer?: boolean;
 }
 
 function makeR2Object(key: string, obj: MockObject): R2ObjectBody {
@@ -38,8 +39,12 @@ function makeR2Object(key: string, obj: MockObject): R2ObjectBody {
     body: stream,
     bodyUsed: false,
     text: () => Promise.resolve(obj.body),
-    arrayBuffer: () =>
-      Promise.resolve(encoder.encode(obj.body).buffer as ArrayBuffer),
+    arrayBuffer: () => {
+      if (obj.failArrayBuffer) {
+        throw new Error('arrayBuffer should not be called');
+      }
+      return Promise.resolve(encoder.encode(obj.body).buffer as ArrayBuffer);
+    },
     json: () => Promise.resolve(JSON.parse(obj.body)),
     blob: () => Promise.resolve(new Blob([obj.body]))
   } as unknown as R2ObjectBody;
@@ -69,6 +74,32 @@ function sliceBody(body: string, range: R2Range): string {
     : body.slice(offset);
 }
 
+async function readBodyValue(value: unknown): Promise<string> {
+  if (typeof value === 'string') return value;
+  if (value instanceof ArrayBuffer) return new TextDecoder().decode(value);
+  if (ArrayBuffer.isView(value)) {
+    return new TextDecoder().decode(value);
+  }
+  if (value instanceof ReadableStream) {
+    const reader = value.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      if (chunk) chunks.push(chunk as Uint8Array);
+    }
+    return new TextDecoder().decode(
+      chunks.reduce((acc, c) => {
+        const merged = new Uint8Array(acc.length + c.length);
+        merged.set(acc);
+        merged.set(c, acc.length);
+        return merged;
+      }, new Uint8Array(0))
+    );
+  }
+  return '';
+}
+
 function createMockR2Bucket(store: Map<string, MockObject>): R2Bucket {
   const uploads = new Map<
     string,
@@ -88,27 +119,7 @@ function createMockR2Bucket(store: Map<string, MockObject>): R2Bucket {
       return makeR2Object(key, obj);
     }),
     put: vi.fn(async (key: string, value: unknown, options?: R2PutOptions) => {
-      let body = '';
-      if (typeof value === 'string') body = value;
-      else if (value instanceof ArrayBuffer)
-        body = new TextDecoder().decode(value);
-      else if (value instanceof ReadableStream) {
-        const reader = value.getReader();
-        const chunks: Uint8Array[] = [];
-        while (true) {
-          const { done, value: chunk } = await reader.read();
-          if (done) break;
-          if (chunk) chunks.push(chunk as Uint8Array);
-        }
-        body = new TextDecoder().decode(
-          chunks.reduce((acc, c) => {
-            const merged = new Uint8Array(acc.length + c.length);
-            merged.set(acc);
-            merged.set(c, acc.length);
-            return merged;
-          }, new Uint8Array(0))
-        );
-      }
+      const body = await readBodyValue(value);
       const httpMetadata = options?.httpMetadata;
       const contentType =
         typeof httpMetadata === 'object' &&
@@ -175,8 +186,7 @@ function createMockR2Bucket(store: Map<string, MockObject>): R2Bucket {
         key,
         uploadId,
         uploadPart: vi.fn(async (partNumber: number, value: unknown) => {
-          let body = '';
-          if (typeof value === 'string') body = value;
+          const body = await readBodyValue(value);
           uploads.get(uploadId)!.parts.set(partNumber, body);
           return { partNumber, etag: `part-etag-${partNumber}` };
         }),
@@ -321,7 +331,7 @@ describe('r2EgressHandler', () => {
   describe('GetObject', () => {
     it('returns object body with 200', async () => {
       const store = new Map<string, MockObject>([
-        ['hello.txt', { body: 'Hello, World!' }]
+        ['hello.txt', { body: 'Hello, World!', failArrayBuffer: true }]
       ]);
       const r2 = createMockR2Bucket(store);
       const res = await r2EgressHandler(
@@ -346,7 +356,7 @@ describe('r2EgressHandler', () => {
 
     it('returns 206 with correct Content-Range for a fixed byte range', async () => {
       const store = new Map<string, MockObject>([
-        ['large.bin', { body: '0123456789' }]
+        ['large.bin', { body: '0123456789', failArrayBuffer: true }]
       ]);
       const r2 = createMockR2Bucket(store);
       const res = await r2EgressHandler(
@@ -409,6 +419,11 @@ describe('r2EgressHandler', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('ETag')).toBeTruthy();
       expect(store.has('new-file.txt')).toBe(true);
+      expect(r2.put).not.toHaveBeenCalled();
+      expect(r2.createMultipartUpload).toHaveBeenCalledWith('new-file.txt', {
+        httpMetadata: { contentType: 'text/plain' }
+      });
+      expect(store.get('new-file.txt')?.body).toBe('new content');
     });
 
     it('copies an object when x-amz-copy-source is present', async () => {
@@ -418,7 +433,8 @@ describe('r2EgressHandler', () => {
           {
             body: 'copy me',
             contentType: 'text/plain',
-            customMetadata: { source: 'yes' }
+            customMetadata: { source: 'yes' },
+            failArrayBuffer: true
           }
         ]
       ]);

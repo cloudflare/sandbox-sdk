@@ -19,6 +19,7 @@ export type {
   FuseMountInfo,
   LocalSyncMountInfo,
   MountInfo,
+  R2BindingMountInfo,
   R2EgressMountInfo
 } from './types';
 export {

@@ -122,6 +122,31 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
   });
 
+  it('mounts a Worker R2 binding from explicit binding', async () => {
+    const res = await mountRequest({
+      binding: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { readOnly: true, prefix: '/uploads/' }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      readOnly: true,
+      prefix: '/uploads/'
+    });
+  });
+
+  it('rejects binding with endpoint', async () => {
+    const res = await mountRequest({
+      binding: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { endpoint: 'https://acct.r2.cloudflarestorage.com' }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('either binding or options.endpoint');
+  });
+
   it('passes s3fsOptions for R2 binding mounts', async () => {
     const res = await mountRequest({
       bucket: 'MY_BUCKET',
@@ -152,10 +177,10 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
   });
 
-  it('rejects missing bucket', async () => {
+  it('rejects missing bucket and binding', async () => {
     const res = await mountRequest({
       mountPath: '/mnt/data',
-      options: { endpoint: 'https://acct.r2.cloudflarestorage.com' }
+      options: {}
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };

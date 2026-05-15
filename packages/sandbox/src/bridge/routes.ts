@@ -73,6 +73,10 @@ function hasEndpoint(
   return 'endpoint' in options && typeof options.endpoint === 'string';
 }
 
+function hasEndpointProperty(options: MountBucketRequestOptions): boolean {
+  return 'endpoint' in options && options.endpoint !== undefined;
+}
+
 function hasCredentials(
   options: MountBucketRequestOptions
 ): options is MountBucketRequestOptions & {
@@ -88,11 +92,33 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function validateMountOptions(
-  options: MountBucketRequestOptions
+  options: MountBucketRequestOptions,
+  binding?: string
 ): Response | null {
   if ('endpoint' in options && !hasEndpoint(options)) {
     return errorJson(
       'options.endpoint must be a string when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (binding !== undefined && typeof binding !== 'string') {
+    return errorJson(
+      'binding must be a string when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (binding === '') {
+    return errorJson(
+      'binding must be a non-empty string when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (binding !== undefined && hasEndpointProperty(options)) {
+    return errorJson(
+      'Provide either binding or options.endpoint, not both',
       'invalid_request',
       400
     );
@@ -136,6 +162,16 @@ function validateMountOptions(
     );
   }
   return null;
+}
+
+function resolveMountBucketName(body: MountBucketRequest): string | Response {
+  if (body.binding !== undefined) return body.binding;
+  if (body.bucket && typeof body.bucket === 'string') return body.bucket;
+  return errorJson(
+    'bucket must be a non-empty string when binding is omitted',
+    'invalid_request',
+    400
+  );
 }
 
 function toSDKMountOptions(
@@ -775,7 +811,10 @@ export function createBridgeApp(
       return errorJson('Invalid JSON body', 'invalid_request', 400);
     }
 
-    if (!body.bucket || typeof body.bucket !== 'string') {
+    if (
+      body.bucket !== undefined &&
+      (typeof body.bucket !== 'string' || body.bucket === '')
+    ) {
       return errorJson(
         'bucket must be a non-empty string',
         'invalid_request',
@@ -803,14 +842,16 @@ export function createBridgeApp(
     ) {
       return errorJson('options must be an object', 'invalid_request', 400);
     }
-    const optionsError = validateMountOptions(body.options);
+    const optionsError = validateMountOptions(body.options, body.binding);
     if (optionsError) return optionsError;
+    const bucketName = resolveMountBucketName(body);
+    if (bucketName instanceof Response) return bucketName;
 
     const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
     const sdkOptions = toSDKMountOptions(body.options);
 
     try {
-      await sandbox.mountBucket(body.bucket, body.mountPath, sdkOptions);
+      await sandbox.mountBucket(bucketName, body.mountPath, sdkOptions);
       return c.json({ ok: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

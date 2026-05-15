@@ -19,10 +19,8 @@ import { isR2Bucket } from './validation';
 // ---------------------------------------------------------------------------
 // Per-mount bucket params
 //
-// Passed through setOutboundByHost params so they are serialized into
-// ContainerProxy props and transmitted with every intercepted request.
-// This avoids relying on module-level state which is not shared across
-// Cloudflare Worker isolates.
+// Serialized into ContainerProxy props and transmitted with every intercepted
+// request so each Worker isolate receives the active mount configuration.
 // ---------------------------------------------------------------------------
 
 export type R2EgressParams = {
@@ -35,8 +33,9 @@ export type R2EgressParams = {
 
 const XML_NS = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"';
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>\n';
+const R2_MULTIPART_PART_SIZE = 5 * 1024 * 1024;
 
-function escapeXml(s: string): string {
+function escapeXML(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -142,36 +141,30 @@ function buildListObjectsV2Xml(
   const contents = result.objects
     .map(
       (obj) =>
-        `<Contents>` +
-        `<Key>${escapeXml(obj.key)}</Key>` +
-        `<LastModified>${obj.uploaded.toISOString()}</LastModified>` +
-        `<ETag>${escapeXml(obj.httpEtag)}</ETag>` +
-        `<Size>${obj.size}</Size>` +
-        `<StorageClass>STANDARD</StorageClass>` +
-        `</Contents>`
+        `<Contents><Key>${escapeXML(obj.key)}</Key><LastModified>${obj.uploaded.toISOString()}</LastModified><ETag>${escapeXML(obj.httpEtag)}</ETag><Size>${obj.size}</Size><StorageClass>STANDARD</StorageClass></Contents>`
     )
     .join('');
 
   const commonPrefixes = result.delimitedPrefixes
     .map(
-      (p) => `<CommonPrefixes><Prefix>${escapeXml(p)}</Prefix></CommonPrefixes>`
+      (p) => `<CommonPrefixes><Prefix>${escapeXML(p)}</Prefix></CommonPrefixes>`
     )
     .join('');
 
   const nextToken =
     result.truncated && result.cursor
-      ? `<NextContinuationToken>${escapeXml(result.cursor)}</NextContinuationToken>`
+      ? `<NextContinuationToken>${escapeXML(result.cursor)}</NextContinuationToken>`
       : '';
 
   const keyCount = result.objects.length + result.delimitedPrefixes.length;
 
   return (
     `<ListBucketResult ${XML_NS}>` +
-    `<Name>${escapeXml(bucketName)}</Name>` +
-    `<Prefix>${escapeXml(prefix)}</Prefix>` +
+    `<Name>${escapeXML(bucketName)}</Name>` +
+    `<Prefix>${escapeXML(prefix)}</Prefix>` +
     `<KeyCount>${keyCount}</KeyCount>` +
     `<MaxKeys>${maxKeys}</MaxKeys>` +
-    (delimiter ? `<Delimiter>${escapeXml(delimiter)}</Delimiter>` : '') +
+    (delimiter ? `<Delimiter>${escapeXML(delimiter)}</Delimiter>` : '') +
     `<IsTruncated>${result.truncated}</IsTruncated>` +
     nextToken +
     contents +
@@ -191,9 +184,9 @@ function buildInitiateMultipartUploadXml(
 ): string {
   return (
     `<InitiateMultipartUploadResult ${XML_NS}>` +
-    `<Bucket>${escapeXml(bucketName)}</Bucket>` +
-    `<Key>${escapeXml(key)}</Key>` +
-    `<UploadId>${escapeXml(uploadId)}</UploadId>` +
+    `<Bucket>${escapeXML(bucketName)}</Bucket>` +
+    `<Key>${escapeXML(key)}</Key>` +
+    `<UploadId>${escapeXML(uploadId)}</UploadId>` +
     `</InitiateMultipartUploadResult>`
   );
 }
@@ -205,10 +198,10 @@ function buildCompleteMultipartUploadXml(
 ): string {
   return (
     `<CompleteMultipartUploadResult ${XML_NS}>` +
-    `<Location>http://r2.internal/${escapeXml(bucketName)}/${escapeXml(key)}</Location>` +
-    `<Bucket>${escapeXml(bucketName)}</Bucket>` +
-    `<Key>${escapeXml(key)}</Key>` +
-    `<ETag>${escapeXml(etag)}</ETag>` +
+    `<Location>http://r2.internal/${escapeXML(bucketName)}/${escapeXML(key)}</Location>` +
+    `<Bucket>${escapeXML(bucketName)}</Bucket>` +
+    `<Key>${escapeXML(key)}</Key>` +
+    `<ETag>${escapeXML(etag)}</ETag>` +
     `</CompleteMultipartUploadResult>`
   );
 }
@@ -217,7 +210,7 @@ function buildCopyObjectXml(etag: string, uploaded: Date): string {
   return (
     `<CopyObjectResult ${XML_NS}>` +
     `<LastModified>${uploaded.toISOString()}</LastModified>` +
-    `<ETag>${escapeXml(etag)}</ETag>` +
+    `<ETag>${escapeXML(etag)}</ETag>` +
     `</CopyObjectResult>`
   );
 }
@@ -354,6 +347,82 @@ function normalizeStorageClass(
   return undefined;
 }
 
+async function readRequestBody(
+  request: Request
+): Promise<Uint8Array | Response> {
+  if (!request.body) {
+    return new Response('Bad Request: missing request body', { status: 400 });
+  }
+  // R2 writes require a known-length body; intercepted s3fs request streams do
+  // not carry that length through the outbound proxy.
+  return new Uint8Array(await request.arrayBuffer());
+}
+
+function mergeChunks(chunks: Uint8Array[], totalLength: number): Uint8Array {
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+async function putRequestBody(
+  r2: R2Bucket,
+  key: string,
+  request: Request,
+  options: R2MultipartOptions
+): Promise<R2Object | Response> {
+  if (!request.body) {
+    return new Response('Bad Request: missing request body', { status: 400 });
+  }
+
+  const upload = await r2.createMultipartUpload(key, options);
+  const reader = request.body.getReader();
+  const uploadedParts: R2UploadedPart[] = [];
+  let partNumber = 1;
+  let chunks: Uint8Array[] = [];
+  let bufferedBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      bufferedBytes += value.length;
+
+      while (bufferedBytes >= R2_MULTIPART_PART_SIZE) {
+        const partBuffer = mergeChunks(chunks, bufferedBytes);
+        const part = partBuffer.slice(0, R2_MULTIPART_PART_SIZE);
+        const remainder = partBuffer.slice(R2_MULTIPART_PART_SIZE);
+        uploadedParts.push(await upload.uploadPart(partNumber, part));
+        partNumber++;
+        chunks = remainder.length > 0 ? [remainder] : [];
+        bufferedBytes = remainder.length;
+      }
+    }
+
+    if (uploadedParts.length === 0 && bufferedBytes === 0) {
+      // Empty body — R2 multipart does not support 0-byte parts; abort and use
+      // a direct put instead.
+      await upload.abort();
+      return r2.put(key, new Uint8Array(0), options);
+    }
+
+    if (bufferedBytes > 0) {
+      uploadedParts.push(
+        await upload.uploadPart(partNumber, mergeChunks(chunks, bufferedBytes))
+      );
+    }
+
+    return upload.complete(uploadedParts);
+  } catch (error) {
+    await upload.abort();
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Operation handlers
 // ---------------------------------------------------------------------------
@@ -438,13 +507,13 @@ async function handleGetObject(
     if (!obj) {
       return new Response(null, { status: 404 });
     }
-    const body = await obj.arrayBuffer();
-    return new Response(body, {
+    return new Response(obj.body, {
       status: 200,
       headers: buildResponseHeaders(obj)
     });
   }
 
+  // R2 range bodies do not include the full object size needed for Content-Range.
   const [headObj, rangeObj] = await Promise.all([
     r2.head(key),
     r2.get(key, { range })
@@ -453,7 +522,6 @@ async function handleGetObject(
     return new Response(null, { status: 404 });
   }
 
-  const rangeBody = await rangeObj.arrayBuffer();
   const headers = buildResponseHeaders(rangeObj);
   headers.set('Content-Range', buildContentRange(range, headObj.size));
   headers.set(
@@ -461,7 +529,7 @@ async function handleGetObject(
     String(getRangeContentLength(range, headObj.size))
   );
 
-  return new Response(rangeBody, { status: 206, headers });
+  return new Response(rangeObj.body, { status: 206, headers });
 }
 
 async function handlePutObject(
@@ -516,8 +584,7 @@ async function handlePutObject(
       metadataDirective?.toUpperCase() === 'REPLACE'
         ? extractHttpMetadata(request)
         : sourceObject.httpMetadata;
-    const sourceBody = await sourceObject.arrayBuffer();
-    const result = await r2.put(key, sourceBody, {
+    const result = await r2.put(key, sourceObject.body, {
       httpMetadata,
       customMetadata: sourceObject.customMetadata,
       storageClass: normalizeStorageClass(sourceObject.storageClass)
@@ -526,8 +593,8 @@ async function handlePutObject(
   }
 
   const httpMetadata = extractHttpMetadata(request);
-  const body = await request.arrayBuffer();
-  const result = await r2.put(key, body, { httpMetadata });
+  const result = await putRequestBody(r2, key, request, { httpMetadata });
+  if (result instanceof Response) return result;
   const headers = new Headers();
   headers.set('ETag', result.httpEtag);
   return new Response(null, { status: 200, headers });
@@ -568,7 +635,8 @@ async function handleUploadPart(
     });
   }
   const upload = r2.resumeMultipartUpload(key, uploadId);
-  const body = await request.arrayBuffer();
+  const body = await readRequestBody(request);
+  if (body instanceof Response) return body;
   const part = await upload.uploadPart(partNumber, body);
   const headers = new Headers();
   headers.set('ETag', `"${part.etag}"`);

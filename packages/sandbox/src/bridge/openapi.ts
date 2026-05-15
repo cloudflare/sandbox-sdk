@@ -102,7 +102,7 @@ export const OPENAPI_SCHEMA = {
           endpoint: {
             type: 'string',
             description:
-              'S3-compatible endpoint URL. Omit to mount a Worker R2 binding with the same name as `bucket`.',
+              'S3-compatible endpoint URL for remote mounts. Mutually exclusive with top-level `binding`.',
             example: 'https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
           },
           readOnly: {
@@ -132,12 +132,19 @@ export const OPENAPI_SCHEMA = {
       },
       MountBucketRequest: {
         type: 'object',
-        required: ['bucket', 'mountPath', 'options'],
+        required: ['mountPath', 'options'],
         properties: {
           bucket: {
             type: 'string',
-            description: 'Bucket name.',
+            description:
+              'Remote bucket name. For compatibility, also used as the R2 binding name when `binding` is omitted.',
             example: 'my-r2-bucket'
+          },
+          binding: {
+            type: 'string',
+            description:
+              'Worker R2 binding name for credential-less R2 binding mounts. Mutually exclusive with `options.endpoint`.',
+            example: 'MY_BUCKET'
           },
           mountPath: {
             type: 'string',

@@ -59,6 +59,7 @@ export function validateBucketBindingName(
     );
   }
 
+  // Worker binding names follow JavaScript identifier syntax.
   const bindingNameRegex = /^[A-Za-z_][A-Za-z0-9_]*$/;
   if (!bindingNameRegex.test(bucketBinding)) {
     throw new InvalidMountConfigError(
