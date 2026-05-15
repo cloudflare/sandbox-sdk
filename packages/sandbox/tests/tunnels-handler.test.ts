@@ -430,6 +430,101 @@ describe('tunnels handler > list', () => {
   });
 });
 
+describe('tunnels handler > per-port serialization', () => {
+  it('queues destroy(port) behind an in-flight get(port) so the destroy sees the new record', async () => {
+    const { client, storage, handler } = makeHandler();
+    let resolveSpawn: (info: TunnelInfo) => void = () => {};
+    client.tunnels.runQuickTunnel.mockImplementation(
+      (id: string, port: number) =>
+        new Promise<TunnelInfo>((resolve) => {
+          resolveSpawn = () => resolve(makeRecord({ id, port }));
+        })
+    );
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: ''
+    });
+
+    // Kick off get() but don't await yet — it's blocked on runQuickTunnel.
+    const getPromise = handler.get(8080);
+    // Wait until the spawn is in flight so we know get() holds the lock.
+    for (let i = 0; i < 50; i++) {
+      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+
+    // Now race a destroy(8080) against the unfinished get(). Without
+    // serialization, the destroy would observe an empty map and return
+    // a no-op success, then get() would write its record into storage
+    // — leaking a cloudflared process the user thinks is gone.
+    const destroyPromise = handler.destroy(8080);
+    // Give the destroy a tick to attempt entering the critical section.
+    await new Promise((r) => setTimeout(r, 5));
+    // The destroy must NOT have called destroyTunnel yet (no record to destroy).
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+
+    // Let get() complete.
+    resolveSpawn(makeRecord({ id: 'unused', port: 8080 }));
+    const info = await getPromise;
+    await destroyPromise;
+
+    // The destroy ran *after* the get wrote, so it tore down the right tunnel.
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(info.id);
+    // Storage is empty at the end — the get's write and the destroy's
+    // clear both happened, in that order.
+    const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(final ?? {}).toEqual({});
+  });
+
+  it('queues get(port) behind an in-flight destroy(port)', async () => {
+    const record = makeRecord({ id: 'quick-pre000pre000pre0', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const handler = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    let resolveDestroy: () => void = () => {};
+    client.tunnels.destroyTunnel.mockImplementation(
+      () =>
+        new Promise<{ success: true; id: string }>((resolve) => {
+          resolveDestroy = () => resolve({ success: true, id: record.id });
+        })
+    );
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    const destroyPromise = handler.destroy(8080);
+    // Wait until the destroy is in flight (has called destroyTunnel).
+    for (let i = 0; i < 50; i++) {
+      if (client.tunnels.destroyTunnel.mock.calls.length > 0) break;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(1);
+
+    // get() must wait — if it ran now it would see the empty map and
+    // try to spawn while destroy() is still tearing down the old one.
+    const getPromise = handler.get(8080);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+
+    resolveDestroy();
+    await destroyPromise;
+    const info = await getPromise;
+
+    // After the destroy completes, get() spawned a fresh tunnel — not
+    // resurrected the old record.
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(info.id).not.toBe(record.id);
+  });
+});
+
 describe('route-based SandboxClient.tunnels placeholder', () => {
   it('throws "RPC transport required" from any method on the proxy', async () => {
     const { SandboxClient } = await import('../src/clients/sandbox-client');

@@ -82,14 +82,38 @@ function isTunnelNotFoundError(error: unknown): boolean {
 }
 
 export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
-  // Per-port inflight coalescing. Two simultaneous get(8080) calls on a
-  // cold cache would otherwise mint two ids and spawn two cloudflared
-  // processes. The slot is cleared in a `finally` so a failed spawn
-  // doesn't poison subsequent calls for the same port.
-  const inflight = new Map<number, Promise<TunnelInfo>>();
+  // Per-port serialization lock. Any operation that mutates the tunnel
+  // for a given port — get() on a cache miss, destroy() — queues behind
+  // the previous operation on the same port. Two consequences:
+  //
+  //   - get(8080) followed by destroy(8080) is well-ordered: the destroy
+  //     observes whatever the get just wrote, even though both yield to
+  //     external RPCs in the middle.
+  //   - Two concurrent get(8080) calls share the first call's record:
+  //     the second runs after the first writes storage and takes the
+  //     hit branch (so no double cloudflared spawn).
+  //
+  // The lock is a plain Promise chain keyed by port. `transaction()` on
+  // the storage write still matters for *cross-port* writes — a
+  // get(8080) and get(8081) running in parallel are independent here.
+  const portLocks = new Map<number, Promise<unknown>>();
 
-  async function readMap(): Promise<TunnelMap> {
-    return (await host.storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
+  function withPortLock<T>(port: number, fn: () => Promise<T>): Promise<T> {
+    const previous = portLocks.get(port) ?? Promise.resolve();
+    const next = previous.then(fn, fn);
+    // Swallow rejections on the chain so a failed op doesn't poison
+    // subsequent ones; the original promise still rejects to the caller.
+    portLocks.set(
+      port,
+      next.catch(() => undefined)
+    );
+    return next;
+  }
+
+  async function readMap(
+    storage: TunnelsStorageTxn = host.storage
+  ): Promise<TunnelMap> {
+    return (await storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
   }
 
   async function get(port: number): Promise<TunnelInfo> {
@@ -100,18 +124,7 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
     try {
       validateTunnelPort(port);
 
-      // Coalescing has to start synchronously: two concurrent get()
-      // calls both need to observe each other's inflight slot before
-      // doing the storage read, otherwise they each mint an id and
-      // spawn a duplicate cloudflared process.
-      const inflightExisting = inflight.get(port);
-      if (inflightExisting) {
-        const info = await inflightExisting;
-        outcome = 'success';
-        return info;
-      }
-
-      const work = (async (): Promise<TunnelInfo> => {
+      const info = await withPortLock(port, async () => {
         const map = await readMap();
         const existing = map[port.toString()];
         if (existing) {
@@ -119,27 +132,20 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
           return existing;
         }
         const id = `quick-${shortId()}`;
-        const info = await host.client.tunnels.runQuickTunnel(id, port);
-        // Atomic re-read and write. The cloudflared await above yields,
-        // so a concurrent get(otherPort) may have written between our
-        // first readMap() and now; transaction() retries on conflict.
+        const spawned = await host.client.tunnels.runQuickTunnel(id, port);
+        // Atomic re-read + write. The lock orders same-port ops, but
+        // a concurrent get(otherPort) can still write the `tunnels` key
+        // between the cloudflared await above and here. transaction()
+        // retries on conflict so the cross-port write doesn't clobber.
         await host.storage.transaction(async (txn) => {
-          const nextMap = (await txn.get<TunnelMap>(STORAGE_KEY)) ?? {};
-          nextMap[port.toString()] = info;
+          const nextMap = await readMap(txn);
+          nextMap[port.toString()] = spawned;
           await txn.put(STORAGE_KEY, nextMap);
         });
-        return info;
-      })();
-      inflight.set(port, work);
-      try {
-        const info = await work;
-        outcome = 'success';
-        return info;
-      } finally {
-        // Always clear the slot — including on failure — so the next
-        // caller retries instead of awaiting a rejected promise.
-        if (inflight.get(port) === work) inflight.delete(port);
-      }
+        return spawned;
+      });
+      outcome = 'success';
+      return info;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
@@ -162,35 +168,35 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
     let caughtError: Error | undefined;
     let tunnelId: string | undefined;
     try {
-      const map = await readMap();
-      const existing = map[port.toString()];
-      if (!existing) {
-        // Idempotent — destroying an unknown port resolves successfully.
-        outcome = 'success';
-        return;
-      }
-      tunnelId = existing.id;
+      await withPortLock(port, async () => {
+        const map = await readMap();
+        const existing = map[port.toString()];
+        if (!existing) {
+          // Idempotent — destroying an unknown port resolves successfully.
+          return;
+        }
+        tunnelId = existing.id;
 
-      // Atomic clear: same race window as get(), since destroyTunnel()
-      // also yields. Wrap the read-modify-write so a concurrent
-      // get(otherPort) write doesn't resurrect this entry. Storage is
-      // cleared *before* the container RPC for the same reason as
-      // portTokens (sandbox.ts:1795): a get(port) that races our destroy
-      // should see a cache miss and spawn fresh rather than reuse the
-      // record we're tearing down.
-      await host.storage.transaction(async (txn) => {
-        const current = (await txn.get<TunnelMap>(STORAGE_KEY)) ?? {};
-        delete current[port.toString()];
-        await txn.put(STORAGE_KEY, current);
+        // Clear storage first. Same ordering as portTokens (sandbox.ts):
+        // a hypothetical reader that observes storage between the put
+        // below and the destroyTunnel RPC sees a cache miss — the right
+        // answer, since the tunnel is on its way out. The port lock
+        // means no in-process get(port) is racing with us, but Workers
+        // / external readers don't go through this handler.
+        await host.storage.transaction(async (txn) => {
+          const current = await readMap(txn);
+          delete current[port.toString()];
+          await txn.put(STORAGE_KEY, current);
+        });
+
+        try {
+          await host.client.tunnels.destroyTunnel(existing.id);
+        } catch (error) {
+          if (!isTunnelNotFoundError(error)) throw error;
+          // Container already forgot — treat as success. Storage is
+          // already cleared above, so we're done.
+        }
       });
-
-      try {
-        await host.client.tunnels.destroyTunnel(existing.id);
-      } catch (error) {
-        if (!isTunnelNotFoundError(error)) throw error;
-        // Container already forgot — treat as success. Storage is
-        // already cleared above, so we're done.
-      }
       outcome = 'success';
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
