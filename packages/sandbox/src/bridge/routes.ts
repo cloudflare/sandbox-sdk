@@ -165,10 +165,17 @@ function validateMountOptions(
 }
 
 function resolveMountBucketName(body: MountBucketRequest): string | Response {
+  if (hasEndpoint(body.options)) {
+    if (body.bucket && typeof body.bucket === 'string') return body.bucket;
+    return errorJson(
+      'bucket must be a non-empty string for remote mounts',
+      'invalid_request',
+      400
+    );
+  }
   if (body.binding !== undefined) return body.binding;
-  if (body.bucket && typeof body.bucket === 'string') return body.bucket;
   return errorJson(
-    'bucket must be a non-empty string when binding is omitted',
+    'binding must be a non-empty string for R2 binding mounts',
     'invalid_request',
     400
   );

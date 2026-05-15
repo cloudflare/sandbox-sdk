@@ -197,11 +197,11 @@ const sandboxConfigurationCache = new WeakMap<
   Map<string, CachedSandboxConfiguration>
 >();
 
-const R2_DEFAULT_S3FS_OPTIONS: readonly string[] = [
-  'stat_cache_expire=60',
-  'enable_noobj_cache',
-  'multipart_size=5'
-];
+const R2_DEFAULT_S3FS_OPTIONS: Readonly<Record<string, string | boolean>> = {
+  stat_cache_expire: '60',
+  enable_noobj_cache: true,
+  multipart_size: '5'
+};
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
@@ -1419,28 +1419,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
       this.activeMounts.set(mountPath, mountInfo);
 
-      await this.configureR2EgressOutbound();
+      await this.configureR2EgressOutbound(this.getR2EgressParams());
 
       await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
       const s3fsSource = bucket;
-      const s3fsArgMap = new Map<string, string>();
-      s3fsArgMap.set('passwd_file', `passwd_file=${passwordFilePath}`);
-      for (const arg of R2_DEFAULT_S3FS_OPTIONS) {
-        const [key] = arg.split('=');
-        s3fsArgMap.set(key, arg);
-      }
-      for (const arg of resolveS3fsOptions('r2', options.s3fsOptions)) {
-        const [key] = arg.split('=');
-        s3fsArgMap.set(key, arg);
-      }
-      s3fsArgMap.set('use_path_request_style', 'use_path_request_style');
-      s3fsArgMap.set('url', 'url=http://r2.internal');
+      const s3fsOptions: Record<string, string | boolean> = {
+        passwd_file: passwordFilePath,
+        ...R2_DEFAULT_S3FS_OPTIONS,
+        ...parseS3fsOptions(resolveS3fsOptions('r2', options.s3fsOptions)),
+        use_path_request_style: true,
+        url: 'http://r2.internal',
+        ...(options.readOnly ? { ro: true } : {})
+      };
 
-      if (options.readOnly) s3fsArgMap.set('ro', 'ro');
-      const s3fsArgs = Array.from(s3fsArgMap.values());
-
-      const optionsStr = shellEscape(s3fsArgs.join(','));
+      const optionsStr = shellEscape(serializeS3fsOptions(s3fsOptions));
       const mountCmd = `s3fs ${shellEscape(s3fsSource)} ${shellEscape(mountPath)} -o ${optionsStr}`;
       this.logger.debug('r2-egress: running s3fs', { mountCmd });
       const result = await this.execInternal(mountCmd);
@@ -1667,7 +1660,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.activeMounts.delete(mountPath);
 
           if (mountInfo.mountType === 'r2-egress') {
-            await this.teardownR2EgressMount();
+            await this.configureR2EgressOutbound(this.getR2EgressParams());
           }
 
           // Remove the now-empty mount directory
@@ -1886,6 +1879,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
+  private async unmountTrackedFuseMount(
+    mountPath: string,
+    mountInfo: FuseMountInfo | R2BindingMountInfo
+  ): Promise<void> {
+    if (!mountInfo.mounted) return;
+
+    this.logger.debug(
+      `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+    );
+    const result = await this.execInternal(
+      `fusermount -u ${shellEscape(mountPath)}`
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`
+      );
+    }
+    mountInfo.mounted = false;
+  }
+
   /**
    * In-flight `destroy()` promise. While set, concurrent callers coalesce
    * onto the same teardown instead of triggering a second one. Cleared when
@@ -1967,49 +1980,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               `Failed to stop local sync for ${mountPath}: ${errorMsg}`
             );
           }
-        } else if (mountInfo.mountType === 'r2-egress') {
-          if (mountInfo.mounted) {
-            try {
-              this.logger.debug(
-                `Unmounting R2 egress bucket ${mountInfo.bucket} from ${mountPath}`
-              );
-              const result = await this.execInternal(
-                `fusermount -u ${shellEscape(mountPath)}`
-              );
-              if (result.exitCode !== 0) {
-                throw new Error(
-                  `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`
-                );
-              }
-              mountInfo.mounted = false;
-            } catch (error) {
-              mountFailures++;
-              const errorMsg =
-                error instanceof Error ? error.message : String(error);
-              this.logger.warn(
-                `Failed to unmount R2 egress bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
-              );
-            }
-          }
-          await this.deletePasswordFile(mountInfo.passwordFilePath);
         } else {
-          if (mountInfo.mounted) {
-            try {
-              this.logger.debug(
-                `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-              );
-              await this.execInternal(
-                `fusermount -u ${shellEscape(mountPath)}`
-              );
-              mountInfo.mounted = false;
-            } catch (error) {
-              mountFailures++;
-              const errorMsg =
-                error instanceof Error ? error.message : String(error);
-              this.logger.warn(
-                `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
-              );
-            }
+          try {
+            await this.unmountTrackedFuseMount(mountPath, mountInfo);
+          } catch (error) {
+            mountFailures++;
+            const errorMsg =
+              error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+            );
           }
 
           // Always cleanup password file for FUSE mounts
@@ -6131,7 +6111,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private async configureR2EgressOutbound(
-    params: R2EgressParams = this.getR2EgressParams()
+    params: R2EgressParams
   ): Promise<void> {
     const ctx = this.ctx as R2EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
@@ -6165,10 +6145,5 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     await ctx.container.interceptOutboundHttp('r2.internal', fetcher);
-  }
-
-  private async teardownR2EgressMount(): Promise<void> {
-    const remainingR2Params = this.getR2EgressParams();
-    await this.configureR2EgressOutbound(remainingR2Params);
   }
 }

@@ -108,9 +108,9 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
   });
 
-  it('mounts a Worker R2 binding when endpoint is omitted', async () => {
+  it('mounts a Worker R2 binding when binding is provided', async () => {
     const res = await mountRequest({
-      bucket: 'MY_BUCKET',
+      binding: 'MY_BUCKET',
       mountPath: '/mnt/data',
       options: { readOnly: true, prefix: '/uploads/' }
     });
@@ -149,7 +149,7 @@ describe('POST /v1/sandbox/:id/mount', () => {
 
   it('passes s3fsOptions for R2 binding mounts', async () => {
     const res = await mountRequest({
-      bucket: 'MY_BUCKET',
+      binding: 'MY_BUCKET',
       mountPath: '/mnt/data',
       options: { s3fsOptions: ['nomultipart', 'nomixupload'] }
     });
@@ -184,7 +184,7 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('bucket');
+    expect(body.error).toContain('binding');
   });
 
   it('rejects missing mountPath', async () => {

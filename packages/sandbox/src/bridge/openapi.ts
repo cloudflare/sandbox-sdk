@@ -137,7 +137,7 @@ export const OPENAPI_SCHEMA = {
           bucket: {
             type: 'string',
             description:
-              'Remote bucket name. For compatibility, also used as the R2 binding name when `binding` is omitted.',
+              'Remote bucket name for endpoint-based S3-compatible mounts.',
             example: 'my-r2-bucket'
           },
           binding: {

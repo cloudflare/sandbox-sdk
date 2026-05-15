@@ -129,7 +129,7 @@ export type {
 
 /** Sent by the client for /mount requests. */
 export interface MountBucketRequest {
-  /** Remote bucket name, or legacy R2 binding name when `binding` is omitted. */
+  /** Remote bucket name for endpoint-based S3-compatible mounts. */
   bucket?: string;
   /** Worker R2 binding name for credential-less R2 binding mounts. */
   binding?: string;

@@ -271,14 +271,11 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
   -d '{"binding": "MY_BUCKET", "mountPath": "/mnt/data", "options": {"prefix": "/uploads/"}}'
 ```
 
-For compatibility, `bucket` is also accepted as the binding name when `binding`
-is omitted and `options.endpoint` is not provided.
-
 **Request body:**
 
 | Field                                 | Type    | Required | Description                                                                     |
 | ------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------- |
-| `bucket`                              | string  | no       | Remote bucket name, or legacy R2 binding name when `binding` is omitted         |
+| `bucket`                              | string  | no       | Remote bucket name for endpoint-based S3-compatible mounts                      |
 | `binding`                             | string  | no       | Worker R2 binding name for credential-less R2 binding mounts                    |
 | `mountPath`                           | string  | yes      | Absolute path in the container to mount at                                      |
 | `options.endpoint`                    | string  | no       | S3-compatible endpoint URL for remote mounts; mutually exclusive with `binding` |
