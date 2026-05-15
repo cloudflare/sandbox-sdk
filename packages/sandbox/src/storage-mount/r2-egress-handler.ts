@@ -33,7 +33,6 @@ export type R2EgressParams = {
 
 const XML_NS = 'xmlns="http://s3.amazonaws.com/doc/2006-03-01/"';
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>\n';
-const R2_MULTIPART_PART_SIZE = 5 * 1024 * 1024;
 
 function escapeXML(s: string): string {
   return s
@@ -358,69 +357,33 @@ async function readRequestBody(
   return new Uint8Array(await request.arrayBuffer());
 }
 
-function mergeChunks(chunks: Uint8Array[], totalLength: number): Uint8Array {
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
-}
-
 async function putRequestBody(
   r2: R2Bucket,
   key: string,
   request: Request,
-  options: R2MultipartOptions
+  options: R2PutOptions
 ): Promise<R2Object | Response> {
   if (!request.body) {
     return new Response('Bad Request: missing request body', { status: 400 });
   }
 
-  const upload = await r2.createMultipartUpload(key, options);
-  const reader = request.body.getReader();
-  const uploadedParts: R2UploadedPart[] = [];
-  let partNumber = 1;
-  let chunks: Uint8Array[] = [];
-  let bufferedBytes = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      bufferedBytes += value.length;
-
-      while (bufferedBytes >= R2_MULTIPART_PART_SIZE) {
-        const partBuffer = mergeChunks(chunks, bufferedBytes);
-        const part = partBuffer.slice(0, R2_MULTIPART_PART_SIZE);
-        const remainder = partBuffer.slice(R2_MULTIPART_PART_SIZE);
-        uploadedParts.push(await upload.uploadPart(partNumber, part));
-        partNumber++;
-        chunks = remainder.length > 0 ? [remainder] : [];
-        bufferedBytes = remainder.length;
-      }
-    }
-
-    if (uploadedParts.length === 0 && bufferedBytes === 0) {
-      // Empty body — R2 multipart does not support 0-byte parts; abort and use
-      // a direct put instead.
-      await upload.abort();
-      return r2.put(key, new Uint8Array(0), options);
-    }
-
-    if (bufferedBytes > 0) {
-      uploadedParts.push(
-        await upload.uploadPart(partNumber, mergeChunks(chunks, bufferedBytes))
-      );
-    }
-
-    return upload.complete(uploadedParts);
-  } catch (error) {
-    await upload.abort();
-    throw error;
+  const contentLength = request.headers.get('Content-Length');
+  const length = contentLength ? Number.parseInt(contentLength, 10) : NaN;
+  if (!Number.isFinite(length) || length < 0) {
+    return new Response('Bad Request: missing or invalid Content-Length', {
+      status: 400
+    });
   }
+
+  if (length === 0) {
+    return r2.put(key, new Uint8Array(0), options);
+  }
+
+  const { readable, writable } = new FixedLengthStream(length);
+  const pipe = request.body.pipeTo(writable);
+  const result = await r2.put(key, readable, options);
+  await pipe;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
