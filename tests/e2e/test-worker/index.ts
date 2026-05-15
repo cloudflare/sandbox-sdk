@@ -14,12 +14,8 @@
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
-import {
-  ContainerProxy,
-  getSandbox,
-  proxyToSandbox,
-  Sandbox
-} from '@cloudflare/sandbox';
+import { ContainerProxy as BaseContainerProxy } from '@cloudflare/containers';
+import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -42,7 +38,7 @@ import type {
 
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
-export { ContainerProxy };
+export class ContainerProxy extends BaseContainerProxy {}
 export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };

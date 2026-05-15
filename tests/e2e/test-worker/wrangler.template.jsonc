@@ -2,7 +2,7 @@
   "name": "{{WORKER_NAME}}",
   "main": "index.ts",
   "compatibility_date": "2025-05-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "enable_ctx_exports"],
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
   "vars": {
