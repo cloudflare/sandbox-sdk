@@ -13,9 +13,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let stats = { imports: 1, exports: 1 };
 let connected = true;
 const disconnects: number[] = [];
+/**
+ * onClose callbacks installed by `ContainerControlClient` on the active
+ * mock connection. The client's `getConnection()` wires this so the WS
+ * close/error listeners can fire teardown synchronously — in tests we
+ * invoke it directly via {@link triggerPeerClose} to simulate the
+ * runtime dispatching that event.
+ */
+const onCloseHandlers: Array<() => void> = [];
+
+/**
+ * Simulate the runtime firing a `close` / `error` event on the live
+ * WebSocket: flip the mock's `connected` flag and fire whichever
+ * `onClose` the client most recently installed. Returns whether a
+ * handler was actually invoked.
+ */
+function triggerPeerClose(): boolean {
+  connected = false;
+  const handler = onCloseHandlers.pop();
+  if (!handler) return false;
+  handler();
+  return true;
+}
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
+    constructor(options: { onClose?: () => void } = {}) {
+      if (options.onClose) onCloseHandlers.push(options.onClose);
+    }
     isConnected() {
       return connected;
     }
@@ -46,6 +71,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     stats = { imports: 1, exports: 1 };
     connected = true;
     disconnects.length = 0;
+    onCloseHandlers.length = 0;
   });
 
   afterEach(() => {
@@ -142,19 +168,19 @@ describe('ContainerControlClient busy/idle tracking', () => {
     vi.advanceTimersByTime(1_000);
     expect(onSessionBusy).toHaveBeenCalledTimes(1);
 
-    // Container crash / WebSocket peer-close: connection reports
-    // disconnected on the next poll.
-    connected = false;
-    vi.advanceTimersByTime(1_000);
-
-    // The poller must observe the dead connection, fire onSessionIdle so
-    // the DO's inflight counter unwinds, and tear down so it isn't
-    // looping over a corpse forever.
+    // Container crash / WebSocket peer-close: the connection's WS
+    // close listener fires synchronously via the `onClose` callback
+    // the client installed in `getConnection()`. This must release
+    // the inflight slot and tear the connection down inside the same
+    // turn of the event loop — no waiting on a poll tick.
+    const fired = triggerPeerClose();
+    expect(fired).toBe(true);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
     expect(disconnects).toHaveLength(1);
 
-    // Subsequent ticks must be a no-op — if the poller fired again it
-    // would attempt destroyConnection() repeatedly.
+    // Subsequent poll ticks must be a no-op — `this.conn` has already
+    // been nulled by `destroyConnection()`, so there's nothing left to
+    // observe.
     vi.advanceTimersByTime(5_000);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
     expect(disconnects).toHaveLength(1);
@@ -179,18 +205,22 @@ describe('ContainerControlClient busy/idle tracking', () => {
     // Several poll ticks while the upgrade is still pending. Must not
     // dispose the connection — the deferred transport's queue is the
     // only thing standing between the user's RPC call and the wire.
+    // The poller now treats `!isConnected()` as 'upgrade in progress'
+    // unconditionally; peer-disconnect teardown comes through onClose.
     vi.advanceTimersByTime(5_000);
     expect(disconnects).toHaveLength(0);
     expect(onSessionIdle).not.toHaveBeenCalled();
 
-    // Upgrade completes. From here on the poller treats subsequent
-    // disconnections as real peer-gone events.
+    // Upgrade completes; the session goes busy.
     connected = true;
     stats = { imports: 1, exports: 2 };
     vi.advanceTimersByTime(1_000); // observed busy
 
-    connected = false;
-    vi.advanceTimersByTime(1_000); // peer-gone — now we tear down
+    // Peer goes away. The WS close listener fires `onClose`, which
+    // tears the connection down synchronously without depending on
+    // the poller observing anything.
+    const fired = triggerPeerClose();
+    expect(fired).toBe(true);
     expect(disconnects).toHaveLength(1);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
   });
