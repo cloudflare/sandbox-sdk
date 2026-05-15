@@ -55,6 +55,17 @@ export interface ContainerControlConnectionOptions {
    * exited). When omitted, the container sees an empty remote main.
    */
   localMain?: any;
+  /**
+   * Invoked when an active WebSocket transitions to closed/errored.
+   * Fired at most once per successful connection from the WS event
+   * handlers in `doConnect`. Gives owners a synchronous teardown
+   * signal so recovery doesn't depend on a periodic poller running
+   * inside what may be an idle isolate.
+   *
+   * Not fired for `doConnect` failures (the rejected `connect()`
+   * promise is the signal in that case) nor for `disconnect()`.
+   */
+  onClose?: () => void;
 }
 
 /**
@@ -75,12 +86,14 @@ export class ContainerControlConnection {
   private readonly port: number;
   private readonly logger: Logger;
   private retryTimeoutMs: number;
+  private readonly onClose: (() => void) | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
     this.port = options.port ?? 3000;
     this.logger = options.logger ?? createNoOpLogger();
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
+    this.onClose = options.onClose;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -163,6 +176,22 @@ export class ContainerControlConnection {
   // Internal
   // -----------------------------------------------------------------------
 
+  /**
+   * Run the owner-provided `onClose` callback exactly once per call,
+   * swallowing any errors so a buggy listener can't keep the connection
+   * object in a half-torn-down state.
+   */
+  private fireOnClose(): void {
+    if (!this.onClose) return;
+    try {
+      this.onClose();
+    } catch (err) {
+      this.logger.warn('ContainerControlConnection onClose handler threw', {
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
+
   private async doConnect(): Promise<void> {
     try {
       const response = await this.fetchUpgradeWithRetry();
@@ -184,14 +213,18 @@ export class ContainerControlConnection {
       (ws as unknown as { accept: () => void }).accept();
 
       ws.addEventListener('close', () => {
+        const wasConnected = this.connected;
         this.connected = false;
         this.ws = null;
         this.logger.debug('ContainerControlConnection WebSocket closed');
+        if (wasConnected) this.fireOnClose();
       });
 
       ws.addEventListener('error', () => {
+        const wasConnected = this.connected;
         this.connected = false;
         this.ws = null;
+        if (wasConnected) this.fireOnClose();
       });
 
       this.ws = ws;

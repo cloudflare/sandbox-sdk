@@ -394,9 +394,19 @@ export class ContainerControlClient {
     this.connOptions = {
       stub: options.stub,
       port: options.port,
+      localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
-      localMain: options.localMain
+      // Event-driven failure recovery: when the live WebSocket closes
+      // or errors, tear the connection down inside the same turn of
+      // the event loop so the next RPC call builds a fresh one. The
+      // 1Hz busy-poll fallback can't be relied on here — `setInterval`
+      // callbacks don't fire while the DO isolate sits idle between
+      // requests, which is exactly the state the isolate enters after
+      // every in-flight RPC rejects with a peer-closed error.
+      onClose: () => {
+        if (this.conn) this.destroyConnection();
+      }
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
