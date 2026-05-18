@@ -21,7 +21,11 @@
       "name": "{{CONTAINER_NAME}}",
       "max_instances": 50,
       "instance_type": "standard-2",
-      "durable_object_offset_instances": 25
+      "unsafe": {
+        "configuration": {
+          "durable_object_offset_instances": 25
+        }
+      }
     }
   ],
 
