@@ -6,6 +6,7 @@ import type {
   ServiceResult
 } from '@sandbox-container/core/types';
 import { DEFAULT_GIT_CLONE_TIMEOUT_MS } from '@sandbox-container/managers/git-manager';
+import type { ExecutionService } from '@sandbox-container/services/execution-service';
 import {
   GitService,
   type SecurityService
@@ -43,6 +44,13 @@ const mockSessionManager = {
   withSession: vi.fn()
 } as unknown as SessionManager;
 
+const mockExecutionService = {
+  execute: vi.fn(),
+  executeStream: vi.fn(),
+  withExecution: vi.fn(),
+  kill: vi.fn()
+} as unknown as ExecutionService;
+
 describe('GitService', () => {
   let gitService: GitService;
 
@@ -60,26 +68,52 @@ describe('GitService', () => {
       errors: []
     });
 
-    // Mock withSession to execute the callback immediately with a mock exec function
-    mocked(mockSessionManager.withSession).mockImplementation(
-      async (_sessionId, callback) => {
+    mocked(mockExecutionService.execute).mockImplementation(
+      async (command, options = {}) => {
+        const sessionId = options.sessionId ?? 'default';
+        const forwardedOptions =
+          options.cwd !== undefined ||
+          options.env !== undefined ||
+          options.origin !== undefined
+            ? {
+                ...(options.cwd !== undefined && { cwd: options.cwd }),
+                ...(options.env !== undefined && { env: options.env }),
+                ...(options.origin !== undefined && { origin: options.origin })
+              }
+            : undefined;
+
+        return forwardedOptions !== undefined
+          ? await mockSessionManager.executeInSession(
+              sessionId,
+              command,
+              forwardedOptions
+            )
+          : await mockSessionManager.executeInSession(sessionId, command);
+      }
+    );
+
+    mocked(mockExecutionService.withExecution).mockImplementation(
+      async ({ sessionId }, callback) => {
         try {
           const mockExec = async (
             cmd: string,
-            options?: { cwd?: string; env?: Record<string, string | undefined> }
+            options?: {
+              cwd?: string;
+              env?: Record<string, string | undefined>;
+              timeoutMs?: number;
+              origin?: 'user' | 'internal';
+            }
           ) => {
-            // Delegate to executeInSession mock for compatibility with existing tests
-            // Only pass cwd if it's defined to match test expectations
-            const result =
-              options?.cwd !== undefined
-                ? await mockSessionManager.executeInSession(_sessionId, cmd, {
-                    cwd: options.cwd
-                  })
-                : await mockSessionManager.executeInSession(_sessionId, cmd);
+            const result = await mockExecutionService.execute(cmd, {
+              sessionId,
+              cwd: options?.cwd,
+              env: options?.env,
+              timeoutMs: options?.timeoutMs,
+              origin: options?.origin
+            });
             if (result.success) {
               return result.data;
             }
-            // If executeInSession returned an error, throw it to propagate to withSession
             throw result.error;
           };
           const data = await callback(mockExec);
@@ -104,7 +138,7 @@ describe('GitService', () => {
 
     gitService = new GitService(
       mockSecurityService,
-      mockSessionManager,
+      mockExecutionService,
       mockLogger
     );
   });
@@ -152,7 +186,8 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
+        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'",
+        { origin: 'internal' }
       );
 
       // Verify SessionManager was called for getting current branch
@@ -160,7 +195,7 @@ describe('GitService', () => {
         2,
         'default',
         "'git' 'branch' '--show-current'",
-        { cwd: '/workspace/repo' }
+        { cwd: '/workspace/repo', origin: 'internal' }
       );
     });
 
@@ -204,7 +239,8 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'session-123',
-        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
+        "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'",
+        { origin: 'internal' }
       );
     });
 
@@ -236,7 +272,8 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        "'timeout' '-k' '5' '90' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
+        "'timeout' '-k' '5' '90' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'",
+        { origin: 'internal' }
       );
     });
 

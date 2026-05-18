@@ -453,6 +453,52 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
+
+    it('drops stale default shell state when default sessions are disabled and re-enabled', async () => {
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        sessionId: 'sandbox-default',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
+        success: true,
+        stdout: 'EMPTY\n',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo "${REVIVED:-EMPTY}"',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      (sandbox as any).defaultSession = 'sandbox-default';
+      await sandbox.setEnableDefaultSession(false);
+      await sandbox.setEnableDefaultSession(true);
+      const result = await sandbox.exec('echo "${REVIVED:-EMPTY}"');
+
+      expect(result.stdout).toBe('EMPTY\n');
+      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
+        'sandbox-default'
+      );
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(mockCtx.storage.delete).toHaveBeenCalledWith('defaultSession');
+    });
+  });
+
+  describe('getProcess', () => {
+    it('returns null when the process does not exist', async () => {
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockRejectedValue(
+        new ProcessNotFoundError({
+          error: 'Process nonexistent-process-id-12345 not found',
+          code: 'PROCESS_NOT_FOUND',
+          details: { processId: 'nonexistent-process-id-12345' }
+        } as any)
+      );
+
+      const process = await sandbox.getProcess('nonexistent-process-id-12345');
+
+      expect(process).toBeNull();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
   });
 
   describe('explicit session creation', () => {

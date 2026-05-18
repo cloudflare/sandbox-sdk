@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
-import type { SessionManager } from '@sandbox-container/services/session-manager';
+import type { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
@@ -26,7 +26,14 @@ const mockSessionManager = {
   listSessions: vi.fn(),
   destroy: vi.fn(),
   withSession: vi.fn()
-} as unknown as SessionManager;
+};
+
+const mockExecutionService = {
+  execute: vi.fn(),
+  executeStream: vi.fn(),
+  withExecution: vi.fn(),
+  kill: vi.fn()
+} as unknown as ExecutionService;
 
 const mockFetch = vi.fn();
 let originalFetch: typeof fetch;
@@ -60,7 +67,13 @@ describe('BackupService', () => {
     vi.clearAllMocks();
     originalFetch = global.fetch;
     global.fetch = mockFetch as unknown as typeof fetch;
-    service = new BackupService(mockLogger, mockSessionManager);
+    mocked(mockExecutionService.execute).mockImplementation(
+      async (command, options = {}) => {
+        const sessionId = options.sessionId ?? 'default';
+        return await mockSessionManager.executeInSession(sessionId, command);
+      }
+    );
+    service = new BackupService(mockLogger, mockExecutionService);
   });
 
   afterEach(() => {
@@ -72,7 +85,7 @@ describe('BackupService', () => {
     const dir = '/app/project';
     const archivePath = '/var/backups/app-dir.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -102,7 +115,7 @@ describe('BackupService', () => {
     const dir = '/app/project';
     const archivePath = '/var/backups/app-dir.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('test -f ')) return execSuccess();
         if (command.includes('/usr/bin/fusermount3 -u ')) return execSuccess();
@@ -324,7 +337,7 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/test.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -368,10 +381,9 @@ describe('BackupService', () => {
 
     expect(result.success).toBe(true);
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
-
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
     );
@@ -392,7 +404,7 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/default-no-gitignore.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -415,10 +427,9 @@ describe('BackupService', () => {
     const result = await service.createArchive(dir, archivePath);
     expect(result.success).toBe(true);
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
-
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
     expect(
       callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
     ).toBe(false);
@@ -435,7 +446,7 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/git-required.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -470,9 +481,9 @@ describe('BackupService', () => {
       expect.objectContaining({ dir })
     );
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
     );
@@ -485,7 +496,7 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/escaped-patterns.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -528,9 +539,9 @@ describe('BackupService', () => {
     );
     expect(result.success).toBe(true);
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
     const writeExcludeCommand = callArgs.find((command) =>
       command.startsWith("printf '%s\\n' ")
     );
@@ -547,7 +558,7 @@ describe('BackupService', () => {
     const dir = '/workspace/app';
     const archivePath = '/var/backups/user-excludes.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -578,9 +589,9 @@ describe('BackupService', () => {
     );
     expect(result.success).toBe(true);
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
 
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
@@ -608,7 +619,7 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/cleanup-on-throw.sqsh';
 
-    mocked(mockSessionManager.executeInSession).mockImplementation(
+    mockSessionManager.executeInSession.mockImplementation(
       async (_sessionId: string, command: string) => {
         if (command.startsWith('mkdir -p ')) return execSuccess();
         if (command.startsWith('test -d ')) return execSuccess();
@@ -650,16 +661,129 @@ describe('BackupService', () => {
     );
     expect(result.success).toBe(false);
 
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
-
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
     expect(
       callArgs.some(
         (command) =>
           command === "rm -f '/var/backups/cleanup-on-throw.sqsh.exclude'"
       )
     ).toBe(true);
+  });
+
+  it('normalizes globstar excludes before passing to mksquashfs', async () => {
+    const dir = '/workspace/app';
+    const archivePath = '/var/backups/globstar-excludes.sqsh';
+
+    mockSessionManager.executeInSession.mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+        if (command.startsWith('rm -f ')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      false,
+      ['**/node_modules/.cache', '**/.next/cache', '**/.turbo', '**/dist']
+    );
+    expect(result.success).toBe(true);
+
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
+
+    const writeExcludeCommand = callArgs.find((command) =>
+      command.startsWith("printf '%s\\n' ")
+    );
+    expect(writeExcludeCommand).toBeDefined();
+
+    // Patterns should be normalized: no ** prefixes
+    expect(writeExcludeCommand).toContain("'node_modules/.cache'");
+    expect(writeExcludeCommand).toContain("'... node_modules/.cache'");
+    expect(writeExcludeCommand).toContain("'.next/cache'");
+    expect(writeExcludeCommand).toContain("'.turbo'");
+    expect(writeExcludeCommand).toContain("'dist'");
+
+    // Original ** patterns must NOT appear
+    expect(writeExcludeCommand).not.toContain('**/node_modules');
+    expect(writeExcludeCommand).not.toContain('**/.next');
+    expect(writeExcludeCommand).not.toContain('**/.turbo');
+    expect(writeExcludeCommand).not.toContain('**/dist');
+
+    // Should have logged warnings about normalization
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
+      expect.objectContaining({
+        original: '**/node_modules/.cache',
+        normalized: 'node_modules/.cache'
+      })
+    );
+  });
+
+  it('does not add exclude flags when gitignore is false in non-git directories', async () => {
+    const dir = '/workspace/non-git-dir';
+    const archivePath = '/var/backups/test-no-exclude.sqsh';
+
+    mockSessionManager.executeInSession.mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      false
+    );
+
+    expect(result.success).toBe(true);
+
+    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
+      ([, command]) => command
+    );
+    const squashCommand = callArgs.find((command) =>
+      command.startsWith('/usr/bin/mksquashfs ')
+    );
+    expect(squashCommand).toBeDefined();
+    expect(squashCommand).not.toContain('-wildcards');
+    expect(squashCommand).not.toContain('-ef');
+    expect(
+      callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
+    ).toBe(false);
   });
 
   describe('normalizeMksquashfsPattern', () => {
@@ -713,120 +837,5 @@ describe('BackupService', () => {
       expect(BackupService.normalizeMksquashfsPattern('*.log')).toBe('*.log');
       expect(BackupService.normalizeMksquashfsPattern('.cache')).toBe('.cache');
     });
-  });
-
-  it('normalizes globstar excludes before passing to mksquashfs', async () => {
-    const dir = '/workspace/app';
-    const archivePath = '/var/backups/globstar-excludes.sqsh';
-
-    mocked(mockSessionManager.executeInSession).mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('rm -f ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
-
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      'default',
-      false,
-      ['**/node_modules/.cache', '**/.next/cache', '**/.turbo', '**/dist']
-    );
-    expect(result.success).toBe(true);
-
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
-
-    const writeExcludeCommand = callArgs.find((command) =>
-      command.startsWith("printf '%s\\n' ")
-    );
-    expect(writeExcludeCommand).toBeDefined();
-
-    // Patterns should be normalized: no ** prefixes
-    expect(writeExcludeCommand).toContain("'node_modules/.cache'");
-    expect(writeExcludeCommand).toContain("'... node_modules/.cache'");
-    expect(writeExcludeCommand).toContain("'.next/cache'");
-    expect(writeExcludeCommand).toContain("'.turbo'");
-    expect(writeExcludeCommand).toContain("'dist'");
-
-    // Original ** patterns must NOT appear
-    expect(writeExcludeCommand).not.toContain('**/node_modules');
-    expect(writeExcludeCommand).not.toContain('**/.next');
-    expect(writeExcludeCommand).not.toContain('**/.turbo');
-    expect(writeExcludeCommand).not.toContain('**/dist');
-
-    // Should have logged warnings about normalization
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
-      expect.objectContaining({
-        original: '**/node_modules/.cache',
-        normalized: 'node_modules/.cache'
-      })
-    );
-  });
-
-  it('does not add exclude flags when gitignore is false in non-git directories', async () => {
-    const dir = '/workspace/non-git-dir';
-    const archivePath = '/var/backups/test-no-exclude.sqsh';
-
-    mocked(mockSessionManager.executeInSession).mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
-
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      'default',
-      false
-    );
-
-    expect(result.success).toBe(true);
-
-    const callArgs = mocked(mockSessionManager.executeInSession)
-      .mock.calls.map(([, command]) => command)
-      .filter((command): command is string => typeof command === 'string');
-
-    const squashCommand = callArgs.find((command) =>
-      command.startsWith('/usr/bin/mksquashfs ')
-    );
-    expect(squashCommand).toBeDefined();
-    expect(squashCommand).not.toContain('-wildcards');
-    expect(squashCommand).not.toContain('-ef');
-    expect(
-      callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
-    ).toBe(false);
   });
 });

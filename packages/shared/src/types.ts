@@ -439,6 +439,8 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
+export const SESSIONLESS_SESSION_ID = 'none';
+
 export type SandboxTransport = 'http' | 'websocket' | 'rpc';
 
 export interface SandboxOptions {
@@ -463,6 +465,8 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
+
+  enableDefaultSession?: boolean;
 
   /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
