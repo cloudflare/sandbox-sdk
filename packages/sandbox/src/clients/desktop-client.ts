@@ -1,4 +1,5 @@
 import type {
+  DesktopProcessHealth,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
   SandboxDesktopAPI
@@ -117,11 +118,7 @@ export interface Desktop {
   keyDown(key: KeyInput): Promise<void>;
   keyUp(key: KeyInput): Promise<void>;
   getScreenSize(): Promise<ScreenSizeResponse>;
-  getProcessStatus(
-    name: string
-  ): Promise<
-    BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-  >;
+  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
 }
 
 /**
@@ -416,15 +413,9 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
   /**
    * Get health status for a specific desktop process.
    */
-  async getProcessStatus(
-    name: string
-  ): Promise<
-    BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-  > {
-    const response = await this.get<
-      BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-    >(`/api/desktop/process/${encodeURIComponent(name)}/status`);
-
-    return response;
+  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
+    return this.get<DesktopProcessHealth>(
+      `/api/desktop/process/${encodeURIComponent(name)}/status`
+    );
   }
 }

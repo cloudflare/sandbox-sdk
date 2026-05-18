@@ -8,6 +8,7 @@
 import type {
   DesktopCursorPosition,
   DesktopMouseButton,
+  DesktopProcessHealth,
   DesktopScreenSize,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
@@ -320,7 +321,7 @@ export interface SandboxDesktopAPI {
   keyDown(key: string): Promise<void>;
   keyUp(key: string): Promise<void>;
   getScreenSize(): Promise<DesktopScreenSize>;
-  getProcessStatus(name: string): Promise<DesktopStatusResult>;
+  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
 }
 
 export interface SandboxWatchAPI {

@@ -8,6 +8,7 @@ import type {
   DesktopMouseDragRequest,
   DesktopMouseScrollRequest,
   DesktopMouseUpRequest,
+  DesktopProcessHealth,
   DesktopScreenSize,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
@@ -1255,8 +1256,10 @@ class DesktopRPCAPI extends RpcTarget {
   async getScreenSize(): Promise<DesktopScreenSize> {
     return extractData<DesktopScreenSize>(await this.#svc.getScreenSize());
   }
-  async getProcessStatus(_name: string): Promise<DesktopStatusResult> {
-    return this.status();
+  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
+    return extractData<DesktopProcessHealth>(
+      await this.#svc.getProcessStatus(name)
+    );
   }
 }
 
