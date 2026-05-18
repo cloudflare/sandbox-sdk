@@ -464,7 +464,7 @@ describe('Sandbox R2 egress mounts', () => {
     );
   });
 
-  it('treats an empty endpoint string as a remote mount configuration error', async () => {
+  it('rejects invalid endpoint URLs for S3-compatible mounts', async () => {
     const sandbox = new Sandbox(
       createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
       { MY_BUCKET: createMockR2Bucket() }
@@ -510,6 +510,43 @@ describe('Sandbox R2 egress mounts', () => {
         prefix: '/two'
       } as any)
     ).rejects.toThrow('already mounted');
+  });
+
+  it('rejects a second mount of the same R2 binding with a different readOnly setting', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) return createExecResult(command);
+      if (command.startsWith('mountpoint')) {
+        return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValueOnce('/tmp/.s3fs-one')
+        .mockReturnValueOnce('/tmp/.s3fs-two')
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/one', {
+      prefix: '/shared',
+      readOnly: true
+    } as any);
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/two', {
+        prefix: '/shared',
+        readOnly: false
+      } as any)
+    ).rejects.toThrow('different readOnly setting');
   });
 
   it('updates R2 egress interception to deny all buckets after final unmount', async () => {

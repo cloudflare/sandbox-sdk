@@ -411,7 +411,10 @@ describe('r2EgressHandler', () => {
         new Request('http://r2.internal/MY_BUCKET/new-file.txt', {
           method: 'PUT',
           body: 'new content',
-          headers: { 'Content-Type': 'text/plain' }
+          headers: {
+            'Content-Length': '11',
+            'Content-Type': 'text/plain'
+          }
         }),
         makeEnv(r2),
         makeCtx()
@@ -419,11 +422,35 @@ describe('r2EgressHandler', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('ETag')).toBeTruthy();
       expect(store.has('new-file.txt')).toBe(true);
-      expect(r2.put).not.toHaveBeenCalled();
-      expect(r2.createMultipartUpload).toHaveBeenCalledWith('new-file.txt', {
-        httpMetadata: { contentType: 'text/plain' }
-      });
+      expect(r2.put).toHaveBeenCalledTimes(1);
+      expect(r2.put).toHaveBeenCalledWith(
+        'new-file.txt',
+        expect.any(ReadableStream),
+        { httpMetadata: { contentType: 'text/plain' } }
+      );
+      expect(r2.createMultipartUpload).not.toHaveBeenCalled();
       expect(store.get('new-file.txt')?.body).toBe('new content');
+    });
+
+    it('accepts zero-length PUT requests with no body stream', async () => {
+      const store = new Map<string, MockObject>();
+      const r2 = createMockR2Bucket(store);
+      const request = {
+        method: 'PUT',
+        url: 'http://r2.internal/MY_BUCKET/empty.txt',
+        headers: new Headers({
+          'Content-Length': '0',
+          'Content-Type': 'text/plain'
+        }),
+        body: null
+      } as unknown as Request;
+
+      const res = await r2EgressHandler(request, makeEnv(r2), makeCtx());
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('ETag')).toBeTruthy();
+      expect(store.get('empty.txt')?.body).toBe('');
+      expect(store.get('empty.txt')?.contentType).toBe('text/plain');
     });
 
     it('copies an object when x-amz-copy-source is present', async () => {

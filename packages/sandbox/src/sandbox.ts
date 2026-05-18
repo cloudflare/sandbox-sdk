@@ -1398,6 +1398,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               'Mount the same binding only once, or use the same prefix for additional mounts.'
           );
         }
+        if (
+          mountInfo.mountType === 'r2-egress' &&
+          mountInfo.bucket === bucket &&
+          mountInfo.readOnly !== (options.readOnly ?? false)
+        ) {
+          throw new InvalidMountConfigError(
+            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different readOnly setting. ` +
+              'Mount the same binding only once, or use the same readOnly value for additional mounts.'
+          );
+        }
       }
 
       const passwordFilePath = this.generatePasswordFilePath();

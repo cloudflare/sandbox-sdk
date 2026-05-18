@@ -352,10 +352,6 @@ async function putRequestBody(
   request: Request,
   options: R2PutOptions
 ): Promise<R2Object | Response> {
-  if (!request.body) {
-    return new Response('Bad Request: missing request body', { status: 400 });
-  }
-
   const contentLength = request.headers.get('Content-Length');
   const length = contentLength ? Number.parseInt(contentLength, 10) : NaN;
   if (!Number.isFinite(length) || length < 0) {
@@ -366,6 +362,10 @@ async function putRequestBody(
 
   if (length === 0) {
     return r2.put(key, new Uint8Array(0), options);
+  }
+
+  if (!request.body) {
+    return new Response('Bad Request: missing request body', { status: 400 });
   }
 
   const { readable, writable } = new FixedLengthStream(length);
