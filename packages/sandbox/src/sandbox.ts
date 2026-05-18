@@ -954,7 +954,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const storedEnableDefaultSession = await this.ctx.storage.get<boolean>(
         'enableDefaultSession'
       );
-      if (storedEnableDefaultSession !== undefined) {
+      if (storedEnableDefaultSession != null) {
         this.enableDefaultSession = storedEnableDefaultSession;
         this.hasStoredEnableDefaultSession = true;
       }
@@ -2985,6 +2985,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       : context.sessionId;
   }
 
+  /**
+   * Resolves the session ID to annotate returned Process objects.
+   *
+   * Unlike `resolveExecution`, this is synchronous and never creates a
+   * session. When `enableDefaultSession` is true but the default session
+   * hasn't been established yet, it returns `undefined` rather than
+   * triggering session creation. The resolved value is only used to
+   * populate `Process.sessionId` on the returned object — it is never
+   * sent to the container API.
+   */
+  private getProcessSessionBinding(
+    explicitSessionId?: string
+  ): string | undefined {
+    if (explicitSessionId) {
+      return explicitSessionId;
+    }
+
+    return this.enableDefaultSession
+      ? (this.defaultSession ?? undefined)
+      : SESSIONLESS_SESSION_ID;
+  }
+
   private resolveExecutionEnv(
     sessionId: string,
     env?: Record<string, string | undefined>
@@ -3810,7 +3832,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? this.defaultSession ?? undefined;
+    const session = this.getProcessSessionBinding(sessionId);
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -3830,14 +3852,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes
-      .getProcess(id)
-      .catch((e: unknown) => {
-        if (e instanceof ProcessNotFoundError) return null;
-        throw e;
-      });
-    if (!response?.process) {
+    const session = this.getProcessSessionBinding(sessionId);
+    let response;
+    try {
+      response = await this.client.processes.getProcess(id);
+    } catch (error) {
+      if (error instanceof ProcessNotFoundError) {
+        return null;
+      }
+      throw error;
+    }
+    if (!response.process) {
       return null;
     }
 
@@ -3861,16 +3886,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HTTP client
+    // Note: signal parameter is not currently supported by the HTTP client.
+    // sessionId is intentionally unused — kill targets a process by ID which
+    // is sandbox-scoped, not session-scoped.
     await this.client.processes.killProcess(id);
   }
 
   async killAllProcesses(sessionId?: string): Promise<number> {
+    // sessionId is intentionally unused — the kill-all operation is
+    // sandbox-scoped and affects all processes regardless of session.
     const response = await this.client.processes.killAllProcesses();
     return response.cleanedCount;
   }
 
   async cleanupCompletedProcesses(sessionId?: string): Promise<number> {
+    // sessionId is intentionally unused — cleanup is sandbox-scoped.
     // Not yet implemented - requires container endpoint
     return 0;
   }

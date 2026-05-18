@@ -268,7 +268,8 @@ describe('FileHandler', () => {
   describe('handleDelete - POST /api/delete', () => {
     it('should delete file successfully', async () => {
       const deleteFileData = {
-        path: '/tmp/delete-me.txt'
+        path: '/tmp/delete-me.txt',
+        sessionId: 'none'
       };
 
       (mockFileService.deleteFile as any).mockResolvedValue({
@@ -290,7 +291,32 @@ describe('FileHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       expect(mockFileService.deleteFile).toHaveBeenCalledWith(
-        '/tmp/delete-me.txt'
+        '/tmp/delete-me.txt',
+        'none'
+      );
+    });
+
+    it('should delete file without sessionId', async () => {
+      const deleteFileData = {
+        path: '/tmp/delete-without-session.txt'
+      };
+
+      (mockFileService.deleteFile as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(deleteFileData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.deleteFile).toHaveBeenCalledWith(
+        '/tmp/delete-without-session.txt',
+        undefined
       );
     });
 
@@ -326,7 +352,8 @@ describe('FileHandler', () => {
     it('should rename file successfully', async () => {
       const renameFileData = {
         oldPath: '/tmp/old-name.txt',
-        newPath: '/tmp/new-name.txt'
+        newPath: '/tmp/new-name.txt',
+        sessionId: 'none'
       };
 
       (mockFileService.renameFile as any).mockResolvedValue({
@@ -350,7 +377,34 @@ describe('FileHandler', () => {
 
       expect(mockFileService.renameFile).toHaveBeenCalledWith(
         '/tmp/old-name.txt',
-        '/tmp/new-name.txt'
+        '/tmp/new-name.txt',
+        'none'
+      );
+    });
+
+    it('should rename file without sessionId', async () => {
+      const renameFileData = {
+        oldPath: '/tmp/old-without-session.txt',
+        newPath: '/tmp/new-without-session.txt'
+      };
+
+      (mockFileService.renameFile as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(renameFileData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.renameFile).toHaveBeenCalledWith(
+        '/tmp/old-without-session.txt',
+        '/tmp/new-without-session.txt',
+        undefined
       );
     });
 
@@ -389,7 +443,8 @@ describe('FileHandler', () => {
     it('should move file successfully', async () => {
       const moveFileData = {
         sourcePath: '/tmp/source.txt',
-        destinationPath: '/tmp/destination.txt'
+        destinationPath: '/tmp/destination.txt',
+        sessionId: 'none'
       };
 
       (mockFileService.moveFile as any).mockResolvedValue({
@@ -413,7 +468,34 @@ describe('FileHandler', () => {
 
       expect(mockFileService.moveFile).toHaveBeenCalledWith(
         '/tmp/source.txt',
-        '/tmp/destination.txt'
+        '/tmp/destination.txt',
+        'none'
+      );
+    });
+
+    it('should move file without sessionId', async () => {
+      const moveFileData = {
+        sourcePath: '/tmp/source-without-session.txt',
+        destinationPath: '/tmp/destination-without-session.txt'
+      };
+
+      (mockFileService.moveFile as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(moveFileData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.moveFile).toHaveBeenCalledWith(
+        '/tmp/source-without-session.txt',
+        '/tmp/destination-without-session.txt',
+        undefined
       );
     });
 
@@ -452,7 +534,8 @@ describe('FileHandler', () => {
     it('should create directory successfully', async () => {
       const mkdirData = {
         path: '/tmp/new-directory',
-        recursive: true
+        recursive: true,
+        sessionId: 'none'
       };
 
       (mockFileService.createDirectory as any).mockResolvedValue({
@@ -478,7 +561,8 @@ describe('FileHandler', () => {
         '/tmp/new-directory',
         {
           recursive: true
-        }
+        },
+        'none'
       );
     });
 
@@ -511,7 +595,8 @@ describe('FileHandler', () => {
         '/tmp/simple-dir',
         {
           recursive: undefined
-        }
+        },
+        undefined
       );
     });
 

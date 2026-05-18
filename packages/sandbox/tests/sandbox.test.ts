@@ -195,6 +195,72 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('should treat null stored enableDefaultSession as unset', async () => {
+      const nullStorageCtx: MockCtx = {
+        storage: {
+          get: vi.fn().mockImplementation(async (key: string) => {
+            return key === 'enableDefaultSession' ? null : undefined;
+          }),
+          put: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          list: vi.fn().mockResolvedValue(new Map())
+        } as any,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        waitUntil: vi.fn(),
+        id: {
+          toString: () => 'null-enable-default-session-sandbox',
+          equals: vi.fn(),
+          name: 'null-enable-default-session'
+        } as any
+      };
+
+      const freshStub = new Sandbox(
+        nullStorageCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await vi.waitFor(() => {
+        expect(nullStorageCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+      await Promise.all(
+        (nullStorageCtx.blockConcurrencyWhile as any).mock.results.map(
+          (r: { value: unknown }) => r.value
+        )
+      );
+
+      const freshSandbox = Object.assign(freshStub, {
+        wsConnect: connect(freshStub)
+      });
+
+      vi.spyOn(freshSandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'sandbox-default',
+        message: 'Created'
+      } as any);
+
+      vi.spyOn(freshSandbox.client.commands, 'execute').mockResolvedValue({
+        success: true,
+        stdout: 'test output',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo test',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await freshSandbox.exec('echo test');
+
+      expect(freshSandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(freshSandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo test',
+        expect.stringMatching(/^sandbox-/),
+        undefined
+      );
+    });
+
     it('should forward exec options to the command client', async () => {
       await sandbox.exec('echo $OPTION', {
         env: { OPTION: 'value' },
@@ -286,10 +352,72 @@ describe('Sandbox - Automatic Session Management', () => {
       ).mock.calls[0];
       expect(listProcessesCall).toEqual([]);
 
-      // Verify the started process appears in the list
+      // Verify the started process appears in the list with session annotation
       expect(process.id).toBe('proc-1');
+      expect(process.sessionId).toMatch(/^sandbox-/);
       expect(processes).toHaveLength(1);
       expect(processes[0].id).toBe('proc-1');
+      expect(processes[0].sessionId).toMatch(/^sandbox-/);
+      expect(process.sessionId).toBe(processes[0].sessionId);
+    });
+
+    it('should preserve the sessionless sentinel on process objects', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-none',
+        pid: 4321,
+        command: 'sleep 10',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
+        success: true,
+        processes: [
+          {
+            id: 'proc-none',
+            pid: 4321,
+            command: 'sleep 10',
+            status: 'running',
+            startTime: new Date().toISOString()
+          }
+        ],
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-none',
+          pid: 4321,
+          command: 'sleep 10',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await sandbox.setEnableDefaultSession(false);
+
+      const started = await sandbox.startProcess('sleep 10');
+      const listed = await sandbox.listProcesses();
+      const fetched = await sandbox.getProcess('proc-none');
+
+      expect(
+        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
+      ).toBe('none');
+      expect(
+        vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
+      ).toEqual([]);
+      expect(
+        vi.mocked(sandbox.client.processes.getProcess).mock.calls[0]
+      ).toEqual(['proc-none']);
+      expect(started.sessionId).toBe('none');
+      expect(listed).toHaveLength(1);
+      expect(listed[0].sessionId).toBe('none');
+      expect(fetched?.sessionId).toBe('none');
+      expect(started.sessionId).toBe(listed[0].sessionId);
+      expect(started.sessionId).toBe(fetched?.sessionId);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('should use default session for git operations', async () => {
