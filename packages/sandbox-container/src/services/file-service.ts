@@ -18,7 +18,7 @@ import type {
   WriteOptions
 } from '../core/types';
 import { FileManager } from '../managers/file-manager';
-import type { SessionManager } from './session-manager';
+import type { ExecutionService } from './execution-service';
 
 export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
@@ -71,7 +71,7 @@ export class FileService implements FileSystemOperations {
   constructor(
     private security: SecurityService,
     private logger: Logger,
-    private sessionManager: SessionManager
+    private executionService: ExecutionService
   ) {
     this.manager = new FileManager();
   }
@@ -110,8 +110,8 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      const result = await this.sessionManager
-        .withSession(sessionId, async (exec) => {
+      const result = await this.executionService
+        .withExecution({ sessionId }, async (exec) => {
           const absolutePath = await this.resolvePathInSession(path, exec);
 
           const bunFile = Bun.file(absolutePath);
@@ -300,8 +300,8 @@ export class FileService implements FileSystemOperations {
         }
       }
 
-      const writeResult = await this.sessionManager.withSession(
-        sessionId,
+      const writeResult = await this.executionService.withExecution(
+        { sessionId },
         async (exec) => {
           let targetPath = path;
 
@@ -427,8 +427,8 @@ export class FileService implements FileSystemOperations {
       // 2. Execute exists→isdir→rm sequence atomically within session
       const escapedPath = shellEscape(path);
 
-      const result = await this.sessionManager.withSession(
-        sessionId,
+      const result = await this.executionService.withExecution(
+        { sessionId },
         async (exec) => {
           // Check if file exists
           const existsResult = await exec(`test -e ${escapedPath}`, {
@@ -561,11 +561,10 @@ export class FileService implements FileSystemOperations {
       const escapedNewPath = shellEscape(newPath);
       const command = `mv ${escapedOldPath} ${escapedNewPath}`;
 
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<void>;
@@ -658,11 +657,10 @@ export class FileService implements FileSystemOperations {
       const escapedDest = shellEscape(destinationPath);
       const command = `mv ${escapedSource} ${escapedDest}`;
 
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<void>;
@@ -752,11 +750,10 @@ export class FileService implements FileSystemOperations {
       command += ` ${escapedPath}`;
 
       // 4. Create directory using SessionManager
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         outcome = 'error';
@@ -847,11 +844,10 @@ export class FileService implements FileSystemOperations {
       const escapedPath = shellEscape(path);
       const command = `test -e ${escapedPath}`;
 
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         // If execution fails, treat as non-existent
@@ -945,11 +941,10 @@ export class FileService implements FileSystemOperations {
       const command = `stat ${statCmd.args[0]} ${statCmd.args[1]} ${escapedPath}`;
 
       // 5. Get file stats using SessionManager
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<FileStats>;
@@ -1149,8 +1144,8 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      const writeResult = await this.sessionManager.withSession(
-        sessionId,
+      const writeResult = await this.executionService.withExecution(
+        { sessionId },
         async (exec) => {
           let targetPath = path;
 
@@ -1382,11 +1377,10 @@ export class FileService implements FileSystemOperations {
       // Skip the base directory itself and format output
       findCommand += ` -not -path ${escapedPath} -printf '%p\\t%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM:%TS\\t%m\\n'`;
 
-      const execResult = await this.sessionManager.executeInSession(
+      const execResult = await this.executionService.execute(findCommand, {
         sessionId,
-        findCommand,
-        { origin: 'internal' }
-      );
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return {
@@ -1570,8 +1564,8 @@ export class FileService implements FileSystemOperations {
 
     const CHUNK_SIZE = 65535;
 
-    return await this.sessionManager
-      .withSession(sessionId, async (exec) => {
+    return await this.executionService
+      .withExecution({ sessionId }, async (exec) => {
         const absolutePath = await this.resolvePathInSession(path, exec);
         const metadataResult = await this.getFileMetadata(absolutePath, exec);
 
@@ -1729,8 +1723,8 @@ export class FileService implements FileSystemOperations {
     // Resolve relative paths via the session's working directory.
     let resolvedPath = path;
     if (!path.startsWith('/')) {
-      const result = await this.sessionManager.withSession(
-        sessionId,
+      const result = await this.executionService.withExecution(
+        { sessionId },
         async (exec) => this.resolvePathInSession(path, exec)
       );
       if (!result.success) {

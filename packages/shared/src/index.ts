@@ -225,7 +225,8 @@ export {
   isExecResult,
   isProcess,
   isProcessStatus,
-  isTerminalStatus
+  isTerminalStatus,
+  SESSIONLESS_SESSION_ID
 } from './types.js';
 // Export WebSocket protocol types
 export type {

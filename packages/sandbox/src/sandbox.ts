@@ -124,6 +124,7 @@ type SandboxConfiguration = {
   };
   sleepAfter?: string | number;
   keepAlive?: boolean;
+  enableDefaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -133,6 +134,7 @@ type CachedSandboxConfiguration = {
   normalizeId?: boolean;
   sleepAfter?: string | number;
   keepAlive?: boolean;
+  enableDefaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -142,11 +144,16 @@ type ConfigurableSandboxStub = {
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
   setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
   setKeepAlive?: (keepAlive: boolean) => Promise<void>;
+  setEnableDefaultSession?: (enableDefaultSession: boolean) => Promise<void>;
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
   setTransport?: (transport: SandboxTransport) => Promise<void>;
 };
+
+type SandboxExecutionContext =
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'sessionless' };
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -168,6 +175,7 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
+const SESSIONLESS_SESSION_ID = 'none';
 
 /**
  * Calculate the optimal number of parts for multipart upload/download
@@ -299,6 +307,13 @@ function buildSandboxConfiguration(
   }
 
   if (
+    options?.enableDefaultSession !== undefined &&
+    cached?.enableDefaultSession !== options.enableDefaultSession
+  ) {
+    configuration.enableDefaultSession = options.enableDefaultSession;
+  }
+
+  if (
     options?.containerTimeouts &&
     !sameContainerTimeouts(cached?.containerTimeouts, options.containerTimeouts)
   ) {
@@ -320,6 +335,7 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sandboxName !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
+    configuration.enableDefaultSession !== undefined ||
     configuration.containerTimeouts !== undefined ||
     configuration.transport !== undefined
   );
@@ -340,6 +356,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.keepAlive !== undefined && {
       keepAlive: configuration.keepAlive
+    }),
+    ...(configuration.enableDefaultSession !== undefined && {
+      enableDefaultSession: configuration.enableDefaultSession
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
@@ -378,6 +397,13 @@ function applySandboxConfiguration(
   if (configuration.keepAlive !== undefined) {
     operations.push(
       stub.setKeepAlive?.(configuration.keepAlive) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.enableDefaultSession !== undefined) {
+    operations.push(
+      stub.setEnableDefaultSession?.(configuration.enableDefaultSession) ??
+        Promise.resolve()
     );
   }
 
@@ -568,8 +594,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
+  private enableDefaultSession: boolean = true;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: SandboxTransport = 'http';
+  private hasStoredEnableDefaultSession = false;
 
   /**
    * True once transport has been written to storage at least once (either
@@ -860,6 +888,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
+      const storedEnableDefaultSession = await this.ctx.storage.get<boolean>(
+        'enableDefaultSession'
+      );
+      if (storedEnableDefaultSession !== undefined) {
+        this.enableDefaultSession = storedEnableDefaultSession;
+        this.hasStoredEnableDefaultSession = true;
+      }
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -948,6 +983,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.setKeepAlive(configuration.keepAlive);
     }
 
+    if (configuration.enableDefaultSession !== undefined) {
+      await this.setEnableDefaultSession(configuration.enableDefaultSession);
+    }
+
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
@@ -979,6 +1018,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!keepAlive) {
       this.renewActivityTimeout();
     }
+  }
+
+  async setEnableDefaultSession(enableDefaultSession: boolean): Promise<void> {
+    if (
+      this.hasStoredEnableDefaultSession &&
+      this.enableDefaultSession === enableDefaultSession
+    ) {
+      return;
+    }
+
+    const previousDefaultSession = !enableDefaultSession
+      ? this.defaultSession
+      : null;
+
+    if (!enableDefaultSession) {
+      this.containerGeneration++;
+      this.defaultSession = null;
+      this.defaultSessionInit = null;
+    }
+
+    if (previousDefaultSession) {
+      await this.client.utils.deleteSession(previousDefaultSession);
+    }
+
+    if (!enableDefaultSession) {
+      await this.ctx.storage.delete('defaultSession');
+    }
+
+    await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
+    this.enableDefaultSession = enableDefaultSession;
+    this.hasStoredEnableDefaultSession = true;
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -1024,19 +1094,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  /**
-   * RPC method to configure container startup timeouts. Idempotent once
-   * the values have been persisted: re-applying the same timeout set is a
-   * no-op. The transport retry budget is recomputed only when at least
-   * one timeout actually changes. Storage is written before the in-memory
-   * mirror and derived state are updated.
-   */
   async setContainerTimeouts(
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ): Promise<void> {
     const validated = { ...this.containerTimeouts };
 
-    // Validate each timeout if provided
     if (timeouts.instanceGetTimeoutMS !== undefined) {
       validated.instanceGetTimeoutMS = this.validateTimeout(
         timeouts.instanceGetTimeoutMS,
@@ -1064,10 +1126,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // No-op only once the values have been written to storage. A first
-    // explicit call persists even when the values match the env/default-
-    // derived in-memory state so user intent is recorded independently of
-    // how those defaults resolve later.
     if (
       this.hasStoredContainerTimeouts &&
       validated.instanceGetTimeoutMS ===
@@ -1082,18 +1140,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('containerTimeouts', validated);
     this.containerTimeouts = validated;
     this.hasStoredContainerTimeouts = true;
-
-    // Update the transport retry budget to reflect new timeouts
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
-
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }
 
-  /**
-   * RPC method to set the transport protocol. Idempotent once the value
-   * has been persisted: re-applying the same transport is a no-op.
-   * Storage is written before the in-memory state and client are updated.
-   */
   async setTransport(transport: SandboxTransport): Promise<void> {
     if (
       transport !== 'http' &&
@@ -1128,10 +1178,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Transport updated', { transport });
   }
 
-  /**
-   * Validate a timeout value is within acceptable range
-   * Throws error if invalid - used for user-provided values
-   */
   private validateTimeout(
     value: number,
     name: string,
@@ -1155,10 +1201,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return value;
   }
 
-  /**
-   * Get default timeouts with env var fallbacks and validation
-   * Precedence: SDK defaults < Env vars < User config
-   */
   private getDefaultTimeouts(
     env: Record<string, unknown>
   ): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
@@ -1197,20 +1239,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       instanceGetTimeoutMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_INSTANCE_TIMEOUT_MS'),
         'instanceGetTimeoutMS',
-        5_000, // Min 5s
-        300_000 // Max 5min
+        5_000,
+        300_000
       ),
       portReadyTimeoutMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_PORT_TIMEOUT_MS'),
         'portReadyTimeoutMS',
-        10_000, // Min 10s
-        600_000 // Max 10min
+        10_000,
+        600_000
       ),
       waitIntervalMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_POLL_INTERVAL_MS'),
         'waitIntervalMS',
-        100, // Min 100ms
-        5_000 // Max 5s
+        100,
+        5_000
       )
     };
   }
@@ -1260,7 +1302,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const mountStartTime = Date.now();
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
-
+    const dirExisted = true; // assume pre-existing so we don't accidentally delete
     try {
       const envObj = this.env as Record<string, unknown>;
       const r2Binding = envObj[bucket];
@@ -1345,7 +1387,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
     let provider: BucketProvider | null = null;
-    let dirExisted = true; // assume pre-existing so we don't accidentally delete
+    let dirExisted = true;
     try {
       this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
@@ -1458,89 +1500,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Manually unmount a bucket filesystem
-   *
-   * @param mountPath - Absolute path where the bucket is mounted
-   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
-   */
-  async unmountBucket(mountPath: string): Promise<void> {
-    const unmountStartTime = Date.now();
-    let unmountOutcome: 'success' | 'error' = 'error';
-    let unmountError: Error | undefined;
-
-    // Look up mount by path
-    const mountInfo = this.activeMounts.get(mountPath);
-
-    try {
-      // Throw error if mount doesn't exist
-      if (!mountInfo) {
-        throw new InvalidMountConfigError(
-          `No active mount found at path: ${mountPath}`
-        );
-      }
-      // Unmount the filesystem
-      if (mountInfo.mountType === 'local-sync') {
-        await mountInfo.syncManager.stop();
-        mountInfo.mounted = false;
-        this.activeMounts.delete(mountPath);
-      } else {
-        // FUSE unmount
-        try {
-          const result = await this.execInternal(
-            `fusermount -u ${shellEscape(mountPath)}`
-          );
-          if (result.exitCode !== 0) {
-            const stderr = result.stderr || 'unknown error';
-            throw new BucketUnmountError(
-              `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
-            );
-          }
-          mountInfo.mounted = false;
-
-          // Only remove from tracking if unmount succeeded
-          this.activeMounts.delete(mountPath);
-
-          // Remove the now-empty mount directory
-          try {
-            const cleanup = await this.execInternal(
-              `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)}`
-            );
-            if (cleanup.exitCode !== 0) {
-              this.logger.warn('mount directory removal failed', {
-                mountPath,
-                exitCode: cleanup.exitCode,
-                stderr: cleanup.stderr
-              });
-            }
-          } catch (err) {
-            this.logger.warn('mount directory removal failed', {
-              mountPath,
-              error: err instanceof Error ? err.message : String(err)
-            });
-          }
-        } finally {
-          // Always cleanup password file, even if unmount fails
-          await this.deletePasswordFile(mountInfo.passwordFilePath);
-        }
-      }
-
-      unmountOutcome = 'success';
-    } catch (error) {
-      unmountError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
-      logCanonicalEvent(this.logger, {
-        event: 'bucket.unmount',
-        outcome: unmountOutcome,
-        durationMs: Date.now() - unmountStartTime,
-        mountPath,
-        bucket: mountInfo?.bucket,
-        error: unmountError
-      });
-    }
-  }
-
-  /**
    * Validate mount options
    */
   private validateMountOptions(
@@ -1597,7 +1556,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
 
-    await this.writeFile(passwordFilePath, content);
+    await this.client.files.writeFile(
+      passwordFilePath,
+      content,
+      SESSIONLESS_SESSION_ID
+    );
 
     await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
@@ -1710,6 +1673,89 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     throw new S3FSMountError(
       `S3FS mount failed: FUSE filesystem never appeared at ${mountPath}. ${diagMessage}`
     );
+  }
+
+  /**
+   * Manually unmount a bucket filesystem
+   *
+   * @param mountPath - Absolute path where the bucket is mounted
+   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
+   */
+  async unmountBucket(mountPath: string): Promise<void> {
+    const unmountStartTime = Date.now();
+    let unmountOutcome: 'success' | 'error' = 'error';
+    let unmountError: Error | undefined;
+
+    // Look up mount by path
+    const mountInfo = this.activeMounts.get(mountPath);
+
+    try {
+      // Throw error if mount doesn't exist
+      if (!mountInfo) {
+        throw new InvalidMountConfigError(
+          `No active mount found at path: ${mountPath}`
+        );
+      }
+      // Unmount the filesystem
+      if (mountInfo.mountType === 'local-sync') {
+        await mountInfo.syncManager.stop();
+        mountInfo.mounted = false;
+        this.activeMounts.delete(mountPath);
+      } else {
+        // FUSE unmount
+        try {
+          const result = await this.execInternal(
+            `fusermount -u ${shellEscape(mountPath)}`
+          );
+          if (result.exitCode !== 0) {
+            const stderr = result.stderr || 'unknown error';
+            throw new BucketUnmountError(
+              `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
+            );
+          }
+          mountInfo.mounted = false;
+
+          // Only remove from tracking if unmount succeeded
+          this.activeMounts.delete(mountPath);
+
+          // Remove the now-empty mount directory
+          try {
+            const cleanup = await this.execInternal(
+              `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)}`
+            );
+            if (cleanup.exitCode !== 0) {
+              this.logger.warn('mount directory removal failed', {
+                mountPath,
+                exitCode: cleanup.exitCode,
+                stderr: cleanup.stderr
+              });
+            }
+          } catch (err) {
+            this.logger.warn('mount directory removal failed', {
+              mountPath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          }
+        } finally {
+          // Always cleanup password file, even if unmount fails
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
+        }
+      }
+
+      unmountOutcome = 'success';
+    } catch (error) {
+      unmountError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.unmount',
+        outcome: unmountOutcome,
+        durationMs: Date.now() - unmountStartTime,
+        mountPath,
+        bucket: mountInfo?.bucket,
+        error: unmountError
+      });
+    }
   }
 
   /**
@@ -1922,16 +1968,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let skipped = 0;
     let failed = 0;
 
-    // Resolving the session ensures the container HTTP API is reachable
-    // before we start firing exposePort requests at it.
-    const sessionId = await this.ensureDefaultSession();
-
     // Fetch the container's current exposed-port list once, then check
     // membership in the loop. On a fresh restart this is empty; on a
     // retry path (re-entering onStart) it may already contain entries
     // that should be skipped.
     const exposedSet = await this.client.ports
-      .getExposedPorts(sessionId)
+      .getExposedPorts(SESSIONLESS_SESSION_ID)
       .then((response) => new Set(response.ports.map((p) => p.port)))
       .catch((error) => {
         this.logger.warn(
@@ -1957,7 +1999,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       try {
-        await this.client.ports.exposePort(port, sessionId, entry.name);
+        await this.client.ports.exposePort(
+          port,
+          SESSIONLESS_SESSION_ID,
+          entry.name
+        );
         restored++;
       } catch (error) {
         failed++;
@@ -2570,10 +2616,86 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('containerPlacementId', containerPlacementId);
   }
 
+  private async resolveExecution(
+    explicitSessionId?: string
+  ): Promise<SandboxExecutionContext> {
+    if (explicitSessionId) {
+      return { kind: 'session', sessionId: explicitSessionId };
+    }
+
+    if (this.enableDefaultSession) {
+      return {
+        kind: 'session',
+        sessionId: await this.ensureDefaultSession()
+      };
+    }
+
+    return { kind: 'sessionless' };
+  }
+
+  private serializeExecutionContext(context: SandboxExecutionContext): string {
+    return context.kind === 'sessionless'
+      ? SESSIONLESS_SESSION_ID
+      : context.sessionId;
+  }
+
+  private resolveExecutionEnv(
+    sessionId: string,
+    env?: Record<string, string | undefined>
+  ): Record<string, string | undefined> | undefined {
+    if (sessionId === SESSIONLESS_SESSION_ID) {
+      const mergedEnv = filterEnvVars({ ...this.envVars, ...(env ?? {}) });
+      return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+    }
+
+    if (env === undefined) {
+      return undefined;
+    }
+
+    const filteredEnv = filterEnvVars(env);
+    return Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
+  }
+
+  private buildExecutionRequestOptions(
+    sessionId: string,
+    options?: {
+      timeout?: number;
+      env?: Record<string, string | undefined>;
+      cwd?: string;
+      origin?: 'user' | 'internal';
+    }
+  ):
+    | {
+        timeoutMs?: number;
+        env?: Record<string, string | undefined>;
+        cwd?: string;
+        origin?: 'user' | 'internal';
+      }
+    | undefined {
+    const env = this.resolveExecutionEnv(sessionId, options?.env);
+
+    if (
+      options?.timeout === undefined &&
+      env === undefined &&
+      options?.cwd === undefined &&
+      options?.origin === undefined
+    ) {
+      return undefined;
+    }
+
+    return {
+      ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
+      ...(env !== undefined && { env }),
+      ...(options?.cwd !== undefined && { cwd: options.cwd }),
+      ...(options?.origin !== undefined && { origin: options.origin })
+    };
+  }
+
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
+    const context = await this.resolveExecution();
+    const session = this.serializeExecutionContext(context);
     return this.execWithSession(command, session, options);
   }
 
@@ -2582,8 +2704,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, { origin: 'internal' });
+    return this.execWithSession(command, SESSIONLESS_SESSION_ID, {
+      origin: 'internal'
+    });
   }
 
   /**
@@ -2621,19 +2744,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } else {
         // Regular execution with session
-        const commandOptions =
-          options &&
-          (options.timeout !== undefined ||
-            options.env !== undefined ||
-            options.cwd !== undefined ||
-            options.origin !== undefined)
-            ? {
-                timeoutMs: options.timeout,
-                env: options.env,
-                cwd: options.cwd,
-                origin: options.origin
-              }
-            : undefined;
+        const commandOptions = this.buildExecutionRequestOptions(
+          sessionId,
+          options
+        );
 
         const response = await this.client.commands.execute(
           command,
@@ -2786,7 +2900,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       endTime?: string | Date;
       exitCode?: number;
     },
-    sessionId: string
+    sessionId?: string
   ): Process {
     return {
       id: data.id,
@@ -3234,14 +3348,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const session = sessionId ?? (await this.ensureDefaultSession());
+      const execution = await this.resolveExecution(sessionId);
+      const session = this.serializeExecutionContext(execution);
+      const executionOptions = this.buildExecutionRequestOptions(session, {
+        timeout: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      });
       const requestOptions = {
+        ...executionOptions,
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
-        ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env !== undefined && { env: filterEnvVars(options.env) }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
         ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
           autoCleanup: options.autoCleanup
@@ -3328,6 +3446,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             return; // Stream complete
         }
       }
+
+      // If we get here without a complete event, something went wrong
+      throw new Error('Stream ended without completion event');
     } catch (error) {
       // Call onError if streaming fails
       if (options.onError && error instanceof Error) {
@@ -3343,7 +3464,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const session = sessionId ?? this.defaultSession ?? undefined;
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -3430,13 +3551,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session, {
-      timeoutMs: options?.timeout,
+    const context = await this.resolveExecution();
+    const session = this.serializeExecutionContext(context);
+    const executionOptions = this.buildExecutionRequestOptions(session, {
+      timeout: options?.timeout,
       env: options?.env,
       cwd: options?.cwd
     });
+    // Get the stream from CommandClient
+    return this.client.commands.executeStream(
+      command,
+      session,
+      executionOptions
+    );
   }
 
   /**
@@ -3452,11 +3579,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId, {
-      timeoutMs: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd
-    });
+    return this.client.commands.executeStream(
+      command,
+      sessionId,
+      this.buildExecutionRequestOptions(sessionId, {
+        timeout: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      })
+    );
   }
 
   /**
@@ -3486,7 +3617,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cloneTimeoutMs?: number;
     }
   ) {
-    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options?.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
       targetDir: options?.targetDir,
@@ -3499,7 +3631,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.mkdir(path, session, {
       recursive: options.recursive
     });
@@ -3510,7 +3643,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
 
     if (content instanceof ReadableStream) {
       return this.client.files.writeFileStream(path, content, session);
@@ -3522,12 +3656,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async deleteFile(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.deleteFile(path, session);
   }
 
   async renameFile(oldPath: string, newPath: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.renameFile(oldPath, newPath, session);
   }
 
@@ -3536,7 +3672,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     sessionId?: string
   ) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.moveFile(sourcePath, destinationPath, session);
   }
 
@@ -3562,7 +3699,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { encoding?: FileEncoding; sessionId?: string } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     if (options.encoding === 'none') {
       return this.client.files.readFile(path, session, { encoding: 'none' });
     }
@@ -3581,7 +3719,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.readFileStream(path, session);
   }
 
@@ -3589,12 +3728,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options?: { recursive?: boolean; includeHidden?: boolean }
   ) {
-    const session = await this.ensureDefaultSession();
+    const context = await this.resolveExecution();
+    const session = this.serializeExecutionContext(context);
     return this.client.files.listFiles(path, session, options);
   }
 
   async exists(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.exists(path, session);
   }
 
@@ -3683,7 +3824,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const sessionId = this.serializeExecutionContext(execution);
     return this.client.watch.watch({
       path,
       recursive: options.recursive,
@@ -3707,7 +3849,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const sessionId = this.serializeExecutionContext(execution);
     return this.client.watch.checkChanges({
       path,
       recursive: options.recursive,
@@ -3799,7 +3942,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
         );
       }
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       await this.client.ports.exposePort(port, sessionId, options?.name);
 
       tokens[port.toString()] = { token, name: options?.name };
@@ -3859,7 +4004,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('portTokens', tokens);
       }
 
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       try {
         await this.client.ports.unexposePort(port, sessionId);
       } catch (error) {
@@ -3889,7 +4036,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getExposedPorts(hostname: string) {
-    const sessionId = await this.ensureDefaultSession();
+    const sessionId = this.serializeExecutionContext(
+      await this.resolveExecution()
+    );
     const response = await this.client.ports.getExposedPorts(sessionId);
 
     // We need the sandbox name to construct preview URLs
@@ -3977,7 +4126,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async isPortExposed(port: number): Promise<boolean> {
     try {
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       const response = await this.client.ports.getExposedPorts(sessionId);
       return response.ports.some((exposedPort) => exposedPort.port === port);
     } catch (error) {

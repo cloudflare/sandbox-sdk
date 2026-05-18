@@ -13,8 +13,8 @@ import type {
   ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
+import type { ExecutionService } from './execution-service';
 import type { ProcessStore } from './process-store';
-import type { SessionManager } from './session-manager';
 
 // Re-export types for use by ProcessStore implementations
 export type { ProcessRecord, ProcessStatus } from '../core/types';
@@ -30,7 +30,7 @@ export class ProcessService {
   constructor(
     private store: ProcessStore,
     private logger: Logger,
-    private sessionManager: SessionManager
+    private executionService: ExecutionService
   ) {
     this.manager = new ProcessManager();
   }
@@ -53,17 +53,13 @@ export class ProcessService {
   ): Promise<ServiceResult<CommandResult>> {
     try {
       // Always use SessionManager for execution (unified model)
-      const sessionId = options.sessionId || 'default';
-      const result = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        {
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          origin: options.origin
-        }
-      );
+      const result = await this.executionService.execute(command, {
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        timeoutMs: options.timeoutMs,
+        env: options.env,
+        origin: options.origin
+      });
 
       if (!result.success) {
         return result as ServiceResult<CommandResult>;
@@ -144,10 +140,14 @@ export class ProcessService {
       // 5. Execute command via SessionManager with streaming
       // Pass process ID as commandId for tracking and killing
       // CRITICAL: Await the initial result to ensure command is tracked before returning
-      const streamResult = await this.sessionManager.executeStreamInSession(
-        sessionId,
-        command,
-        async (event) => {
+      const streamResult = await this.executionService.executeStream(command, {
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        env: options.env,
+        origin: options.origin,
+        commandId: processRecordData.id,
+        background: true,
+        onEvent: async (event) => {
           // Route events to process record listeners
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
@@ -235,19 +235,17 @@ export class ProcessService {
               origin: options.origin
             });
           }
-        },
-        {
-          cwd: options.cwd,
-          env: options.env,
-          origin: options.origin
-        },
-        processRecordData.id, // Pass process ID as commandId for tracking and killing
-        { background: true } // Release lock after startup
-      );
+        }
+      });
 
       if (!streamResult.success) {
         return streamResult as ServiceResult<ProcessRecord>;
       }
+
+      processRecord.commandHandle = streamResult.data.commandHandle;
+      await this.store.update(processRecord.id, {
+        commandHandle: streamResult.data.commandHandle
+      });
 
       // Store streaming promise so getLogs() can await it for completed processes
       // This ensures all output is captured before returning logs
@@ -379,10 +377,7 @@ export class ProcessService {
         };
       }
 
-      const result = await this.sessionManager.killCommand(
-        process.commandHandle.sessionId,
-        process.commandHandle.commandId
-      );
+      const result = await this.executionService.kill(process.commandHandle);
 
       if (result.success) {
         await this.store.update(id, {
