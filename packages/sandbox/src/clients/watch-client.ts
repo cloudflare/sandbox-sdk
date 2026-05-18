@@ -3,6 +3,7 @@ import {
   type CheckChangesResult,
   type FileWatchSSEEvent,
   parseSSEFrames,
+  type SandboxWatchAPI,
   type SSEPartialEvent,
   type WatchRequest
 } from '@repo/shared';
@@ -15,7 +16,7 @@ import { BaseHttpClient } from './base-client';
  * @internal This client is used internally by the SDK.
  * Users should use `sandbox.watch()` or `sandbox.checkChanges()` instead.
  */
-export class WatchClient extends BaseHttpClient {
+export class WatchClient extends BaseHttpClient implements SandboxWatchAPI {
   /**
    * Check whether a path changed since a previously returned version.
    */

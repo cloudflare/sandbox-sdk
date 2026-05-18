@@ -5,6 +5,7 @@ import type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessStartResult,
+  SandboxProcessesAPI,
   StartProcessRequest
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
@@ -24,7 +25,10 @@ export type {
 /**
  * Client for background process management
  */
-export class ProcessClient extends BaseHttpClient {
+export class ProcessClient
+  extends BaseHttpClient
+  implements SandboxProcessesAPI
+{
   /**
    * Start a background process
    * @param command - Command to execute as a background process

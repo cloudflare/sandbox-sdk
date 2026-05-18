@@ -1,4 +1,4 @@
-import type { ExecuteRequest } from '@repo/shared';
+import type { ExecuteRequest, SandboxCommandsAPI } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -20,7 +20,10 @@ export interface ExecuteResponse extends BaseApiResponse {
 /**
  * Client for command execution operations
  */
-export class CommandClient extends BaseHttpClient {
+export class CommandClient
+  extends BaseHttpClient
+  implements SandboxCommandsAPI
+{
   /**
    * Execute a command and return the complete result
    * @param command - The command to execute

@@ -6,7 +6,8 @@ import {
   type ExecutionError,
   type OutputMessage,
   type Result,
-  ResultImpl
+  ResultImpl,
+  type SandboxInterpreterAPI
 } from '@repo/shared';
 import type { ErrorResponse } from '../errors';
 import {
@@ -58,7 +59,10 @@ export interface ExecutionCallbacks {
   onError?: (error: ExecutionError) => void | Promise<void>;
 }
 
-export class InterpreterClient extends BaseHttpClient {
+export class InterpreterClient
+  extends BaseHttpClient
+  implements SandboxInterpreterAPI
+{
   private readonly maxRetries = 3;
   private readonly retryDelayMs = 1000;
 

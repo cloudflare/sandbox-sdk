@@ -1,3 +1,4 @@
+import type { SandboxDesktopAPI } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -139,7 +140,7 @@ export interface Desktop {
 /**
  * Client for desktop environment lifecycle, input, and screen operations
  */
-export class DesktopClient extends BaseHttpClient {
+export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
   /**
    * Start the desktop environment with optional resolution and DPI.
    */

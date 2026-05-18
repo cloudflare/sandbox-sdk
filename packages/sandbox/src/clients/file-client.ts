@@ -9,6 +9,7 @@ import type {
   ReadFileResult,
   ReadFileStreamResult,
   RenameFileResult,
+  SandboxFilesAPI,
   WriteFileResult
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
@@ -50,7 +51,7 @@ export interface FileOperationRequest extends SessionRequest {
 /**
  * Client for file system operations
  */
-export class FileClient extends BaseHttpClient {
+export class FileClient extends BaseHttpClient implements SandboxFilesAPI {
   /**
    * Create a directory
    * @param path - Directory path to create
