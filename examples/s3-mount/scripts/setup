@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# setup-aws.sh — One-time AWS setup for the sandbox-s3-mount example.
+#
+# This script is documentation, not automation. Review each command, substitute
+# the placeholder values, then run the steps manually or adapt to your IaC tool.
+#
+# Prerequisites:
+#   - AWS CLI configured with credentials that can create IAM users, roles,
+#     and inline policies.
+#   - An existing S3 bucket that the container will read/write.
+#
+# After running, set the three Worker secrets:
+#   wrangler secret put BROKER_AWS_ACCESS_KEY_ID
+#   wrangler secret put BROKER_AWS_SECRET_ACCESS_KEY
+#   wrangler secret put AWS_ROLE_ARN
+
+
+set -euo pipefail
+
+# ── CONFIGURATION ─────────────────────────────────────────────────────────────
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+BUCKET_NAME="${S3_BUCKET_NAME:-my-s3-bucket}"          # S3 bucket to mount
+REGION="${AWS_REGION:-us-east-1}"                       # Bucket region
+BROKER_USER="sandbox-worker-broker"                     # IAM user for the Worker
+ROLE_NAME="sandbox-s3-demo"                             # Role assumed by the container
+# ── END CONFIGURATION ─────────────────────────────────────────────────────────
+
+echo "Account: ${ACCOUNT_ID}"
+echo "Bucket:  ${BUCKET_NAME}"
+echo "Region:  ${REGION}"
+echo ""
+# ── Step 0: Verify (or create) the S3 bucket ────────────────────────────────────
+# The role policy below grants access to one bucket only. That bucket must
+# actually exist in this AWS account — otherwise mount-s3 will fail with
+# AccessDenied even though the IAM setup looks correct.
+echo "==> Checking that bucket ${BUCKET_NAME} exists in account ${ACCOUNT_ID}"
+if aws s3api head-bucket --bucket "${BUCKET_NAME}" 2>/dev/null; then
+  BUCKET_REGION="$(aws s3api get-bucket-location --bucket "${BUCKET_NAME}" \
+    --query 'LocationConstraint' --output text 2>/dev/null)"
+  # us-east-1 buckets report 'None' for LocationConstraint
+  [ "${BUCKET_REGION}" = "None" ] && BUCKET_REGION="us-east-1"
+  if [ "${BUCKET_REGION}" != "${REGION}" ]; then
+    echo "✖ Bucket exists in region '${BUCKET_REGION}' but AWS_REGION is set to '${REGION}'." >&2
+    echo "  Re-run with AWS_REGION=${BUCKET_REGION} or use a bucket in ${REGION}." >&2
+    exit 1
+  fi
+  echo "(bucket exists in ${BUCKET_REGION})"
+else
+  echo "✖ Bucket '${BUCKET_NAME}' is not accessible from this account."
+  echo "  S3 bucket names are globally unique — if you see a 403 above, the name"
+  echo "  is taken by someone else; if 404, it doesn't exist anywhere."
+  echo ""
+  read -r -p "Create '${BUCKET_NAME}' in ${REGION}? [y/N] " reply
+  if [ "${reply}" = "y" ] || [ "${reply}" = "Y" ]; then
+    if [ "${REGION}" = "us-east-1" ]; then
+      aws s3api create-bucket --bucket "${BUCKET_NAME}" --region "${REGION}"
+    else
+      aws s3api create-bucket --bucket "${BUCKET_NAME}" --region "${REGION}" \
+        --create-bucket-configuration "LocationConstraint=${REGION}"
+    fi
+    echo "(bucket created)"
+  else
+    echo ""
+    echo "Aborting. Re-run with S3_BUCKET_NAME=<your-bucket> ./scripts/setup"
+    exit 1
+  fi
+fi
+echo ""
+
+# ── Step 1: Create broker IAM user ────────────────────────────────────────────
+# The broker user may only call sts:AssumeRole on the single target role ARN.
+# It cannot access S3 directly — blast radius is limited to role assumption.
+echo "==> Creating broker IAM user: ${BROKER_USER}"
+aws iam create-user --user-name "${BROKER_USER}" || echo "(user already exists)"
+
+aws iam put-user-policy \
+  --user-name "${BROKER_USER}" \
+  --policy-name AssumeRoleOnly \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": \"sts:AssumeRole\",
+      \"Resource\": \"arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}\"
+    }]
+  }"
+
+echo "==> Creating access key for broker user"
+ACCESS_KEY="$(aws iam create-access-key --user-name "${BROKER_USER}")"
+BROKER_KEY_ID="$(echo "${ACCESS_KEY}" | jq -r '.AccessKey.AccessKeyId')"
+BROKER_SECRET="$(echo "${ACCESS_KEY}" | jq -r '.AccessKey.SecretAccessKey')"
+
+echo "(broker access key created — will be written to .dev.vars.setup at the end)"
+
+# ── Step 2: Create the container role ─────────────────────────────────────────
+# This role is assumed by the container via STS. Permissions are scoped to the
+# single bucket. AmazonS3FullAccess is NOT used — the inline policy is bucket-scoped.
+echo ""
+echo "==> Creating container role: ${ROLE_NAME}"
+ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+
+TRUST_POLICY="{
+  \"Version\": \"2012-10-17\",
+  \"Statement\": [{
+    \"Effect\": \"Allow\",
+    \"Principal\": {
+      \"AWS\": \"arn:aws:iam::${ACCOUNT_ID}:user/${BROKER_USER}\"
+    },
+    \"Action\": \"sts:AssumeRole\"
+  }]
+}"
+
+# IAM user ARNs take a few seconds to replicate after creation. Retry the
+# create-role call with backoff until the principal is recognised, or until
+# we confirm the role already exists.
+for attempt in 1 2 3 4 5; do
+  ROLE_OUT="$(aws iam create-role \
+    --role-name "${ROLE_NAME}" \
+    --max-session-duration 3600 \
+    --assume-role-policy-document "${TRUST_POLICY}" 2>&1)" && {
+    echo "${ROLE_OUT}"
+    break
+  } || {
+    if echo "${ROLE_OUT}" | grep -q 'EntityAlreadyExists'; then
+      echo "(role already exists, continuing)"
+      break
+    elif echo "${ROLE_OUT}" | grep -q 'MalformedPolicyDocument' && [ "${attempt}" -lt 5 ]; then
+      echo "  (IAM principal not yet propagated, retrying in 10s — attempt ${attempt}/5)"
+      sleep 10
+    else
+      echo "${ROLE_OUT}" >&2
+      exit 1
+    fi
+  }
+done
+
+# Bucket-scoped inline policy — only the actions mount-s3 needs.
+# AbortMultipartUpload is required for large file uploads.
+echo "==> Attaching bucket-scoped policy to ${ROLE_NAME}"
+aws iam put-role-policy \
+  --role-name "${ROLE_NAME}" \
+  --policy-name "sandbox-s3-bucket-access" \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": [
+        \"s3:GetObject\",
+        \"s3:PutObject\",
+        \"s3:DeleteObject\",
+        \"s3:ListBucket\",
+        \"s3:AbortMultipartUpload\"
+      ],
+      \"Resource\": [
+        \"arn:aws:s3:::${BUCKET_NAME}\",
+        \"arn:aws:s3:::${BUCKET_NAME}/*\"
+      ]
+    }]
+  }"
+
+echo ""
+echo "==> Role ARN: ${ROLE_ARN}"
+echo ""
+
+
+# ── Step 4: Update wrangler.jsonc vars ────────────────────────────────────────
+echo "==> Update the following vars in wrangler.jsonc:"
+echo "  \"AWS_REGION\":      \"${REGION}\""
+echo "  \"S3_BUCKET_NAME\":  \"${BUCKET_NAME}\""
+echo ""
+
+# ── Step 5: Verify ────────────────────────────────────────────────────────────
+echo "==> Verifying setup:"
+echo ""
+echo "Broker user policy:"
+aws iam get-user-policy --user-name "${BROKER_USER}" --policy-name AssumeRoleOnly \
+  --query PolicyDocument --output json 2>/dev/null || echo "(could not verify — check manually)"
+
+echo ""
+echo "Container role inline policy:"
+aws iam get-role-policy --role-name "${ROLE_NAME}" --policy-name sandbox-s3-bucket-access \
+  --query PolicyDocument --output json 2>/dev/null || echo "(could not verify — check manually)"
+
+echo ""
+echo "==> Setup complete."
+echo ""
+echo "IMPORTANT: AmazonS3FullAccess is NOT attached. The role policy above grants"
+echo "only the minimum S3 actions required by mount-s3 on bucket: ${BUCKET_NAME}"
+echo ""
+# ── Write .dev.vars.setup with the real secrets ──────────────────────────────
+# Don't print secrets to stdout. Write them to a side file the user can review
+# and then `mv` into place.
+SETUP_FILE="$(dirname "$0")/../.dev.vars.setup"
+cat > "${SETUP_FILE}" <<EOF
+BROKER_AWS_ACCESS_KEY_ID=${BROKER_KEY_ID}
+BROKER_AWS_SECRET_ACCESS_KEY=${BROKER_SECRET}
+AWS_ROLE_ARN=${ROLE_ARN}
+EOF
+chmod 600 "${SETUP_FILE}"
+
+# Redacted preview: show everything except the actual secret values.
+redact() {
+  local value="$1"
+  local len=${#value}
+  if [ "${len}" -le 8 ]; then
+    printf '%s' '********'
+  else
+    printf '%s...%s' "${value:0:4}" "${value: -4}"
+  fi
+}
+
+echo "─────────────────────────────────────────────────────────────────"
+echo "Wrote ${SETUP_FILE} — review it, then move it into place:"
+echo ""
+echo "  mv ${SETUP_FILE} $(dirname "${SETUP_FILE}")/.dev.vars"
+echo ""
+echo "Contents (secrets redacted):"
+echo "─────────────────────────────────────────────────────────────────"
+echo "BROKER_AWS_ACCESS_KEY_ID=$(redact "${BROKER_KEY_ID}")"
+echo "BROKER_AWS_SECRET_ACCESS_KEY=$(redact "${BROKER_SECRET}")"
+echo "AWS_ROLE_ARN=${ROLE_ARN}"
+echo "─────────────────────────────────────────────────────────────────"
+echo ""
+echo "Credentials are vended via outbound interception on http://169.254.170.2/"
+echo "— no public credential endpoint is exposed."
+
+

@@ -1,0 +1,25 @@
+{
+  "name": "@cloudflare/sandbox-s3-mount-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Mount an AWS S3 bucket inside a Sandbox container using short-lived STS credentials",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "./scripts/test"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "aws4fetch": "^1.0.20",
+    "hono": "^4.12.18",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.76.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

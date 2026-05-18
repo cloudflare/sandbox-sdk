@@ -1,0 +1,213 @@
+#!/usr/bin/env bun
+/**
+ * Smoke test that drives the mounted bucket through the /ws/terminal PTY
+ * endpoint — no HTTP file routes, no GUI.
+ *
+ * Flow:
+ *   POST /api/session                       → { sandboxId }
+ *   WS   /ws/terminal/:sandboxId             → bash on the default session
+ *   POST /api/session/:sandboxId/cleanup     → fusermount -u
+ *
+ * Usage:
+ *   BASE_URL=https://your-worker.workers.dev ./scripts/test
+ *   BASE_URL=http://localhost:8787           ./scripts/test
+ */
+
+const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8787';
+
+// ── Tiny PTY shell client ────────────────────────────────────────────────────
+
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[=>]|[\x00-\x08\x0b-\x1f]/g;
+
+interface RunResult {
+	stdout: string;
+	exitCode: number;
+}
+
+class PTYShell {
+	private buf = '';
+	private waiters: Array<{ marker: string; resolve: (r: RunResult) => void }> = [];
+	private counter = 0;
+	private ready = Promise.withResolvers<void>();
+	private closed = Promise.withResolvers<void>();
+
+	constructor(private ws: WebSocket) {
+		ws.binaryType = 'arraybuffer';
+		ws.addEventListener('message', (ev) => this.onMessage(ev));
+		ws.addEventListener('close', () => this.closed.resolve());
+		ws.addEventListener('error', (e) => {
+			this.ready.reject(e);
+			this.closed.resolve();
+		});
+	}
+
+	static async connect(sandboxId: string): Promise<PTYShell> {
+		const wsProto = BASE_URL.startsWith('https:') ? 'wss:' : 'ws:';
+		const host = new URL(BASE_URL).host;
+		const ws = new WebSocket(`${wsProto}//${host}/ws/terminal/${sandboxId}`);
+		await new Promise<void>((res, rej) => {
+			ws.addEventListener('open', () => res(), { once: true });
+			ws.addEventListener('error', (e) => rej(e), { once: true });
+		});
+		const shell = new PTYShell(ws);
+		await shell.ready.promise;
+		// Send a resize so bash knows the terminal width. Disable prompt to keep
+		// output clean, and turn off line editor echo of long commands.
+		ws.send(JSON.stringify({ type: 'resize', cols: 200, rows: 50 }));
+		// ~/.bashrc auto-cd's into /mnt/s3 (installed by mountBucket), so we only
+		// need to tame the prompt + echo here.
+		await shell.run("export PS1='' ; stty -echo ; set +o history");
+		return shell;
+	}
+
+	private onMessage(ev: MessageEvent): void {
+		if (ev.data instanceof ArrayBuffer) {
+			this.buf += new TextDecoder().decode(new Uint8Array(ev.data));
+			this.drain();
+			return;
+		}
+		try {
+			const msg = JSON.parse(ev.data as string);
+			if (msg.type === 'ready') this.ready.resolve();
+			else if (msg.type === 'exit' || msg.type === 'error') this.closed.resolve();
+		} catch {
+			// ignore non-JSON text frames
+		}
+	}
+
+	private drain(): void {
+		while (this.waiters.length) {
+			const w = this.waiters[0];
+			// Scan past false hits — e.g. bash may echo the typed command before
+			// `stty -echo` takes effect, so the literal `__MARK_N__%d__` template
+			// appears earlier in the buffer than the real marker with digits.
+			let searchFrom = 0;
+			while (true) {
+				const idx = this.buf.indexOf(w.marker, searchFrom);
+				if (idx < 0) return; // wait for more bytes
+				const after = this.buf.slice(idx + w.marker.length);
+				const tail = /^__(\d+)__/.exec(after);
+				if (!tail) {
+					// If this is the only match we have, wait — the digits may still
+					// be in flight. Otherwise skip past this hit and keep looking.
+					if (this.buf.indexOf(w.marker, idx + w.marker.length) < 0) return;
+					searchFrom = idx + w.marker.length;
+					continue;
+				}
+				const before = this.buf.slice(0, idx);
+				this.buf = after.slice(tail[0].length);
+				this.waiters.shift();
+				w.resolve({
+					stdout: stripAnsi(before),
+					exitCode: parseInt(tail[1], 10),
+				});
+				break;
+			}
+		}
+	}
+
+	async run(cmd: string): Promise<RunResult> {
+		const marker = `__MARK_${++this.counter}__`;
+		const promise = new Promise<RunResult>((resolve) => {
+			this.waiters.push({ marker, resolve });
+		});
+		// `; printf …` runs unconditionally so we always get an exit code.
+		this.ws.send(new TextEncoder().encode(`${cmd}; printf '${marker}__%d__\\n' "$?"\r`));
+		return promise;
+	}
+
+	async close(): Promise<void> {
+		try {
+			this.ws.send(new TextEncoder().encode('exit\r'));
+		} catch {}
+		this.ws.close();
+		await this.closed.promise;
+	}
+}
+
+function stripAnsi(s: string): string {
+	return s.replace(ANSI, '').replace(/\r/g, '');
+}
+
+// ── Assertions ───────────────────────────────────────────────────────────────
+
+let passed = 0;
+let failed = 0;
+function check(name: string, ok: boolean, detail?: string): void {
+	if (ok) {
+		passed++;
+		console.log(`  \x1b[32m✓\x1b[0m ${name}`);
+	} else {
+		failed++;
+		console.log(`  \x1b[31m✗\x1b[0m ${name}${detail ? `\n      ${detail}` : ''}`);
+	}
+}
+
+// ── Test ─────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+	console.log(`▶ POST ${BASE_URL}/api/session`);
+	const sessRes = await fetch(`${BASE_URL}/api/session`, { method: 'POST' });
+	if (!sessRes.ok) {
+		console.error(`session create failed: ${sessRes.status} ${await sessRes.text()}`);
+		process.exit(1);
+	}
+	const { sandboxId } = (await sessRes.json()) as {
+		sandboxId: string;
+	};
+	console.log(`  sandbox=${sandboxId}`);
+
+	const shell = await PTYShell.connect(sandboxId);
+	const unique = `pty-test-${Date.now()}`;
+	const path = `${unique}.txt`;
+	const body = `hello from pty ${unique}`;
+
+	try {
+		console.log(`▶ exercising /mnt/s3 via PTY`);
+
+		const pwd = await shell.run('pwd');
+		check('cwd is /mnt/s3', pwd.stdout.trim() === '/mnt/s3', pwd.stdout);
+
+		const mountCheck = await shell.run('mountpoint -q /mnt/s3 && echo MOUNTED || echo NOT_MOUNTED');
+		check('bucket is mounted', mountCheck.stdout.includes('MOUNTED'), mountCheck.stdout);
+
+		const write = await shell.run(`printf '%s' ${shellQuote(body)} > ${path}`);
+		check('write file', write.exitCode === 0, `exit=${write.exitCode}`);
+
+		const ls = await shell.run(`ls -1 ${path}`);
+		check('file appears in ls', ls.stdout.trim() === path, ls.stdout);
+
+		const read = await shell.run(`cat ${path}`);
+		check('read returns the body', read.stdout.trim() === body, `got: ${JSON.stringify(read.stdout)}`);
+
+		const nestedPath = `${unique}/sub/dir/nested.txt`;
+		const mkdirRm = await shell.run(`mkdir -p ${unique}/sub/dir && printf nested > ${nestedPath} && cat ${nestedPath}`);
+		check('nested write+read', mkdirRm.stdout.trim() === 'nested', mkdirRm.stdout);
+
+		// mount-s3 has no real directories — `rm -r` on a now-empty prefix can
+		// return non-zero even after every object underneath has been deleted.
+		// Verify the *effect* (everything is gone) rather than `rm`'s exit code.
+		await shell.run(`rm -f ${path}; rm -rf ${unique}`);
+		const gone = await shell.run(`(ls ${path} ${unique} 2>&1 || echo ALL_GONE)`);
+		check('delete file + dir', gone.stdout.includes('ALL_GONE'), gone.stdout);
+
+		const lsGone = await shell.run(`ls ${path} 2>&1 || echo MISSING`);
+		check('file is gone', lsGone.stdout.includes('MISSING'), lsGone.stdout);
+	} finally {
+		await shell.close();
+		console.log(`▶ POST ${BASE_URL}/api/session/${sandboxId}/cleanup`);
+		await fetch(`${BASE_URL}/api/session/${sandboxId}/cleanup`, { method: 'POST' }).catch(() => {});
+	}
+
+	console.log(`\n${passed} passed, ${failed} failed`);
+	process.exit(failed === 0 ? 0 : 1);
+}
+
+function shellQuote(s: string): string {
+	return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+main().catch((err) => {
+	console.error(err);
+	process.exit(1);
+});
