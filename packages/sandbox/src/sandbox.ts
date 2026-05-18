@@ -65,6 +65,7 @@ import {
   InvalidBackupConfigError,
   PortNotExposedError,
   ProcessExitedBeforeReadyError,
+  ProcessNotFoundError,
   ProcessReadyTimeoutError,
   SandboxError,
   SessionAlreadyExistsError
@@ -3363,8 +3364,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
     const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes.getProcess(id);
-    if (!response.process) {
+    const response = await this.client.processes
+      .getProcess(id)
+      .catch((e: unknown) => {
+        if (e instanceof ProcessNotFoundError) return null;
+        throw e;
+      });
+    if (!response?.process) {
       return null;
     }
 
