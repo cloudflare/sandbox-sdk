@@ -113,7 +113,7 @@ describe('ContainerControlConnection', () => {
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
         internals.connected = true;
-        internals.ws = { close: vi.fn() };
+        internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
       await conn.connect();
@@ -132,7 +132,7 @@ describe('ContainerControlConnection', () => {
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
         internals.connected = true;
-        internals.ws = { close: vi.fn() };
+        internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
       // rpc() returns the stub immediately — same reference before and after connect
@@ -156,7 +156,7 @@ describe('ContainerControlConnection', () => {
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
           internals.connected = true;
-          internals.ws = { close: vi.fn() };
+          internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
       await conn.connect();
@@ -183,7 +183,7 @@ describe('ContainerControlConnection', () => {
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
           internals.connected = true;
-          internals.ws = { close: vi.fn() };
+          internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
       await Promise.all([conn.connect(), conn.connect()]);

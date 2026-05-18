@@ -152,6 +152,13 @@ export class ContainerControlConnection {
       // Stub may already be disposed
     }
     if (this.ws) {
+      // Unbind first so a late `close` / `error` event dispatched by
+      // the runtime after we've decided this connection is dead can't
+      // reach a successor that the owner installed in our place — see
+      // the WebSocket-listener-unbinding tests in container-connection
+      // for the race this prevents.
+      this.ws.removeEventListener('close', this.onWebSocketClose);
+      this.ws.removeEventListener('error', this.onWebSocketError);
       try {
         this.ws.close();
       } catch {
@@ -192,6 +199,31 @@ export class ContainerControlConnection {
     }
   }
 
+  /**
+   * WebSocket `close` listener. Defined as a bound arrow field so the
+   * same reference can be passed to both `addEventListener` and
+   * `removeEventListener` — a fresh anonymous lambda would silently
+   * fail to unbind.
+   */
+  private onWebSocketClose = (): void => {
+    const wasConnected = this.connected;
+    this.connected = false;
+    this.ws = null;
+    this.logger.debug('ContainerControlConnection WebSocket closed');
+    if (wasConnected) this.fireOnClose();
+  };
+
+  /**
+   * WebSocket `error` listener. Same field-form rationale as
+   * {@link onWebSocketClose}.
+   */
+  private onWebSocketError = (): void => {
+    const wasConnected = this.connected;
+    this.connected = false;
+    this.ws = null;
+    if (wasConnected) this.fireOnClose();
+  };
+
   private async doConnect(): Promise<void> {
     try {
       const response = await this.fetchUpgradeWithRetry();
@@ -212,20 +244,8 @@ export class ContainerControlConnection {
       // Workers WebSockets require explicit accept() before use
       (ws as unknown as { accept: () => void }).accept();
 
-      ws.addEventListener('close', () => {
-        const wasConnected = this.connected;
-        this.connected = false;
-        this.ws = null;
-        this.logger.debug('ContainerControlConnection WebSocket closed');
-        if (wasConnected) this.fireOnClose();
-      });
-
-      ws.addEventListener('error', () => {
-        const wasConnected = this.connected;
-        this.connected = false;
-        this.ws = null;
-        if (wasConnected) this.fireOnClose();
-      });
+      ws.addEventListener('close', this.onWebSocketClose);
+      ws.addEventListener('error', this.onWebSocketError);
 
       this.ws = ws;
       this.transport.activate(ws);
