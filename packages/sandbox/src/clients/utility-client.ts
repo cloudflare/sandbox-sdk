@@ -131,4 +131,10 @@ export class UtilityClient extends BaseHttpClient implements SandboxUtilsAPI {
       return 'unknown';
     }
   }
+
+  listSessions(): Promise<{ sessions: string[] }> {
+    throw new Error(
+      'listSessions requires the RPC transport. Set SANDBOX_TRANSPORT=rpc.'
+    );
+  }
 }
