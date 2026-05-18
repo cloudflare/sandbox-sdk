@@ -9,11 +9,10 @@
  * id without waiting for the create round-trip to resolve.
  */
 
-import type { Logger, TunnelInfo } from '@repo/shared';
+import type { Logger, SandboxControlCallback, TunnelInfo } from '@repo/shared';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
 import { TunnelManager } from '../managers/tunnel-manager';
-
 
 export interface RunQuickTunnelOptions {
   /** Override the readiness timeout. Forwarded to TunnelManager. */
@@ -30,7 +29,19 @@ interface TunnelRecord {
 export class TunnelService {
   private readonly tunnels = new Map<string, TunnelRecord>();
 
-  constructor(private readonly logger: Logger) {}
+  /**
+   * @param logger Child logger for tunnel-service log lines.
+   * @param getControlCallback Optional accessor returning the DO-side
+   * control callback exposed over the capnweb session's remote main.
+   * Resolved fresh on every cloudflared exit, returning `null` when the
+   * session is not bound yet (legacy callers, tests, or
+   * pre-WS-upgrade window).
+   */
+  constructor(
+    private readonly logger: Logger,
+    private readonly getControlCallback: () => SandboxControlCallback | null = () =>
+      null
+  ) {}
 
   async runQuickTunnel(
     id: string,
@@ -49,7 +60,22 @@ export class TunnelService {
       port,
       logger: this.logger,
       readyTimeoutMs: options?.readyTimeoutMs,
-      stopGraceMs: options?.stopGraceMs
+      stopGraceMs: options?.stopGraceMs,
+      onExit: (code) => {
+        // Drop our in-memory registry first so list() / destroyAll()
+        // don't see a phantom record while we await the DO callback.
+        this.tunnels.delete(id);
+        const cb = this.getControlCallback();
+        if (!cb) return;
+        // Fire-and-forget the DO notification. Errors are swallowed
+        // so a misbehaving DO can't crash the manager's exit handler.
+        cb.onTunnelExit(id, port, code).catch((err) => {
+          this.logger.warn('onTunnelExit RPC failed', {
+            id,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        });
+      }
     });
 
     try {

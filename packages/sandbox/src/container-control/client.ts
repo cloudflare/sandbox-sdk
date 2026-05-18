@@ -395,7 +395,8 @@ export class ContainerControlClient {
       stub: options.stub,
       port: options.port,
       logger: options.logger,
-      retryTimeoutMs: options.retryTimeoutMs
+      retryTimeoutMs: options.retryTimeoutMs,
+      localMain: options.localMain
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;

@@ -1,4 +1,4 @@
-import { createLogger } from '@repo/shared';
+import { createLogger, type SandboxControlCallback } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { trustRuntimeCert } from './cert';
@@ -201,11 +201,17 @@ export async function startServer(): Promise<ServerInstance> {
                 } catch {}
               });
           } else if (ws.data.type === 'capnweb') {
-            const { transport } = newBunWebSocketRpcSession(
+            const { stub, transport } = newBunWebSocketRpcSession(
               ws,
               app.controlPlaneAPI
             );
             ws.data.transport = transport;
+            // Capture the peer's remote main (the DO's
+            // SandboxControlCallback) so the container can push
+            // events back — e.g. tunnel-exit notifications.
+            app.container.setControlCallback(
+              stub as unknown as SandboxControlCallback
+            );
             logger.debug('capnweb session initialized', {
               connectionId: ws.data.connectionId
             });
@@ -227,6 +233,10 @@ export async function startServer(): Promise<ServerInstance> {
               .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
+            // Forget the peer's control callback. Subsequent tunnel
+            // exits resolve `null` from the accessor and become no-ops
+            // until a new session opens.
+            app.container.setControlCallback(null);
           } else {
             app.wsAdapter.onClose(ws, code, reason);
           }

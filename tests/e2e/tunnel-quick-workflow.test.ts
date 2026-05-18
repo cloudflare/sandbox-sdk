@@ -197,6 +197,80 @@ console.log("Server listening on port " + server.port);
   );
 
   test.skipIf(skipQuickTunnel)(
+    'auto-clears the storage entry when cloudflared exits unexpectedly',
+    async () => {
+      const port = TUNNEL_TEST_PORT + 20;
+      const filePath = `/workspace/quick-tunnel-crash-${port}.ts`;
+      // Boot a tiny server so cloudflared has something to point at.
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: filePath,
+          content: `Bun.serve({ hostname: "0.0.0.0", port: ${port}, fetch() { return new Response("ok"); } });`
+        })
+      });
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `bun run ${filePath}` })
+      });
+      const { id: processId } = (await startResponse.json()) as Process;
+      await fetch(`${workerUrl}/api/process/${processId}/waitForPort`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ port, timeout: 15_000, mode: 'tcp' })
+      });
+
+      try {
+        const tunnel = await getTunnel(port);
+        // Tunnel is in the cache.
+        expect((await listTunnels()).map((t) => t.id)).toContain(tunnel.id);
+
+        // Kill the cloudflared process from inside the sandbox.
+        // pgrep / pkill are part of procps which ships in the base
+        // image; cloudflared was started by the container's
+        // TunnelManager so it's a child of pid 1.
+        const killResponse = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command: 'pkill -9 -f cloudflared' })
+        });
+        expect(killResponse.status).toBe(200);
+
+        // Poll list() until the dead tunnel is evicted. The exit
+        // callback fires inside the container's proc.exited handler,
+        // crosses the capnweb session, and clears storage — a
+        // handful of milliseconds in the happy case, but allow a few
+        // seconds for the round-trip.
+        let cleared = false;
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const ids = (await listTunnels()).map((t) => t.id);
+          if (!ids.includes(tunnel.id)) {
+            cleared = true;
+            break;
+          }
+        }
+        expect(cleared).toBe(true);
+
+        // A subsequent get(port) is now a clean cache miss — spawns
+        // a fresh tunnel with a new id and URL.
+        const fresh = await getTunnel(port);
+        expect(fresh.id).not.toBe(tunnel.id);
+        expect(fresh.url).not.toBe(tunnel.url);
+      } finally {
+        await destroyTunnel(port).catch(() => {});
+        await fetch(`${workerUrl}/api/process/${processId}/kill`, {
+          method: 'POST',
+          headers
+        }).catch(() => {});
+      }
+    },
+    180_000
+  );
+
+  test.skipIf(skipQuickTunnel)(
     'runs two tunnels on two different ports side by side',
     async () => {
       const portA = TUNNEL_TEST_PORT + 1;

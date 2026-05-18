@@ -54,6 +54,24 @@ export interface TunnelsHandler {
   destroy(portOrInfo: number | TunnelInfo): Promise<void>;
 }
 
+/**
+ * Container-driven exit hook. Invoked by `SandboxControlCallbackImpl`
+ * when the container reports that a `cloudflared` process has
+ * exited. NOT part of the public `TunnelsHandler` interface —
+ * exposed only through the factory's return shape so the public
+ * `sandbox.tunnels` API stays narrow.
+ */
+export type TunnelExitHandler = (
+  id: string,
+  port: number,
+  exitCode: number | null
+) => Promise<void>;
+
+export interface TunnelsHandle {
+  tunnels: TunnelsHandler;
+  handleTunnelExit: TunnelExitHandler;
+}
+
 /** DO storage key for the `port → TunnelInfo` map. */
 const STORAGE_KEY = 'tunnels';
 
@@ -81,7 +99,7 @@ function isTunnelNotFoundError(error: unknown): boolean {
   return message.includes('TUNNEL_NOT_FOUND');
 }
 
-export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
+export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
   // Per-port serialization lock. Any operation that mutates the tunnel
   // for a given port — get() on a cache miss, destroy() — queues behind
   // the previous operation on the same port. Two consequences:
@@ -218,5 +236,34 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandler {
     return Object.values(map);
   }
 
-  return { get, list, destroy };
+  const handleTunnelExit: TunnelExitHandler = async (id, port, exitCode) => {
+    const startTime = Date.now();
+    await withPortLock(port, async () => {
+      await host.storage.transaction(async (txn) => {
+        const map = await readMap(txn);
+        const existing = map[port.toString()];
+        // Defensive: only clear if storage still references this exact
+        // tunnel id. Without this check, a sequence like "old
+        // cloudflared dies → new get() spawns fresh → old callback
+        // fires" would clobber the new record.
+        if (existing?.id === id) {
+          delete map[port.toString()];
+          await txn.put(STORAGE_KEY, map);
+        }
+      });
+      logCanonicalEvent(host.logger, {
+        event: 'tunnel.exit',
+        outcome: 'success',
+        port,
+        tunnelId: id,
+        exitCode: exitCode ?? undefined,
+        durationMs: Date.now() - startTime
+      });
+    });
+  };
+
+  return {
+    tunnels: { get, list, destroy },
+    handleTunnelExit
+  };
 }

@@ -116,6 +116,7 @@ export type {
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
+  SandboxControlCallback,
   SandboxDesktopAPI,
   SandboxFilesAPI,
   SandboxGitAPI,

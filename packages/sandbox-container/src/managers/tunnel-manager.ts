@@ -27,6 +27,19 @@ export interface TunnelManagerOptions {
   readyTimeoutMs?: number;
   /** Grace period between SIGTERM and SIGKILL during stop(). */
   stopGraceMs?: number;
+  /**
+   * Optional callback invoked exactly once when the supervised
+   * `cloudflared` process exits, for any reason — natural exit,
+   * graceful SIGTERM via `stop()`, or post-SIGKILL reap.
+   *
+   * `exitCode` is the integer exit status, or `null` if the process
+   * was signalled rather than exited cleanly (matches Bun's
+   * Subprocess.exited contract).
+   *
+   * Errors thrown from the callback are caught and logged so a
+   * broken consumer cannot crash the manager.
+   */
+  onExit?: (exitCode: number | null) => void | Promise<void>;
   logger: Logger;
 }
 
@@ -78,10 +91,31 @@ export class TunnelManager {
     }) as Subprocess<'ignore', 'pipe', 'pipe'>;
 
     // Track exit so the readiness loop can fail fast if cloudflared dies.
+    // We also fire the consumer's onExit callback here so a single
+    // hook covers natural exits, SIGTERM-driven stops, and SIGKILL
+    // fallbacks. Callback errors are caught and logged — a broken
+    // consumer must not crash the manager.
     this.proc.exited.then((code) => {
       this.exited = true;
       this.exitInfo = { code, signal: null };
       this.logger.info('cloudflared exited', { code });
+      const onExit = this.opts.onExit;
+      if (onExit) {
+        try {
+          const result = onExit(code);
+          if (result && typeof (result as Promise<void>).catch === 'function') {
+            (result as Promise<void>).catch((err) => {
+              this.logger.warn('onExit callback rejected', {
+                error: err instanceof Error ? err.message : String(err)
+              });
+            });
+          }
+        } catch (err) {
+          this.logger.warn('onExit callback threw', {
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
     });
 
     // Pump stderr (cloudflared logs there by default) and scrape what we

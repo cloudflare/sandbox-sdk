@@ -98,8 +98,10 @@ import type {
   LocalSyncMountInfo,
   MountInfo
 } from './storage-mount/types';
+import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
   createTunnelsHandler,
+  type TunnelExitHandler,
   type TunnelsHandler
 } from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
@@ -539,8 +541,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   // Tunnels namespace handler. Lazily constructed on first access via the
   // `tunnels` getter; holds an in-memory map of tunnels created through
-  // this Sandbox instance.
+  // this Sandbox instance. The sibling `tunnelExitHandler` is the
+  // control-plane exit hook invoked by the capnweb session's
+  // SandboxControlCallback when the container reports cloudflared has
+  // died; both fields are reset together on transport swap.
   private tunnelsHandler: TunnelsHandler | null = null;
+  private tunnelExitHandler: TunnelExitHandler | null = null;
+  // capnweb localMain exposed to the container side of the RPC
+  // session. Constructed once in the constructor (the lazy accessor
+  // keeps it pointing at the current `tunnelExitHandler` even as
+  // transports swap), so the container can call back into the DO
+  // without us re-binding the session.
+  private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
   // Incremented whenever the container stops. Used to invalidate
@@ -732,6 +744,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         port: 3000,
         logger: this.logger,
         retryTimeoutMs: this.computeRetryTimeoutMs(),
+        // localMain exposes the DO-side control callback (tunnel-exit
+        // notifications, etc.) to the container side of the session.
+        localMain: this.controlCallback,
         // Mirrors containerFetch()'s request lifecycle for the RPC transport.
         //
         // The HTTP transport bumps inflightRequests at the top of each
@@ -823,6 +838,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    // Construct the control callback BEFORE the client — RPC clients
+    // capture it as `localMain` on the capnweb session, and the
+    // session is created eagerly in the connection's constructor.
+    this.controlCallback = new SandboxControlCallbackImpl(
+      () => this.tunnelExitHandler,
+      this.logger
+    );
+
     this.client = this.createClientForTransport(this.transport);
 
     this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
@@ -874,6 +897,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Drop the tunnels handler; the lazy getter rebinds it to the
         // new client on next access. Same rationale as codeInterpreter.
         this.tunnelsHandler = null;
+        this.tunnelExitHandler = null;
         previousClient.disconnect();
       }
       if (storedTransport) {
@@ -1097,6 +1121,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // tunnels are still backed by their cloudflared processes since the
     // container did not restart.
     this.tunnelsHandler = null;
+    this.tunnelExitHandler = null;
     previousClient.disconnect();
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
@@ -3922,14 +3947,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * throws "RPC transport required".
    */
   get tunnels(): TunnelsHandler {
-    if (!this.tunnelsHandler) {
-      this.tunnelsHandler = createTunnelsHandler({
-        client: this.client,
-        storage: this.ctx.storage,
-        logger: this.logger
-      });
-    }
-    return this.tunnelsHandler;
+    this.ensureTunnelsBuilt();
+    // Non-null after ensureTunnelsBuilt(); cast for the type system.
+    return this.tunnelsHandler as TunnelsHandler;
+  }
+
+  /**
+   * Lazily construct both the public tunnels handler and its sibling
+   * exit-handler callback. Called from the `tunnels` getter on first
+   * access and on every access after a transport swap clears both
+   * fields.
+   */
+  private ensureTunnelsBuilt(): void {
+    if (this.tunnelsHandler) return;
+    const built = createTunnelsHandler({
+      client: this.client,
+      storage: this.ctx.storage,
+      logger: this.logger
+    });
+    this.tunnelsHandler = built.tunnels;
+    this.tunnelExitHandler = built.handleTunnelExit;
   }
 
   async isPortExposed(port: number): Promise<boolean> {

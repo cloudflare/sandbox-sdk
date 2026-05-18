@@ -355,3 +355,26 @@ export interface SandboxTunnelsAPI {
   /** List tunnels currently running inside the container. */
   listTunnels(): Promise<TunnelInfo[]>;
 }
+
+/**
+ * RPC surface the Sandbox DO exposes to the container over the existing
+ * capnweb session. The container reaches it via
+ * `session.getRemoteMain<SandboxControlCallback>()` and invokes methods
+ * to push control-plane events (today: tunnel exits) back to the DO.
+ *
+ * One stable target per sandbox; not per-tunnel. Reusable seam for
+ * future container→DO events.
+ */
+export interface SandboxControlCallback {
+  /**
+   * Called by the container when a `cloudflared` process exits for any
+   * reason — SIGTERM from `destroyTunnel`, container-initiated SIGKILL,
+   * network failure, segfault. `exitCode` is `null` if the process was
+   * signalled rather than exited cleanly.
+   */
+  onTunnelExit(
+    id: string,
+    port: number,
+    exitCode: number | null
+  ): Promise<void>;
+}

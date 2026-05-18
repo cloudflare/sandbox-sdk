@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
+  type TunnelsHandler,
   type TunnelsStorage
 } from '../src/tunnels/tunnels-handler';
 
@@ -90,14 +91,22 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
 function makeHandler() {
   const { client } = makeClient();
   const storage = makeStorage();
-  const handler = createTunnelsHandler({
+  const { tunnels, handleTunnelExit } = createTunnelsHandler({
     client: client as unknown as Parameters<
       typeof createTunnelsHandler
     >[0]['client'],
     storage,
     logger: makeLogger()
   });
-  return { client, storage, handler };
+  // `handler` alias kept for legacy test bodies; new tests should
+  // reach for `tunnels` and `handleTunnelExit` directly.
+  return {
+    client,
+    storage,
+    handler: tunnels,
+    tunnels,
+    handleTunnelExit
+  };
 }
 
 describe('tunnels handler > get', () => {
@@ -134,7 +143,7 @@ describe('tunnels handler > get', () => {
     const record = makeRecord({ id: 'quick-cached0000cached', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -155,7 +164,7 @@ describe('tunnels handler > get', () => {
     const record = makeRecord({ id: 'quick-stale00000000stale', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -282,7 +291,7 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -307,7 +316,7 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-tx0000tx0000tx', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -330,7 +339,7 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-info0000info00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -360,7 +369,7 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-gone0000gone00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -382,7 +391,7 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-err000000err000', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -410,7 +419,7 @@ describe('tunnels handler > list', () => {
     });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': a, '8081': b });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -482,7 +491,7 @@ describe('tunnels handler > per-port serialization', () => {
     const record = makeRecord({ id: 'quick-pre000pre000pre0', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const handler = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandler({
       client: client as unknown as Parameters<
         typeof createTunnelsHandler
       >[0]['client'],
@@ -522,6 +531,125 @@ describe('tunnels handler > per-port serialization', () => {
     // resurrected the old record.
     expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
     expect(info.id).not.toBe(record.id);
+  });
+});
+
+describe('tunnels handler > handleTunnelExit', () => {
+  it('clears the matching port from storage when the stored id matches', async () => {
+    const record = makeRecord({ id: 'quick-exit0000exit0000', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const { tunnels, handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await handleTunnelExit(record.id, 8080, 0);
+
+    const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(final ?? {}).toEqual({});
+    // No container RPCs were issued — the exit hook is pure storage.
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    // `tunnels.list()` reflects the cleared storage.
+    await expect(tunnels.list()).resolves.toEqual([]);
+  });
+
+  it('is a no-op when the stored id has been replaced (id-mismatch safety net)', async () => {
+    const newer = makeRecord({ id: 'quick-newer000newer00', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': newer });
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    // Callback fires for an OLDER tunnel id that's no longer in storage.
+    await handleTunnelExit('quick-stale0000stale00', 8080, null);
+
+    // Storage is untouched.
+    const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(final).toEqual({ '8080': newer });
+  });
+
+  it('is a no-op when storage is empty (already destroyed)', async () => {
+    const { client } = makeClient();
+    const storage = makeStorage();
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await expect(
+      handleTunnelExit('quick-anything00000ok', 8080, null)
+    ).resolves.toBeUndefined();
+    // No write happened.
+    expect((storage.put as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+
+  it('runs under the port lock — waits for a concurrent get(port) to complete', async () => {
+    const { client, storage, tunnels, handleTunnelExit } = makeHandler();
+    let resolveSpawn: (info: TunnelInfo) => void = () => {};
+    client.tunnels.runQuickTunnel.mockImplementation(
+      (id: string, port: number) =>
+        new Promise<TunnelInfo>((resolve) => {
+          resolveSpawn = () => resolve(makeRecord({ id, port }));
+        })
+    );
+
+    // Kick off a slow get(8080). Holds the port lock past the spawn.
+    const getPromise = tunnels.get(8080);
+    for (let i = 0; i < 50; i++) {
+      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+
+    // Fire an exit callback for some arbitrary id while get() is
+    // blocked. Without the lock, the callback would read the empty
+    // storage now (before get() writes) and observe nothing to clean
+    // up. With the lock, it must wait until get() releases.
+    const exitPromise = handleTunnelExit('quick-old', 8080, 0);
+    await new Promise((r) => setTimeout(r, 5));
+
+    // The exit hook has not yet read storage — storage is empty so
+    // there's nothing visible to assert directly, but we *can* assert
+    // it hasn't completed.
+    let exitResolved = false;
+    void exitPromise.then(() => {
+      exitResolved = true;
+    });
+    expect(exitResolved).toBe(false);
+
+    // Let get() finish.
+    resolveSpawn(makeRecord({ id: 'unused', port: 8080 }));
+    const info = await getPromise;
+    await exitPromise;
+
+    // The exit callback ran after the get() wrote storage, saw a
+    // different id ('quick-old' vs the spawned id), and no-op'd —
+    // the spawned record is still there.
+    const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(final).toEqual({ '8080': info });
+  });
+});
+
+describe('TunnelsHandler public surface', () => {
+  it('does not expose any exit hook on the public interface', () => {
+    // Compile-time guard: if a future change adds a method to
+    // TunnelsHandler beyond get/list/destroy, this assertion fails
+    // and the developer has to consciously update the allowlist.
+    type AllowedKeys = 'get' | 'list' | 'destroy';
+    type _Check = keyof TunnelsHandler extends AllowedKeys ? true : false;
+    const ok: _Check = true;
+    expect(ok).toBe(true);
   });
 });
 

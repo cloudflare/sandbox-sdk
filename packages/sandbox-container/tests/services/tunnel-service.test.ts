@@ -365,3 +365,95 @@ describe('TunnelService > list & destroyAll', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Exit-callback wiring (container → DO via session remote main)
+// ---------------------------------------------------------------------------
+
+describe('TunnelService > exit callback', () => {
+  it('invokes the callback when cloudflared exits naturally after start', async () => {
+    const onTunnelExit = mock(async () => {});
+    const service = new TunnelService(mockLogger, () => ({
+      onTunnelExit
+    }));
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.runQuickTunnel('quick-natural', 8080)
+    );
+    expect(service.list()).toHaveLength(1);
+
+    // Simulate cloudflared crashing.
+    fakeProcs[0].resolveExit(2);
+    // Let the exit handler chain run.
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(onTunnelExit).toHaveBeenCalledTimes(1);
+    expect(onTunnelExit).toHaveBeenCalledWith('quick-natural', 8080, 2);
+    // Service registry is cleared so list() reflects truth.
+    expect(service.list()).toHaveLength(0);
+  });
+
+  it('invokes the callback on the graceful stop path triggered by destroyTunnel', async () => {
+    const onTunnelExit = mock(async () => {});
+    const service = new TunnelService(mockLogger, () => ({
+      onTunnelExit
+    }));
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.runQuickTunnel('quick-graceful', 8080)
+    );
+
+    const destroyPromise = service.destroyTunnel('quick-graceful');
+    await new Promise((r) => setTimeout(r, 5));
+    fakeProcs[0].resolveExit(0);
+    await destroyPromise;
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(onTunnelExit).toHaveBeenCalledTimes(1);
+    expect(onTunnelExit).toHaveBeenCalledWith('quick-graceful', 8080, 0);
+  });
+
+  it('skips the callback when the accessor returns null (no session bound)', async () => {
+    let nullCalls = 0;
+    const service = new TunnelService(mockLogger, () => {
+      nullCalls++;
+      return null;
+    });
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.runQuickTunnel('quick-nocb', 8080)
+    );
+    fakeProcs[0].resolveExit(0);
+    await new Promise((r) => setTimeout(r, 20));
+    // Accessor was at least consulted once on exit.
+    expect(nullCalls).toBeGreaterThanOrEqual(1);
+    // Service registry still cleared even with no DO to notify.
+    expect(service.list()).toHaveLength(0);
+  });
+
+  it('swallows callback errors so a broken DO does not break the service', async () => {
+    const onTunnelExit = mock(async () => {
+      throw new Error('DO storage exploded');
+    });
+    const service = new TunnelService(mockLogger, () => ({
+      onTunnelExit
+    }));
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.runQuickTunnel('quick-bad-cb', 8080)
+    );
+    fakeProcs[0].resolveExit(0);
+    // Should not throw, should not leave behind a registry entry.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onTunnelExit).toHaveBeenCalledTimes(1);
+    expect(service.list()).toHaveLength(0);
+  });
+
+  it('omitting the accessor (legacy callers) is supported — no callback fired', async () => {
+    // Backward-compat path: existing tests/code that don't pass a
+    // callback accessor keep working.
+    const service = new TunnelService(mockLogger);
+    await withFakeCloudflared(QUICK_BANNER, () =>
+      service.runQuickTunnel('quick-legacy', 8080)
+    );
+    fakeProcs[0].resolveExit(0);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(service.list()).toHaveLength(0);
+  });
+});
