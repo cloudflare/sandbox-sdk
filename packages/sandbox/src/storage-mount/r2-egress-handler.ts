@@ -346,17 +346,6 @@ function normalizeStorageClass(
   return undefined;
 }
 
-async function readRequestBody(
-  request: Request
-): Promise<Uint8Array | Response> {
-  if (!request.body) {
-    return new Response('Bad Request: missing request body', { status: 400 });
-  }
-  // R2 writes require a known-length body; intercepted s3fs request streams do
-  // not carry that length through the outbound proxy.
-  return new Uint8Array(await request.arrayBuffer());
-}
-
 async function putRequestBody(
   r2: R2Bucket,
   key: string,
@@ -597,10 +586,26 @@ async function handleUploadPart(
       status: 400
     });
   }
+  if (!request.body) {
+    return new Response('Bad Request: missing request body', { status: 400 });
+  }
+  const contentLength = request.headers.get('Content-Length');
+  const partLength = contentLength ? Number.parseInt(contentLength, 10) : NaN;
+  if (!Number.isFinite(partLength) || partLength < 0) {
+    return new Response('Bad Request: missing or invalid Content-Length', {
+      status: 400
+    });
+  }
   const upload = r2.resumeMultipartUpload(key, uploadId);
-  const body = await readRequestBody(request);
-  if (body instanceof Response) return body;
-  const part = await upload.uploadPart(partNumber, body);
+  let part: R2UploadedPart;
+  if (partLength === 0) {
+    part = await upload.uploadPart(partNumber, new Uint8Array(0));
+  } else {
+    const { readable, writable } = new FixedLengthStream(partLength);
+    const pipe = request.body.pipeTo(writable);
+    part = await upload.uploadPart(partNumber, readable);
+    await pipe;
+  }
   const headers = new Headers();
   headers.set('ETag', `"${part.etag}"`);
   return new Response(null, { status: 200, headers });
