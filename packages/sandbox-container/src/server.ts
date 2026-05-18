@@ -142,7 +142,7 @@ async function createApplication(): Promise<{
         }
 
         if (url.pathname === '/rpc') {
-          logger.info('Establishing capnweb connection');
+          logger.info('Establishing RPC connection');
           const upgraded = server.upgrade(req, {
             data: {
               type: 'capnweb' as const,
@@ -212,7 +212,7 @@ export async function startServer(): Promise<ServerInstance> {
             app.container.setControlCallback(
               stub as unknown as SandboxControlCallback
             );
-            logger.debug('capnweb session initialized', {
+            logger.debug('RPC session initialized', {
               connectionId: ws.data.connectionId
             });
           } else {

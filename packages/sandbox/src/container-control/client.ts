@@ -523,7 +523,7 @@ export class ContainerControlClient {
         imports <= IDLE_IMPORT_THRESHOLD &&
         exports <= IDLE_EXPORT_THRESHOLD
       ) {
-        this.logger.debug('Disconnecting idle capnweb connection');
+        this.logger.debug('Disconnecting idle RPC connection');
         this.destroyConnection();
       }
     }, this.idleDisconnectMs);
