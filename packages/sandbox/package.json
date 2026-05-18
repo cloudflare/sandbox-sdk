@@ -80,6 +80,11 @@
       "types": "./dist/bridge/index.d.ts",
       "import": "./dist/bridge/index.js",
       "require": "./dist/bridge/index.js"
+    },
+    "./bridge-client": {
+      "types": "./dist/bridge-client/index.d.ts",
+      "import": "./dist/bridge-client/index.js",
+      "require": "./dist/bridge-client/index.js"
     }
   },
   "keywords": [],

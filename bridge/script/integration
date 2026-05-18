@@ -32,6 +32,13 @@
 
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  BridgeAuthError,
+  createBridgeClient
+} from '@cloudflare/sandbox/bridge-client';
+
+const BRIDGE_RPC_BEARER_SUBPROTOCOL_PREFIX =
+  'cloudflare-sandbox-bridge.bearer.';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -150,8 +157,24 @@ function parseSSE(text: string) {
 // ---------------------------------------------------------------------------
 
 async function startServer() {
-  const env = { ...process.env, SANDBOX_API_KEY: TOKEN, WRANGLER_SKIP_UPDATE_CHECK: '1' };
-  const child = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--enable-containers=false'], {
+  const env = {
+    ...process.env,
+    SANDBOX_API_KEY: TOKEN,
+    SANDBOX_EXPERIMENTAL_RPC: 'true',
+    WRANGLER_SKIP_UPDATE_CHECK: '1'
+  };
+  // Pass the experimental flag through to the worker via --var; bare
+  // shell env doesn't reach the workerd runtime.
+  const args = [
+    'wrangler',
+    'dev',
+    '--port',
+    String(PORT),
+    '--enable-containers=false',
+    '--var',
+    'SANDBOX_EXPERIMENTAL_RPC:true'
+  ];
+  const child = spawn('npx', args, {
     cwd: process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -535,6 +558,211 @@ async function runTests() {
       assertEqual(res.status, 401, 'status');
     });
   }
+
+  // ── GET /v1/rpc — capnweb WebSocket RPC ─────────────────────
+  console.log('\n📋 GET /v1/rpc — capnweb RPC');
+
+  await test('rejects plain GET without Upgrade header', async () => {
+    const res = await fetch(`${BASE}/v1/rpc`);
+    assertEqual(res.status, 400, 'status');
+    const body: any = await res.json();
+    assertIncludes(body.error, 'WebSocket upgrade required');
+    assertEqual(body.code, 'invalid_request', 'code');
+  });
+
+  if (TOKEN) {
+    await test('rejects WS upgrade without subprotocol', async () => {
+      const res = await fetch(`${BASE}/v1/rpc`, {
+        headers: { Upgrade: 'websocket', Connection: 'Upgrade' }
+      });
+      assertEqual(res.status, 401, 'status');
+      const body: any = await res.json();
+      assertEqual(body.code, 'unauthorized', 'code');
+    });
+
+    await test('rejects WS upgrade with wrong subprotocol token', async () => {
+      const res = await fetch(`${BASE}/v1/rpc`, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          'Sec-WebSocket-Protocol': `${BRIDGE_RPC_BEARER_SUBPROTOCOL_PREFIX}WRONG`
+        }
+      });
+      assertEqual(res.status, 401, 'status');
+    });
+
+    await test('does not accept Authorization header for /v1/rpc (subprotocol-only)', async () => {
+      // /v1/rpc is auth’d via Sec-WebSocket-Protocol only. A request
+      // carrying a valid Authorization header but no subprotocol must
+      // still 401 — there's only one supported auth path per endpoint.
+      const res = await fetch(`${BASE}/v1/rpc`, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          Authorization: `Bearer ${TOKEN}`
+        }
+      });
+      assertEqual(res.status, 401, 'status');
+    });
+  }
+
+  await test('WebSocket upgrade with correct subprotocol completes', async () => {
+    // Bun's WebSocket constructor takes `protocols` as the second arg and
+    // sends them in Sec-WebSocket-Protocol. The bridge echoes the selected
+    // protocol back on the 101.
+    const wsBase = BASE.replace(/^http/, 'ws');
+    const wsUrl = `${wsBase}/v1/rpc`;
+    const protocols = TOKEN
+      ? [`${BRIDGE_RPC_BEARER_SUBPROTOCOL_PREFIX}${TOKEN}`]
+      : [];
+
+    const result = await new Promise<{
+      opened: boolean;
+      acceptedProtocol?: string;
+      closedCode?: number;
+      error?: string;
+    }>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          resolve({ opened: false, error: 'timeout after 5s' });
+        }
+      }, 5000);
+
+      const ws =
+        protocols.length > 0
+          ? new WebSocket(wsUrl, protocols)
+          : new WebSocket(wsUrl);
+
+      ws.addEventListener('open', () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          // biome-ignore lint/suspicious/noExplicitAny: Bun-specific field
+          const accepted: string | undefined = (ws as any).protocol;
+          ws.close();
+          resolve({ opened: true, acceptedProtocol: accepted });
+        }
+      });
+
+      ws.addEventListener('error', () => {
+        // Wait for close to settle so we can read the code.
+      });
+
+      ws.addEventListener('close', (ev) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve({ opened: false, closedCode: ev.code });
+        }
+      });
+    });
+
+    assert(
+      result.opened,
+      `WebSocket did not open: ${JSON.stringify(result)}`
+    );
+    if (TOKEN) {
+      assertEqual(
+        result.acceptedProtocol,
+        `${BRIDGE_RPC_BEARER_SUBPROTOCOL_PREFIX}${TOKEN}`,
+        'echoed subprotocol'
+      );
+    }
+  });
+
+  // ── @cloudflare/sandbox/bridge-client ───────────────────────
+  console.log('\n📋 @cloudflare/sandbox/bridge-client');
+
+  if (TOKEN) {
+    await test('createBridgeClient rejects with BridgeAuthError on wrong token', async () => {
+      const client = createBridgeClient({
+        baseURL: `${BASE}/v1`,
+        token: 'definitely-not-the-token'
+      });
+      try {
+        let caught: unknown;
+        try {
+          await client.sandbox(SANDBOX_ID).utils.ping();
+        } catch (err) {
+          caught = err;
+        }
+        assert(caught !== undefined, 'expected an error');
+        assert(
+          caught instanceof BridgeAuthError,
+          `expected BridgeAuthError, got ${caught}`
+        );
+        assertEqual(
+          (caught as BridgeAuthError).status,
+          401,
+          'auth error status'
+        );
+      } finally {
+        await client.close();
+      }
+    });
+  }
+
+  await test('client.sandbox(id) surfaces pool errors over capnweb (no container backend)', async () => {
+    // wrangler dev runs without --enable-containers, so the warm pool
+    // can't allocate a container. The error must propagate through capnweb
+    // to the client — this is the proof the wire is hooked up end to end
+    // and that pool resolution moved off HTTP middleware onto the RPC
+    // surface as designed.
+    const client = createBridgeClient({
+      baseURL: `${BASE}/v1`,
+      token: TOKEN || undefined
+    });
+    try {
+      let caught: unknown;
+      try {
+        await client.sandbox(SANDBOX_ID).utils.ping();
+      } catch (err) {
+        caught = err;
+      }
+      assert(
+        caught !== undefined,
+        'expected an error from utils.ping() without a backend'
+      );
+      const msg = (caught as Error).message ?? String(caught);
+      assert(
+        /pool error|capacity|Failed to start container/i.test(msg),
+        `expected a pool error, got: ${msg}`
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  await test('client.sandbox(id).utils.ping returns "pong" on a real backend (skipped without BASE_URL backend)', async () => {
+    // utils.ping is wired as a constant 'pong' inside the shim, so it
+    // doesn't need a live container — *but* it does need rpc.sandbox(id)
+    // to resolve, which goes through the warm pool. With no container
+    // backend the test setup above already covers that path; this test
+    // only succeeds against a deployed instance and is best-effort here.
+    const client = createBridgeClient({
+      baseURL: `${BASE}/v1`,
+      token: TOKEN || undefined
+    });
+    try {
+      try {
+        const reply = await client.sandbox(SANDBOX_ID).utils.ping();
+        assertEqual(reply, 'pong', 'ping reply');
+      } catch (err) {
+        // No backend available — swallow as 'skipped' so the suite stays
+        // useful in dev. Real failures (auth, wire shape) surface in the
+        // tests above.
+        const msg = (err as Error).message ?? String(err);
+        if (!/pool error|capacity|Failed to start container/i.test(msg)) {
+          throw err;
+        }
+        console.log(`     (skipped — no container backend: ${msg})`);
+      }
+    } finally {
+      await client.close();
+    }
+  });
 
   // ── OpenAPI ────────────────────────────────────────────
   console.log('\n📋 OpenAPI');

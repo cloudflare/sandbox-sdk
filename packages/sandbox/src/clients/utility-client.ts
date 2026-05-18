@@ -62,6 +62,17 @@ export interface DeleteSessionResponse extends BaseApiResponse {
 }
 
 /**
+ * Response interface for listing sessions.
+ *
+ * Container HTTP returns `{ success, data: string[], timestamp }`; we adapt
+ * to `{ sessions }` here so the public client surface matches the capnweb
+ * `SandboxUtilsAPI.listSessions()` shape.
+ */
+interface ListSessionsResponse extends BaseApiResponse {
+  data: string[];
+}
+
+/**
  * Client for health checks and utility operations
  */
 export class UtilityClient extends BaseHttpClient {
@@ -109,6 +120,17 @@ export class UtilityClient extends BaseHttpClient {
     );
 
     return response;
+  }
+
+  /**
+   * List the IDs of all live sessions in the container.
+   *
+   * Returns the same `{ sessions: string[] }` shape as the capnweb variant
+   * so callers see one stable surface regardless of transport.
+   */
+  async listSessions(): Promise<{ sessions: string[] }> {
+    const response = await this.get<ListSessionsResponse>('/api/session/list');
+    return { sessions: response.data };
   }
 
   /**

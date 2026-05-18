@@ -6,7 +6,8 @@ export default defineConfig({
     'src/bridge/index.ts',
     'src/openai/index.ts',
     'src/opencode/index.ts',
-    'src/xterm/index.ts'
+    'src/xterm/index.ts',
+    'src/bridge-client/index.ts'
   ],
   external: ['cloudflare:workers', 'hono'],
   outDir: 'dist',

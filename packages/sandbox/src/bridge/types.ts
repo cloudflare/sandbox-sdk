@@ -38,6 +38,17 @@ export interface BridgeConfig {
    * @default "/health"
    */
   healthRoute?: string;
+  /**
+   * Enable the experimental capnweb RPC endpoint at `${apiRoutePrefix}/rpc`.
+   *
+   * The RPC surface mirrors the still-evolving sandbox interface and is
+   * subject to breaking changes. When this flag is unset (or false) the
+   * route returns 404.
+   *
+   * @default false
+   * @experimental
+   */
+  enableExperimentalRPC?: boolean;
 }
 
 /**

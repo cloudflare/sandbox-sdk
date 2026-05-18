@@ -7,12 +7,16 @@
  */
 
 import type { ExecutionSession, ISandbox, PtyOptions } from '@repo/shared';
+
 import { Hono, type MiddlewareHandler } from 'hono';
-import type { Sandbox } from '../sandbox';
-import { getSandbox as _getSandbox } from '../sandbox';
 import {
-  base32Encode,
+  type BridgeSandbox,
+  getBridgeSandbox as getSandbox
+} from './bridge-sandbox';
+import {
   errorJson,
+  generateSandboxId,
+  isValidSandboxId,
   resolveWorkspacePath,
   shellQuote,
   sseToByteStream,
@@ -22,6 +26,8 @@ import {
 import { OPENAPI_SCHEMA } from './openapi';
 import { renderOpenApiHtml } from './openapi-html';
 import { primePool } from './pool';
+import { handleRpcUpgrade } from './rpc-api';
+
 import type {
   BridgeEnv,
   ExecRequest,
@@ -31,33 +37,7 @@ import type {
   WriteResponse
 } from './types';
 
-// ---------------------------------------------------------------------------
-// BridgeSandbox type
-// ---------------------------------------------------------------------------
-
-/**
- * The SDK's getSandbox() proxy exposes methods not declared on ISandbox
- * (terminal, destroy) or declared with a narrower return type (getSession
- * without terminal). This type extends ISandbox with those extra methods
- * so call sites get type safety without per-call casts.
- */
-type BridgeSandbox = ISandbox & {
-  terminal(request: Request, options?: PtyOptions): Promise<Response>;
-  getSession(sessionId: string): Promise<
-    ExecutionSession & {
-      terminal(request: Request, options?: PtyOptions): Promise<Response>;
-    }
-  >;
-  destroy(): Promise<void>;
-};
-
-/** Typed wrapper around the SDK's getSandbox() that returns a BridgeSandbox. */
-function getSandbox<T extends Sandbox<any>>(
-  ns: DurableObjectNamespace<T>,
-  containerUUID: string
-): BridgeSandbox {
-  return _getSandbox(ns, containerUUID) as unknown as BridgeSandbox;
-}
+// (BridgeSandbox + getSandbox now live in ./bridge-sandbox.ts)
 
 // ---------------------------------------------------------------------------
 // Route configuration
@@ -68,6 +48,12 @@ export interface RouteConfig {
   warmPoolBinding: string;
   apiPrefix: string;
   healthPath: string;
+  /**
+   * When true, register the experimental capnweb RPC endpoint at
+   * `${apiPrefix}/rpc`. Defaults to false; the route returns 404 when
+   * disabled.
+   */
+  enableExperimentalRPC?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +90,7 @@ export function createBridgeApp(
     // Path is {prefix}/sandbox/:id/... — find the ID
     const prefixParts = apiPrefix.split('/').filter(Boolean);
     const sandboxId = pathParts[prefixParts.length + 2]; // +1 for leading empty, +1 for "sandbox"
-    if (sandboxId && !/^[a-z2-7]{1,128}$/.test(sandboxId)) {
+    if (sandboxId && !isValidSandboxId(sandboxId)) {
       return errorJson('Invalid sandbox ID format', 'invalid_request', 400);
     }
 
@@ -138,11 +124,7 @@ export function createBridgeApp(
       }
     }
 
-    // Generate a sandbox ID: 16 random bytes → base32 (lowercase a-z, 2-7), 26 chars
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    const id = base32Encode(bytes);
-    return c.json({ id });
+    return c.json({ id: generateSandboxId() });
   });
 
   // ------------------------------------------------------------------
@@ -848,6 +830,22 @@ export function createBridgeApp(
     }
 
     return new Response(null, { status: 204 });
+  });
+
+  // ------------------------------------------------------------------
+  // GET /rpc — experimental capnweb WebSocket RPC
+  // ------------------------------------------------------------------
+  //
+  // Sandbox-agnostic: sandbox selection happens inside the rpc.sandbox(id)
+  // call, so this route bypasses the /sandbox/* middleware. Gated behind
+  // `enableExperimentalRPC` because the surface mirrors the still-evolving
+  // sandbox interface and is subject to breaking changes.
+
+  app.get(`${apiPrefix}/rpc`, (c) => {
+    if (!config.enableExperimentalRPC) {
+      return errorJson('Not Found', 'not_found', 404);
+    }
+    return handleRpcUpgrade(c.req.raw, c.env, { sandboxBinding });
   });
 
   // ------------------------------------------------------------------

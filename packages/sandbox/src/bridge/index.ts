@@ -21,10 +21,16 @@
 import { env as cfEnv } from 'cloudflare:workers';
 import { primePool } from './pool';
 import { createBridgeApp, type RouteConfig } from './routes';
+
 import type { BridgeConfig, BridgeEnv, WorkerHandlers } from './types';
 
 // Re-export helpers that may be useful for testing / advanced use
 export { resolveWorkspacePath, shellQuote } from './helpers';
+export {
+  BRIDGE_RPC_BEARER_SUBPROTOCOL_PREFIX,
+  type BridgeRPCAPI,
+  type SandboxRPCAPI
+} from './rpc-types';
 export type { BridgeConfig, BridgeEnv, WorkerHandlers } from './types';
 export type { PoolStats, WarmPoolConfig } from './warm-pool';
 // Re-export types and utilities consumers may need
@@ -92,6 +98,7 @@ export function bridge(
   const warmPoolBinding = config?.bindings?.warmPool ?? 'WarmPool';
   const apiPrefix = config?.apiRoutePrefix ?? '/v1';
   const healthPath = config?.healthRoute ?? '/health';
+  const enableExperimentalRPC = config?.enableExperimentalRPC ?? false;
 
   // Check bindings at module evaluation time
   checkBindings(cfEnv as unknown as Record<string, unknown>, {
@@ -104,7 +111,8 @@ export function bridge(
     sandboxBinding,
     warmPoolBinding,
     apiPrefix,
-    healthPath
+    healthPath,
+    enableExperimentalRPC
   };
   const app = createBridgeApp(routeConfig);
 
@@ -124,7 +132,7 @@ export function bridge(
       env: BridgeEnv,
       ctx: ExecutionContext
     ): Promise<Response> {
-      // 1. Try bridge API routes
+      // Bridge API routes (/v1/* including /v1/rpc, plus /health).
       const url = new URL(request.url);
       if (
         url.pathname.startsWith(`${apiPrefix}/`) ||
