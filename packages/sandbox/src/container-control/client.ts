@@ -382,21 +382,24 @@ export class ContainerControlClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
-  /**
-   * Set the first time the poller observes `conn.isConnected() === true`,
-   * cleared in `destroyConnection()`. Lets us distinguish "the WebSocket
-   * upgrade is still in progress" (don't tear down) from "we were
-   * connected and the peer went away" (do tear down).
-   */
-  private wasEverConnected = false;
 
   constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
       stub: options.stub,
       port: options.port,
+      localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
-      localMain: options.localMain
+      // Event-driven failure recovery: when the live WebSocket closes
+      // or errors, tear the connection down inside the same turn of
+      // the event loop so the next RPC call builds a fresh one. The
+      // 1Hz busy-poll fallback can't be relied on here — `setInterval`
+      // callbacks don't fire while the DO isolate sits idle between
+      // requests, which is exactly the state the isolate enters after
+      // every in-flight RPC rejects with a peer-closed error.
+      onClose: () => {
+        if (this.conn) this.destroyConnection();
+      }
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
@@ -452,23 +455,17 @@ export class ContainerControlClient {
     const conn = this.conn;
     if (!conn) return;
     if (!conn.isConnected()) {
-      // Two distinct cases share the same `isConnected() === false`
-      // signal:
-      //   1. The WebSocket upgrade is still in progress — we constructed
-      //      the connection in getConnection() but doConnect() hasn't
-      //      resolved yet. Sends are queued in the deferred transport.
-      //      Tearing down here would drop those queued calls on the floor.
-      //   2. We were connected and the peer went away (container crash,
-      //      network blip). The session is dead, we must release
-      //      inflight and stop polling.
-      // `wasEverConnected` distinguishes them: it flips to true the first
-      // time we observe a live connection below.
-      if (this.wasEverConnected) {
-        this.destroyConnection();
-      }
+      // The WebSocket upgrade is still in progress (or a freshly
+      // recreated connection hasn't finished doConnect() yet). Sends
+      // are queued in the deferred transport and will flush once the
+      // upgrade resolves — don't tear down here.
+      //
+      // Failure recovery (a peer that disconnected after we connected)
+      // is handled synchronously by `ContainerControlConnection`'s
+      // `onClose` callback firing `destroyConnection()`, which nulls
+      // `this.conn` before the poller could observe it.
       return;
     }
-    this.wasEverConnected = true;
 
     const { imports, exports } = conn.getStats();
     const isBusy =
@@ -549,7 +546,6 @@ export class ContainerControlClient {
       this.conn.disconnect();
       this.conn = null;
     }
-    this.wasEverConnected = false;
   }
 
   // -------------------------------------------------------------------------
