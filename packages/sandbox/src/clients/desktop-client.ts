@@ -1,4 +1,8 @@
-import type { SandboxDesktopAPI } from '@repo/shared';
+import type {
+  DesktopScreenshotRegionRequest,
+  DesktopScreenshotRequest,
+  SandboxDesktopAPI
+} from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -82,27 +86,10 @@ export interface Desktop {
   start(options?: DesktopStartOptions): Promise<DesktopStartResponse>;
   stop(): Promise<DesktopStopResponse>;
   status(): Promise<DesktopStatusResponse>;
-  screenshot(
-    options?: ScreenshotOptions & { format?: 'base64' }
+  screenshot(options?: DesktopScreenshotRequest): Promise<ScreenshotResponse>;
+  screenshotRegion(
+    request: DesktopScreenshotRegionRequest
   ): Promise<ScreenshotResponse>;
-  screenshot(
-    options: ScreenshotOptions & { format: 'bytes' }
-  ): Promise<ScreenshotBytesResponse>;
-  screenshot(
-    options?: ScreenshotOptions
-  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
-  screenshotRegion(
-    region: ScreenshotRegion,
-    options?: ScreenshotOptions & { format?: 'base64' }
-  ): Promise<ScreenshotResponse>;
-  screenshotRegion(
-    region: ScreenshotRegion,
-    options: ScreenshotOptions & { format: 'bytes' }
-  ): Promise<ScreenshotBytesResponse>;
-  screenshotRegion(
-    region: ScreenshotRegion,
-    options?: ScreenshotOptions
-  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
   click(x: number, y: number, options?: ClickOptions): Promise<void>;
   doubleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
   tripleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
@@ -199,18 +186,8 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
    * Capture a full-screen screenshot as base64 (default).
    */
   async screenshot(
-    options?: ScreenshotOptions & { format?: 'base64' }
-  ): Promise<ScreenshotResponse>;
-  /**
-   * Capture a full-screen screenshot as bytes.
-   */
-  async screenshot(
-    options: ScreenshotOptions & { format: 'bytes' }
-  ): Promise<ScreenshotBytesResponse>;
-  async screenshot(
-    options?: ScreenshotOptions
-  ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
-    const wantsBytes = options?.format === 'bytes';
+    options?: DesktopScreenshotRequest
+  ): Promise<ScreenshotResponse> {
     const data = {
       format: 'base64',
       ...(options?.imageFormat !== undefined && {
@@ -221,78 +198,31 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
         showCursor: options.showCursor
       })
     };
-
-    const response = await this.post<ScreenshotResponse>(
-      '/api/desktop/screenshot',
-      data
-    );
-
-    if (wantsBytes) {
-      const binaryString = atob(response.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      return {
-        ...response,
-        data: bytes
-      } as ScreenshotBytesResponse;
-    }
-
-    return response;
+    return this.post<ScreenshotResponse>('/api/desktop/screenshot', data);
   }
 
   /**
-   * Capture a region screenshot as base64 (default).
+   * Capture a region screenshot as base64.
    */
   async screenshotRegion(
-    region: ScreenshotRegion,
-    options?: ScreenshotOptions & { format?: 'base64' }
-  ): Promise<ScreenshotResponse>;
-  /**
-   * Capture a region screenshot as bytes.
-   */
-  async screenshotRegion(
-    region: ScreenshotRegion,
-    options: ScreenshotOptions & { format: 'bytes' }
-  ): Promise<ScreenshotBytesResponse>;
-  async screenshotRegion(
-    region: ScreenshotRegion,
-    options?: ScreenshotOptions
-  ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
-    const wantsBytes = options?.format === 'bytes';
+    request: DesktopScreenshotRegionRequest
+  ): Promise<ScreenshotResponse> {
+    const { region, ...options } = request;
     const data = {
       region,
       format: 'base64',
-      ...(options?.imageFormat !== undefined && {
+      ...(options.imageFormat !== undefined && {
         imageFormat: options.imageFormat
       }),
-      ...(options?.quality !== undefined && { quality: options.quality }),
-      ...(options?.showCursor !== undefined && {
+      ...(options.quality !== undefined && { quality: options.quality }),
+      ...(options.showCursor !== undefined && {
         showCursor: options.showCursor
       })
     };
-
-    const response = await this.post<ScreenshotResponse>(
+    return this.post<ScreenshotResponse>(
       '/api/desktop/screenshot/region',
       data
     );
-
-    if (wantsBytes) {
-      const binaryString = atob(response.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      return {
-        ...response,
-        data: bytes
-      } as ScreenshotBytesResponse;
-    }
-
-    return response;
   }
 
   /**

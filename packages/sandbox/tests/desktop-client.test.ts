@@ -202,28 +202,6 @@ describe('DesktopClient', () => {
       expect(result.height).toBe(768);
     });
 
-    it('should capture a screenshot as bytes', async () => {
-      // Base64 for "hello" = "aGVsbG8="
-      const mockResponse: ScreenshotResponse = {
-        success: true,
-        data: 'aGVsbG8=',
-        imageFormat: 'png',
-        width: 1024,
-        height: 768,
-        timestamp: '2023-01-01T00:00:00Z'
-      };
-
-      mockFetch.mockResolvedValue(
-        new Response(JSON.stringify(mockResponse), { status: 200 })
-      );
-
-      const result = await client.screenshot({ format: 'bytes' });
-
-      expect(result.data).toBeInstanceOf(Uint8Array);
-      expect(result.imageFormat).toBe('png');
-      expect(result.width).toBe(1024);
-    });
-
     it('should pass screenshot options to the request', async () => {
       const mockResponse: ScreenshotResponse = {
         success: true,
@@ -265,10 +243,7 @@ describe('DesktopClient', () => {
       );
 
       const result = await client.screenshotRegion({
-        x: 50,
-        y: 50,
-        width: 200,
-        height: 100
+        region: { x: 50, y: 50, width: 200, height: 100 }
       });
 
       expect(result.width).toBe(200);
@@ -281,29 +256,6 @@ describe('DesktopClient', () => {
         width: 200,
         height: 100
       });
-    });
-
-    it('should capture a region screenshot as bytes', async () => {
-      const mockResponse: ScreenshotResponse = {
-        success: true,
-        data: 'aGVsbG8=',
-        imageFormat: 'webp',
-        width: 300,
-        height: 200,
-        timestamp: '2023-01-01T00:00:00Z'
-      };
-
-      mockFetch.mockResolvedValue(
-        new Response(JSON.stringify(mockResponse), { status: 200 })
-      );
-
-      const result = await client.screenshotRegion(
-        { x: 0, y: 0, width: 300, height: 200 },
-        { format: 'bytes' }
-      );
-
-      expect(result.data).toBeInstanceOf(Uint8Array);
-      expect(result.imageFormat).toBe('webp');
     });
   });
 
