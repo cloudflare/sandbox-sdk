@@ -987,6 +987,57 @@ console.log('Terminal server on port ' + port);
         }
       }
 
+      // Tunnels (RPC-only)
+      if (url.pathname === '/api/tunnel/get' && request.method === 'POST') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const info = await sandbox.tunnels.get(body.port);
+        return new Response(JSON.stringify(info), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/tunnel/list' && request.method === 'GET') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const tunnels = await sandbox.tunnels.list();
+        return new Response(JSON.stringify({ tunnels }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/tunnel/') &&
+        request.method === 'DELETE'
+      ) {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const portStr = url.pathname.slice('/api/tunnel/'.length);
+        const port = Number.parseInt(portStr, 10);
+        if (!Number.isFinite(port)) {
+          return new Response(
+            JSON.stringify({ error: `Invalid port: ${portStr}` }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        await sandbox.tunnels.destroy(port);
+        return new Response(JSON.stringify({ success: true, port }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Environment variables
       if (url.pathname === '/api/env/set' && request.method === 'POST') {
         await executor.setEnvVars(body.envVars);

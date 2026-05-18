@@ -128,7 +128,7 @@ export function getSuggestion(
         case 'invalid_frame':
           return 'The container sent a frame the RPC transport cannot handle. This usually indicates a version mismatch between the SDK and the container image.';
         case 'protocol_error':
-          return 'The peer sent a malformed RPC message (capnweb could not parse the wire format). This usually indicates a version mismatch between the SDK and the container image.';
+          return 'The peer sent a malformed RPC message (could not parse the wire format). This usually indicates a version mismatch between the SDK and the container image.';
         case 'session_disposed':
           return 'The RPC session was disposed while a call was in flight. Avoid reusing stubs after disconnect(); the next method call will reconnect automatically.';
         default:

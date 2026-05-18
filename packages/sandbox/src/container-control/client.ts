@@ -80,6 +80,7 @@ import type {
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTransport,
+  SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -394,7 +395,8 @@ export class ContainerControlClient {
       stub: options.stub,
       port: options.port,
       logger: options.logger,
-      retryTimeoutMs: options.retryTimeoutMs
+      retryTimeoutMs: options.retryTimeoutMs,
+      localMain: options.localMain
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
@@ -521,7 +523,7 @@ export class ContainerControlClient {
         imports <= IDLE_IMPORT_THRESHOLD &&
         exports <= IDLE_EXPORT_THRESHOLD
       ) {
-        this.logger.debug('Disconnecting idle capnweb connection');
+        this.logger.debug('Disconnecting idle RPC connection');
         this.destroyConnection();
       }
     }, this.idleDisconnectMs);
@@ -588,6 +590,9 @@ export class ContainerControlClient {
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);
+  }
+  get tunnels(): SandboxTunnelsAPI {
+    return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);

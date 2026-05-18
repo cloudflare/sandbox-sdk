@@ -25,6 +25,7 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
+  TunnelInfo,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -47,6 +48,7 @@ import type {
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
+import type { TunnelService } from '../services/tunnel-service';
 import type { WatchService } from '../services/watch-service';
 
 export interface SandboxAPIDeps {
@@ -58,6 +60,7 @@ export interface SandboxAPIDeps {
   backupService: BackupService;
   desktopService: DesktopService;
   watchService: WatchService;
+  tunnelService: TunnelService;
   sessionManager: SessionManager;
   logger: Logger;
 }
@@ -138,6 +141,9 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get watch() {
     return new WatchRPCAPI(this.#deps.watchService);
+  }
+  get tunnels() {
+    return new TunnelsRPCAPI(this.#deps.tunnelService);
   }
 }
 
@@ -1288,5 +1294,32 @@ class WatchRPCAPI extends RpcTarget {
       since: request.since
     });
     return extractData<CheckChangesResult>(result);
+  }
+}
+
+// ===========================================================================
+// Tunnels (cloudflared-based preview alternative)
+// ===========================================================================
+
+class TunnelsRPCAPI extends RpcTarget {
+  #svc: TunnelService;
+  constructor(svc: TunnelService) {
+    super();
+    this.#svc = svc;
+  }
+
+  async runQuickTunnel(id: string, port: number): Promise<TunnelInfo> {
+    const result = await this.#svc.runQuickTunnel(id, port);
+    return extractData<TunnelInfo>(result);
+  }
+
+  async destroyTunnel(id: string): Promise<{ success: true; id: string }> {
+    const result = await this.#svc.destroyTunnel(id);
+    throwIfError(result);
+    return { success: true, id };
+  }
+
+  async listTunnels(): Promise<TunnelInfo[]> {
+    return this.#svc.list();
   }
 }

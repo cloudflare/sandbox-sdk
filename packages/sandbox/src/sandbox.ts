@@ -98,6 +98,12 @@ import type {
   LocalSyncMountInfo,
   MountInfo
 } from './storage-mount/types';
+import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
+import {
+  createTunnelsHandler,
+  type TunnelExitHandler,
+  type TunnelsHandler
+} from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
 
 /**
@@ -533,6 +539,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+  // Tunnels namespace handler. Lazily constructed on first access via the
+  // `tunnels` getter; holds an in-memory map of tunnels created through
+  // this Sandbox instance. The sibling `tunnelExitHandler` is the
+  // control-plane exit hook invoked by the capnweb session's
+  // SandboxControlCallback when the container reports cloudflared has
+  // died; both fields are reset together on transport swap.
+  private tunnelsHandler: TunnelsHandler | null = null;
+  private tunnelExitHandler: TunnelExitHandler | null = null;
+  // capnweb localMain exposed to the container side of the RPC
+  // session. Constructed once in the constructor (the lazy accessor
+  // keeps it pointing at the current `tunnelExitHandler` even as
+  // transports swap), so the container can call back into the DO
+  // without us re-binding the session.
+  private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
   // Incremented whenever the container stops. Used to invalidate
@@ -724,6 +744,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         port: 3000,
         logger: this.logger,
         retryTimeoutMs: this.computeRetryTimeoutMs(),
+        // localMain exposes the DO-side control callback (tunnel-exit
+        // notifications, etc.) to the container side of the session.
+        localMain: this.controlCallback,
         // Mirrors containerFetch()'s request lifecycle for the RPC transport.
         //
         // The HTTP transport bumps inflightRequests at the top of each
@@ -815,6 +838,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    // Construct the control callback BEFORE the client — RPC clients
+    // capture it as `localMain` on the capnweb session, and the
+    // session is created eagerly in the connection's constructor.
+    this.controlCallback = new SandboxControlCallbackImpl(
+      () => this.tunnelExitHandler,
+      this.logger
+    );
+
     this.client = this.createClientForTransport(this.transport);
 
     this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
@@ -863,6 +894,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.codeInterpreter = new CodeInterpreter(
           () => this.client.interpreter
         );
+        // Drop the tunnels handler; the lazy getter rebinds it to the
+        // new client on next access. Same rationale as codeInterpreter.
+        this.tunnelsHandler = null;
+        this.tunnelExitHandler = null;
         previousClient.disconnect();
       }
       if (storedTransport) {
@@ -1081,6 +1116,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.hasStoredTransport = true;
     this.client = this.createClientForTransport(transport);
     this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
+    // Drop the tunnels handler so the lazy getter rebinds it to the
+    // new client on next access. Storage is unchanged: existing
+    // tunnels are still backed by their cloudflared processes since the
+    // container did not restart.
+    this.tunnelsHandler = null;
+    this.tunnelExitHandler = null;
     previousClient.disconnect();
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
@@ -1785,6 +1826,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // still not atomic against concurrent writers, but the preview URL
       // authorization path is race-free.
       await this.ctx.storage.delete('portTokens');
+      // Tunnels storage is the SDK's source of truth for which
+      // *.trycloudflare.com URLs are live. Clearing it ensures any
+      // post-destroy get() reads see an empty cache and a destroyed
+      // sandbox's URLs are not resurrected after a new container
+      // takes the same DO id.
+      await this.ctx.storage.delete('tunnels');
 
       // Disconnect transport after all cleanup commands have completed
       this.client.disconnect();
@@ -1830,6 +1877,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       this.logger.error(
         'Failed to restore exposed ports after container start',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
+    // Tunnels are NOT restored across container restart. Every
+    // cloudflared process the container was running died with it, so
+    // every stored *.trycloudflare.com URL is dead. Clearing storage
+    // here means the next get(port) call takes the miss branch and
+    // spawns a fresh tunnel with a new URL. We do this inside onStart's
+    // blockConcurrencyWhile gate so any get() that arrived during the
+    // startup window sees the empty cache by the time it runs.
+    try {
+      await this.ctx.storage.delete('tunnels');
+    } catch (error) {
+      this.logger.error(
+        'Failed to clear tunnel storage after container start',
         error instanceof Error ? error : new Error(String(error))
       );
     }
@@ -3862,6 +3925,48 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       ];
     });
+  }
+
+  /**
+   * Namespaced tunnel API. Quick tunnels are zero-config preview URLs
+   * backed by Cloudflare's trycloudflare service.
+   *
+   * - `tunnels.get(port)` — idempotent. Returns the cached tunnel for
+   *   `port` if one exists in DO storage, otherwise spawns a fresh
+   *   cloudflared process and persists the record.
+   * - `tunnels.list()` — records currently known to this sandbox, from
+   *   DO storage.
+   * - `tunnels.destroy(portOrInfo)` — tear down by port number or by
+   *   the record returned from `get()`.
+   *
+   * Storage is cleared on container restart (`onStart`), so URLs do
+   * not survive a container restart — the next `get(port)` call will
+   * spawn a fresh tunnel with a new URL.
+   *
+   * Requires the RPC transport. Calling this on a route-based transport
+   * throws "RPC transport required".
+   */
+  get tunnels(): TunnelsHandler {
+    this.ensureTunnelsBuilt();
+    // Non-null after ensureTunnelsBuilt(); cast for the type system.
+    return this.tunnelsHandler as TunnelsHandler;
+  }
+
+  /**
+   * Lazily construct both the public tunnels handler and its sibling
+   * exit-handler callback. Called from the `tunnels` getter on first
+   * access and on every access after a transport swap clears both
+   * fields.
+   */
+  private ensureTunnelsBuilt(): void {
+    if (this.tunnelsHandler) return;
+    const built = createTunnelsHandler({
+      client: this.client,
+      storage: this.ctx.storage,
+      logger: this.logger
+    });
+    this.tunnelsHandler = built.tunnels;
+    this.tunnelExitHandler = built.handleTunnelExit;
   }
 
   async isPortExposed(port: number): Promise<boolean> {

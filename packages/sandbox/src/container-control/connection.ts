@@ -47,6 +47,14 @@ export interface ContainerControlConnectionOptions {
    * `WebSocketTransport`. Set to 0 to disable retries.
    */
   retryTimeoutMs?: number;
+  /**
+   * Optional `localMain` exposed to the container side of the capnweb
+   * session. The container reaches it via
+   * `session.getRemoteMain()` and uses it for control-plane callbacks
+   * (e.g. notifying the DO when a tunnel's cloudflared process has
+   * exited). When omitted, the container sees an empty remote main.
+   */
+  localMain?: any;
 }
 
 /**
@@ -75,7 +83,10 @@ export class ContainerControlConnection {
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
 
     this.transport = new DeferredTransport();
-    this.session = new RpcSession<SandboxAPI>(this.transport);
+    this.session = new RpcSession<SandboxAPI>(
+      this.transport,
+      options.localMain
+    );
     this.stub = this.session.getRemoteMain();
   }
 
