@@ -513,4 +513,130 @@ describe('ContainerControlConnection', () => {
       }
     });
   });
+
+  /**
+   * When a peer-closed WebSocket triggers an `onClose` callback that
+   * destroys the connection and creates a new one, we must not let a
+   * stale `close` / `error` event from the old WebSocket arrive later
+   * and clobber the successor connection. The connection guards against
+   * this by unbinding its own listeners from the underlying WebSocket
+   * inside `disconnect()`, so any event the runtime dispatches after we
+   * decide the connection is dead becomes a no-op.
+   */
+  describe('WebSocket listener unbinding', () => {
+    /**
+     * Fake WebSocket that records every (un)bind so we can assert
+     * `disconnect()` cleans up the listeners it registered in
+     * `doConnect()`.
+     */
+    function createTrackedWebSocket(): {
+      ws: WebSocket;
+      listenerCount: (type: string) => number;
+      emitClose: (code: number, reason: string) => void;
+      emitError: () => void;
+    } {
+      const target = new EventTarget();
+      const counts: Record<string, number> = {};
+
+      const addListener = (type: string, listener: EventListener): void => {
+        counts[type] = (counts[type] ?? 0) + 1;
+        target.addEventListener(type, listener);
+      };
+      const removeListener = (type: string, listener: EventListener): void => {
+        counts[type] = Math.max(0, (counts[type] ?? 0) - 1);
+        target.removeEventListener(type, listener);
+      };
+
+      const ws = {
+        addEventListener: addListener,
+        removeEventListener: removeListener,
+        send: () => {},
+        close: () => {},
+        accept: () => {}
+      } as unknown as WebSocket;
+
+      return {
+        ws,
+        listenerCount: (type) => counts[type] ?? 0,
+        emitClose: (code, reason) =>
+          target.dispatchEvent(
+            Object.assign(new Event('close'), { code, reason }) as CloseEvent
+          ),
+        emitError: () => target.dispatchEvent(new Event('error'))
+      };
+    }
+
+    function makeUpgradeResponseFor(ws: WebSocket): Response {
+      return {
+        status: 101,
+        statusText: 'Switching Protocols',
+        webSocket: ws
+      } as unknown as Response;
+    }
+
+    it('unbinds its close and error listeners from the WebSocket on disconnect', async () => {
+      const tracked = createTrackedWebSocket();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(makeUpgradeResponseFor(tracked.ws))
+        }
+      });
+
+      await conn.connect();
+      expect(tracked.listenerCount('close')).toBeGreaterThan(0);
+      expect(tracked.listenerCount('error')).toBeGreaterThan(0);
+
+      const closeBeforeDisconnect = tracked.listenerCount('close');
+      const errorBeforeDisconnect = tracked.listenerCount('error');
+
+      conn.disconnect();
+
+      // The connection's own close/error listeners must be gone. The
+      // DeferredTransport's listeners on the same WebSocket are out of
+      // scope here — we only assert that the connection removed exactly
+      // the listeners it added in doConnect().
+      expect(tracked.listenerCount('close')).toBe(closeBeforeDisconnect - 1);
+      expect(tracked.listenerCount('error')).toBe(errorBeforeDisconnect - 1);
+    });
+
+    it('does not fire onClose for a close event dispatched after disconnect()', async () => {
+      const tracked = createTrackedWebSocket();
+      const onClose = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(makeUpgradeResponseFor(tracked.ws))
+        },
+        onClose
+      });
+
+      await conn.connect();
+      conn.disconnect();
+
+      // Runtime dispatches a delayed close after we've already torn down.
+      // This simulates the race where a successor connection has been
+      // installed on the client and we don't want its stale predecessor's
+      // close event to reach the client's onClose handler.
+      tracked.emitClose(1011, 'Container WebSocket error');
+
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('does not fire onClose for an error event dispatched after disconnect()', async () => {
+      const tracked = createTrackedWebSocket();
+      const onClose = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(makeUpgradeResponseFor(tracked.ws))
+        },
+        onClose
+      });
+
+      await conn.connect();
+      conn.disconnect();
+
+      tracked.emitError();
+
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });
