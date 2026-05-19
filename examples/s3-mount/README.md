@@ -2,6 +2,12 @@
 
 Mount an AWS S3 bucket as a normal read/write folder inside a Cloudflare Sandbox container. The container never sees a long-lived AWS key — it gets short-lived credentials on demand, issued by the Worker.
 
+<img width="49%" alt="Screenshot 2026-05-19 at 12 26 48" src="https://github.com/user-attachments/assets/8892b90b-071b-4245-9b71-8857eb161166" />
+<img width="50%" alt="Screenshot 2026-05-19 at 12 26 59" src="https://github.com/user-attachments/assets/78b511dd-1914-420c-9b79-880789055f2d" />
+
+> [!IMPORTANT]
+> This demo requires FUSE support in the container environment. As such it will not work locally using `wrangler dev` and requires deployment to a production environment via `wrangler deploy`.
+
 ## What it demonstrates
 
 - **S3 mounted as a folder** using [`mount-s3`](https://github.com/awslabs/mountpoint-s3), running inside the sandbox container. Files in `/mnt/s3/` are objects in your bucket.
