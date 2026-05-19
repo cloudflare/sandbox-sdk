@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger } from '@repo/shared';
+import type { ExecEvent, Logger } from '@repo/shared';
 import type {
   ProcessRecord,
   ServiceResult
@@ -149,6 +149,20 @@ describe('ProcessService', () => {
 
   describe('startProcess', () => {
     it('should start background process successfully', async () => {
+      let createdCommandAtCreate: ProcessRecord['command'] | undefined;
+      let createdStatusAtCreate: ProcessRecord['status'] | undefined;
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandAtCreate = process.command;
+          createdStatusAtCreate = process.status;
+          createdCommandHandleAtCreate = process.commandHandle;
+        }
+      );
+
       mocked(mockExecutionService.executeStream).mockImplementation(
         async (_command, options) =>
           ({
@@ -196,12 +210,9 @@ describe('ProcessService', () => {
 
       // Verify process is initially stored without a commandHandle. The
       // authoritative handle is attached only after ExecutionService returns.
-      const createdRecord = mocked(mockProcessStore.create).mock.calls[0]?.[0];
-      expect(createdRecord).toMatchObject({
-        command: 'sleep 10',
-        status: 'running'
-      });
-      expect(createdRecord?.commandHandle).toBeUndefined();
+      expect(createdCommandAtCreate).toBe('sleep 10');
+      expect(createdStatusAtCreate).toBe('running');
+      expect(createdCommandHandleAtCreate).toBeUndefined();
 
       expect(mockProcessStore.update).toHaveBeenCalledWith(
         result.success ? result.data.id : expect.any(String),
@@ -215,6 +226,16 @@ describe('ProcessService', () => {
     });
 
     it('should preserve the sessionless command handle for background processes', async () => {
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandHandleAtCreate = process.commandHandle;
+        }
+      );
+
       mocked(mockExecutionService.executeStream).mockImplementation(
         async (_command, options) =>
           ({
@@ -248,8 +269,7 @@ describe('ProcessService', () => {
         });
       }
 
-      const createdRecord = mocked(mockProcessStore.create).mock.calls[0]?.[0];
-      expect(createdRecord?.commandHandle).toBeUndefined();
+      expect(createdCommandHandleAtCreate).toBeUndefined();
 
       expect(mockProcessStore.update).toHaveBeenCalledWith(
         result.success ? result.data.id : expect.any(String),
@@ -261,6 +281,51 @@ describe('ProcessService', () => {
           }
         })
       );
+    });
+
+    it('should reflect a later non-zero complete event on the returned process record', async () => {
+      let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
+
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) => {
+          onEvent = options.onEvent;
+
+          return {
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: 'none',
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          } as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: {
+              sessionId: string;
+              commandId: string;
+              pid?: number;
+            };
+          }>;
+        }
+      );
+
+      const result = await processService.startProcess('(exit 7)', {});
+
+      expect(result.success).toBe(true);
+      expect(onEvent).toBeDefined();
+
+      if (result.success && onEvent) {
+        await onEvent({
+          type: 'complete',
+          exitCode: 7,
+          timestamp: new Date().toISOString()
+        });
+
+        expect(result.data.exitCode).toBe(7);
+        expect(result.data.status).toBe('failed');
+      }
     });
 
     it('should reject empty command', async () => {
