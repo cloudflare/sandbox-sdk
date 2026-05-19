@@ -240,6 +240,7 @@ export class ProcessService {
       }
 
       executionSessionId = streamResult.data.commandHandle.sessionId;
+      processRecord.commandHandle = streamResult.data.commandHandle;
       await this.store.update(processRecord.id, {
         commandHandle: streamResult.data.commandHandle
       });
@@ -257,10 +258,7 @@ export class ProcessService {
 
       return {
         success: true,
-        data: {
-          ...processRecord,
-          commandHandle: streamResult.data.commandHandle
-        }
+        data: processRecord
       };
     } catch (error) {
       const errorMessage =
