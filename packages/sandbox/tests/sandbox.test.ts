@@ -295,6 +295,98 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
+    it('should forward explicit sessionId for execStream and listFiles', async () => {
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
+        new ReadableStream()
+      );
+      vi.spyOn(sandbox.client.files, 'listFiles').mockResolvedValue({
+        success: true,
+        path: '/workspace',
+        files: [],
+        count: 0,
+        timestamp: new Date().toISOString()
+      });
+
+      await sandbox.execStream('echo streamed', {
+        sessionId: 'explicit-session',
+        cwd: '/workspace/project'
+      });
+      await sandbox.listFiles('/workspace', {
+        recursive: true,
+        sessionId: 'explicit-session'
+      });
+
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo streamed',
+        'explicit-session',
+        {
+          cwd: '/workspace/project'
+        }
+      );
+      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
+        '/workspace',
+        'explicit-session',
+        {
+          recursive: true,
+          sessionId: 'explicit-session'
+        }
+      );
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('should honor the sessionless sentinel for execStream and listFiles', async () => {
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
+        new ReadableStream()
+      );
+      vi.spyOn(sandbox.client.files, 'listFiles').mockResolvedValue({
+        success: true,
+        path: '/workspace',
+        files: [],
+        count: 0,
+        timestamp: new Date().toISOString()
+      });
+
+      await sandbox.execStream('echo streamed', {
+        sessionId: 'none',
+        cwd: '/workspace/project'
+      });
+      await sandbox.listFiles('/workspace', {
+        includeHidden: true,
+        sessionId: 'none'
+      });
+
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo streamed',
+        'none',
+        {
+          cwd: '/workspace/project'
+        }
+      );
+      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
+        '/workspace',
+        'none',
+        {
+          includeHidden: true,
+          sessionId: 'none'
+        }
+      );
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('should reject empty explicit session IDs', async () => {
+      await expect(
+        sandbox.execStream('echo bad', { sessionId: '   ' })
+      ).rejects.toThrow('sessionId must not be empty or whitespace');
+
+      await expect(
+        sandbox.listFiles('/workspace', { sessionId: '' })
+      ).rejects.toThrow('sessionId must not be empty or whitespace');
+
+      await expect(sandbox.listProcesses('')).rejects.toThrow(
+        'sessionId must not be empty or whitespace'
+      );
+    });
+
     it('should reuse default session across multiple operations', async () => {
       await sandbox.exec('echo test1');
       await sandbox.writeFile('/test.txt', 'content');

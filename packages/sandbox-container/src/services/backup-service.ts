@@ -7,6 +7,7 @@ import {
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
+import type { RawExecResult } from '../session';
 import type { ExecutionService } from './execution-service';
 
 export const BACKUP_WORK_DIR = '/var/backups';
@@ -122,7 +123,7 @@ export class BackupService {
   private async executeInternal(
     sessionId: string,
     command: string
-  ): Promise<ServiceResult<import('../session').RawExecResult>> {
+  ): Promise<ServiceResult<RawExecResult>> {
     return this.executionService.execute(command, {
       sessionId,
       origin: 'internal'

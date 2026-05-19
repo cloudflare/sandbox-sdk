@@ -517,16 +517,12 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      if (url.pathname === '/api/state' && request.method === 'GET') {
-        const state = await sandbox.getState();
-        return new Response(JSON.stringify(state), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (url.pathname === '/api/placement-id' && request.method === 'GET') {
-        const placementId = await sandbox.getContainerPlacementId();
-        return new Response(JSON.stringify({ placementId }), {
+      if (
+        url.pathname === '/api/session/default-policy' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.setEnableDefaultSession(body.enableDefaultSession);
+        return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -550,11 +546,18 @@ console.log('Terminal server on port ' + port);
           body.command
         );
         const startTime = Date.now();
-        const stream = await executor.execStream(body.command, {
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout
-        });
+        const stream = sessionId
+          ? await executor.execStream(body.command, {
+              env: body.env,
+              cwd: body.cwd,
+              timeout: body.timeout
+            })
+          : await sandbox.execStream(body.command, {
+              env: body.env,
+              cwd: body.cwd,
+              timeout: body.timeout,
+              sessionId: body.sessionId
+            });
         console.log(
           '[TestWorker] Stream received in',
           Date.now() - startTime,

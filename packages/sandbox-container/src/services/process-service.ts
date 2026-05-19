@@ -124,15 +124,12 @@ export class ProcessService {
         options
       );
 
-      // 3. Build full process record with commandHandle instead of subprocess
-      const sessionId = options.sessionId || 'default';
+      // 3. Build full process record. commandHandle is attached only after
+      // ExecutionService returns the authoritative session/pid binding.
       const processRecord: ProcessRecord = {
-        ...processRecordData,
-        commandHandle: {
-          sessionId,
-          commandId: processRecordData.id // Use process ID as command ID
-        }
+        ...processRecordData
       };
+      let executionSessionId = options.sessionId ?? 'default';
 
       // 4. Store record (data layer)
       await this.store.create(processRecord);
@@ -159,7 +156,7 @@ export class ProcessService {
               pid: event.pid,
               durationMs: Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
@@ -192,7 +189,7 @@ export class ProcessService {
                   ? endTime.getTime() - processRecord.startTime.getTime()
                   : Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               origin: options.origin
             });
 
@@ -228,7 +225,7 @@ export class ProcessService {
               outcome: 'error',
               command,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               durationMs: Date.now() - startTime,
               errorMessage: event.error,
               error: new Error(event.error),
@@ -242,7 +239,7 @@ export class ProcessService {
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
-      processRecord.commandHandle = streamResult.data.commandHandle;
+      executionSessionId = streamResult.data.commandHandle.sessionId;
       await this.store.update(processRecord.id, {
         commandHandle: streamResult.data.commandHandle
       });
@@ -260,7 +257,10 @@ export class ProcessService {
 
       return {
         success: true,
-        data: processRecord
+        data: {
+          ...processRecord,
+          commandHandle: streamResult.data.commandHandle
+        }
       };
     } catch (error) {
       const errorMessage =
