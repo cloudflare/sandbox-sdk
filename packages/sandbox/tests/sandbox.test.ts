@@ -594,14 +594,14 @@ describe('Sandbox - Automatic Session Management', () => {
         stdout: 'EMPTY\n',
         stderr: '',
         exitCode: 0,
-        command: 'echo "${REVIVED:-EMPTY}"',
+        command: `echo "\${REVIVED:-EMPTY}"`,
         timestamp: new Date().toISOString()
       } as any);
 
       (sandbox as any).defaultSession = 'sandbox-default';
       await sandbox.setEnableDefaultSession(false);
       await sandbox.setEnableDefaultSession(true);
-      const result = await sandbox.exec('echo "${REVIVED:-EMPTY}"');
+      const result = await sandbox.exec(`echo "\${REVIVED:-EMPTY}"`);
 
       expect(result.stdout).toBe('EMPTY\n');
       expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(

@@ -294,7 +294,7 @@ export class GitService {
       const args = this.manager.buildCheckoutArgs(branch);
       const command = this.buildCommand(args);
 
-      // Execute git checkout (via SessionManager)
+      // Execute git checkout through the unified execution path
       const execResult = await this.executionService.execute(command, {
         sessionId,
         cwd: repoPath,
@@ -385,7 +385,7 @@ export class GitService {
       const args = this.manager.buildGetCurrentBranchArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
+      // Execute command through the unified execution path
       const execResult = await this.executionService.execute(command, {
         sessionId,
         cwd: repoPath,
@@ -460,7 +460,7 @@ export class GitService {
       const args = this.manager.buildListBranchesArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
+      // Execute command through the unified execution path
       const execResult = await this.executionService.execute(command, {
         sessionId,
         cwd: repoPath,
