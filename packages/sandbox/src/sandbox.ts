@@ -700,11 +700,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Dispatch method for tunnel operations.
    * Called by the client-side proxy created in getSandbox() to provide
-   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * the `sandbox.tunnels` API without relying on RPC pipelining
    * through property getters which is broken when using vite-plugin.
    */
   async callTunnels(method: string, args: unknown[]): Promise<unknown> {
-    if (new Set(['get', 'list', 'destroy']).has(method)) {
+    if (!['get', 'list', 'destroy'].includes(method)) {
       throw new Error(`Unknown tunnels method: ${method}`);
     }
     const client = this.tunnels;
