@@ -56,51 +56,6 @@ export interface TunnelsHandler {
 }
 
 /**
- * Concrete `TunnelsHandler` implementation that extends `RpcTarget` so
- * it can cross the Workers RPC boundary. The Sandbox DO is reachable
- * from Workers via Workers RPC (`stub.tunnels.get(port)`); only
- * `RpcTarget` instances are passed by reference across that boundary,
- * so a plain `{ get, list, destroy }` object returned from the getter
- * would fail with "The RPC receiver does not implement the method ...".
- *
- * The class is a thin shell — the heavy lifting (per-port lock,
- * storage transactions, log events) lives in the closures inside
- * `createTunnelsHandler`. We just forward to them here so the wrapper
- * stays out of the way of the existing tests.
- */
-class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
-  // ECMAScript private fields (not TS `private`) so they are not
-  // observable as own properties on the RPC receiver and cannot be
-  // invoked as `tunnels.#get(...)` from a Worker.
-  readonly #get: (port: number) => Promise<TunnelInfo>;
-  readonly #list: () => Promise<TunnelInfo[]>;
-  readonly #destroy: (portOrInfo: number | TunnelInfo) => Promise<void>;
-
-  constructor(
-    getFn: (port: number) => Promise<TunnelInfo>,
-    listFn: () => Promise<TunnelInfo[]>,
-    destroyFn: (portOrInfo: number | TunnelInfo) => Promise<void>
-  ) {
-    super();
-    this.#get = getFn;
-    this.#list = listFn;
-    this.#destroy = destroyFn;
-  }
-
-  get(port: number): Promise<TunnelInfo> {
-    return this.#get(port);
-  }
-
-  list(): Promise<TunnelInfo[]> {
-    return this.#list();
-  }
-
-  destroy(portOrInfo: number | TunnelInfo): Promise<void> {
-    return this.#destroy(portOrInfo);
-  }
-}
-
-/**
  * Container-driven exit hook. Invoked by `SandboxControlCallbackImpl`
  * when the container reports that a `cloudflared` process has
  * exited. NOT part of the public `TunnelsHandler` interface —
@@ -122,6 +77,9 @@ export interface TunnelsHandle {
 const STORAGE_KEY = 'tunnels';
 
 type TunnelMap = Record<string, TunnelInfo>;
+
+/** Per-port serializer shared between `TunnelsRpcTarget` and the exit hook. */
+type WithPortLock = <T>(port: number, fn: () => Promise<T>) => Promise<T>;
 
 function validateTunnelPort(port: number): void {
   if (!validatePort(port)) {
@@ -145,6 +103,141 @@ function isTunnelNotFoundError(error: unknown): boolean {
   return message.includes('TUNNEL_NOT_FOUND');
 }
 
+async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {
+  return (await storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
+}
+
+/**
+ * Concrete `TunnelsHandler` implementation. Extends `RpcTarget` so it
+ * can cross the Workers RPC boundary: the Sandbox DO is reachable from
+ * Workers via Workers RPC (`stub.tunnels.get(port)`), and only
+ * `RpcTarget` instances are passed by reference across that boundary.
+ * A plain `{ get, list, destroy }` object returned from the getter
+ * would fail with "The RPC receiver does not implement the method ...".
+ *
+ * The `withPortLock` serializer is passed in by the factory so it can
+ * be shared with `handleTunnelExit`, which must observe the same
+ * per-port ordering but is not part of the public RPC surface.
+ */
+class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
+  // ECMAScript private fields (not TS `private`) so they are not
+  // observable as own properties on the RPC receiver and cannot be
+  // invoked from a Worker.
+  readonly #host: TunnelsHandlerHost;
+  readonly #withPortLock: WithPortLock;
+
+  constructor(host: TunnelsHandlerHost, withPortLock: WithPortLock) {
+    super();
+    this.#host = host;
+    this.#withPortLock = withPortLock;
+  }
+
+  async get(port: number): Promise<TunnelInfo> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let cacheState: 'hit' | 'miss' = 'miss';
+    let caughtError: Error | undefined;
+    try {
+      validateTunnelPort(port);
+
+      const info = await this.#withPortLock(port, async () => {
+        const map = await readMap(this.#host.storage);
+        const existing = map[port.toString()];
+        if (existing) {
+          cacheState = 'hit';
+          return existing;
+        }
+        const id = `quick-${shortId()}`;
+        const spawned = await this.#host.client.tunnels.runQuickTunnel(
+          id,
+          port
+        );
+        // Atomic re-read + write. The lock orders same-port ops, but
+        // a concurrent get(otherPort) can still write the `tunnels` key
+        // between the cloudflared await above and here. transaction()
+        // retries on conflict so the cross-port write doesn't clobber.
+        await this.#host.storage.transaction(async (txn) => {
+          const nextMap = await readMap(txn);
+          nextMap[port.toString()] = spawned;
+          await txn.put(STORAGE_KEY, nextMap);
+        });
+        return spawned;
+      });
+      outcome = 'success';
+      return info;
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.#host.logger, {
+        event: 'tunnel.get',
+        outcome,
+        port,
+        cacheState,
+        durationMs: Date.now() - startTime,
+        error: caughtError
+      });
+    }
+  }
+
+  async destroy(portOrInfo: number | TunnelInfo): Promise<void> {
+    const port = typeof portOrInfo === 'number' ? portOrInfo : portOrInfo.port;
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let tunnelId: string | undefined;
+    try {
+      await this.#withPortLock(port, async () => {
+        const map = await readMap(this.#host.storage);
+        const existing = map[port.toString()];
+        if (!existing) {
+          // Idempotent — destroying an unknown port resolves successfully.
+          return;
+        }
+        tunnelId = existing.id;
+
+        // Clear storage first. Same ordering as portTokens (sandbox.ts):
+        // a hypothetical reader that observes storage between the put
+        // below and the destroyTunnel RPC sees a cache miss — the right
+        // answer, since the tunnel is on its way out. The port lock
+        // means no in-process get(port) is racing with us, but Workers
+        // / external readers don't go through this handler.
+        await this.#host.storage.transaction(async (txn) => {
+          const current = await readMap(txn);
+          delete current[port.toString()];
+          await txn.put(STORAGE_KEY, current);
+        });
+
+        try {
+          await this.#host.client.tunnels.destroyTunnel(existing.id);
+        } catch (error) {
+          if (!isTunnelNotFoundError(error)) throw error;
+          // Container already forgot — treat as success. Storage is
+          // already cleared above, so we're done.
+        }
+      });
+      outcome = 'success';
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.#host.logger, {
+        event: 'tunnel.destroy',
+        outcome,
+        port,
+        tunnelId,
+        durationMs: Date.now() - startTime,
+        error: caughtError
+      });
+    }
+  }
+
+  async list(): Promise<TunnelInfo[]> {
+    const map = await readMap(this.#host.storage);
+    return Object.values(map);
+  }
+}
+
 export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
   // Per-port serialization lock. Any operation that mutates the tunnel
   // for a given port — get() on a cache miss, destroy() — queues behind
@@ -160,9 +253,16 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
   // The lock is a plain Promise chain keyed by port. `transaction()` on
   // the storage write still matters for *cross-port* writes — a
   // get(8080) and get(8081) running in parallel are independent here.
+  //
+  // The lock is shared between the public `TunnelsRpcTarget` and the
+  // private `handleTunnelExit` callback so an exit hook can't race a
+  // concurrent get/destroy on the same port.
   const portLocks = new Map<number, Promise<unknown>>();
 
-  function withPortLock<T>(port: number, fn: () => Promise<T>): Promise<T> {
+  const withPortLock: WithPortLock = <T>(
+    port: number,
+    fn: () => Promise<T>
+  ): Promise<T> => {
     const previous = portLocks.get(port) ?? Promise.resolve();
     const next = previous.then(fn, fn);
     // Swallow rejections on the chain so a failed op doesn't poison
@@ -172,115 +272,9 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
       next.catch(() => undefined)
     );
     return next;
-  }
+  };
 
-  async function readMap(
-    storage: TunnelsStorageTxn = host.storage
-  ): Promise<TunnelMap> {
-    return (await storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
-  }
-
-  async function get(port: number): Promise<TunnelInfo> {
-    const startTime = Date.now();
-    let outcome: 'success' | 'error' = 'error';
-    let cacheState: 'hit' | 'miss' = 'miss';
-    let caughtError: Error | undefined;
-    try {
-      validateTunnelPort(port);
-
-      const info = await withPortLock(port, async () => {
-        const map = await readMap();
-        const existing = map[port.toString()];
-        if (existing) {
-          cacheState = 'hit';
-          return existing;
-        }
-        const id = `quick-${shortId()}`;
-        const spawned = await host.client.tunnels.runQuickTunnel(id, port);
-        // Atomic re-read + write. The lock orders same-port ops, but
-        // a concurrent get(otherPort) can still write the `tunnels` key
-        // between the cloudflared await above and here. transaction()
-        // retries on conflict so the cross-port write doesn't clobber.
-        await host.storage.transaction(async (txn) => {
-          const nextMap = await readMap(txn);
-          nextMap[port.toString()] = spawned;
-          await txn.put(STORAGE_KEY, nextMap);
-        });
-        return spawned;
-      });
-      outcome = 'success';
-      return info;
-    } catch (error) {
-      caughtError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
-      logCanonicalEvent(host.logger, {
-        event: 'tunnel.get',
-        outcome,
-        port,
-        cacheState,
-        durationMs: Date.now() - startTime,
-        error: caughtError
-      });
-    }
-  }
-
-  async function destroy(portOrInfo: number | TunnelInfo): Promise<void> {
-    const port = typeof portOrInfo === 'number' ? portOrInfo : portOrInfo.port;
-    const startTime = Date.now();
-    let outcome: 'success' | 'error' = 'error';
-    let caughtError: Error | undefined;
-    let tunnelId: string | undefined;
-    try {
-      await withPortLock(port, async () => {
-        const map = await readMap();
-        const existing = map[port.toString()];
-        if (!existing) {
-          // Idempotent — destroying an unknown port resolves successfully.
-          return;
-        }
-        tunnelId = existing.id;
-
-        // Clear storage first. Same ordering as portTokens (sandbox.ts):
-        // a hypothetical reader that observes storage between the put
-        // below and the destroyTunnel RPC sees a cache miss — the right
-        // answer, since the tunnel is on its way out. The port lock
-        // means no in-process get(port) is racing with us, but Workers
-        // / external readers don't go through this handler.
-        await host.storage.transaction(async (txn) => {
-          const current = await readMap(txn);
-          delete current[port.toString()];
-          await txn.put(STORAGE_KEY, current);
-        });
-
-        try {
-          await host.client.tunnels.destroyTunnel(existing.id);
-        } catch (error) {
-          if (!isTunnelNotFoundError(error)) throw error;
-          // Container already forgot — treat as success. Storage is
-          // already cleared above, so we're done.
-        }
-      });
-      outcome = 'success';
-    } catch (error) {
-      caughtError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
-      logCanonicalEvent(host.logger, {
-        event: 'tunnel.destroy',
-        outcome,
-        port,
-        tunnelId,
-        durationMs: Date.now() - startTime,
-        error: caughtError
-      });
-    }
-  }
-
-  async function list(): Promise<TunnelInfo[]> {
-    const map = await readMap();
-    return Object.values(map);
-  }
+  const tunnels = new TunnelsRpcTarget(host, withPortLock);
 
   const handleTunnelExit: TunnelExitHandler = async (id, port, exitCode) => {
     const startTime = Date.now();
@@ -307,14 +301,6 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
       });
     });
   };
-
-  // Wrap the public methods in an RpcTarget subclass so the object
-  // survives the Workers RPC boundary when returned from the Sandbox
-  // DO's `tunnels` getter. A plain object literal with methods would
-  // fail with "The RPC receiver does not implement the method ..."
-  // on the Worker side because only RpcTarget instances are passed
-  // by reference across Workers RPC.
-  const tunnels: TunnelsHandler = new TunnelsRpcTarget(get, list, destroy);
 
   return {
     tunnels,
