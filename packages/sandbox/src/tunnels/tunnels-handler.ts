@@ -112,12 +112,6 @@ async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {
  * can cross the Workers RPC boundary: the Sandbox DO is reachable from
  * Workers via Workers RPC (`stub.tunnels.get(port)`), and only
  * `RpcTarget` instances are passed by reference across that boundary.
- * A plain `{ get, list, destroy }` object returned from the getter
- * would fail with "The RPC receiver does not implement the method ...".
- *
- * The `withPortLock` serializer is passed in by the factory so it can
- * be shared with `handleTunnelExit`, which must observe the same
- * per-port ordering but is not part of the public RPC surface.
  */
 class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
   // ECMAScript private fields (not TS `private`) so they are not
