@@ -1,5 +1,5 @@
 import type { ExecEvent, Logger } from '@repo/shared';
-import { logCanonicalEvent } from '@repo/shared';
+import { logCanonicalEvent, SESSIONLESS_SESSION_ID } from '@repo/shared';
 import type {
   CommandErrorContext,
   CommandNotFoundContext
@@ -17,7 +17,6 @@ import type { SessionManager } from './session-manager';
 const BASH_PATH = '/bin/bash';
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_CWD = '/workspace';
-const SESSIONLESS_SESSION_ID = 'none';
 const SESSIONLESS_TIMEOUT_EXIT_CODE = 124;
 const SESSIONLESS_KILL_GRACE_PERIOD_MS = 5_000;
 const SESSIONLESS_FORCE_KILL_WAIT_MS = 1_000;
@@ -26,15 +25,17 @@ type ExecutionTarget =
   | { kind: 'session'; sessionId: string }
   | { kind: 'sessionless' };
 
+type NestedExecutionOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  origin?: 'user' | 'internal';
+};
+
 type ExecutionCallback<T> = (
   exec: (
     command: string,
-    options?: {
-      cwd?: string;
-      env?: Record<string, string | undefined>;
-      timeoutMs?: number;
-      origin?: 'user' | 'internal';
-    }
+    options?: NestedExecutionOptions
   ) => Promise<RawExecResult>
 ) => Promise<T>;
 
@@ -131,17 +132,26 @@ export class ExecutionService {
     const target = this.resolveTarget(options.sessionId);
 
     if (target.kind === 'session') {
-      return this.sessionManager.withSession(target.sessionId, fn, options.cwd);
+      return this.sessionManager.withSession(
+        target.sessionId,
+        (exec) =>
+          fn((command, execOptions) =>
+            exec(
+              command,
+              this.mergeNestedExecutionOptions(options, execOptions, {
+                inheritOuterCwd: false
+              })
+            )
+          ),
+        options.cwd
+      );
     }
 
     try {
       const result = await fn((command, execOptions) =>
         this.executeSessionlessOrThrow(command, {
           sessionId: SESSIONLESS_SESSION_ID,
-          cwd: execOptions?.cwd ?? options.cwd,
-          env: execOptions?.env,
-          timeoutMs: execOptions?.timeoutMs,
-          origin: execOptions?.origin
+          ...(this.mergeNestedExecutionOptions(options, execOptions) ?? {})
         })
       );
 
@@ -221,6 +231,25 @@ export class ExecutionService {
     }
 
     return DEFAULT_SESSION_ID;
+  }
+
+  private mergeNestedExecutionOptions(
+    defaults: ExecutionOptions,
+    overrides?: NestedExecutionOptions,
+    config: { inheritOuterCwd?: boolean } = {}
+  ): NestedExecutionOptions | undefined {
+    const merged: NestedExecutionOptions = {
+      ...(config.inheritOuterCwd !== false && {
+        cwd: overrides?.cwd ?? defaults.cwd
+      }),
+      env: overrides?.env ?? defaults.env,
+      timeoutMs: overrides?.timeoutMs ?? defaults.timeoutMs,
+      origin: overrides?.origin ?? defaults.origin
+    };
+
+    return Object.values(merged).some((value) => value !== undefined)
+      ? merged
+      : undefined;
   }
 
   private async executeSessionless(

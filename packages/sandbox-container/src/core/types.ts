@@ -157,8 +157,7 @@ export interface KillProcessResponse {
 
 export interface KillAllProcessesResponse {
   success: true;
-  message: string;
-  killedCount: number;
+  cleanedCount: number;
   timestamp: string;
 }
 

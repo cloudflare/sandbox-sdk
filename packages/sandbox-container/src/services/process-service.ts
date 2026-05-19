@@ -36,8 +36,8 @@ export class ProcessService {
   }
 
   /**
-   * Start a background process via SessionManager
-   * Semantically identical to executeCommandStream() - both use SessionManager
+   * Start a background process via the unified execution path.
+   * Semantically identical to executeCommandStream() - both use ExecutionService.
    * The difference is conceptual: startProcess() runs in background for long-lived processes
    */
   async startProcess(
@@ -52,7 +52,7 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<CommandResult>> {
     try {
-      // Always use SessionManager for execution (unified model)
+      // Always use ExecutionService for command execution
       const result = await this.executionService.execute(command, {
         sessionId: options.sessionId,
         cwd: options.cwd,
@@ -96,7 +96,7 @@ export class ProcessService {
   }
 
   /**
-   * Execute a command with streaming output via SessionManager
+   * Execute a command with streaming output via the unified execution path
    * Used by both execStream() and startProcess()
    */
   async executeCommandStream(
@@ -137,7 +137,7 @@ export class ProcessService {
       // 4. Store record (data layer)
       await this.store.create(processRecord);
 
-      // 5. Execute command via SessionManager with streaming
+      // 5. Execute command with streaming and bind it to the process record
       // Pass process ID as commandId for tracking and killing
       // CRITICAL: Await the initial result to ensure command is tracked before returning
       const streamResult = await this.executionService.executeStream(command, {
@@ -369,7 +369,7 @@ export class ProcessService {
         };
       }
 
-      // All processes use SessionManager for unified execution model
+      // All processes use ExecutionService for the unified execution model
       if (!process.commandHandle) {
         // Process has no commandHandle - likely already completed or malformed
         return {

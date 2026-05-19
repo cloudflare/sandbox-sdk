@@ -424,7 +424,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Execute exists→isdir→rm sequence atomically within session
+      // 2. Execute the exists→isdir→rm sequence through the unified execution path
       const escapedPath = shellEscape(path);
 
       const result = await this.executionService.withExecution(
@@ -556,7 +556,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 3. Rename file using SessionManager with mv command
+      // 3. Rename file using the unified execution path with mv
       const escapedOldPath = shellEscape(oldPath);
       const escapedNewPath = shellEscape(newPath);
       const command = `mv ${escapedOldPath} ${escapedNewPath}`;
@@ -651,7 +651,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 3. Move file using SessionManager with mv command
+      // 3. Move file using the unified execution path with mv
       // mv is atomic on same filesystem, automatically handles cross-filesystem moves
       const escapedSource = shellEscape(sourcePath);
       const escapedDest = shellEscape(destinationPath);
@@ -749,7 +749,7 @@ export class FileService implements FileSystemOperations {
       }
       command += ` ${escapedPath}`;
 
-      // 4. Create directory using SessionManager
+      // 4. Create directory using the unified execution path
       const execResult = await this.executionService.execute(command, {
         sessionId,
         origin: 'internal'
@@ -840,7 +840,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Check if file/directory exists using SessionManager
+      // 2. Check if file/directory exists using the unified execution path
       const escapedPath = shellEscape(path);
       const command = `test -e ${escapedPath}`;
 
@@ -940,7 +940,7 @@ export class FileService implements FileSystemOperations {
       const escapedPath = shellEscape(path);
       const command = `stat ${statCmd.args[0]} ${statCmd.args[1]} ${escapedPath}`;
 
-      // 5. Get file stats using SessionManager
+      // 5. Get file stats using the unified execution path
       const execResult = await this.executionService.execute(command, {
         sessionId,
         origin: 'internal'

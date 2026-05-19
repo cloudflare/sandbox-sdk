@@ -43,6 +43,7 @@ import {
   getEnvString,
   logCanonicalEvent,
   partitionEnvVars,
+  SESSIONLESS_SESSION_ID,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -175,7 +176,6 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
-const SESSIONLESS_SESSION_ID = 'none';
 
 /**
  * Calculate the optimal number of parts for multipart upload/download
@@ -3507,32 +3507,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
     const session = this.getProcessSessionBinding(sessionId);
-    let response;
     try {
-      response = await this.client.processes.getProcess(id);
+      const response = await this.client.processes.getProcess(id);
+
+      if (!response.process) {
+        return null;
+      }
+
+      const processData = response.process;
+      return this.createProcessFromDTO(
+        {
+          id: processData.id,
+          pid: processData.pid,
+          command: processData.command,
+          status: processData.status,
+          startTime: processData.startTime,
+          endTime: processData.endTime,
+          exitCode: processData.exitCode
+        },
+        session
+      );
     } catch (error) {
       if (error instanceof ProcessNotFoundError) {
         return null;
       }
       throw error;
     }
-    if (!response.process) {
-      return null;
-    }
-
-    const processData = response.process;
-    return this.createProcessFromDTO(
-      {
-        id: processData.id,
-        pid: processData.pid,
-        command: processData.command,
-        status: processData.status,
-        startTime: processData.startTime,
-        endTime: processData.endTime,
-        exitCode: processData.exitCode
-      },
-      session
-    );
   }
 
   async killProcess(
