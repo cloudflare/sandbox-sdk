@@ -15,6 +15,7 @@ import type {
   ExecutionSession,
   FileEncoding,
   ISandbox,
+  ListFilesOptions,
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
@@ -1032,16 +1033,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ? this.defaultSession
       : null;
 
+    // Invalidate in-memory state before the storage writes so that any
+    // concurrent ensureDefaultSession() call sees the new generation and
+    // does not race to restore the session we are about to delete.
     if (!enableDefaultSession) {
       this.containerGeneration++;
       this.defaultSession = null;
       this.defaultSessionInit = null;
     }
 
-    if (previousDefaultSession) {
-      await this.client.utils.deleteSession(previousDefaultSession);
-    }
-
+    // Persist to storage before the best-effort container call. This
+    // ensures a consistent durable state even if deleteSession throws.
     if (!enableDefaultSession) {
       await this.ctx.storage.delete('defaultSession');
     }
@@ -1049,6 +1051,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
     this.enableDefaultSession = enableDefaultSession;
     this.hasStoredEnableDefaultSession = true;
+
+    // Best-effort: delete the container-side session. The session will
+    // eventually expire on its own; failure here is non-fatal.
+    if (previousDefaultSession) {
+      await this.client.utils
+        .deleteSession(previousDefaultSession)
+        .catch((error: unknown) => {
+          this.logger.warn('Failed to delete previous default session', {
+            sessionId: previousDefaultSession,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+    }
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -2619,7 +2634,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async resolveExecution(
     explicitSessionId?: string
   ): Promise<SandboxExecutionContext> {
-    if (explicitSessionId) {
+    if (explicitSessionId !== undefined) {
+      if (explicitSessionId.trim().length === 0) {
+        throw new Error('sessionId must not be empty or whitespace');
+      }
+
       return { kind: 'session', sessionId: explicitSessionId };
     }
 
@@ -2652,7 +2671,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private getProcessSessionBinding(
     explicitSessionId?: string
   ): string | undefined {
-    if (explicitSessionId) {
+    if (explicitSessionId !== undefined) {
+      if (explicitSessionId.trim().length === 0) {
+        throw new Error('sessionId must not be empty or whitespace');
+      }
+
       return explicitSessionId;
     }
 
@@ -2724,6 +2747,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Execute an infrastructure command (backup, mount, env setup, etc.)
    * tagged with origin: 'internal' so logging demotes it to debug level.
+   *
+   * Deliberately uses SESSIONLESS_SESSION_ID rather than the default session:
+   * infrastructure commands are atomic and stateless, so they don't need a
+   * persistent shell, and this avoids creating a default session as a side
+   * effect of internal operations.
    */
   private async execInternal(command: string): Promise<ExecResult> {
     return this.execWithSession(command, SESSIONLESS_SESSION_ID, {
@@ -3581,7 +3609,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const context = await this.resolveExecution();
+    const context = await this.resolveExecution(options?.sessionId);
     const session = this.serializeExecutionContext(context);
     const executionOptions = this.buildExecutionRequestOptions(session, {
       timeout: options?.timeout,
@@ -3754,11 +3782,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.readFileStream(path, session);
   }
 
-  async listFiles(
-    path: string,
-    options?: { recursive?: boolean; includeHidden?: boolean }
-  ) {
-    const context = await this.resolveExecution();
+  async listFiles(path: string, options?: ListFilesOptions) {
+    const context = await this.resolveExecution(options?.sessionId);
     const session = this.serializeExecutionContext(context);
     return this.client.files.listFiles(path, session, options);
   }

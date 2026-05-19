@@ -194,14 +194,71 @@ describe('ProcessService', () => {
         })
       );
 
-      // Verify process was stored
-      expect(mockProcessStore.create).toHaveBeenCalledWith(
+      // Verify process is initially stored without a commandHandle. The
+      // authoritative handle is attached only after ExecutionService returns.
+      const createdRecord = mocked(mockProcessStore.create).mock.calls[0]?.[0];
+      expect(createdRecord).toMatchObject({
+        command: 'sleep 10',
+        status: 'running'
+      });
+      expect(createdRecord?.commandHandle).toBeUndefined();
+
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        result.success ? result.data.id : expect.any(String),
         expect.objectContaining({
-          command: 'sleep 10',
-          status: 'running',
-          commandHandle: expect.objectContaining({
-            sessionId: 'session-123'
-          })
+          commandHandle: {
+            sessionId: 'session-123',
+            commandId: result.success ? result.data.id : expect.any(String)
+          }
+        })
+      );
+    });
+
+    it('should preserve the sessionless command handle for background processes', async () => {
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) =>
+          ({
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: 'none',
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          }) as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: {
+              sessionId: string;
+              commandId: string;
+              pid?: number;
+            };
+          }>
+      );
+
+      const result = await processService.startProcess('sleep 10', {});
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.commandHandle).toEqual({
+          sessionId: 'none',
+          commandId: result.data.id,
+          pid: 4321
+        });
+      }
+
+      const createdRecord = mocked(mockProcessStore.create).mock.calls[0]?.[0];
+      expect(createdRecord?.commandHandle).toBeUndefined();
+
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        result.success ? result.data.id : expect.any(String),
+        expect.objectContaining({
+          commandHandle: {
+            sessionId: 'none',
+            commandId: result.success ? result.data.id : expect.any(String),
+            pid: 4321
+          }
         })
       );
     });

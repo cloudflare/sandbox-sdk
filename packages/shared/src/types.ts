@@ -394,6 +394,15 @@ export interface LogEvent {
 
 export interface StreamOptions extends BaseExecOptions {
   /**
+   * Optional session ID to run the streaming command in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   * Pass `SESSIONLESS_SESSION_ID` to force sessionless execution for this
+   * command.
+   */
+  sessionId?: string;
+
+  /**
    * Buffer size for streaming output
    */
   bufferSize?: number;
@@ -439,6 +448,13 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
+/**
+ * Special session ID that forces a command or operation to run without a
+ * persistent shell session.
+ *
+ * Pass this as `sessionId` on supported APIs to opt a single operation into
+ * sessionless execution even when default sessions are enabled.
+ */
 export const SESSIONLESS_SESSION_ID = 'none';
 
 export type SandboxTransport = 'http' | 'websocket' | 'rpc';
@@ -466,6 +482,19 @@ export interface SandboxOptions {
    */
   keepAlive?: boolean;
 
+  /**
+   * When true (the default), the first implicit operation automatically creates
+   * and reuses a persistent default shell session. Set to false to run all
+   * implicit operations sessionlessly — each command spawns a fresh process
+   * with no shared shell state.
+   *
+   * This value is persisted in Durable Object storage; changing it via
+   * {@link Sandbox.setEnableDefaultSession} disables/recreates the default
+   * session at runtime. Explicit `sessionId` arguments always take precedence
+   * regardless of this setting.
+   *
+   * Default: true
+   */
   enableDefaultSession?: boolean;
 
   /**
@@ -682,6 +711,14 @@ export interface FileInfo {
 export interface ListFilesOptions {
   recursive?: boolean;
   includeHidden?: boolean;
+  /**
+   * Optional session ID used to resolve relative paths and execution context.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   * Pass `SESSIONLESS_SESSION_ID` to force sessionless execution for this
+   * operation.
+   */
+  sessionId?: string;
 }
 
 export interface ListFilesResult {
@@ -1386,6 +1423,7 @@ export interface ISandbox {
 
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
+  setEnableDefaultSession(enableDefaultSession: boolean): Promise<void>;
 
   // Bucket mounting operations
   mountBucket(

@@ -132,6 +132,9 @@ export class ExecutionService {
     const target = this.resolveTarget(options.sessionId);
 
     if (target.kind === 'session') {
+      // For session-backed execution, cwd is managed by the session shell and
+      // passed as a one-time `cd` via withSession(). Inner calls must NOT
+      // inherit the outer cwd or they would double-apply it.
       return this.sessionManager.withSession(
         target.sessionId,
         (exec) =>
@@ -146,6 +149,9 @@ export class ExecutionService {
         options.cwd
       );
     }
+    // For sessionless execution, there is no persistent shell state, so the
+    // outer cwd must flow through to each spawned process (inheritOuterCwd
+    // defaults to true). Inner calls can still override it individually.
 
     try {
       const result = await fn((command, execOptions) =>
@@ -228,6 +234,13 @@ export class ExecutionService {
   private canonicalizeExecutionSessionId(sessionId?: string): string {
     if (sessionId && sessionId.trim().length > 0) {
       return sessionId;
+    }
+
+    if (sessionId !== undefined && sessionId.trim().length === 0) {
+      this.logger.warn(
+        'Session ID contains only whitespace; falling back to default session',
+        { provided: JSON.stringify(sessionId) }
+      );
     }
 
     return DEFAULT_SESSION_ID;
@@ -393,6 +406,10 @@ export class ExecutionService {
         spawned,
         options.timeoutMs
       );
+      // Wait for pipe draining AFTER the process exits. When the process
+      // terminates (or is killed on timeout) the OS closes its write end of
+      // the pipe, which signals EOF to the readers. Awaiting here ensures all
+      // buffered output is delivered before the 'complete' event fires.
       await Promise.all([stdoutPromise, stderrPromise]);
 
       if (completion.timedOut) {
@@ -507,11 +524,29 @@ export class ExecutionService {
     try {
       process.kill(-pid, signal);
       return;
-    } catch {}
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ESRCH') {
+        this.logger.warn('Unexpected error sending signal to process group', {
+          pid,
+          signal,
+          code
+        });
+      }
+    }
 
     try {
       process.kill(pid, signal);
-    } catch {}
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ESRCH') {
+        this.logger.warn('Unexpected error sending signal to process', {
+          pid,
+          signal,
+          code
+        });
+      }
+    }
   }
 
   private async waitForProcessTreeExit(
