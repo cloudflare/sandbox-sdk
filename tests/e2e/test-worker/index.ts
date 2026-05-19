@@ -517,6 +517,20 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      if (url.pathname === '/api/state' && request.method === 'GET') {
+        const result = await sandbox.getState();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/placement-id' && request.method === 'GET') {
+        const placementId = await sandbox.getContainerPlacementId();
+        return new Response(JSON.stringify({ placementId }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       if (
         url.pathname === '/api/session/default-policy' &&
         request.method === 'POST'
