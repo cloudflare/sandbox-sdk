@@ -465,11 +465,18 @@ export function getSandbox<T extends Sandbox<any>>(
       proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub),
     // Client-side proxy for desktop operations. Each method call is dispatched
-    // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
+    // to the DO's callDesktop() method, avoiding RPC pipelining through getters
+    // which are broken when using the vite-plugin.
     desktop: new Proxy({} as Desktop, {
       get(_, method) {
         if (typeof method !== 'string' || method === 'then') return undefined;
         return (...args: unknown[]) => stub.callDesktop(method, args);
+      }
+    }),
+    tunnels: new Proxy({} as TunnelsHandler, {
+      get: (_, method) => {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return (...args: unknown[]) => stub.callTunnels(method, args);
       }
     })
   };
@@ -676,7 +683,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Dispatch method for desktop operations.
    * Called by the client-side proxy created in getSandbox() to provide
    * the `sandbox.desktop.status()` API without relying on RPC pipelining
-   * through property getters.
+   * through property getters which is broken when using vite-plugin.
    */
   async callDesktop(method: string, args: unknown[]): Promise<unknown> {
     if (!Sandbox.DESKTOP_METHODS.has(method)) {
@@ -685,7 +692,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const client = this.client.desktop;
     const fn = client[method as keyof typeof client];
     if (typeof fn !== 'function') {
-      throw new Error(`Unknown desktop method: ${method}`);
+      throw new Error(`sandbox.desktop missing method: ${method}`);
+    }
+    return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
+
+  /**
+   * Dispatch method for tunnel operations.
+   * Called by the client-side proxy created in getSandbox() to provide
+   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * through property getters which is broken when using vite-plugin.
+   */
+  async callTunnels(method: string, args: unknown[]): Promise<unknown> {
+    if (new Set(['get', 'list', 'destroy']).has(method)) {
+      throw new Error(`Unknown tunnels method: ${method}`);
+    }
+    const client = this.tunnels;
+    const fn = client[method as keyof typeof client];
+    if (typeof fn !== 'function') {
+      throw new Error(`sandbox.tunnels missing method: ${method}`);
     }
     return (fn as (...a: unknown[]) => unknown).apply(client, args);
   }

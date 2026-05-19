@@ -9,6 +9,7 @@
  * separately against the container.
  */
 
+import { RpcTarget } from 'cloudflare:workers';
 import type { Logger, SandboxTunnelsAPI, TunnelInfo } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
 import { SandboxSecurityError, validatePort } from '../security';
@@ -52,6 +53,51 @@ export interface TunnelsHandler {
   get(port: number): Promise<TunnelInfo>;
   list(): Promise<TunnelInfo[]>;
   destroy(portOrInfo: number | TunnelInfo): Promise<void>;
+}
+
+/**
+ * Concrete `TunnelsHandler` implementation that extends `RpcTarget` so
+ * it can cross the Workers RPC boundary. The Sandbox DO is reachable
+ * from Workers via Workers RPC (`stub.tunnels.get(port)`); only
+ * `RpcTarget` instances are passed by reference across that boundary,
+ * so a plain `{ get, list, destroy }` object returned from the getter
+ * would fail with "The RPC receiver does not implement the method ...".
+ *
+ * The class is a thin shell — the heavy lifting (per-port lock,
+ * storage transactions, log events) lives in the closures inside
+ * `createTunnelsHandler`. We just forward to them here so the wrapper
+ * stays out of the way of the existing tests.
+ */
+class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
+  // ECMAScript private fields (not TS `private`) so they are not
+  // observable as own properties on the RPC receiver and cannot be
+  // invoked as `tunnels.#get(...)` from a Worker.
+  readonly #get: (port: number) => Promise<TunnelInfo>;
+  readonly #list: () => Promise<TunnelInfo[]>;
+  readonly #destroy: (portOrInfo: number | TunnelInfo) => Promise<void>;
+
+  constructor(
+    getFn: (port: number) => Promise<TunnelInfo>,
+    listFn: () => Promise<TunnelInfo[]>,
+    destroyFn: (portOrInfo: number | TunnelInfo) => Promise<void>
+  ) {
+    super();
+    this.#get = getFn;
+    this.#list = listFn;
+    this.#destroy = destroyFn;
+  }
+
+  get(port: number): Promise<TunnelInfo> {
+    return this.#get(port);
+  }
+
+  list(): Promise<TunnelInfo[]> {
+    return this.#list();
+  }
+
+  destroy(portOrInfo: number | TunnelInfo): Promise<void> {
+    return this.#destroy(portOrInfo);
+  }
 }
 
 /**
@@ -262,8 +308,16 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
     });
   };
 
+  // Wrap the public methods in an RpcTarget subclass so the object
+  // survives the Workers RPC boundary when returned from the Sandbox
+  // DO's `tunnels` getter. A plain object literal with methods would
+  // fail with "The RPC receiver does not implement the method ..."
+  // on the Worker side because only RpcTarget instances are passed
+  // by reference across Workers RPC.
+  const tunnels: TunnelsHandler = new TunnelsRpcTarget(get, list, destroy);
+
   return {
-    tunnels: { get, list, destroy },
+    tunnels,
     handleTunnelExit
   };
 }
