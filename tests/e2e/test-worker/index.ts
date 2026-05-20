@@ -960,6 +960,53 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Port exposure status (ONLY works with sandbox - sessions don't expose ports)
+      if (url.pathname === '/api/exposed-ports' && request.method === 'GET') {
+        if (sessionId) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Port exposure not supported for explicit sessions. Use default sandbox.'
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        const hostname = url.hostname + (url.port ? `:${url.port}` : '');
+        const ports = await sandbox.getExposedPorts(hostname);
+        return new Response(JSON.stringify(ports), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/exposed-ports/') &&
+        request.method === 'GET'
+      ) {
+        if (sessionId) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Port exposure not supported for explicit sessions. Use default sandbox.'
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        const pathParts = url.pathname.split('/');
+        const port = parseInt(pathParts[3], 10);
+        if (!Number.isNaN(port)) {
+          const exposed = await sandbox.isPortExposed(port);
+          return new Response(JSON.stringify({ exposed, port }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
       // Port unexpose (ONLY works with sandbox - sessions don't expose ports)
       if (
         url.pathname.startsWith('/api/exposed-ports/') &&
