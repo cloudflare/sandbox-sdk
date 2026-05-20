@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import { SESSIONLESS_SESSION_ID } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
@@ -16,6 +15,8 @@ type SessionExec = (
     origin?: 'user' | 'internal';
   }
 ) => Promise<RawExecResult>;
+
+const SESSIONLESS_SESSION_ID = 'none';
 
 const mockLogger = {
   info: vi.fn(),

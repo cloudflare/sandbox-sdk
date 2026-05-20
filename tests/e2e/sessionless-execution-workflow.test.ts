@@ -2,7 +2,6 @@ import {
   type ExecEvent,
   type ExecResult,
   type ListFilesResult,
-  SESSIONLESS_SESSION_ID,
   type SessionCreateResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
@@ -12,20 +11,6 @@ import {
   createTestSandbox,
   type TestSandbox
 } from './helpers/global-sandbox';
-
-async function setDefaultSessionPolicy(
-  workerUrl: string,
-  headers: Record<string, string>,
-  enableDefaultSession: boolean
-): Promise<void> {
-  const response = await fetch(`${workerUrl}/api/session/default-policy`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ enableDefaultSession })
-  });
-
-  expect(response.status).toBe(200);
-}
 
 async function executeCommand(
   workerUrl: string,
@@ -78,7 +63,10 @@ describe('Sessionless Execution Workflow', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers();
+    headers = {
+      ...sandbox.headers(),
+      'X-Sandbox-Enable-Default-Session': 'false'
+    };
   }, 120000);
 
   afterAll(async () => {
@@ -87,8 +75,6 @@ describe('Sessionless Execution Workflow', () => {
   }, 120000);
 
   test('should run implicit exec calls without shared shell state when default sessions are disabled', async () => {
-    await setDefaultSessionPolicy(workerUrl, headers, false);
-
     const testDir = sandbox!.uniquePath('sessionless-state');
     const first = await executeCommand(
       workerUrl,
@@ -109,27 +95,22 @@ describe('Sessionless Execution Workflow', () => {
     const [marker, cwd] = second.stdout.trim().split('|');
     expect(marker).toBe('missing');
     expect(cwd).not.toBe(testDir);
-
-    await setDefaultSessionPolicy(workerUrl, headers, true);
   }, 90000);
 
-  test('should let execStream opt into sessionless execution without disturbing the default session', async () => {
-    await setDefaultSessionPolicy(workerUrl, headers, true);
-
-    const before = await executeCommand(
+  test('should stream implicit commands without a persistent shell when default sessions are disabled', async () => {
+    const setup = await executeCommand(
       workerUrl,
       headers,
-      `export SESSIONLESS_OVERRIDE_MARKER=default-session-value && printf '%s' "$SESSIONLESS_OVERRIDE_MARKER"`
+      `export SESSIONLESS_STREAM_MARKER=hidden && printf '%s' "$SESSIONLESS_STREAM_MARKER"`
     );
-    expect(before.success).toBe(true);
-    expect(before.stdout).toBe('default-session-value');
+    expect(setup.success).toBe(true);
+    expect(setup.stdout).toBe('hidden');
 
     const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `printf '%s' "\${SESSIONLESS_OVERRIDE_MARKER:-missing}"`,
-        sessionId: SESSIONLESS_SESSION_ID
+        command: `printf '%s' "\${SESSIONLESS_STREAM_MARKER:-missing}"`
       })
     });
     expect(streamResponse.status).toBe(200);
@@ -145,17 +126,9 @@ describe('Sessionless Execution Workflow', () => {
     expect(stdout).toBe('missing');
     expect(complete).toBeDefined();
     expect(error).toBeUndefined();
-
-    const after = await executeCommand(
-      workerUrl,
-      headers,
-      `printf '%s' "$SESSIONLESS_OVERRIDE_MARKER"`
-    );
-    expect(after.success).toBe(true);
-    expect(after.stdout).toBe('default-session-value');
   }, 90000);
 
-  test('should resolve relative listFiles paths using the explicit sessionId option', async () => {
+  test('should reject explicit session IDs when default sessions are disabled', async () => {
     const testDir = sandbox!.uniquePath('session-list-files');
     const filePath = `${testDir}/session-only.txt`;
 
@@ -189,25 +162,25 @@ describe('Sessionless Execution Workflow', () => {
         options: { sessionId: sessionData.sessionId }
       })
     });
-    expect(scopedListResponse.status).toBe(200);
-    const scopedList = (await scopedListResponse.json()) as ListFilesResult;
-    expect(
-      scopedList.files.some((file) => file.name === 'session-only.txt')
-    ).toBe(true);
+    expect(scopedListResponse.status).toBe(400);
+    const scopedListError = (await scopedListResponse.json()) as {
+      error: string;
+    };
+    expect(scopedListError.error).toContain(
+      'Explicit sessionId is not supported when enableDefaultSession is false'
+    );
 
-    const sessionlessListResponse = await fetch(`${workerUrl}/api/list-files`, {
+    const implicitListResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '.',
-        options: { sessionId: SESSIONLESS_SESSION_ID }
+        path: testDir
       })
     });
-    expect(sessionlessListResponse.status).toBe(200);
-    const sessionlessList =
-      (await sessionlessListResponse.json()) as ListFilesResult;
+    expect(implicitListResponse.status).toBe(200);
+    const implicitList = (await implicitListResponse.json()) as ListFilesResult;
     expect(
-      sessionlessList.files.some((file) => file.name === 'session-only.txt')
-    ).toBe(false);
+      implicitList.files.some((file) => file.name === 'session-only.txt')
+    ).toBe(true);
   }, 90000);
 });

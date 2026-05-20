@@ -55,6 +55,8 @@ const mockContext: RequestContext = {
   sessionId: 'session-456'
 };
 
+const SESSIONLESS_SESSION_ID = 'none';
+
 describe('FileHandler', () => {
   let fileHandler: FileHandler;
 
@@ -269,7 +271,7 @@ describe('FileHandler', () => {
     it('should delete file successfully', async () => {
       const deleteFileData = {
         path: '/tmp/delete-me.txt',
-        sessionId: 'none'
+        sessionId: SESSIONLESS_SESSION_ID
       };
 
       (mockFileService.deleteFile as any).mockResolvedValue({
@@ -292,7 +294,7 @@ describe('FileHandler', () => {
 
       expect(mockFileService.deleteFile).toHaveBeenCalledWith(
         '/tmp/delete-me.txt',
-        'none'
+        SESSIONLESS_SESSION_ID
       );
     });
 
@@ -353,7 +355,7 @@ describe('FileHandler', () => {
       const renameFileData = {
         oldPath: '/tmp/old-name.txt',
         newPath: '/tmp/new-name.txt',
-        sessionId: 'none'
+        sessionId: SESSIONLESS_SESSION_ID
       };
 
       (mockFileService.renameFile as any).mockResolvedValue({
@@ -378,7 +380,7 @@ describe('FileHandler', () => {
       expect(mockFileService.renameFile).toHaveBeenCalledWith(
         '/tmp/old-name.txt',
         '/tmp/new-name.txt',
-        'none'
+        SESSIONLESS_SESSION_ID
       );
     });
 
@@ -444,7 +446,7 @@ describe('FileHandler', () => {
       const moveFileData = {
         sourcePath: '/tmp/source.txt',
         destinationPath: '/tmp/destination.txt',
-        sessionId: 'none'
+        sessionId: SESSIONLESS_SESSION_ID
       };
 
       (mockFileService.moveFile as any).mockResolvedValue({
@@ -469,7 +471,7 @@ describe('FileHandler', () => {
       expect(mockFileService.moveFile).toHaveBeenCalledWith(
         '/tmp/source.txt',
         '/tmp/destination.txt',
-        'none'
+        SESSIONLESS_SESSION_ID
       );
     });
 
@@ -535,7 +537,7 @@ describe('FileHandler', () => {
       const mkdirData = {
         path: '/tmp/new-directory',
         recursive: true,
-        sessionId: 'none'
+        sessionId: SESSIONLESS_SESSION_ID
       };
 
       (mockFileService.createDirectory as any).mockResolvedValue({
@@ -562,7 +564,7 @@ describe('FileHandler', () => {
         {
           recursive: true
         },
-        'none'
+        SESSIONLESS_SESSION_ID
       );
     });
 
