@@ -56,7 +56,10 @@ export type {
   SandboxTransport,
   SessionOptions,
   StreamOptions,
+  NamedTunnelInfo,
+  QuickTunnelInfo,
   TunnelInfo,
+  TunnelOptions,
   WaitForLogResult,
   WaitForPortOptions,
   WatchOptions

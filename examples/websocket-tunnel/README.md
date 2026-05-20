@@ -11,7 +11,9 @@ This example provides a simple demo that loads a web page with two buttons.
 
 The worker will establish a sandbox running a small web server with a WebSocket server.
 
-The worker will create a new tunnel using `sandbox.tunnels.get()`.
+By default the worker creates a **quick tunnel** via `sandbox.tunnels.get(port)`, which hands back a fresh `*.trycloudflare.com` URL on every container restart — zero configuration needed.
+
+If `TUNNEL_NAME`, `CLOUDFLARE_ZONE_ID`, and the `CLOUDFLARE_API_TOKEN` secret are all set, the worker uses a **named tunnel** instead: `sandbox.tunnels.get(port, { name: TUNNEL_NAME })`. The tunnel binds the stable hostname `<TUNNEL_NAME>.<zone>` and survives container restarts (the SDK rediscovers the tagged Cloudflare resources on re-run).
 
 ## Setup
 
@@ -28,6 +30,20 @@ npm run build
 cd examples/websocket-tunnel # if you're not already here
 npm run dev
 ```
+
+### Optional: named tunnel under your zone
+
+To bind the demo to a stable hostname instead of `*.trycloudflare.com`:
+
+1. Pick a hostname label (e.g. `ws-demo`) and a zone you control (e.g. `example.com`). The resulting hostname will be `ws-demo.example.com`.
+2. Edit `wrangler.jsonc` and set `CLOUDFLARE_ZONE_ID` and `TUNNEL_NAME` under `vars` (the file has commented-out placeholders).
+3. Create a Cloudflare API token with **Account → Cloudflare Tunnel → Edit** and **Zone → DNS → Edit** permissions, then stash it as a secret:
+
+```bash
+npx wrangler secret put CLOUDFLARE_API_TOKEN
+```
+
+Re-run `npm run dev` and the demo will use the named tunnel. Universal SSL only covers `<label>.<zone>`, so the label must be a single DNS label (no dots).
 
 The first run will build the Docker container (2–3 minutes). Subsequent runs are much faster.
 
