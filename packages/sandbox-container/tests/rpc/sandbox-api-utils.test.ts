@@ -94,9 +94,9 @@ describe('SandboxControlAPI utils.createSession', () => {
     }
 
     expect(caught).toBeDefined();
-    const err = caught as {
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as Error & {
       code?: string;
-      message?: string;
       details?: Record<string, unknown>;
     };
     expect(err.code).toBe(ErrorCode.SESSION_ALREADY_EXISTS);
@@ -128,7 +128,11 @@ describe('SandboxControlAPI utils.createSession', () => {
     }
 
     expect(caught).toBeDefined();
-    const err = caught as { code?: string; details?: Record<string, unknown> };
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as Error & {
+      code?: string;
+      details?: Record<string, unknown>;
+    };
     expect(err.code).toBe(ErrorCode.UNKNOWN_ERROR);
     expect(err.details).toEqual({ foo: 'bar' });
     expect(err.details?.containerPlacementId).toBeUndefined();

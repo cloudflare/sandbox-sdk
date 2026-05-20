@@ -74,7 +74,8 @@ export interface SandboxAPIDeps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any ServiceResult variant
 function throwIfError(result: ServiceResult<any, any>): void {
   if (!result.success) {
-    throw result.error;
+    const { code, message, details } = result.error;
+    throw Object.assign(new Error(message), { code, details });
   }
 }
 
@@ -1015,11 +1016,14 @@ class UtilsRPCAPI extends RpcTarget {
     ) {
       // Mirror the HTTP handler: surface placement ID on the duplicate-create
       // path so a restarted DO can capture it from the idempotent retry.
-      result.error.details = {
-        ...result.error.details,
-        containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
-      };
-      throw result.error;
+      const { code, message, details } = result.error;
+      throw Object.assign(new Error(message), {
+        code,
+        details: {
+          ...details,
+          containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
+        }
+      });
     }
     throwIfError(result);
     return {
