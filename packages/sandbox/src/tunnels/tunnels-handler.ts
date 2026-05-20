@@ -26,12 +26,12 @@ import {
 } from '../security';
 import {
   createTunnel,
-  deleteDnsRecord,
+  deleteDNSRecord,
   deleteTunnel,
   findTunnelByName,
   getTunnelToken,
   getZoneName,
-  upsertCname
+  upsertCNAME
 } from './cloudflare-api';
 
 /** Subset of the RPC client this handler depends on. */
@@ -397,7 +397,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
 
     // Step 3: upsert the proxied CNAME. Throws on conflict before any
     // container work happens.
-    const dnsResult = await upsertCname({
+    const dnsResult = await upsertCNAME({
       token: config.token,
       zoneId: config.zoneId,
       hostname,
@@ -502,7 +502,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         const fetcher = this.#host.fetcher;
         await Promise.allSettled([
           metaBefore.dnsRecordId
-            ? deleteDnsRecord({
+            ? deleteDNSRecord({
                 token: config.token,
                 zoneId: config.zoneId,
                 recordId: metaBefore.dnsRecordId,

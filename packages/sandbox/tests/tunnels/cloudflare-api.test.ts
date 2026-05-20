@@ -14,12 +14,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createTunnel,
-  deleteDnsRecord,
+  deleteDNSRecord,
   deleteTunnel,
   findTunnelByName,
   getTunnelToken,
   getZoneName,
-  upsertCname
+  upsertCNAME
 } from '../../src/tunnels/cloudflare-api';
 
 function jsonOk(body: unknown): Response {
@@ -247,7 +247,7 @@ describe('cloudflare-api > getZoneName', () => {
   });
 });
 
-describe('cloudflare-api > upsertCname', () => {
+describe('cloudflare-api > upsertCNAME', () => {
   const baseArgs = {
     token: 'tok',
     zoneId: 'zone-id',
@@ -264,7 +264,7 @@ describe('cloudflare-api > upsertCname', () => {
       .mockResolvedValueOnce(jsonOk([]))
       // create -> ok
       .mockResolvedValueOnce(jsonOk({ id: 'dns-id' }));
-    const result = await upsertCname({ ...baseArgs, fetcher });
+    const result = await upsertCNAME({ ...baseArgs, fetcher });
     expect(result.recordId).toBe('dns-id');
     expect(result.reused).toBe(false);
 
@@ -302,7 +302,7 @@ describe('cloudflare-api > upsertCname', () => {
         }
       ])
     );
-    const result = await upsertCname({ ...baseArgs, fetcher });
+    const result = await upsertCNAME({ ...baseArgs, fetcher });
     expect(result.recordId).toBe('dns-id');
     expect(result.reused).toBe(true);
     // Only the list call \u2014 no POST/PUT was made.
@@ -322,7 +322,7 @@ describe('cloudflare-api > upsertCname', () => {
         }
       ])
     );
-    await expect(upsertCname({ ...baseArgs, fetcher })).rejects.toThrow(
+    await expect(upsertCNAME({ ...baseArgs, fetcher })).rejects.toThrow(
       /already exists|owned/i
     );
     // The throw must not be followed by any mutation.
@@ -330,10 +330,10 @@ describe('cloudflare-api > upsertCname', () => {
   });
 });
 
-describe('cloudflare-api > deleteDnsRecord', () => {
+describe('cloudflare-api > deleteDNSRecord', () => {
   it('DELETEs the dns record id', async () => {
     const fetcher = vi.fn(async () => jsonOk({ id: 'dns-id' }));
-    await deleteDnsRecord({
+    await deleteDNSRecord({
       token: 'tok',
       zoneId: 'zone-id',
       recordId: 'dns-id',
@@ -351,7 +351,7 @@ describe('cloudflare-api > deleteDnsRecord', () => {
       jsonError({ success: false, errors: [{ code: 81044 }] }, 404)
     );
     await expect(
-      deleteDnsRecord({
+      deleteDNSRecord({
         token: 'tok',
         zoneId: 'zone-id',
         recordId: 'missing',

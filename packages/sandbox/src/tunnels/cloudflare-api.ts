@@ -1,11 +1,6 @@
 /**
  * Cloudflare API client for named-tunnel orchestration.
  *
- * Each export is a thin, focused wrapper over a single Cloudflare REST
- * endpoint. The wrappers exist to keep `tunnels-handler.ts` free of
- * URL strings and JSON munging, and to make every endpoint
- * individually mockable in unit tests via the injected `fetcher`.
- *
  * Design notes:
  *
  * - The Cloudflare API envelope is `{ success, result, errors }`. We
@@ -15,7 +10,7 @@
  * - Delete endpoints are idempotent from the caller's perspective:
  *   a 404 (already gone) resolves successfully so destroy() can run
  *   without special-casing.
- * - `upsertCname` is the most subtle wrapper: it lists existing
+ * - `upsertCNAME` is the most subtle wrapper: it lists existing
  *   records, reuses a matching one, and refuses to mutate a record
  *   whose content differs from what we want. This is the fence that
  *   stops two sandboxes from racing on the same hostname.
@@ -255,22 +250,22 @@ export async function getZoneName(args: GetZoneNameArgs): Promise<string> {
 // DNS records
 // ---------------------------------------------------------------------------
 
-export interface UpsertCnameArgs extends BaseArgs {
+export interface UpsertCNAMEArgs extends BaseArgs {
   zoneId: string;
   hostname: string;
   /** `<tunnel-id>.cfargotunnel.com`. */
   cnameTarget: string;
-  /** `sandbox-<sandbox-id>` \u2014 used both for tagging and reuse matching. */
+  /** `sandbox-<sandbox-id>` — used both for tagging and reuse matching. */
   comment: string;
 }
 
-export interface UpsertCnameResult {
+export interface UpsertCNAMEResult {
   recordId: string;
   /** True when an existing matching record was reused; false when created. */
   reused: boolean;
 }
 
-interface DnsRecordEntry {
+interface DNSRecordEntry {
   id: string;
   type: string;
   name: string;
@@ -279,15 +274,15 @@ interface DnsRecordEntry {
   proxied?: boolean;
 }
 
-export async function upsertCname(
-  args: UpsertCnameArgs
-): Promise<UpsertCnameResult> {
+export async function upsertCNAME(
+  args: UpsertCNAMEArgs
+): Promise<UpsertCNAMEResult> {
   const fetcher = args.fetcher ?? fetch;
   const listUrl =
     `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records` +
     `?type=CNAME&name=${encodeURIComponent(args.hostname)}`;
   const records =
-    (await cfRequest<DnsRecordEntry[]>(listUrl, args.token, fetcher)) ?? [];
+    (await cfRequest<DNSRecordEntry[]>(listUrl, args.token, fetcher)) ?? [];
 
   const existing = records.find(
     (r) => r.type === 'CNAME' && r.name === args.hostname
@@ -327,13 +322,13 @@ export async function upsertCname(
   return { recordId: createResult.id, reused: false };
 }
 
-export interface DeleteDnsRecordArgs extends BaseArgs {
+export interface DeleteDNSRecordArgs extends BaseArgs {
   zoneId: string;
   recordId: string;
 }
 
-export async function deleteDnsRecord(
-  args: DeleteDnsRecordArgs
+export async function deleteDNSRecord(
+  args: DeleteDNSRecordArgs
 ): Promise<void> {
   const fetcher = args.fetcher ?? fetch;
   await cfRequest<unknown>(
