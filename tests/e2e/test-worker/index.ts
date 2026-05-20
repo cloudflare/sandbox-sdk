@@ -1404,6 +1404,17 @@ console.log('Terminal server on port ' + port);
         }
       }
 
+      if (
+        error instanceof Error &&
+        error.message ===
+          'Explicit sessionId is not supported when enableDefaultSession is false'
+      ) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       return new Response(
         JSON.stringify({
           error: error instanceof Error ? error.message : 'Unknown error'
