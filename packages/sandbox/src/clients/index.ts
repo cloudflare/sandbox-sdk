@@ -79,14 +79,6 @@ export type {
 export type { GitCheckoutRequest, GitCheckoutResult } from './git-client';
 // Interpreter client types
 export type { ExecutionCallbacks } from './interpreter-client';
-// Port client types
-export type {
-  ExposePortRequest,
-  PortCloseResult,
-  PortExposeResult,
-  PortListResult,
-  UnexposePortRequest
-} from './port-client';
 // Process client types
 export type {
   ProcessCleanupResult,

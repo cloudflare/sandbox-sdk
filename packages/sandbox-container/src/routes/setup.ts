@@ -110,31 +110,10 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
-  // Port management routes
-  router.register({
-    method: 'POST',
-    path: '/api/expose-port',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
+  // Port readiness route
   router.register({
     method: 'POST',
     path: '/api/port-watch',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'GET',
-    path: '/api/exposed-ports',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'DELETE',
-    path: '/api/exposed-ports/{port}',
     handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
     middleware: [container.get('loggingMiddleware')]
   });
@@ -242,35 +221,6 @@ export function setupRoutes(router: Router, container: Container): void {
     path: '/api/execute/code',
     handler: async (req, ctx) =>
       container.get('interpreterHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  // Proxy routes (catch-all for /proxy/*)
-  router.register({
-    method: 'GET',
-    path: '/proxy/{port}',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'POST',
-    path: '/proxy/{port}',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'PUT',
-    path: '/proxy/{port}',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'DELETE',
-    path: '/proxy/{port}',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
     middleware: [container.get('loggingMiddleware')]
   });
 
