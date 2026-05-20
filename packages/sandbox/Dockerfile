@@ -334,14 +334,19 @@ ARG CLOUDFLARED_VERSION
 ARG TARGETARCH
 
 # Inject the host's extra CA bundle when building behind a TLS-intercepting
-# proxy (e.g. Cloudflare WARP). Must run *before* apk so the package
-# download itself can validate dl-cdn.alpinelinux.org. No-op when the secret
-# isn't passed.
+# proxy (e.g. Cloudflare WARP). Copies the cert to both the live bundle and
+# /usr/local/share/ca-certificates/ so that update-ca-certificates (run after
+# apk) does not discard it. No-op when the secret isn't passed.
 RUN --mount=type=secret,id=wrangler_ca \
     if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
         cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt; \
+        mkdir -p /usr/local/share/ca-certificates && \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt; \
     fi && \
-    apk add --no-cache git ca-certificates file
+    apk add --no-cache git ca-certificates file && \
+    if [ -f /usr/local/share/ca-certificates/wrangler-dev-ca.crt ]; then \
+        update-ca-certificates; \
+    fi
 
 WORKDIR /build
 RUN git clone --depth 1 --branch ${CLOUDFLARED_VERSION} \
