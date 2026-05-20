@@ -22,21 +22,17 @@ export interface TunnelManagerOptions {
   /** Local port to expose. */
   port: number;
   /**
-   * Tunnel mode.
-   *
-   * - `'quick'` — spawn `cloudflared tunnel --url http://localhost:<port>`,
-   *   scrape the `*.trycloudflare.com` URL from stderr, and resolve once
-   *   `/ready` reports a live connection.
-   * - `'named'` — spawn `cloudflared tunnel run --token <token> --url`
-   *   `http://localhost:<port>`. The hostname is owned by the SDK; the
-   *   manager only confirms readiness via `/ready`.
-   *
-   * Defaults to `'quick'` for backward compatibility.
-   */
-  mode?: 'quick' | 'named';
-  /**
    * Opaque cloudflared `--token` from the Cloudflare Tunnel API.
-   * Required when `mode === 'named'`. Never logged.
+   *
+   * Presence selects the tunnel mode:
+   *   - omitted → quick tunnel (`cloudflared tunnel --url`), scrape
+   *     `*.trycloudflare.com` URL from stderr, resolve once `/ready`
+   *     reports a live connection.
+   *   - present → named tunnel (`cloudflared tunnel run --token <T> --url`),
+   *     hostname is owned by the SDK; the manager only confirms readiness.
+   *
+   * The token is masked when logged — only the first five characters
+   * survive into log lines, the rest become `*`s.
    */
   token?: string;
   /** Optional path to the cloudflared binary. Defaults to `cloudflared`. */
@@ -64,17 +60,10 @@ export interface TunnelManagerOptions {
 export interface TunnelStartResult {
   /**
    * Public URL the tunnel resolves to, parsed from the cloudflared banner.
-   * Only populated for `'quick'` mode; `undefined` for `'named'` mode,
-   * where the hostname lives in the SDK layer.
+   * Only populated for quick tunnels; `undefined` for named tunnels where
+   * the hostname lives in the SDK layer.
    */
   url?: string;
-  /** PID of the cloudflared child process. */
-  pid: number;
-}
-
-export interface TunnelStartResult {
-  /** Public URL the tunnel resolves to, parsed from the cloudflared banner. */
-  url: string;
   /** PID of the cloudflared child process. */
   pid: number;
 }
@@ -106,6 +95,17 @@ function isEnoent(err: unknown): boolean {
   return e.code === 'ENOENT' || e.errno === -2;
 }
 
+/**
+ * Mask a cloudflared `--token` value for logging. Keeps the first 5
+ * characters (enough to correlate against Cloudflare's dashboard token
+ * preview) and replaces the rest with `*` so the secret never lands in
+ * a log line in full.
+ */
+function maskToken(token: string): string {
+  if (token.length <= 5) return '*'.repeat(token.length);
+  return token.slice(0, 5) + '*'.repeat(token.length - 5);
+}
+
 export class TunnelManager {
   private readonly opts: TunnelManagerOptions;
   private readonly logger: Logger;
@@ -132,19 +132,19 @@ export class TunnelManager {
     if (this.proc) {
       throw new Error('TunnelManager: already started');
     }
-    const mode = this.opts.mode ?? 'quick';
-    if (mode === 'named' && !this.opts.token) {
-      throw new Error('TunnelManager: named mode requires a token');
-    }
+    const isNamed = this.opts.token !== undefined;
 
     const args = this.buildArgs();
-    // Never log the token. Quick mode has no token; for named mode we
-    // redact the value before logging.
-    const loggableArgs =
-      mode === 'named'
-        ? args.map((a, i) => (args[i - 1] === '--token' ? '<redacted>' : a))
-        : args;
-    this.logger.info('Spawning cloudflared', { mode, args: loggableArgs });
+    // Token presence selects the mode. When it's set we mask it in the
+    // log line: first 5 chars survive (useful for matching against a
+    // dashboard token preview), the rest become `*`s.
+    const loggableArgs = isNamed
+      ? args.map((a, i) => (args[i - 1] === '--token' ? maskToken(a) : a))
+      : args;
+    this.logger.info('Spawning cloudflared', {
+      mode: isNamed ? 'named' : 'quick',
+      args: loggableArgs
+    });
 
     const binary = this.opts.binaryPath ?? 'cloudflared';
     try {
@@ -243,12 +243,12 @@ export class TunnelManager {
 
   private buildArgs(): string[] {
     const localUrl = `http://localhost:${this.opts.port}`;
-    const mode = this.opts.mode ?? 'quick';
+    const token = this.opts.token;
     // Always attach a metrics server on an ephemeral port so we can poll
     // /ready for a stable readiness signal.
-    if (mode === 'named') {
-      // `tunnel run --token <T>` runs a named tunnel using config_src=cloudflare.
-      // The token already identifies the tunnel; `--url` overrides the local
+    if (token !== undefined) {
+      // Named tunnel: `tunnel run --token <T>` uses config_src=cloudflare.
+      // The token identifies the tunnel; `--url` overrides the local
       // forward address so we don't depend on the edge-side ingress config.
       return [
         'tunnel',
@@ -257,8 +257,7 @@ export class TunnelManager {
         '--no-autoupdate',
         'run',
         '--token',
-        // Non-null: validated at start() entry.
-        this.opts.token as string,
+        token,
         '--url',
         localUrl
       ];
@@ -351,7 +350,7 @@ export class TunnelManager {
    */
   private async waitForReady(timeoutMs: number): Promise<string | undefined> {
     const deadline = Date.now() + timeoutMs;
-    const mode = this.opts.mode ?? 'quick';
+    const isNamed = this.opts.token !== undefined;
 
     while (Date.now() < deadline) {
       if (this.exited) {
@@ -362,7 +361,7 @@ export class TunnelManager {
 
       const ready = await this.checkReady();
       if (ready) {
-        if (mode === 'named') return undefined;
+        if (isNamed) return undefined;
         if (this.quickUrl) return this.quickUrl;
       }
 

@@ -17,7 +17,7 @@ import {
   TunnelManager
 } from '../managers/tunnel-manager';
 
-export interface RunQuickTunnelOptions {
+export interface RunTunnelOptions {
   /** Override the readiness timeout. Forwarded to TunnelManager. */
   readyTimeoutMs?: number;
   /** Override the SIGTERM→SIGKILL grace period. Forwarded to TunnelManager. */
@@ -49,7 +49,7 @@ export class TunnelService {
   async runQuickTunnel(
     id: string,
     port: number,
-    options?: RunQuickTunnelOptions
+    options?: RunTunnelOptions
   ): Promise<ServiceResult<TunnelInfo>> {
     if (this.tunnels.has(id)) {
       return serviceError({
@@ -132,7 +132,7 @@ export class TunnelService {
     id: string,
     token: string,
     port: number,
-    options?: RunQuickTunnelOptions
+    options?: RunTunnelOptions
   ): Promise<ServiceResult<TunnelInfo>> {
     if (this.tunnels.has(id)) {
       return serviceError({
@@ -144,7 +144,6 @@ export class TunnelService {
 
     const manager = new TunnelManager({
       port,
-      mode: 'named',
       token,
       logger: this.logger,
       readyTimeoutMs: options?.readyTimeoutMs,
