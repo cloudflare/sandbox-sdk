@@ -665,37 +665,6 @@ class PortsRPCAPI extends RpcTarget {
     this.#procSvc = procSvc;
   }
 
-  async exposePort(port: number, _sessionId: string, name?: string) {
-    const result = await this.#portSvc.exposePort(port, name);
-    throwIfError(result);
-    return {
-      success: true,
-      port,
-      url: '',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async getExposedPorts(_sessionId: string) {
-    const result = await this.#portSvc.getExposedPorts();
-    const ports = extractData<Array<{ port: number; name?: string }>>(result);
-    return {
-      success: true,
-      ports: ports.map((p) => ({
-        port: p.port,
-        url: '',
-        status: 'active' as const
-      })),
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async unexposePort(port: number, _sessionId: string) {
-    const result = await this.#portSvc.unexposePort(port);
-    throwIfError(result);
-    return { success: true, port, timestamp: new Date().toISOString() };
-  }
-
   async watchPort(request: {
     port: number;
     mode: 'http' | 'tcp';

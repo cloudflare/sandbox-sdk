@@ -943,36 +943,10 @@ export interface EnvSetResult {
   timestamp: string;
 }
 
-// Port management result types
 export interface PortExposeResult {
-  success: boolean;
-  port: number;
   url: string;
-  timestamp: string;
-}
-
-export interface PortStatusResult {
-  success: boolean;
   port: number;
-  status: 'active' | 'inactive';
-  url?: string;
-  timestamp: string;
-}
-
-export interface PortListResult {
-  success: boolean;
-  ports: Array<{
-    port: number;
-    url: string;
-    status: 'active' | 'inactive';
-  }>;
-  timestamp: string;
-}
-
-export interface PortCloseResult {
-  success: boolean;
-  port: number;
-  timestamp: string;
+  name?: string;
 }
 
 // Code interpreter result types

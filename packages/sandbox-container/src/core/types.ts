@@ -90,44 +90,6 @@ export interface CommandsResponse {
   timestamp: string;
 }
 
-// Port handler response interfaces
-export interface ExposePortResponse {
-  success: true;
-  port: number;
-  name?: string;
-  exposedAt: string;
-  timestamp: string;
-}
-
-export interface UnexposePortResponse {
-  success: true;
-  message: string;
-  port: number;
-  timestamp: string;
-}
-
-export interface ListExposedPortsResponse {
-  success: true;
-  count: number;
-  ports: Array<{
-    port: number;
-    name?: string;
-    exposedAt: string;
-  }>;
-  timestamp: string;
-}
-
-// Proxied service response interfaces - for responses from external services via proxy
-export interface ProxiedSuccessResponse {
-  success: boolean;
-  [key: string]: unknown;
-}
-
-export interface ProxiedErrorResponse {
-  error: string;
-  [key: string]: unknown;
-}
-
 // Process handler response interfaces
 export interface StartProcessResponse {
   success: true;
@@ -185,18 +147,6 @@ export interface ListSessionsResponse {
     // as they would require querying each session individually
   }>;
   timestamp: string;
-}
-
-// Port service specific error response interfaces
-export interface PortNotFoundResponse {
-  error: string;
-  port: number;
-}
-
-export interface ProxyErrorResponse {
-  error: string;
-  message: string;
-  port: number;
 }
 
 export interface Middleware {
@@ -317,14 +267,6 @@ export interface WriteOptions {
 export interface MkdirOptions {
   recursive?: boolean;
   mode?: string;
-}
-
-// Port management types
-export interface PortInfo {
-  port: number;
-  name?: string;
-  exposedAt: Date;
-  status: 'active' | 'inactive';
 }
 
 // Git operation types

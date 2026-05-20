@@ -97,14 +97,6 @@ export interface FileExistsRequest {
 }
 
 /**
- * Request to expose a port
- */
-export interface ExposePortRequest {
-  port: number;
-  name?: string;
-}
-
-/**
  * Request to clone a Git repository
  */
 export interface GitCheckoutRequest {

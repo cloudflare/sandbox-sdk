@@ -284,7 +284,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   return {
     port: SERVER_PORT,
-    // Cleanup handles application-level resources (processes, ports).
+    // Cleanup handles application-level resources.
     // WebSocket connections are closed automatically when the process exits -
     // Bun's serve() handles transport cleanup on shutdown.
     cleanup: async () => {

@@ -21,7 +21,7 @@ import { DesktopService } from '../services/desktop-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
 import { InterpreterService } from '../services/interpreter-service';
-import { InMemoryPortStore, PortService } from '../services/port-service';
+import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
@@ -122,7 +122,6 @@ export class Container {
 
     // Initialize stores
     const processStore = new ProcessStore(logger);
-    const portStore = new InMemoryPortStore();
 
     // Initialize SessionManager
     const sessionManager = new SessionManager(logger);
@@ -141,7 +140,7 @@ export class Container {
       logger,
       sessionManager
     );
-    const portService = new PortService(portStore, securityAdapter, logger);
+    const portService = new PortService();
     const gitService = new GitService(
       securityAdapter,
       sessionManager,
