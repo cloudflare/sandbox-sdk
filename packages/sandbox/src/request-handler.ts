@@ -1,5 +1,11 @@
-import { switchPort } from '@cloudflare/containers';
-import { createLogger, type LogContext, TraceContext } from '@repo/shared';
+import { createLogger, TraceContext } from '@repo/shared';
+import {
+  PREVIEW_PROXY_HEADER,
+  PREVIEW_PROXY_HEADERS,
+  PREVIEW_PROXY_PORT_HEADER,
+  PREVIEW_PROXY_SANDBOX_ID_HEADER,
+  PREVIEW_PROXY_TOKEN_HEADER
+} from './preview-proxy-protocol';
 import { getSandbox, type Sandbox } from './sandbox';
 import { sanitizeSandboxId, validatePort } from './security';
 
@@ -7,26 +13,26 @@ export interface SandboxEnv<T extends Sandbox<any> = Sandbox<any>> {
   Sandbox: DurableObjectNamespace<T>;
 }
 
-export interface RouteInfo {
+interface RouteInfo {
   port: number;
   sandboxId: string;
-  path: string;
   token: string;
+}
+
+function createProxyLogger(request: Request) {
+  const traceId =
+    TraceContext.fromHeaders(request.headers) || TraceContext.generate();
+  return createLogger({
+    component: 'sandbox-do',
+    traceId,
+    operation: 'proxy'
+  });
 }
 
 export async function proxyToSandbox<
   T extends Sandbox<any>,
   E extends SandboxEnv<T>
 >(request: Request, env: E): Promise<Response | null> {
-  // Create logger context for this request
-  const traceId =
-    TraceContext.fromHeaders(request.headers) || TraceContext.generate();
-  const logger = createLogger({
-    component: 'sandbox-do',
-    traceId,
-    operation: 'proxy'
-  });
-
   try {
     const url = new URL(request.url);
     const routeInfo = extractSandboxRoute(url);
@@ -35,82 +41,23 @@ export async function proxyToSandbox<
       return null; // Not a request to an exposed container port
     }
 
-    const { sandboxId, port, path, token } = routeInfo;
+    const { sandboxId, port, token } = routeInfo;
     // Preview URLs always use normalized (lowercase) IDs
     const sandbox = getSandbox(env.Sandbox, sandboxId, { normalizeId: true });
 
-    // Critical security check: Validate token (mandatory for all user ports)
-    // Skip check for control plane port 3000
-    if (port !== 3000) {
-      // Validate the token matches the port
-      const isValidToken = await sandbox.validatePortToken(port, token);
-      if (!isValidToken) {
-        logger.warn('Invalid token access blocked', {
-          port,
-          sandboxId,
-          path,
-          hostname: url.hostname,
-          url: request.url,
-          method: request.method,
-          userAgent: request.headers.get('User-Agent') || 'unknown'
-        });
-
-        return new Response(
-          JSON.stringify({
-            error: `Access denied: Invalid token or port not exposed`,
-            code: 'INVALID_TOKEN'
-          }),
-          {
-            status: 404,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-      }
+    const headers = new Headers(request.headers);
+    for (const header of PREVIEW_PROXY_HEADERS) {
+      headers.delete(header);
     }
+    headers.set(PREVIEW_PROXY_HEADER, '1');
+    headers.set(PREVIEW_PROXY_PORT_HEADER, port.toString());
+    headers.set(PREVIEW_PROXY_TOKEN_HEADER, token);
+    headers.set(PREVIEW_PROXY_SANDBOX_ID_HEADER, sandboxId);
 
-    // Detect WebSocket upgrade request
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader?.toLowerCase() === 'websocket') {
-      // WebSocket path: Must use fetch() not containerFetch()
-      // This bypasses JSRPC serialization boundary which cannot handle WebSocket upgrades
-      return await sandbox.fetch(switchPort(request, port));
-    }
-
-    // Build proxy request with proper headers
-    let proxyUrl: string;
-
-    // Route based on the target port
-    if (port !== 3000) {
-      // Route directly to user's service on the specified port
-      proxyUrl = `http://localhost:${port}${path}${url.search}`;
-    } else {
-      // Port 3000 is our control plane - route normally
-      proxyUrl = `http://localhost:3000${path}${url.search}`;
-    }
-
-    const headers: Record<string, string> = {
-      'X-Original-URL': request.url,
-      'X-Forwarded-Host': url.hostname,
-      'X-Forwarded-Proto': url.protocol.replace(':', ''),
-      'X-Sandbox-Name': sandboxId
-    };
-    request.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-
-    const proxyRequest = new Request(proxyUrl, {
-      method: request.method,
-      headers,
-      body: request.body,
-      // @ts-expect-error - duplex required for body streaming in modern runtimes
-      duplex: 'half',
-      redirect: 'manual' // Do not follow redirects, return them to the client to handle
-    });
-
-    return await sandbox.containerFetch(proxyRequest, port);
+    const previewRequest = new Request(request, { headers });
+    return await sandbox.fetch(previewRequest);
   } catch (error) {
+    const logger = createProxyLogger(request);
     logger.error(
       'Proxy routing error',
       error instanceof Error ? error : new Error(String(error))
@@ -128,7 +75,6 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   }
 
   const subdomain = url.hostname.slice(0, dotIndex);
-  const domain = url.hostname.slice(dotIndex + 1);
 
   // Extract port (digits at start followed by hyphen)
   const firstHyphen = subdomain.indexOf('-');
@@ -157,7 +103,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const token = rest.slice(lastHyphen + 1);
 
   // No hyphens in tokens: URL is {port}-{sandboxId}-{token}.{domain}
-  // We split at the LAST hyphen, so hyphens in tokens would be ambiguous
+  // We split at the LAST hyphen, so hyphens in tokens would be ambiguous.
+  // The SDK issues tokens up to 16 chars; 63 is the DNS label component limit.
   if (!/^[a-z0-9_]+$/.test(token) || token.length === 0 || token.length > 63) {
     return null;
   }
@@ -177,35 +124,6 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   return {
     port,
     sandboxId: sanitizedSandboxId,
-    path: url.pathname || '/',
     token
   };
-}
-
-export function isLocalhostPattern(hostname: string): boolean {
-  // Handle IPv6 addresses in brackets (with or without port)
-  if (hostname.startsWith('[')) {
-    if (hostname.includes(']:')) {
-      // [::1]:port format
-      const ipv6Part = hostname.substring(0, hostname.indexOf(']:') + 1);
-      return ipv6Part === '[::1]';
-    } else {
-      // [::1] format without port
-      return hostname === '[::1]';
-    }
-  }
-
-  // Handle bare IPv6 without brackets
-  if (hostname === '::1') {
-    return true;
-  }
-
-  // For IPv4 and regular hostnames, split on colon to remove port
-  const hostPart = hostname.split(':')[0];
-
-  return (
-    hostPart === 'localhost' ||
-    hostPart === '127.0.0.1' ||
-    hostPart === '0.0.0.0'
-  );
 }
