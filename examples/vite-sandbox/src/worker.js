@@ -25,8 +25,7 @@ async function handleAPISandboxRoute(env) {
       processId: 'vite-dev-server',
       cwd: '/app',
       env: {
-        VITE_PORT: `${VITE_PORT}`,
-        VITE_HMR_CLIENT_PORT: '443' // Cloudflare Tunnel is always https
+        VITE_PORT: `${VITE_PORT}`
       }
     });
     await proc.waitForPort(VITE_PORT);
@@ -36,17 +35,18 @@ async function handleAPISandboxRoute(env) {
     const tunnel = await sandbox.tunnels.get(VITE_PORT);
     return Response.json({ url: tunnel.url });
   } catch (error) {
-    console.error({
-      message:
-        'Failed to create Cloudflare Tunnel. If you are running WARP please ensure it is disabled',
-      error
-    });
-    return Response.json(
-      {
-        detail:
-          'Failed to create Cloudflare Tunnel. If you are running WARP please ensure it is disabled.'
-      },
-      { status: 500 }
-    );
+    // cloudflared tunnels don't work when WARP is running.
+    if (
+      error instanceof Error &&
+      'errorResponse' in error &&
+      error.errorResponse.code === 'TUNNEL_START_ERROR'
+    ) {
+      const detail =
+        'Failed to create Cloudflare Tunnel. If you are running WARP please ensure it is disabled';
+      console.error({ message: detail, error });
+      return Response.json({ detail }, { status: 503 });
+    }
+
+    return Response.json({ detail: `${error}` }, { status: 500 });
   }
 }

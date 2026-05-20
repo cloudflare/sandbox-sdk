@@ -25,7 +25,7 @@ export default defineConfig({
     port: process.env.VITE_PORT ?? 5173,
     allowedHosts: ['.trycloudflare.com', '.localhost'],
     hmr: {
-      clientPort: process.env.VITE_HMR_CLIENT_PORT
+      clientPort: 443
     }
   }
 });
