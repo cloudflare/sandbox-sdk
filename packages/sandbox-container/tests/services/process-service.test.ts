@@ -58,6 +58,8 @@ const createMockProcess = (
   ...overrides
 });
 
+const SESSIONLESS_SESSION_ID = 'none';
+
 describe('ProcessService', () => {
   let processService: ProcessService;
 
@@ -243,7 +245,7 @@ describe('ProcessService', () => {
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: 'none',
+                sessionId: SESSIONLESS_SESSION_ID,
                 commandId: options.commandId,
                 pid: 4321
               }
@@ -263,7 +265,7 @@ describe('ProcessService', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.commandHandle).toEqual({
-          sessionId: 'none',
+          sessionId: SESSIONLESS_SESSION_ID,
           commandId: result.data.id,
           pid: 4321
         });
@@ -275,7 +277,7 @@ describe('ProcessService', () => {
         result.success ? result.data.id : expect.any(String),
         expect.objectContaining({
           commandHandle: {
-            sessionId: 'none',
+            sessionId: SESSIONLESS_SESSION_ID,
             commandId: result.success ? result.data.id : expect.any(String),
             pid: 4321
           }
@@ -295,7 +297,7 @@ describe('ProcessService', () => {
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: 'none',
+                sessionId: SESSIONLESS_SESSION_ID,
                 commandId: options.commandId,
                 pid: 4321
               }

@@ -1,5 +1,5 @@
 import type { ExecEvent, Logger } from '@repo/shared';
-import { logCanonicalEvent, SESSIONLESS_SESSION_ID } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   CommandNotFoundContext
@@ -14,6 +14,7 @@ import {
 import type { RawExecResult } from '../session';
 import type { SessionManager } from './session-manager';
 
+const SESSIONLESS_SESSION_ID = 'none';
 const BASH_PATH = '/bin/bash';
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_CWD = '/workspace';

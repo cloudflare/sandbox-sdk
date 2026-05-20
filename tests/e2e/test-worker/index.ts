@@ -212,6 +212,11 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
+    const enableDefaultSessionHeader = request.headers.get(
+      'X-Sandbox-Enable-Default-Session'
+    );
+    const enableDefaultSession =
+      enableDefaultSessionHeader === 'false' ? false : undefined;
 
     // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
@@ -233,7 +238,8 @@ export default {
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
       transport,
-      ...(sleepAfter !== null && { sleepAfter })
+      ...(sleepAfter !== null && { sleepAfter }),
+      ...(enableDefaultSession !== undefined && { enableDefaultSession })
     });
 
     // Get session ID from header (optional)
@@ -525,16 +531,6 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      if (
-        url.pathname === '/api/session/default-policy' &&
-        request.method === 'POST'
-      ) {
-        await sandbox.setEnableDefaultSession(body.enableDefaultSession);
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
       // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
         const result = await executor.exec(body.command, {
@@ -563,8 +559,7 @@ console.log('Terminal server on port ' + port);
           : await sandbox.execStream(body.command, {
               env: body.env,
               cwd: body.cwd,
-              timeout: body.timeout,
-              sessionId: body.sessionId
+              timeout: body.timeout
             });
         console.log(
           '[TestWorker] Stream received in',

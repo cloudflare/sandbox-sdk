@@ -334,7 +334,10 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
-    it('should honor the sessionless sentinel for execStream and listFiles', async () => {
+    it('should reject explicit session IDs when default sessions are disabled', async () => {
+      (
+        sandbox as unknown as { enableDefaultSession: boolean }
+      ).enableDefaultSession = false;
       vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
         new ReadableStream()
       );
@@ -345,31 +348,28 @@ describe('Sandbox - Automatic Session Management', () => {
         count: 0,
         timestamp: new Date().toISOString()
       });
+      vi.mocked(sandbox.client.utils.createSession).mockClear();
 
-      await sandbox.execStream('echo streamed', {
-        sessionId: 'none',
-        cwd: '/workspace/project'
-      });
-      await sandbox.listFiles('/workspace', {
-        includeHidden: true,
-        sessionId: 'none'
-      });
-
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
-        'echo streamed',
-        'none',
-        {
+      await expect(
+        sandbox.execStream('echo streamed', {
+          sessionId: 'explicit-session',
           cwd: '/workspace/project'
-        }
+        })
+      ).rejects.toThrow(
+        'Explicit sessionId is not supported when enableDefaultSession is false'
       );
-      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
-        '/workspace',
-        'none',
-        {
+
+      await expect(
+        sandbox.listFiles('/workspace', {
           includeHidden: true,
-          sessionId: 'none'
-        }
+          sessionId: 'explicit-session'
+        })
+      ).rejects.toThrow(
+        'Explicit sessionId is not supported when enableDefaultSession is false'
       );
+
+      expect(sandbox.client.commands.executeStream).not.toHaveBeenCalled();
+      expect(sandbox.client.files.listFiles).not.toHaveBeenCalled();
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
@@ -488,7 +488,7 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await sandbox.setEnableDefaultSession(false);
+      await sandbox.configure({ enableDefaultSession: false });
 
       const started = await sandbox.startProcess('sleep 10');
       const listed = await sandbox.listProcesses();
@@ -674,33 +674,38 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
 
-    it('drops stale default shell state when default sessions are disabled and re-enabled', async () => {
+    it('drops stale default shell state when configured with default sessions disabled', async () => {
       vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
         success: true,
         sessionId: 'sandbox-default',
         timestamp: new Date().toISOString()
-      } as any);
+      } as never);
+
+      (sandbox as unknown as { defaultSession: string }).defaultSession =
+        'sandbox-default';
 
       vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
         success: true,
-        stdout: 'EMPTY\n',
+        stdout: 'sessionless',
         stderr: '',
         exitCode: 0,
-        command: `echo "\${REVIVED:-EMPTY}"`,
+        command: 'printf sessionless',
         timestamp: new Date().toISOString()
-      } as any);
+      } as never);
 
-      (sandbox as any).defaultSession = 'sandbox-default';
-      await sandbox.setEnableDefaultSession(false);
-      await sandbox.setEnableDefaultSession(true);
-      const result = await sandbox.exec(`echo "\${REVIVED:-EMPTY}"`);
+      await sandbox.configure({ enableDefaultSession: false });
+      const result = await sandbox.exec('printf sessionless');
 
-      expect(result.stdout).toBe('EMPTY\n');
+      expect(result.stdout).toBe('sessionless');
       expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
         'sandbox-default'
       );
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(mockCtx.storage.delete).toHaveBeenCalledWith('defaultSession');
+      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+        'enableDefaultSession',
+        false
+      );
     });
   });
 
@@ -3018,13 +3023,11 @@ describe('Sandbox.getProcess()', () => {
       (sb as any).client = {
         getTransportMode: () => 'rpc',
         utils: {
-          createSession: vi
-            .fn()
-            .mockResolvedValue({
-              success: true,
-              id: 'default',
-              message: 'ok'
-            } as any)
+          createSession: vi.fn().mockResolvedValue({
+            success: true,
+            id: 'default',
+            message: 'ok'
+          } as any)
         },
         processes: {}
       };

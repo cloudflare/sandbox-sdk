@@ -44,7 +44,6 @@ import {
   getEnvString,
   logCanonicalEvent,
   partitionEnvVars,
-  SESSIONLESS_SESSION_ID,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -146,7 +145,6 @@ type ConfigurableSandboxStub = {
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
   setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
   setKeepAlive?: (keepAlive: boolean) => Promise<void>;
-  setEnableDefaultSession?: (enableDefaultSession: boolean) => Promise<void>;
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
@@ -162,6 +160,7 @@ const sandboxConfigurationCache = new WeakMap<
   Map<string, CachedSandboxConfiguration>
 >();
 
+const SESSIONLESS_SESSION_ID = 'none';
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -401,13 +400,6 @@ function applySandboxConfiguration(
     );
   }
 
-  if (configuration.enableDefaultSession !== undefined) {
-    operations.push(
-      stub.setEnableDefaultSession?.(configuration.enableDefaultSession) ??
-        Promise.resolve()
-    );
-  }
-
   if (configuration.containerTimeouts !== undefined) {
     operations.push(
       stub.setContainerTimeouts?.(configuration.containerTimeouts) ??
@@ -598,7 +590,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private enableDefaultSession: boolean = true;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: SandboxTransport = 'http';
-  private hasStoredEnableDefaultSession = false;
 
   /**
    * True once transport has been written to storage at least once (either
@@ -889,13 +880,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
-      const storedEnableDefaultSession = await this.ctx.storage.get<boolean>(
-        'enableDefaultSession'
-      );
-      if (storedEnableDefaultSession != null) {
-        this.enableDefaultSession = storedEnableDefaultSession;
-        this.hasStoredEnableDefaultSession = true;
-      }
+      this.enableDefaultSession =
+        (await this.ctx.storage.get<boolean>('enableDefaultSession')) ?? true;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -985,7 +971,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     if (configuration.enableDefaultSession !== undefined) {
-      await this.setEnableDefaultSession(configuration.enableDefaultSession);
+      await this.configureDefaultSessionPolicy(
+        configuration.enableDefaultSession
+      );
     }
 
     if (configuration.containerTimeouts !== undefined) {
@@ -1021,11 +1009,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async setEnableDefaultSession(enableDefaultSession: boolean): Promise<void> {
-    if (
-      this.hasStoredEnableDefaultSession &&
-      this.enableDefaultSession === enableDefaultSession
-    ) {
+  private async configureDefaultSessionPolicy(
+    enableDefaultSession: boolean
+  ): Promise<void> {
+    if (this.enableDefaultSession === enableDefaultSession) {
       return;
     }
 
@@ -1033,27 +1020,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ? this.defaultSession
       : null;
 
-    // Invalidate in-memory state before the storage writes so that any
-    // concurrent ensureDefaultSession() call sees the new generation and
-    // does not race to restore the session we are about to delete.
     if (!enableDefaultSession) {
       this.containerGeneration++;
       this.defaultSession = null;
       this.defaultSessionInit = null;
-    }
-
-    // Persist to storage before the best-effort container call. This
-    // ensures a consistent durable state even if deleteSession throws.
-    if (!enableDefaultSession) {
       await this.ctx.storage.delete('defaultSession');
     }
 
     await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
     this.enableDefaultSession = enableDefaultSession;
-    this.hasStoredEnableDefaultSession = true;
 
-    // Best-effort: delete the container-side session. The session will
-    // eventually expire on its own; failure here is non-fatal.
     if (previousDefaultSession) {
       await this.client.utils
         .deleteSession(previousDefaultSession)
@@ -2635,21 +2611,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     explicitSessionId?: string
   ): Promise<SandboxExecutionContext> {
     if (explicitSessionId !== undefined) {
-      if (explicitSessionId.trim().length === 0) {
-        throw new Error('sessionId must not be empty or whitespace');
-      }
-
+      this.validateExplicitSessionId(explicitSessionId);
       return { kind: 'session', sessionId: explicitSessionId };
     }
 
-    if (this.enableDefaultSession) {
-      return {
-        kind: 'session',
-        sessionId: await this.ensureDefaultSession()
-      };
+    if (!this.enableDefaultSession) {
+      return { kind: 'sessionless' };
     }
 
-    return { kind: 'sessionless' };
+    return {
+      kind: 'session',
+      sessionId: await this.ensureDefaultSession()
+    };
+  }
+
+  private validateExplicitSessionId(sessionId: string): void {
+    if (sessionId.trim().length === 0) {
+      throw new Error('sessionId must not be empty or whitespace');
+    }
+
+    if (!this.enableDefaultSession) {
+      throw new Error(
+        'Explicit sessionId is not supported when enableDefaultSession is false'
+      );
+    }
   }
 
   private serializeExecutionContext(context: SandboxExecutionContext): string {
@@ -2672,10 +2657,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     explicitSessionId?: string
   ): string | undefined {
     if (explicitSessionId !== undefined) {
-      if (explicitSessionId.trim().length === 0) {
-        throw new Error('sessionId must not be empty or whitespace');
-      }
-
+      this.validateExplicitSessionId(explicitSessionId);
       return explicitSessionId;
     }
 
