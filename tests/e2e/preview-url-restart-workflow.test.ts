@@ -14,6 +14,18 @@ const skipPortExposureTests =
 
 const RESTART_TEST_PORT = 9851;
 
+async function responseText(response: Response): Promise<string> {
+  return await response.text().catch(() => '<unreadable>');
+}
+
+async function assertOK(response: Response, action: string): Promise<void> {
+  if (!response.ok) {
+    throw new Error(
+      `${action} failed: ${response.status} ${await responseText(response)}`
+    );
+  }
+}
+
 function previewURL(previewUrl: string, path: string): string {
   return new URL(path, previewUrl).toString();
 }
@@ -61,7 +73,7 @@ await Bun.sleep(300000);
       `.trim();
 
       const startServer = async () => {
-        await fetch(`${workerUrl}/api/file/write`, {
+        const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -69,6 +81,8 @@ await Bun.sleep(300000);
             content: serverCode
           })
         });
+        await assertOK(writeResponse, 'Writing restart preview server');
+
         const startResponse = await fetch(`${workerUrl}/api/process/start`, {
           method: 'POST',
           headers,
@@ -76,8 +90,9 @@ await Bun.sleep(300000);
             command: `bun run /workspace/restart-server.ts`
           })
         });
-        expect(startResponse.status).toBe(200);
+        await assertOK(startResponse, 'Starting restart preview server');
         const { id: processId } = (await startResponse.json()) as Process;
+
         const waitPortResponse = await fetch(
           `${workerUrl}/api/process/${processId}/waitForPort`,
           {
@@ -90,56 +105,65 @@ await Bun.sleep(300000);
             })
           }
         );
-        expect(waitPortResponse.status).toBe(200);
+        await assertOK(waitPortResponse, 'Waiting for restart preview port');
       };
 
-      await startServer();
-      const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
-        method: 'POST',
-        headers: portHeaders,
-        body: JSON.stringify({
-          port: RESTART_TEST_PORT,
-          name: 'restart-test',
-          token: 'stable_reboot'
-        })
-      });
-      expect(exposeResponse.status).toBe(200);
-      const { url: exposedUrl } =
-        (await exposeResponse.json()) as PortExposeResult;
+      try {
+        await startServer();
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers: portHeaders,
+          body: JSON.stringify({
+            port: RESTART_TEST_PORT,
+            name: 'restart-test',
+            token: 'stable_reboot'
+          })
+        });
+        await assertOK(exposeResponse, 'Exposing restart preview port');
+        const { url: exposedUrl } =
+          (await exposeResponse.json()) as PortExposeResult;
 
-      const before = await fetch(previewURL(exposedUrl, '/hello'));
-      expect(before.status).toBe(200);
-      expect(await before.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
+        const before = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(before.status).toBe(200);
+        expect(await before.text()).toBe(
+          `hello from port ${RESTART_TEST_PORT}`
+        );
 
-      await stopContainerAndWait(workerUrl, portHeaders);
+        await stopContainerAndWait(workerUrl, portHeaders);
 
-      await startServer();
+        await startServer();
 
-      const stale = await fetch(previewURL(exposedUrl, '/hello'));
-      expect(stale.status).toBe(410);
-      expect(await stale.json()).toMatchObject({ code: 'STALE_PREVIEW_URL' });
+        const stale = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(stale.status).toBe(410);
+        expect(await stale.json()).toMatchObject({
+          code: 'STALE_PREVIEW_URL'
+        });
 
-      const reactivateResponse = await fetch(`${workerUrl}/api/port/expose`, {
-        method: 'POST',
-        headers: portHeaders,
-        body: JSON.stringify({
-          port: RESTART_TEST_PORT,
-          name: 'restart-test'
-        })
-      });
-      expect(reactivateResponse.status).toBe(200);
-      const { url: reactivatedUrl } =
-        (await reactivateResponse.json()) as PortExposeResult;
-      expect(reactivatedUrl).toBe(exposedUrl);
+        const reactivateResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers: portHeaders,
+          body: JSON.stringify({
+            port: RESTART_TEST_PORT,
+            name: 'restart-test'
+          })
+        });
+        await assertOK(reactivateResponse, 'Reactivating restart preview port');
+        const { url: reactivatedUrl } =
+          (await reactivateResponse.json()) as PortExposeResult;
+        expect(reactivatedUrl).toBe(exposedUrl);
 
-      const after = await fetch(previewURL(exposedUrl, '/hello'));
-      expect(after.status).toBe(200);
-      expect(await after.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
-
-      await fetch(`${workerUrl}/api/exposed-ports/${RESTART_TEST_PORT}`, {
-        method: 'DELETE',
-        headers: portHeaders
-      });
+        const after = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(after.status).toBe(200);
+        expect(await after.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
+      } finally {
+        await fetch(`${workerUrl}/api/exposed-ports/${RESTART_TEST_PORT}`, {
+          method: 'DELETE',
+          headers: portHeaders
+        }).catch(() => undefined);
+        await stopContainerAndWait(workerUrl, portHeaders).catch(
+          () => undefined
+        );
+      }
     },
     180000
   );

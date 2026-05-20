@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import {
   getContainerStatus,
-  stopContainerAndWait as stopContainer
+  stopContainerAndWait as stopContainer,
+  waitForContainerHealthy
 } from './helpers/container-lifecycle';
 import {
   cleanupTestSandbox,
@@ -14,17 +15,43 @@ import {
 
 const skipPortExposureTests =
   process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
-const PREVIEW_LIFECYCLE_PORT = 9852;
-const PREVIEW_TOKEN = 'lifecycleok';
+
+const PREVIEW_PORTS = {
+  validHttp: 9852,
+  webSocket: 9853,
+  staleAfterStop: 9854,
+  rotatedToken: 9856,
+  revoked: 9857,
+  reusedURL: 9858,
+  unrelatedRuntime: 9859,
+  destroy: 9860
+} as const;
+
+const REUSED_URL_TOKEN = 'lifecycleok';
+const ROTATED_TOKEN_A = 'lifecycle_a';
+const ROTATED_TOKEN_B = 'lifecycle_b';
+
+async function responseText(response: Response): Promise<string> {
+  return await response.text().catch(() => '<unreadable>');
+}
+
+async function assertOK(response: Response, action: string): Promise<void> {
+  if (!response.ok) {
+    throw new Error(
+      `${action} failed: ${response.status} ${await responseText(response)}`
+    );
+  }
+}
 
 async function writePreviewServer(
   workerUrl: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  port: number
 ): Promise<void> {
   const serverCode = `
 const server = Bun.serve({
   hostname: "0.0.0.0",
-  port: ${PREVIEW_LIFECYCLE_PORT},
+  port: ${port},
   fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
@@ -34,7 +61,7 @@ const server = Bun.serve({
       return new Response("Expected WebSocket", { status: 400 });
     }
     if (url.pathname === "/hello") {
-      return new Response("hello from lifecycle port", { status: 200 });
+      return new Response("hello from lifecycle port ${port}", { status: 200 });
     }
     return new Response("not found", { status: 404 });
   },
@@ -51,27 +78,28 @@ await Bun.sleep(300000);
     method: 'POST',
     headers,
     body: JSON.stringify({
-      path: '/workspace/preview-lifecycle-server.ts',
+      path: `/workspace/preview-lifecycle-server-${port}.ts`,
       content: serverCode
     })
   });
-  expect(response.status).toBe(200);
+  await assertOK(response, `Writing preview server for port ${port}`);
 }
 
 async function startPreviewServer(
   workerUrl: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  port: number
 ): Promise<void> {
-  await writePreviewServer(workerUrl, headers);
+  await writePreviewServer(workerUrl, headers, port);
 
   const startResponse = await fetch(`${workerUrl}/api/process/start`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      command: 'bun run /workspace/preview-lifecycle-server.ts'
+      command: `bun run /workspace/preview-lifecycle-server-${port}.ts`
     })
   });
-  expect(startResponse.status).toBe(200);
+  await assertOK(startResponse, `Starting preview server for port ${port}`);
   const process = (await startResponse.json()) as Pick<Process, 'id'>;
 
   const waitPortResponse = await fetch(
@@ -80,38 +108,50 @@ async function startPreviewServer(
       method: 'POST',
       headers,
       body: JSON.stringify({
-        port: PREVIEW_LIFECYCLE_PORT,
+        port,
         timeout: 15000,
         mode: 'tcp'
       })
     }
   );
-  expect(waitPortResponse.status).toBe(200);
+  await assertOK(waitPortResponse, `Waiting for preview server port ${port}`);
 }
 
-async function exposeLifecyclePort(
+async function exposePreviewPort(
   workerUrl: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  port: number,
+  token?: string
 ): Promise<string> {
+  const body: { port: number; name: string; token?: string } = {
+    port,
+    name: `preview-lifecycle-${port}`
+  };
+  if (token !== undefined) {
+    body.token = token;
+  }
+
   const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      port: PREVIEW_LIFECYCLE_PORT,
-      name: 'preview-lifecycle',
-      token: PREVIEW_TOKEN
-    })
+    body: JSON.stringify(body)
   });
-  expect(exposeResponse.status).toBe(200);
+  await assertOK(exposeResponse, `Exposing preview port ${port}`);
   const preview = (await exposeResponse.json()) as PortExposeResult;
   return preview.url;
 }
 
-type ExposedPortsResponse = Array<{
-  port: number;
-  url: string;
-  status: string;
-}>;
+async function unexposePreviewPort(
+  workerUrl: string,
+  headers: Record<string, string>,
+  port: number
+): Promise<void> {
+  const response = await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
+    method: 'DELETE',
+    headers
+  });
+  await assertOK(response, `Unexposing preview port ${port}`);
+}
 
 function previewURL(previewUrl: string, path: string): string {
   return new URL(path, previewUrl).toString();
@@ -159,16 +199,6 @@ async function expectWebSocketStatus(
   });
 }
 
-function replacePreviewToken(previewUrl: string, replacement: string): string {
-  const url = new URL(previewUrl);
-  const firstDot = url.hostname.indexOf('.');
-  const subdomain = url.hostname.slice(0, firstDot);
-  const domain = url.hostname.slice(firstDot + 1);
-  const lastHyphen = subdomain.lastIndexOf('-');
-  url.hostname = `${subdomain.slice(0, lastHyphen + 1)}${replacement}.${domain}`;
-  return url.toString();
-}
-
 async function writeUnrelatedRuntimeFile(
   workerUrl: string,
   headers: Record<string, string>
@@ -181,7 +211,17 @@ async function writeUnrelatedRuntimeFile(
       content: `unrelated runtime start ${Date.now()}`
     })
   });
-  expect(response.status).toBe(200);
+  await assertOK(response, 'Writing unrelated runtime file');
+}
+
+function createPortHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  // Port APIs use the sandbox's default session, while file/process setup uses
+  // the test session headers for deterministic workspace state.
+  const portHeaders = { ...headers };
+  delete portHeaders['X-Session-Id'];
+  return portHeaders;
 }
 
 describe('Preview URL lifecycle', () => {
@@ -194,10 +234,7 @@ describe('Preview URL lifecycle', () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
     headers = sandbox.headers(createUniqueSession());
-    // Port APIs use the sandbox's default session, while file/process setup
-    // uses the test session headers for deterministic workspace state.
-    portHeaders = { ...headers };
-    delete portHeaders['X-Session-Id'];
+    portHeaders = createPortHeaders(headers);
   }, 120000);
 
   afterAll(async () => {
@@ -207,14 +244,22 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'valid preview URL reaches a service in the current runtime',
     async () => {
+      const port = PREVIEW_PORTS.validHttp;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
+        );
 
         const response = await fetch(previewURL(previewUrl, '/hello'));
         expect(response.status).toBe(200);
-        expect(await response.text()).toBe('hello from lifecycle port');
+        expect(await response.text()).toBe(`hello from lifecycle port ${port}`);
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -224,10 +269,15 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'WebSocket preview URL connects only while activated in the current runtime',
     async () => {
+      const port = PREVIEW_PORTS.webSocket;
       let ws: WebSocket | null = null;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
+        );
 
         ws = await connectWebSocket(previewWebSocketURL(previewUrl, '/ws'));
         const echoPromise = new Promise<string>((resolve, reject) => {
@@ -253,6 +303,9 @@ describe('Preview URL lifecycle', () => {
         );
       } finally {
         ws?.close();
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -262,9 +315,14 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'authorized preview URL after container stop is stale and does not wake the container',
     async () => {
+      const port = PREVIEW_PORTS.staleAfterStop;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
+        );
 
         const healthyResponse = await fetch(previewURL(previewUrl, '/hello'));
         expect(healthyResponse.status).toBe(200);
@@ -283,6 +341,9 @@ describe('Preview URL lifecycle', () => {
           'healthy'
         );
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -290,16 +351,28 @@ describe('Preview URL lifecycle', () => {
   );
 
   test.skipIf(skipPortExposureTests)(
-    'bad token after container stop is rejected without waking the container',
+    'old preview URL with a rotated token is rejected without waking the container',
     async () => {
+      const port = PREVIEW_PORTS.rotatedToken;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const oldPreviewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port,
+          ROTATED_TOKEN_A
+        );
+        const newPreviewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port,
+          ROTATED_TOKEN_B
+        );
+        expect(newPreviewUrl).not.toBe(oldPreviewUrl);
 
         await stopContainer(workerUrl, portHeaders);
-        const badTokenUrl = replacePreviewToken(previewUrl, 'badtoken');
 
-        const response = await fetch(previewURL(badTokenUrl, '/hello'));
+        const response = await fetch(previewURL(oldPreviewUrl, '/hello'));
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({
           code: 'INVALID_TOKEN'
@@ -308,6 +381,9 @@ describe('Preview URL lifecycle', () => {
           'healthy'
         );
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -317,19 +393,16 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'revoked preview URL after container stop is rejected without waking the container',
     async () => {
+      const port = PREVIEW_PORTS.revoked;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
-
-        const deleteResponse = await fetch(
-          `${workerUrl}/api/exposed-ports/${PREVIEW_LIFECYCLE_PORT}`,
-          {
-            method: 'DELETE',
-            headers: portHeaders
-          }
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
         );
-        expect(deleteResponse.status).toBe(200);
 
+        await unexposePreviewPort(workerUrl, portHeaders, port);
         await stopContainer(workerUrl, portHeaders);
 
         const response = await fetch(previewURL(previewUrl, '/hello'));
@@ -341,6 +414,9 @@ describe('Preview URL lifecycle', () => {
           'healthy'
         );
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -350,16 +426,24 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'same preview URL stays stale until exposePort is called in the new runtime',
     async () => {
+      const port = PREVIEW_PORTS.reusedURL;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port,
+          REUSED_URL_TOKEN
+        );
 
         const initialResponse = await fetch(previewURL(previewUrl, '/hello'));
         expect(initialResponse.status).toBe(200);
-        expect(await initialResponse.text()).toBe('hello from lifecycle port');
+        expect(await initialResponse.text()).toBe(
+          `hello from lifecycle port ${port}`
+        );
 
         await stopContainer(workerUrl, portHeaders);
-        await startPreviewServer(workerUrl, headers);
+        await startPreviewServer(workerUrl, headers, port);
 
         const staleResponse = await fetch(previewURL(previewUrl, '/hello'));
         expect(staleResponse.status).toBe(410);
@@ -367,9 +451,10 @@ describe('Preview URL lifecycle', () => {
           code: 'STALE_PREVIEW_URL'
         });
 
-        const reactivatedUrl = await exposeLifecyclePort(
+        const reactivatedUrl = await exposePreviewPort(
           workerUrl,
-          portHeaders
+          portHeaders,
+          port
         );
         expect(reactivatedUrl).toBe(previewUrl);
 
@@ -378,9 +463,12 @@ describe('Preview URL lifecycle', () => {
         );
         expect(reactivatedResponse.status).toBe(200);
         expect(await reactivatedResponse.text()).toBe(
-          'hello from lifecycle port'
+          `hello from lifecycle port ${port}`
         );
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
@@ -390,18 +478,21 @@ describe('Preview URL lifecycle', () => {
   test.skipIf(skipPortExposureTests)(
     'old preview URL stays stale after unrelated SDK work starts a new runtime',
     async () => {
+      const port = PREVIEW_PORTS.unrelatedRuntime;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
+        );
 
         const initialResponse = await fetch(previewURL(previewUrl, '/hello'));
         expect(initialResponse.status).toBe(200);
 
         await stopContainer(workerUrl, portHeaders);
         await writeUnrelatedRuntimeFile(workerUrl, headers);
-        expect(await getContainerStatus(workerUrl, portHeaders)).toBe(
-          'healthy'
-        );
+        await waitForContainerHealthy(workerUrl, portHeaders);
 
         const staleResponse = await fetch(previewURL(previewUrl, '/hello'));
         expect(staleResponse.status).toBe(410);
@@ -412,32 +503,64 @@ describe('Preview URL lifecycle', () => {
           'healthy'
         );
       } finally {
+        await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+          () => undefined
+        );
         await stopContainer(workerUrl, portHeaders).catch(() => undefined);
       }
     },
     180000
   );
+});
+
+describe('Preview URL lifecycle after sandbox destroy', () => {
+  let workerUrl: string;
+  let headers: Record<string, string>;
+  let portHeaders: Record<string, string>;
+  let sandbox: TestSandbox | null = null;
+  let destroyed = false;
+
+  beforeAll(async () => {
+    sandbox = await createTestSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.headers(createUniqueSession());
+    portHeaders = createPortHeaders(headers);
+  }, 120000);
+
+  afterAll(async () => {
+    if (!destroyed) {
+      await cleanupTestSandbox(sandbox);
+    }
+  }, 120000);
 
   test.skipIf(skipPortExposureTests)(
     'old preview URL is rejected after sandbox destroy',
     async () => {
+      const port = PREVIEW_PORTS.destroy;
       try {
-        await startPreviewServer(workerUrl, headers);
-        const previewUrl = await exposeLifecyclePort(workerUrl, portHeaders);
+        await startPreviewServer(workerUrl, headers, port);
+        const previewUrl = await exposePreviewPort(
+          workerUrl,
+          portHeaders,
+          port
+        );
 
         const cleanupResponse = await fetch(`${workerUrl}/cleanup`, {
           method: 'POST',
           headers: portHeaders
         });
-        expect(cleanupResponse.status).toBe(200);
-        sandbox = null;
+        await assertOK(cleanupResponse, 'Destroying preview lifecycle sandbox');
+        destroyed = true;
 
         const response = await fetch(previewURL(previewUrl, '/hello'));
         expect(response.status).toBe(404);
         const body = (await response.json()) as { code?: string };
         expect(body.code).toBe('INVALID_TOKEN');
       } finally {
-        if (sandbox !== null) {
+        if (!destroyed) {
+          await unexposePreviewPort(workerUrl, portHeaders, port).catch(
+            () => undefined
+          );
           await stopContainer(workerUrl, portHeaders).catch(() => undefined);
         }
       }
