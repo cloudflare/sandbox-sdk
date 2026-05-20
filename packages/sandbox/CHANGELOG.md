@@ -1,5 +1,27 @@
 # @cloudflare/sandbox
 
+## 0.10.2
+
+### Patch Changes
+
+- [#695](https://github.com/cloudflare/sandbox-sdk/pull/695) [`c6bf7dc`](https://github.com/cloudflare/sandbox-sdk/commit/c6bf7dc48fa3f0199b57ab74753ffa066d09ab92) Thanks [@aron-cf](https://github.com/aron-cf)! - Add `sandbox.tunnels` namespace with quick-tunnel support. Call `sandbox.tunnels.get(port)` to obtain a `https://<words>.trycloudflare.com` URL that proxies to `localhost:<port>` inside the sandbox. The call is idempotent: repeated calls for the same port return the same record from per-sandbox Durable Object storage. No Cloudflare account or DNS setup required.
+
+  ```ts
+  const tunnel = await sandbox.tunnels.get(8080);
+  console.log(tunnel.url);
+  // → https://random-words-here.trycloudflare.com
+
+  const same = await sandbox.tunnels.get(8080);
+  console.log(same.url === tunnel.url); // true
+
+  await sandbox.tunnels.list();
+  await sandbox.tunnels.destroy(8080); // or destroy(tunnel)
+  ```
+
+- [#691](https://github.com/cloudflare/sandbox-sdk/pull/691) [`3ca24fc`](https://github.com/cloudflare/sandbox-sdk/commit/3ca24fc37983d3e14aa95ec29d41ef6788d1a2fa) Thanks [@scuffi](https://github.com/scuffi)! - Add credential-less R2 bucket mounting via egress interception
+
+- [#703](https://github.com/cloudflare/sandbox-sdk/pull/703) [`68c8b71`](https://github.com/cloudflare/sandbox-sdk/commit/68c8b71343274937b76282498dfda87a0f4955c2) Thanks [@aron-cf](https://github.com/aron-cf)! - Fix inconsistencies in the sandbox.desktop interface between RPC and HTTP transports
+
 ## 0.10.1
 
 ### Patch Changes
