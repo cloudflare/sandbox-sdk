@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { ExecEvent, Logger } from '@repo/shared';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   ProcessRecord,
   ServiceResult
@@ -57,8 +58,6 @@ const createMockProcess = (
   },
   ...overrides
 });
-
-const SESSIONLESS_SESSION_ID = 'none';
 
 describe('ProcessService', () => {
   let processService: ProcessService;
@@ -210,11 +209,12 @@ describe('ProcessService', () => {
         })
       );
 
-      // Verify process is initially stored without a commandHandle. The
-      // authoritative handle is attached only after ExecutionService returns.
       expect(createdCommandAtCreate).toBe('sleep 10');
       expect(createdStatusAtCreate).toBe('running');
-      expect(createdCommandHandleAtCreate).toBeUndefined();
+      expect(createdCommandHandleAtCreate).toEqual({
+        sessionId: 'session-123',
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
 
       expect(mockProcessStore.update).toHaveBeenCalledWith(
         result.success ? result.data.id : expect.any(String),
@@ -245,7 +245,7 @@ describe('ProcessService', () => {
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: SESSIONLESS_SESSION_ID,
+                sessionId: DISABLE_SESSION_TOKEN,
                 commandId: options.commandId,
                 pid: 4321
               }
@@ -260,24 +260,29 @@ describe('ProcessService', () => {
           }>
       );
 
-      const result = await processService.startProcess('sleep 10', {});
+      const result = await processService.startProcess('sleep 10', {
+        sessionId: DISABLE_SESSION_TOKEN
+      });
 
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.commandHandle).toEqual({
-          sessionId: SESSIONLESS_SESSION_ID,
+          sessionId: DISABLE_SESSION_TOKEN,
           commandId: result.data.id,
           pid: 4321
         });
       }
 
-      expect(createdCommandHandleAtCreate).toBeUndefined();
+      expect(createdCommandHandleAtCreate).toEqual({
+        sessionId: DISABLE_SESSION_TOKEN,
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
 
       expect(mockProcessStore.update).toHaveBeenCalledWith(
         result.success ? result.data.id : expect.any(String),
         expect.objectContaining({
           commandHandle: {
-            sessionId: SESSIONLESS_SESSION_ID,
+            sessionId: DISABLE_SESSION_TOKEN,
             commandId: result.success ? result.data.id : expect.any(String),
             pid: 4321
           }
@@ -297,7 +302,7 @@ describe('ProcessService', () => {
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: SESSIONLESS_SESSION_ID,
+                sessionId: DISABLE_SESSION_TOKEN,
                 commandId: options.commandId,
                 pid: 4321
               }
@@ -344,7 +349,6 @@ describe('ProcessService', () => {
     });
 
     it('should handle stream execution errors', async () => {
-      // Mock SessionManager to throw error
       mocked(mockExecutionService.executeStream).mockImplementation(() => {
         throw new Error('Failed to execute stream');
       });

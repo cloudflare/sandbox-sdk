@@ -13,6 +13,7 @@ import type { ErrorResponse } from '@repo/shared/errors';
 import type { RequestContext } from '@sandbox-container/core/types';
 import { FileHandler } from '@sandbox-container/handlers/file-handler';
 import type { FileService } from '@sandbox-container/services/file-service';
+import { DISABLE_SESSION_TOKEN } from '../../../shared/src/internal';
 
 // Mock the dependencies - use partial mock to avoid missing properties
 const mockFileService = {
@@ -54,8 +55,6 @@ const mockContext: RequestContext = {
   },
   sessionId: 'session-456'
 };
-
-const SESSIONLESS_SESSION_ID = 'none';
 
 describe('FileHandler', () => {
   let fileHandler: FileHandler;
@@ -271,7 +270,7 @@ describe('FileHandler', () => {
     it('should delete file successfully', async () => {
       const deleteFileData = {
         path: '/tmp/delete-me.txt',
-        sessionId: SESSIONLESS_SESSION_ID
+        sessionId: DISABLE_SESSION_TOKEN
       };
 
       (mockFileService.deleteFile as any).mockResolvedValue({
@@ -294,7 +293,7 @@ describe('FileHandler', () => {
 
       expect(mockFileService.deleteFile).toHaveBeenCalledWith(
         '/tmp/delete-me.txt',
-        SESSIONLESS_SESSION_ID
+        DISABLE_SESSION_TOKEN
       );
     });
 
@@ -355,7 +354,7 @@ describe('FileHandler', () => {
       const renameFileData = {
         oldPath: '/tmp/old-name.txt',
         newPath: '/tmp/new-name.txt',
-        sessionId: SESSIONLESS_SESSION_ID
+        sessionId: DISABLE_SESSION_TOKEN
       };
 
       (mockFileService.renameFile as any).mockResolvedValue({
@@ -380,7 +379,7 @@ describe('FileHandler', () => {
       expect(mockFileService.renameFile).toHaveBeenCalledWith(
         '/tmp/old-name.txt',
         '/tmp/new-name.txt',
-        SESSIONLESS_SESSION_ID
+        DISABLE_SESSION_TOKEN
       );
     });
 
@@ -446,7 +445,7 @@ describe('FileHandler', () => {
       const moveFileData = {
         sourcePath: '/tmp/source.txt',
         destinationPath: '/tmp/destination.txt',
-        sessionId: SESSIONLESS_SESSION_ID
+        sessionId: DISABLE_SESSION_TOKEN
       };
 
       (mockFileService.moveFile as any).mockResolvedValue({
@@ -471,7 +470,7 @@ describe('FileHandler', () => {
       expect(mockFileService.moveFile).toHaveBeenCalledWith(
         '/tmp/source.txt',
         '/tmp/destination.txt',
-        SESSIONLESS_SESSION_ID
+        DISABLE_SESSION_TOKEN
       );
     });
 
@@ -537,7 +536,7 @@ describe('FileHandler', () => {
       const mkdirData = {
         path: '/tmp/new-directory',
         recursive: true,
-        sessionId: SESSIONLESS_SESSION_ID
+        sessionId: DISABLE_SESSION_TOKEN
       };
 
       (mockFileService.createDirectory as any).mockResolvedValue({
@@ -564,7 +563,7 @@ describe('FileHandler', () => {
         {
           recursive: true
         },
-        SESSIONLESS_SESSION_ID
+        DISABLE_SESSION_TOKEN
       );
     });
 

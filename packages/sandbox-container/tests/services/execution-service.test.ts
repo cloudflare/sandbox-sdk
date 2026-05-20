@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
@@ -15,8 +16,6 @@ type SessionExec = (
     origin?: 'user' | 'internal';
   }
 ) => Promise<RawExecResult>;
-
-const SESSIONLESS_SESSION_ID = 'none';
 
 const mockLogger = {
   info: vi.fn(),
@@ -111,7 +110,7 @@ describe('ExecutionService', () => {
   it('runs sessionless execute without calling SessionManager', async () => {
     const result = await executionService.execute(
       'printf "hello"; printf "warn" >&2; exit 7',
-      { sessionId: SESSIONLESS_SESSION_ID, cwd: process.cwd() }
+      { sessionId: DISABLE_SESSION_TOKEN, cwd: process.cwd() }
     );
 
     expect(result.success).toBe(true);
@@ -125,7 +124,7 @@ describe('ExecutionService', () => {
 
   it('times out sessionless execution and returns the timeout exit code', async () => {
     const result = await executionService.execute('sleep 1', {
-      sessionId: SESSIONLESS_SESSION_ID,
+      sessionId: DISABLE_SESSION_TOKEN,
       cwd: process.cwd(),
       timeoutMs: 50
     });
@@ -141,7 +140,7 @@ describe('ExecutionService', () => {
   it('inherits outer env and timeout in sessionless withExecution calls', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: SESSIONLESS_SESSION_ID,
+        sessionId: DISABLE_SESSION_TOKEN,
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 500,
@@ -242,7 +241,7 @@ describe('ExecutionService', () => {
   it('lets nested sessionless withExecution options override inherited defaults', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: SESSIONLESS_SESSION_ID,
+        sessionId: DISABLE_SESSION_TOKEN,
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 1000,
@@ -282,7 +281,7 @@ describe('ExecutionService', () => {
     const result = await executionService.executeStream(
       'printf "hello"; printf "warn" >&2',
       {
-        sessionId: SESSIONLESS_SESSION_ID,
+        sessionId: DISABLE_SESSION_TOKEN,
         cwd: process.cwd(),
         commandId: 'cmd-1',
         onEvent: async (event) => {
@@ -300,7 +299,7 @@ describe('ExecutionService', () => {
       return;
     }
 
-    expect(result.data.commandHandle.sessionId).toBe(SESSIONLESS_SESSION_ID);
+    expect(result.data.commandHandle.sessionId).toBe(DISABLE_SESSION_TOKEN);
     expect(result.data.commandHandle.commandId).toBe('cmd-1');
     expect(result.data.commandHandle.pid).toBeDefined();
 
@@ -323,7 +322,7 @@ describe('ExecutionService', () => {
     const events: Array<{ type: string; exitCode?: number }> = [];
 
     const result = await executionService.executeStream('sleep 30', {
-      sessionId: SESSIONLESS_SESSION_ID,
+      sessionId: DISABLE_SESSION_TOKEN,
       cwd: process.cwd(),
       commandId: 'cmd-kill',
       background: true,

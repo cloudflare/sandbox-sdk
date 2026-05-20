@@ -13,6 +13,10 @@
       "types": "./dist/backup.d.ts",
       "import": "./dist/backup.js"
     },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js"
+    },
     "./errors": {
       "types": "./dist/errors/index.d.ts",
       "import": "./dist/errors/index.js"

@@ -195,7 +195,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should treat null stored enableDefaultSession as unset', async () => {
+    it('does not read enableDefaultSession from storage', async () => {
       const nullStorageCtx: MockCtx = {
         storage: {
           get: vi.fn().mockImplementation(async (key: string) => {
@@ -253,6 +253,9 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await freshSandbox.exec('echo test');
 
+      expect(nullStorageCtx.storage.get).not.toHaveBeenCalledWith(
+        'enableDefaultSession'
+      );
       expect(freshSandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
       expect(freshSandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
@@ -334,10 +337,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
-    it('should reject explicit session IDs when default sessions are disabled', async () => {
-      (
-        sandbox as unknown as { enableDefaultSession: boolean }
-      ).enableDefaultSession = false;
+    it('should allow explicit session IDs on top-level methods', async () => {
       vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
         new ReadableStream()
       );
@@ -350,26 +350,31 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       vi.mocked(sandbox.client.utils.createSession).mockClear();
 
-      await expect(
-        sandbox.execStream('echo streamed', {
-          sessionId: 'explicit-session',
-          cwd: '/workspace/project'
-        })
-      ).rejects.toThrow(
-        'Explicit sessionId is not supported when enableDefaultSession is false'
-      );
+      await sandbox.execStream('echo streamed', {
+        sessionId: 'explicit-session',
+        cwd: '/workspace/project'
+      });
+      await sandbox.listFiles('/workspace', {
+        includeHidden: true,
+        sessionId: 'explicit-session'
+      });
 
-      await expect(
-        sandbox.listFiles('/workspace', {
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'echo streamed',
+        'explicit-session',
+        {
+          cwd: '/workspace/project'
+        }
+      );
+      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
+        '/workspace',
+        'explicit-session',
+        {
           includeHidden: true,
           sessionId: 'explicit-session'
-        })
-      ).rejects.toThrow(
-        'Explicit sessionId is not supported when enableDefaultSession is false'
+        }
       );
 
-      expect(sandbox.client.commands.executeStream).not.toHaveBeenCalled();
-      expect(sandbox.client.files.listFiles).not.toHaveBeenCalled();
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
@@ -453,7 +458,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(process.sessionId).toBe(processes[0].sessionId);
     });
 
-    it('should preserve the sessionless sentinel on process objects', async () => {
+    it('should preserve the default session on process objects', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-none',
@@ -488,28 +493,26 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await sandbox.configure({ enableDefaultSession: false });
-
       const started = await sandbox.startProcess('sleep 10');
       const listed = await sandbox.listProcesses();
       const fetched = await sandbox.getProcess('proc-none');
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toBe('none');
+      ).toMatch(/^sandbox-/);
       expect(
         vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
       ).toEqual([]);
       expect(
         vi.mocked(sandbox.client.processes.getProcess).mock.calls[0]
       ).toEqual(['proc-none']);
-      expect(started.sessionId).toBe('none');
+      expect(started.sessionId).toMatch(/^sandbox-/);
       expect(listed).toHaveLength(1);
-      expect(listed[0].sessionId).toBe('none');
-      expect(fetched?.sessionId).toBe('none');
+      expect(listed[0].sessionId).toMatch(/^sandbox-/);
+      expect(fetched?.sessionId).toMatch(/^sandbox-/);
       expect(started.sessionId).toBe(listed[0].sessionId);
       expect(started.sessionId).toBe(fetched?.sessionId);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledOnce();
     });
 
     it('should use default session for git operations', async () => {
@@ -674,7 +677,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
 
-    it('drops stale default shell state when configured with default sessions disabled', async () => {
+    it('keeps default shell state independent of sessionless proxy configuration', async () => {
       vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
         success: true,
         sessionId: 'sandbox-default',
@@ -693,16 +696,12 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as never);
 
-      await sandbox.configure({ enableDefaultSession: false });
       const result = await sandbox.exec('printf sessionless');
 
       expect(result.stdout).toBe('sessionless');
-      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
-        'sandbox-default'
-      );
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(mockCtx.storage.delete).toHaveBeenCalledWith('defaultSession');
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
+      expect(sandbox.client.utils.deleteSession).not.toHaveBeenCalled();
+      expect(mockCtx.storage.delete).not.toHaveBeenCalledWith('defaultSession');
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
         'enableDefaultSession',
         false
       );

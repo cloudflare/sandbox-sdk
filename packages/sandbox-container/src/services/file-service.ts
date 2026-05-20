@@ -424,13 +424,12 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Execute the exists→isdir→rm sequence through the unified execution path
-      const escapedPath = shellEscape(path);
-
       const result = await this.executionService.withExecution(
         { sessionId },
         async (exec) => {
-          // Check if file exists
+          const resolvedPath = await this.resolvePathInSession(path, exec);
+          const escapedPath = shellEscape(resolvedPath);
+
           const existsResult = await exec(`test -e ${escapedPath}`, {
             origin: 'internal'
           });
@@ -445,7 +444,6 @@ export class FileService implements FileSystemOperations {
             };
           }
 
-          // Check if path is a directory (deleteFile only works on files)
           const isDirResult = await exec(`test -d ${escapedPath}`, {
             origin: 'internal'
           });
@@ -460,7 +458,6 @@ export class FileService implements FileSystemOperations {
             };
           }
 
-          // Delete file using rm command
           const command = `rm ${escapedPath}`;
           const rmResult = await exec(command, { origin: 'internal' });
 
@@ -556,15 +553,23 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 3. Rename file using the unified execution path with mv
-      const escapedOldPath = shellEscape(oldPath);
-      const escapedNewPath = shellEscape(newPath);
-      const command = `mv ${escapedOldPath} ${escapedNewPath}`;
-
-      const execResult = await this.executionService.execute(command, {
-        sessionId,
-        origin: 'internal'
-      });
+      const execResult = await this.executionService.withExecution(
+        { sessionId },
+        async (exec) => {
+          const resolvedOldPath = await this.resolvePathInSession(
+            oldPath,
+            exec
+          );
+          const resolvedNewPath = await this.resolvePathInSession(
+            newPath,
+            exec
+          );
+          const command = `mv ${shellEscape(resolvedOldPath)} ${shellEscape(
+            resolvedNewPath
+          )}`;
+          return await exec(command, { origin: 'internal' });
+        }
+      );
 
       if (!execResult.success) {
         return execResult as ServiceResult<void>;
@@ -651,16 +656,23 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 3. Move file using the unified execution path with mv
-      // mv is atomic on same filesystem, automatically handles cross-filesystem moves
-      const escapedSource = shellEscape(sourcePath);
-      const escapedDest = shellEscape(destinationPath);
-      const command = `mv ${escapedSource} ${escapedDest}`;
-
-      const execResult = await this.executionService.execute(command, {
-        sessionId,
-        origin: 'internal'
-      });
+      const execResult = await this.executionService.withExecution(
+        { sessionId },
+        async (exec) => {
+          const resolvedSourcePath = await this.resolvePathInSession(
+            sourcePath,
+            exec
+          );
+          const resolvedDestinationPath = await this.resolvePathInSession(
+            destinationPath,
+            exec
+          );
+          const command = `mv ${shellEscape(resolvedSourcePath)} ${shellEscape(
+            resolvedDestinationPath
+          )}`;
+          return await exec(command, { origin: 'internal' });
+        }
+      );
 
       if (!execResult.success) {
         return execResult as ServiceResult<void>;

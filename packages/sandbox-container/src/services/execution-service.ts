@@ -5,6 +5,7 @@ import type {
   CommandNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import {
   type ProcessCommandHandle,
   type ServiceResult,
@@ -14,7 +15,6 @@ import {
 import type { RawExecResult } from '../session';
 import type { SessionManager } from './session-manager';
 
-const SESSIONLESS_SESSION_ID = 'none';
 const BASH_PATH = '/bin/bash';
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_CWD = '/workspace';
@@ -157,7 +157,7 @@ export class ExecutionService {
     try {
       const result = await fn((command, execOptions) =>
         this.executeSessionlessOrThrow(command, {
-          sessionId: SESSIONLESS_SESSION_ID,
+          sessionId: DISABLE_SESSION_TOKEN,
           ...(this.mergeNestedExecutionOptions(options, execOptions) ?? {})
         })
       );
@@ -179,7 +179,7 @@ export class ExecutionService {
         message: `withExecution callback failed for sessionless execution: ${errorMessage}`,
         code: ErrorCode.INTERNAL_ERROR,
         details: {
-          sessionId: SESSIONLESS_SESSION_ID,
+          sessionId: DISABLE_SESSION_TOKEN,
           originalError: errorMessage
         }
       });
@@ -198,7 +198,7 @@ export class ExecutionService {
 
     if (handle.pid === undefined || !this.processExists(handle.pid)) {
       return serviceError({
-        message: `Command '${handle.commandId}' not found or already completed in session '${SESSIONLESS_SESSION_ID}'`,
+        message: `Command '${handle.commandId}' not found or already completed in session '${DISABLE_SESSION_TOKEN}'`,
         code: ErrorCode.COMMAND_NOT_FOUND,
         details: {
           command: handle.commandId
@@ -214,7 +214,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to kill command '${handle.commandId}' in session '${SESSIONLESS_SESSION_ID}': ${errorMessage}`,
+        message: `Failed to kill command '${handle.commandId}' in session '${DISABLE_SESSION_TOKEN}': ${errorMessage}`,
         code: ErrorCode.PROCESS_ERROR,
         details: {
           processId: handle.commandId,
@@ -227,7 +227,7 @@ export class ExecutionService {
   private resolveTarget(sessionId?: string): ExecutionTarget {
     const resolved = this.canonicalizeExecutionSessionId(sessionId);
 
-    return resolved === SESSIONLESS_SESSION_ID
+    return resolved === DISABLE_SESSION_TOKEN
       ? { kind: 'sessionless' }
       : { kind: 'session', sessionId: resolved };
   }
@@ -238,10 +238,7 @@ export class ExecutionService {
     }
 
     if (sessionId !== undefined && sessionId.trim().length === 0) {
-      this.logger.warn(
-        'Session ID contains only whitespace; falling back to default session',
-        { provided: JSON.stringify(sessionId) }
-      );
+      throw new Error('sessionId must not be empty or whitespace');
     }
 
     return DEFAULT_SESSION_ID;
@@ -256,7 +253,10 @@ export class ExecutionService {
       ...(config.inheritOuterCwd !== false && {
         cwd: overrides?.cwd ?? defaults.cwd
       }),
-      env: overrides?.env ?? defaults.env,
+      env:
+        defaults.env || overrides?.env
+          ? { ...defaults.env, ...overrides?.env }
+          : undefined,
       timeoutMs: overrides?.timeoutMs ?? defaults.timeoutMs,
       origin: overrides?.origin ?? defaults.origin
     };
@@ -310,7 +310,7 @@ export class ExecutionService {
       caughtError = error instanceof Error ? error : new Error(String(error));
 
       return serviceError({
-        message: `Failed to execute command '${command}' in session '${SESSIONLESS_SESSION_ID}': ${caughtError.message}`,
+        message: `Failed to execute command '${command}' in session '${DISABLE_SESSION_TOKEN}': ${caughtError.message}`,
         code: ErrorCode.COMMAND_EXECUTION_ERROR,
         details: {
           command,
@@ -324,7 +324,7 @@ export class ExecutionService {
         command,
         exitCode,
         durationMs: Date.now() - startTime,
-        sessionId: SESSIONLESS_SESSION_ID,
+        sessionId: DISABLE_SESSION_TOKEN,
         origin: options.origin ?? 'user',
         error: caughtError,
         errorMessage: caughtError?.message
@@ -352,7 +352,7 @@ export class ExecutionService {
     try {
       const spawned = this.spawnSessionlessProcess(command, options);
       const commandHandle: ProcessCommandHandle = {
-        sessionId: SESSIONLESS_SESSION_ID,
+        sessionId: DISABLE_SESSION_TOKEN,
         commandId: options.commandId,
         pid: spawned.pid
       };
@@ -377,7 +377,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to execute streaming command '${command}' in session '${SESSIONLESS_SESSION_ID}': ${errorMessage}`,
+        message: `Failed to execute streaming command '${command}' in session '${DISABLE_SESSION_TOKEN}': ${errorMessage}`,
         code: ErrorCode.STREAM_START_ERROR,
         details: {
           command,

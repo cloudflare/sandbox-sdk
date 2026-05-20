@@ -7,6 +7,7 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 import type {
   CommandResult,
+  ProcessCommandHandle,
   ProcessOptions,
   ProcessRecord,
   ProcessStatus,
@@ -123,23 +124,26 @@ export class ProcessService {
         undefined,
         options
       );
-
-      // 3. Build full process record. commandHandle is attached only after
-      // ExecutionService returns the authoritative session/pid binding.
-      const processRecord: ProcessRecord = {
-        ...processRecordData
+      const commandHandle: ProcessCommandHandle = {
+        sessionId: options.sessionId ?? 'default',
+        commandId: processRecordData.id
       };
-      let executionSessionId = options.sessionId ?? 'default';
+
+      const processRecord: ProcessRecord = {
+        ...processRecordData,
+        commandHandle
+      };
+      let executionSessionId = commandHandle.sessionId;
 
       // 4. Store record (data layer)
       await this.store.create(processRecord);
 
       // 5. Execute command with streaming and bind it to the process record
       // Pass process ID as commandId for tracking and killing
-      // CRITICAL: Await the initial result to ensure command is tracked before returning
       const streamResult = await this.executionService.executeStream(command, {
         sessionId: options.sessionId,
         cwd: options.cwd,
+        timeoutMs: options.timeoutMs,
         env: options.env,
         origin: options.origin,
         commandId: processRecordData.id,
@@ -236,6 +240,10 @@ export class ProcessService {
       });
 
       if (!streamResult.success) {
+        await this.store.update(processRecord.id, {
+          status: 'error',
+          endTime: new Date()
+        });
         return streamResult as ServiceResult<ProcessRecord>;
       }
 

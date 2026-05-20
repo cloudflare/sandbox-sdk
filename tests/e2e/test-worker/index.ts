@@ -556,17 +556,11 @@ console.log('Terminal server on port ' + port);
           body.command
         );
         const startTime = Date.now();
-        const stream = sessionId
-          ? await executor.execStream(body.command, {
-              env: body.env,
-              cwd: body.cwd,
-              timeout: body.timeout
-            })
-          : await sandbox.execStream(body.command, {
-              env: body.env,
-              cwd: body.cwd,
-              timeout: body.timeout
-            });
+        const stream = await executor.execStream(body.command, {
+          env: body.env,
+          cwd: body.cwd,
+          timeout: body.timeout
+        });
         console.log(
           '[TestWorker] Stream received in',
           Date.now() - startTime,
@@ -1402,17 +1396,6 @@ console.log('Terminal server on port ' + port);
             }
           );
         }
-      }
-
-      if (
-        error instanceof Error &&
-        error.message ===
-          'Explicit sessionId is not supported when enableDefaultSession is false'
-      ) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
       }
 
       return new Response(

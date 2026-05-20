@@ -69,7 +69,7 @@ export class GitService {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let errorMessage: string | undefined;
-    const sessionId = options.sessionId || 'default';
+    const sessionId = options.sessionId ?? 'default';
 
     try {
       // Validate repository URL

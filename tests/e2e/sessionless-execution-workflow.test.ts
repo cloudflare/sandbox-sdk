@@ -128,7 +128,7 @@ describe('Sessionless Execution Workflow', () => {
     expect(error).toBeUndefined();
   }, 90000);
 
-  test('should reject explicit session IDs when default sessions are disabled', async () => {
+  test('should allow explicit session IDs when default sessions are disabled', async () => {
     const testDir = sandbox!.uniquePath('session-list-files');
     const filePath = `${testDir}/session-only.txt`;
 
@@ -162,13 +162,11 @@ describe('Sessionless Execution Workflow', () => {
         options: { sessionId: sessionData.sessionId }
       })
     });
-    expect(scopedListResponse.status).toBe(400);
-    const scopedListError = (await scopedListResponse.json()) as {
-      error: string;
-    };
-    expect(scopedListError.error).toContain(
-      'Explicit sessionId is not supported when enableDefaultSession is false'
-    );
+    expect(scopedListResponse.status).toBe(200);
+    const scopedList = (await scopedListResponse.json()) as ListFilesResult;
+    expect(
+      scopedList.files.some((file) => file.name === 'session-only.txt')
+    ).toBe(true);
 
     const implicitListResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',

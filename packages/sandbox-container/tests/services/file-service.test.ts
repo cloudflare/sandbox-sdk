@@ -831,6 +831,40 @@ describe('FileService', () => {
       );
     });
 
+    it('should resolve relative rename paths in the execution context', async () => {
+      mocked(mockSessionManager.executeInSession)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.rename(
+        'old.txt',
+        'new.txt',
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        4,
+        'session-123',
+        "mv '/workspace/project/old.txt' '/workspace/project/new.txt'",
+        { origin: 'internal' }
+      );
+    });
+
     it('should handle rename command failures', async () => {
       // Mock exists check
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
@@ -884,6 +918,40 @@ describe('FileService', () => {
         2,
         'session-123',
         "mv '/tmp/source.txt' '/tmp/dest.txt'",
+        { origin: 'internal' }
+      );
+    });
+
+    it('should resolve relative move paths in the execution context', async () => {
+      mocked(mockSessionManager.executeInSession)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.move(
+        'source.txt',
+        'dest.txt',
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        4,
+        'session-123',
+        "mv '/workspace/project/source.txt' '/workspace/project/dest.txt'",
         { origin: 'internal' }
       );
     });

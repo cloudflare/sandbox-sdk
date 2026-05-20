@@ -53,6 +53,7 @@ import {
   BACKUP_ALLOWED_PREFIXES,
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
@@ -134,7 +135,6 @@ type SandboxConfiguration = {
   };
   sleepAfter?: string | number;
   keepAlive?: boolean;
-  enableDefaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -144,7 +144,6 @@ type CachedSandboxConfiguration = {
   normalizeId?: boolean;
   sleepAfter?: string | number;
   keepAlive?: boolean;
-  enableDefaultSession?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
 };
@@ -202,6 +201,23 @@ type ConfigurableSandboxStub = {
   setTransport?: (transport: SandboxTransport) => Promise<void>;
 };
 
+type SandboxProxyStub = ConfigurableSandboxStub & {
+  fetch: (request: Request) => Promise<Response>;
+  createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
+  getSession: (sessionId: string) => Promise<ExecutionSession>;
+  callDesktop: (method: string, args: unknown[]) => Promise<unknown>;
+  execWithSessionToken: (
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ) => Promise<ExecResult>;
+  execStreamWithSessionToken: (
+    command: string,
+    sessionId: string,
+    options?: StreamOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
+};
+
 type SandboxExecutionContext =
   | { kind: 'session'; sessionId: string }
   | { kind: 'sessionless' };
@@ -217,7 +233,6 @@ const R2_DEFAULT_S3FS_OPTIONS: Readonly<Record<string, string | boolean>> = {
   multipart_size: '5'
 };
 
-const SESSIONLESS_SESSION_ID = 'none';
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -364,13 +379,6 @@ function buildSandboxConfiguration(
   }
 
   if (
-    options?.enableDefaultSession !== undefined &&
-    cached?.enableDefaultSession !== options.enableDefaultSession
-  ) {
-    configuration.enableDefaultSession = options.enableDefaultSession;
-  }
-
-  if (
     options?.containerTimeouts &&
     !sameContainerTimeouts(cached?.containerTimeouts, options.containerTimeouts)
   ) {
@@ -392,7 +400,6 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sandboxName !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
-    configuration.enableDefaultSession !== undefined ||
     configuration.containerTimeouts !== undefined ||
     configuration.transport !== undefined
   );
@@ -413,9 +420,6 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.keepAlive !== undefined && {
       keepAlive: configuration.keepAlive
-    }),
-    ...(configuration.enableDefaultSession !== undefined && {
-      enableDefaultSession: configuration.enableDefaultSession
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
@@ -496,7 +500,7 @@ export function getSandbox<T extends Sandbox<any>>(
   const stub = getContainer(
     ns as unknown as DurableObjectNamespace<Container<Cloudflare.Env>>,
     effectiveId
-  ) as unknown as T & ConfigurableSandboxStub;
+  ) as unknown as T & SandboxProxyStub;
 
   const namespaceCache = getNamespaceConfigurationCache(ns);
   const cachedConfiguration = namespaceCache.get(effectiveId);
@@ -524,11 +528,124 @@ export function getSandbox<T extends Sandbox<any>>(
   }
 
   const defaultSessionId = `sandbox-${effectiveId}`;
+  const useDefaultSession = options?.enableDefaultSession !== false;
 
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
+    exec: (command: string, execOptions?: ExecOptions) =>
+      useDefaultSession
+        ? stub.exec(command, execOptions)
+        : stub.execWithSessionToken(
+            command,
+            DISABLE_SESSION_TOKEN,
+            execOptions
+          ),
+    startProcess: (command: string, processOptions?: ProcessOptions) =>
+      useDefaultSession || processOptions?.sessionId !== undefined
+        ? stub.startProcess(command, processOptions)
+        : stub.startProcess(command, {
+            ...processOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    listProcesses: () => stub.listProcesses(),
+    getProcess: (id: string) => stub.getProcess(id),
+    execStream: (command: string, streamOptions?: StreamOptions) => {
+      if (useDefaultSession || streamOptions?.sessionId !== undefined) {
+        return stub.execStream(command, streamOptions);
+      }
+
+      return stub.execStreamWithSessionToken(
+        command,
+        DISABLE_SESSION_TOKEN,
+        streamOptions
+      );
+    },
+    writeFile: (
+      path: string,
+      content: string | ReadableStream<Uint8Array>,
+      fileOptions: { encoding?: string; sessionId?: string } = {}
+    ) =>
+      useDefaultSession || fileOptions.sessionId !== undefined
+        ? stub.writeFile(path, content, fileOptions)
+        : stub.writeFile(path, content, {
+            ...fileOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    readFile: (
+      path: string,
+      fileOptions:
+        | { encoding: 'none'; sessionId?: string }
+        | { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string } = {}
+    ) => {
+      if (fileOptions.encoding === 'none') {
+        const options =
+          useDefaultSession || fileOptions.sessionId !== undefined
+            ? fileOptions
+            : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
+        return stub.readFile(path, options);
+      }
+
+      const options =
+        useDefaultSession || fileOptions.sessionId !== undefined
+          ? fileOptions
+          : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
+      return stub.readFile(path, options);
+    },
+    readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
+      useDefaultSession || fileOptions.sessionId !== undefined
+        ? stub.readFileStream(path, fileOptions)
+        : stub.readFileStream(path, { sessionId: DISABLE_SESSION_TOKEN }),
+    mkdir: (
+      path: string,
+      mkdirOptions: { recursive?: boolean; sessionId?: string } = {}
+    ) =>
+      useDefaultSession || mkdirOptions.sessionId !== undefined
+        ? stub.mkdir(path, mkdirOptions)
+        : stub.mkdir(path, {
+            ...mkdirOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    deleteFile: (path: string) =>
+      useDefaultSession
+        ? stub.deleteFile(path)
+        : stub.deleteFile(path, DISABLE_SESSION_TOKEN),
+    renameFile: (oldPath: string, newPath: string) =>
+      useDefaultSession
+        ? stub.renameFile(oldPath, newPath)
+        : stub.renameFile(oldPath, newPath, DISABLE_SESSION_TOKEN),
+    moveFile: (sourcePath: string, destinationPath: string) =>
+      useDefaultSession
+        ? stub.moveFile(sourcePath, destinationPath)
+        : stub.moveFile(sourcePath, destinationPath, DISABLE_SESSION_TOKEN),
+    listFiles: (path: string, listOptions?: ListFilesOptions) =>
+      useDefaultSession || listOptions?.sessionId !== undefined
+        ? stub.listFiles(path, listOptions)
+        : stub.listFiles(path, {
+            ...listOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    exists: (path: string, sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.exists(path, sessionId)
+        : stub.exists(path, DISABLE_SESSION_TOKEN),
+    gitCheckout: (
+      repoUrl: string,
+      gitOptions?: {
+        branch?: string;
+        targetDir?: string;
+        sessionId?: string;
+        depth?: number;
+        cloneTimeoutMs?: number;
+      }
+    ) =>
+      useDefaultSession || gitOptions?.sessionId !== undefined
+        ? stub.gitCheckout(repoUrl, gitOptions)
+        : stub.gitCheckout(repoUrl, {
+            ...gitOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return enhanceSession(stub, rpcSession as ExecutionSession);
@@ -537,6 +654,17 @@ export function getSandbox<T extends Sandbox<any>>(
       const rpcSession = await stub.getSession(sessionId);
       return enhanceSession(stub, rpcSession as ExecutionSession);
     },
+    watch: (path: string, options: WatchOptions = {}) =>
+      useDefaultSession || options.sessionId !== undefined
+        ? stub.watch(path, options)
+        : stub.watch(path, { ...options, sessionId: DISABLE_SESSION_TOKEN }),
+    checkChanges: (path: string, options: CheckChangesOptions = {}) =>
+      useDefaultSession || options.sessionId !== undefined
+        ? stub.checkChanges(path, options)
+        : stub.checkChanges(path, {
+            ...options,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub),
@@ -632,7 +760,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
-  private enableDefaultSession: boolean = true;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: SandboxTransport = 'http';
 
@@ -943,8 +1070,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
-      this.enableDefaultSession =
-        (await this.ctx.storage.get<boolean>('enableDefaultSession')) ?? true;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -1033,12 +1158,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.setKeepAlive(configuration.keepAlive);
     }
 
-    if (configuration.enableDefaultSession !== undefined) {
-      await this.configureDefaultSessionPolicy(
-        configuration.enableDefaultSession
-      );
-    }
-
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
@@ -1069,39 +1188,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (!keepAlive) {
       this.renewActivityTimeout();
-    }
-  }
-
-  private async configureDefaultSessionPolicy(
-    enableDefaultSession: boolean
-  ): Promise<void> {
-    if (this.enableDefaultSession === enableDefaultSession) {
-      return;
-    }
-
-    const previousDefaultSession = !enableDefaultSession
-      ? this.defaultSession
-      : null;
-
-    if (!enableDefaultSession) {
-      this.containerGeneration++;
-      this.defaultSession = null;
-      this.defaultSessionInit = null;
-      await this.ctx.storage.delete('defaultSession');
-    }
-
-    await this.ctx.storage.put('enableDefaultSession', enableDefaultSession);
-    this.enableDefaultSession = enableDefaultSession;
-
-    if (previousDefaultSession) {
-      await this.client.utils
-        .deleteSession(previousDefaultSession)
-        .catch((error: unknown) => {
-          this.logger.warn('Failed to delete previous default session', {
-            sessionId: previousDefaultSession,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        });
     }
   }
 
@@ -1877,7 +1963,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.files.writeFile(
       passwordFilePath,
       content,
-      SESSIONLESS_SESSION_ID
+      DISABLE_SESSION_TOKEN
     );
 
     await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
@@ -2303,7 +2389,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // retry path (re-entering onStart) it may already contain entries
     // that should be skipped.
     const exposedSet = await this.client.ports
-      .getExposedPorts(SESSIONLESS_SESSION_ID)
+      .getExposedPorts(DISABLE_SESSION_TOKEN)
       .then((response) => new Set(response.ports.map((p) => p.port)))
       .catch((error) => {
         this.logger.warn(
@@ -2331,7 +2417,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       try {
         await this.client.ports.exposePort(
           port,
-          SESSIONLESS_SESSION_ID,
+          DISABLE_SESSION_TOKEN,
           entry.name
         );
         restored++;
@@ -2958,11 +3044,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<SandboxExecutionContext> {
     if (explicitSessionId !== undefined) {
       this.validateExplicitSessionId(explicitSessionId);
+      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
+        return { kind: 'sessionless' };
+      }
       return { kind: 'session', sessionId: explicitSessionId };
-    }
-
-    if (!this.enableDefaultSession) {
-      return { kind: 'sessionless' };
     }
 
     return {
@@ -2975,29 +3060,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (sessionId.trim().length === 0) {
       throw new Error('sessionId must not be empty or whitespace');
     }
-
-    if (!this.enableDefaultSession) {
-      throw new Error(
-        'Explicit sessionId is not supported when enableDefaultSession is false'
-      );
-    }
   }
 
   private serializeExecutionContext(context: SandboxExecutionContext): string {
-    return context.kind === 'sessionless'
-      ? SESSIONLESS_SESSION_ID
-      : context.sessionId;
+    if (context.kind === 'sessionless') {
+      return DISABLE_SESSION_TOKEN;
+    }
+    return context.sessionId;
   }
 
   /**
    * Resolves the session ID to annotate returned Process objects.
    *
    * Unlike `resolveExecution`, this is synchronous and never creates a
-   * session. When `enableDefaultSession` is true but the default session
-   * hasn't been established yet, it returns `undefined` rather than
-   * triggering session creation. The resolved value is only used to
-   * populate `Process.sessionId` on the returned object — it is never
-   * sent to the container API.
+   * session. When the default session hasn't been established yet, it returns
+   * `undefined` rather than triggering session creation. The resolved value is
+   * only used to populate `Process.sessionId` on the returned object — it is
+   * never sent to the container API.
    */
   private getProcessSessionBinding(
     explicitSessionId?: string
@@ -3007,16 +3086,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return explicitSessionId;
     }
 
-    return this.enableDefaultSession
-      ? (this.defaultSession ?? undefined)
-      : SESSIONLESS_SESSION_ID;
+    return this.defaultSession ?? undefined;
   }
 
   private resolveExecutionEnv(
     sessionId: string,
     env?: Record<string, string | undefined>
   ): Record<string, string | undefined> | undefined {
-    if (sessionId === SESSIONLESS_SESSION_ID) {
+    if (sessionId === DISABLE_SESSION_TOKEN) {
       const mergedEnv = filterEnvVars({ ...this.envVars, ...(env ?? {}) });
       return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
     }
@@ -3072,19 +3149,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.execWithSession(command, session, options);
   }
 
+  async execWithSessionToken(
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    this.validateExplicitSessionId(sessionId);
+    return this.execWithSession(command, sessionId, options);
+  }
+
   /**
    * Execute an infrastructure command (backup, mount, env setup, etc.)
    * tagged with origin: 'internal' so logging demotes it to debug level.
-   *
-   * Deliberately uses SESSIONLESS_SESSION_ID rather than the default session:
-   * infrastructure commands are atomic and stateless, so they don't need a
-   * persistent shell, and this avoids creating a default session as a side
-   * effect of internal operations.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    return this.execWithSession(command, SESSIONLESS_SESSION_ID, {
-      origin: 'internal'
-    });
+    const session = await this.ensureDefaultSession();
+    return this.execWithSession(command, session, { origin: 'internal' });
   }
 
   /**
@@ -3950,6 +4030,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       session,
       executionOptions
     );
+  }
+
+  async execStreamWithSessionToken(
+    command: string,
+    sessionId: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
+    this.validateExplicitSessionId(sessionId);
+    return this.execStreamWithSession(command, sessionId, options);
   }
 
   /**

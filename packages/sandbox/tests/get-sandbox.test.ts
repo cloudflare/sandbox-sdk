@@ -1,3 +1,4 @@
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSandbox } from '../src/sandbox';
 
@@ -332,6 +333,80 @@ describe('getSandbox', () => {
 
       sandbox.validatePortToken(8080, 'token123');
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
+    });
+
+    it('routes implicit startProcess through the sessionless token when default sessions are disabled', async () => {
+      mockStub.startProcess = vi.fn().mockResolvedValue({
+        success: true,
+        processId: 'proc-sessionless',
+        command: 'sleep 10',
+        timestamp: new Date().toISOString()
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.startProcess('sleep 10', {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000
+      });
+
+      expect(mockStub.startProcess).toHaveBeenCalledWith('sleep 10', {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000,
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+    });
+
+    it('routes implicit watch through the sessionless token when default sessions are disabled', async () => {
+      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.watch('/workspace');
+
+      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+    });
+
+    it('routes implicit checkChanges through the sessionless token when default sessions are disabled', async () => {
+      mockStub.checkChanges = vi
+        .fn()
+        .mockResolvedValue({ status: 'unchanged', version: 1 });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.checkChanges('/workspace');
+
+      expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+    });
+
+    it('passes an explicit sessionId through watch even when default sessions are disabled', async () => {
+      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.watch('/workspace', { sessionId: 'my-session' });
+
+      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
+        sessionId: 'my-session'
+      });
     });
 
     it('should read properties directly from the stub', () => {

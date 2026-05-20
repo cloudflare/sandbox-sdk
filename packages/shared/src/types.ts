@@ -223,6 +223,13 @@ export interface PortWatchEvent {
 // Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**
+   * Optional session ID to run the background process in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
+
+  /**
    * Custom process ID for later reference
    * If not provided, a UUID will be generated
    */
@@ -475,8 +482,8 @@ export interface SandboxOptions {
    * When true (the default), implicit operations automatically create and reuse
    * a persistent default shell session. Set to false to run implicit top-level
    * operations sessionlessly, where each command spawns a fresh process with no
-   * shared shell state. Explicit per-call session IDs are not supported when
-   * this is false.
+   * shared shell state. Explicit per-call session IDs continue to work normally
+   * when this is false.
    *
    * Default: true
    */
@@ -943,6 +950,8 @@ export interface ProcessLogsResult {
 
 export interface ProcessCleanupResult {
   success: boolean;
+  message?: string;
+  killedCount?: number;
   cleanedCount: number;
   timestamp: string;
 }
