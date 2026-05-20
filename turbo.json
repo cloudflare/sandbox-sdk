@@ -83,7 +83,8 @@
         "!tests/e2e/browser/**",
         "vitest.e2e.config.ts",
         "packages/sandbox/Dockerfile"
-      ]
+      ],
+      "passThroughEnv": ["TEST_TRANSPORT", "TEST_WORKER_URL"]
     },
     "test:perf": {
       "dependsOn": ["^build", "docker:local"],
@@ -100,7 +101,13 @@
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY"
       ],
-      "env": ["GITHUB_SHA", "GITHUB_REF_NAME", "GITHUB_EVENT_NAME", "CI", "PERF_RUN_ID"]
+      "env": [
+        "GITHUB_SHA",
+        "GITHUB_REF_NAME",
+        "GITHUB_EVENT_NAME",
+        "CI",
+        "PERF_RUN_ID"
+      ]
     },
     "test:e2e:browser": {
       "dependsOn": ["^build", "docker:local"],

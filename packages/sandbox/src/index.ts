@@ -158,11 +158,7 @@ export { collectFile, streamFile } from './file-stream';
 export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
-export {
-  proxyToSandbox,
-  type RouteInfo,
-  type SandboxEnv
-} from './request-handler';
+export { proxyToSandbox, type SandboxEnv } from './request-handler';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export {
   asyncIterableToSSEStream,
