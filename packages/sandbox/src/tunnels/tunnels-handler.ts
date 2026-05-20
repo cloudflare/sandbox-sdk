@@ -146,8 +146,6 @@ type TunnelMap = Record<string, TunnelInfo>;
 interface TunnelMetaEntry {
   /** Stable hash of the `options` object the tunnel was created with. */
   optionsHash: string;
-  /** Discriminator that mirrors the union in the public `TunnelInfo` shape. */
-  mode: 'quick' | 'named';
   /** Cloudflare DNS record id for named tunnels; absent for quick. */
   dnsRecordId?: string;
 }
@@ -267,8 +265,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
             cachedHash ?? (existing.name ? `named:${existing.name}` : 'quick');
           if (effectiveHash !== requestedHash) {
             throw new Error(
-              `Tunnel on port ${port} was created with different options ` +
-                `(${effectiveHash} vs ${requestedHash}). ` +
+              `Tunnel on port ${port} was created with different options. ` +
                 `Call destroy(${port}) before changing tunnel options.`
             );
           }
@@ -313,7 +310,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       nextMap[port.toString()] = spawned;
       await txn.put(STORAGE_KEY, nextMap);
       const nextMeta = await readMetaMap(txn);
-      nextMeta[port.toString()] = { optionsHash: 'quick', mode: 'quick' };
+      nextMeta[port.toString()] = { optionsHash: 'quick' };
       await txn.put(META_STORAGE_KEY, nextMeta);
     });
     return spawned;
@@ -427,7 +424,6 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       const nextMeta = await readMetaMap(txn);
       nextMeta[port.toString()] = {
         optionsHash: computeOptionsHash({ name }),
-        mode: 'named',
         dnsRecordId: dnsResult.recordId
       };
       await txn.put(META_STORAGE_KEY, nextMeta);
@@ -481,7 +477,9 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         // Named-tunnel cleanup on Cloudflare. Best-effort: log failures
         // but do not abort the rest of teardown. Quick tunnels short-circuit
         // here because they have no CF-side resources.
-        if (metaBefore?.mode !== 'named') return;
+        // Quick tunnels short-circuit here — no DNS record id means there
+        // are no Cloudflare-side resources to delete.
+        if (!metaBefore?.dnsRecordId) return;
         if (!this.#host.getNamedTunnelConfig) return;
 
         let config: { token: string; accountId: string; zoneId: string };
