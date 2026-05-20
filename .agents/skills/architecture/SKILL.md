@@ -76,7 +76,7 @@ The route-based client pattern is:
   - `CommandClient` — exec / execStream
   - `FileClient` — read, write, list, delete
   - `ProcessClient` — start, stop, list, signal
-  - `PortClient` — expose / preview URLs
+  - `PortClient` — port readiness streams
   - `GitClient` — clone, checkout, status
   - `UtilityClient` — ping, metadata
   - `InterpreterClient` — code interpreter sessions
@@ -90,7 +90,7 @@ When maintaining route-based compatibility, add or extend specialized clients un
 - **Control plane** (`control-plane/`) — primary container-side API called by the Sandbox DO
 - **Handlers** (`handlers/`) — route-based compatibility handlers, thin layer that parses requests
 - **Services** (`services/`) — business logic (`CommandService`, `FileService`, `ProcessService`, …)
-- **Managers** (`managers/`) — stateful coordinators (`ProcessManager`, `PortManager`)
+- **Managers** (`managers/`) — stateful coordinators such as `ProcessManager`
 
 Entry point: `packages/sandbox-container/src/index.ts` starts a Bun HTTP server on port 3000.
 
@@ -118,7 +118,7 @@ Uses npm workspaces + [Turbo](https://turbo.build/):
 ## Cross-Cutting Patterns
 
 - **Sessions** — isolate execution contexts (cwd, env vars). Default session is auto-created; multiple sessions per sandbox are supported.
-- **Ports** — expose internal services via preview URLs with token auth. Auto-cleaned on sandbox sleep. Production preview URLs require a custom domain with wildcard DNS (`*.yourdomain.com`); `.workers.dev` does not support the required subdomain patterns.
+- **Ports** — expose internal services via preview URLs with token auth. Preview URL authorization is Durable Object-owned, while forwarding is active only after `exposePort()` activates the port for the current runtime. Production preview URLs require a custom domain with wildcard DNS (`*.yourdomain.com`); `.workers.dev` does not support the required subdomain patterns.
 - **Container isolation** — handled at the Cloudflare platform level (VMs), not by SDK code.
 
 ## Container Base Image

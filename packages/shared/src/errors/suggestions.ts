@@ -22,10 +22,10 @@ export function getSuggestion(
       return 'Verify the process ID is correct and the process has not already exited';
 
     case ErrorCode.PORT_NOT_EXPOSED:
-      return `Port ${context.port} is not currently exposed. Use listExposedPorts() to see active ports`;
+      return `Port ${context.port} is not currently available for this operation`;
 
     case ErrorCode.PORT_ALREADY_EXPOSED:
-      return `Port ${context.port} is already exposed. Unexpose it first or use a different port`;
+      return `Port ${context.port} already has preview URL authorization or activation state`;
 
     case ErrorCode.PORT_IN_USE:
       return `Port ${context.port} is already in use by another service. Choose a different port`;

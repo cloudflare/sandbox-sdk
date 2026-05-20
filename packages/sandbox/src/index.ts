@@ -88,9 +88,6 @@ export type {
   // Command client types
   ExecuteRequest,
   ExecuteResponse as CommandExecuteResponse,
-
-  // Port client types
-  ExposePortRequest,
   FileOperationRequest,
 
   // Git client types
@@ -102,9 +99,6 @@ export type {
   // File client types
   MkdirRequest,
   PingResponse,
-  PortCloseResult,
-  PortExposeResult,
-  PortListResult,
   ProcessCleanupResult,
   ProcessInfoResult,
   ProcessKillResult,
@@ -125,7 +119,6 @@ export type {
   // Process client types
   StartProcessRequest,
   TypeOptions,
-  UnexposePortRequest,
   WriteFileRequest
 } from './clients';
 export type {
