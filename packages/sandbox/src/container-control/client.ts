@@ -70,6 +70,12 @@
  */
 
 import type {
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
+  DesktopScreenshotRegionRequest,
+  DesktopScreenshotRequest,
+  DesktopScreenshotResult,
   Logger,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -93,6 +99,7 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
+import { base64ToBytes } from '../clients/desktop-client';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import {
@@ -586,10 +593,27 @@ export class ContainerControlClient {
       this.getConnection().rpc().desktop,
       this.renewActivity
     );
-    // The capnweb RPC method `type` takes `{ delay }` on the wire while
-    // the user-facing SandboxDesktopAPI exposes `{ delayMs }` (matching
-    // the HTTP DesktopTypeRequest shape). Translate here so both
-    // transports present the same `delayMs` surface to callers.
+    // The capnweb RPC stub exposes the wire shape used by the container:
+    //   - `type` takes `{ delay }` (HTTP/service use `delayMs`)
+    //   - `screenshot` / `screenshotRegion` return only base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP `DesktopClient` (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`, and
+    // `type` options shaped as `{ delayMs }`). Translate here so both
+    // transports present the same surface to callers without changing the
+    // wire format.
+    type DesktopRpcStub = {
+      type: (t: string, o?: { delay?: number }) => Promise<void>;
+      screenshot: (
+        options?: DesktopScreenshotRequest
+      ) => Promise<DesktopScreenshotResult>;
+      screenshotRegion: (
+        request: DesktopScreenshotRegionRequest
+      ) => Promise<DesktopScreenshotResult>;
+    };
+    const wire = stub as unknown as DesktopRpcStub;
     return new Proxy(stub, {
       get(target, prop, receiver) {
         if (prop === 'type') {
@@ -598,16 +622,39 @@ export class ContainerControlClient {
               options?.delayMs !== undefined
                 ? { delay: options.delayMs }
                 : undefined;
-            return (
-              target as unknown as {
-                type: (t: string, o?: { delay?: number }) => Promise<void>;
-              }
-            ).type(text, wireOptions);
+            return wire.type(text, wireOptions);
+          };
+        }
+        if (prop === 'screenshot') {
+          return async (
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshot(rest);
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
+          };
+        }
+        if (prop === 'screenshotRegion') {
+          return async (
+            region: DesktopScreenshotRegion,
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshotRegion({ region, ...rest });
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
           };
         }
         return Reflect.get(target, prop, receiver);
       }
-    });
+    }) as unknown as SandboxDesktopAPI;
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);

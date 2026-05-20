@@ -10,8 +10,9 @@ import type {
   DesktopMouseButton,
   DesktopProcessHealth,
   DesktopScreenSize,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
   DesktopScreenshotResult,
   DesktopScrollDirection,
   DesktopStartResult,
@@ -277,11 +278,26 @@ export interface SandboxDesktopAPI {
   stop(): Promise<DesktopStopResult>;
   status(): Promise<DesktopStatusResult>;
   screenshot(
-    options?: DesktopScreenshotRequest
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
+  ): Promise<DesktopScreenshotResult>;
+  screenshot(
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshot(
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
   ): Promise<DesktopScreenshotResult>;
   screenshotRegion(
-    request: DesktopScreenshotRegionRequest
-  ): Promise<DesktopScreenshotResult>;
+    region: DesktopScreenshotRegion,
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
   click(
     x: number,
     y: number,

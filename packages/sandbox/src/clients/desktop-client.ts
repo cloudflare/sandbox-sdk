@@ -1,9 +1,4 @@
-import type {
-  DesktopProcessHealth,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
-  SandboxDesktopAPI
-} from '@repo/shared';
+import type { DesktopProcessHealth, SandboxDesktopAPI } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -87,10 +82,27 @@ export interface Desktop {
   start(options?: DesktopStartOptions): Promise<DesktopStartResponse>;
   stop(): Promise<DesktopStopResponse>;
   status(): Promise<DesktopStatusResponse>;
-  screenshot(options?: DesktopScreenshotRequest): Promise<ScreenshotResponse>;
-  screenshotRegion(
-    request: DesktopScreenshotRegionRequest
+  screenshot(
+    options?: ScreenshotOptions & { format?: 'base64' }
   ): Promise<ScreenshotResponse>;
+  screenshot(
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  screenshot(
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions & { format?: 'base64' }
+  ): Promise<ScreenshotResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
   click(x: number, y: number, options?: ClickOptions): Promise<void>;
   doubleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
   tripleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
@@ -119,6 +131,20 @@ export interface Desktop {
   keyUp(key: KeyInput): Promise<void>;
   getScreenSize(): Promise<ScreenSizeResponse>;
   getProcessStatus(name: string): Promise<DesktopProcessHealth>;
+}
+
+/**
+ * Decode a base64-encoded screenshot payload into a Uint8Array.
+ * Shared with the RPC client wrapper, which receives base64 over the
+ * wire and needs the same `format: 'bytes'` convenience.
+ */
+export function base64ToBytes(data: string): Uint8Array {
+  const binaryString = atob(data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 
 /**
@@ -183,8 +209,18 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
    * Capture a full-screen screenshot as base64 (default).
    */
   async screenshot(
-    options?: DesktopScreenshotRequest
-  ): Promise<ScreenshotResponse> {
+    options?: ScreenshotOptions & { format?: 'base64' }
+  ): Promise<ScreenshotResponse>;
+  /**
+   * Capture a full-screen screenshot as bytes.
+   */
+  async screenshot(
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  async screenshot(
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
+    const wantsBytes = options?.format === 'bytes';
     const data = {
       format: 'base64',
       ...(options?.imageFormat !== undefined && {
@@ -195,31 +231,66 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
         showCursor: options.showCursor
       })
     };
-    return this.post<ScreenshotResponse>('/api/desktop/screenshot', data);
+
+    const response = await this.post<ScreenshotResponse>(
+      '/api/desktop/screenshot',
+      data
+    );
+
+    if (wantsBytes) {
+      return {
+        ...response,
+        data: base64ToBytes(response.data)
+      } as ScreenshotBytesResponse;
+    }
+
+    return response;
   }
 
   /**
-   * Capture a region screenshot as base64.
+   * Capture a region screenshot as base64 (default).
    */
   async screenshotRegion(
-    request: DesktopScreenshotRegionRequest
-  ): Promise<ScreenshotResponse> {
-    const { region, ...options } = request;
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions & { format?: 'base64' }
+  ): Promise<ScreenshotResponse>;
+  /**
+   * Capture a region screenshot as bytes.
+   */
+  async screenshotRegion(
+    region: ScreenshotRegion,
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  async screenshotRegion(
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse> {
+    const wantsBytes = options?.format === 'bytes';
     const data = {
       region,
       format: 'base64',
-      ...(options.imageFormat !== undefined && {
+      ...(options?.imageFormat !== undefined && {
         imageFormat: options.imageFormat
       }),
-      ...(options.quality !== undefined && { quality: options.quality }),
-      ...(options.showCursor !== undefined && {
+      ...(options?.quality !== undefined && { quality: options.quality }),
+      ...(options?.showCursor !== undefined && {
         showCursor: options.showCursor
       })
     };
-    return this.post<ScreenshotResponse>(
+
+    const response = await this.post<ScreenshotResponse>(
       '/api/desktop/screenshot/region',
       data
     );
+
+    if (wantsBytes) {
+      return {
+        ...response,
+        data: base64ToBytes(response.data)
+      } as ScreenshotBytesResponse;
+    }
+
+    return response;
   }
 
   /**

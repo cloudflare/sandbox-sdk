@@ -139,10 +139,17 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
     return new BackupRPCAPI(this.#deps.backupService);
   }
   get desktop(): SandboxDesktopAPI {
-    // DesktopRPCAPI.type declares the capnweb wire shape `{ delay }` while
-    // SandboxDesktopAPI exposes the user-facing `{ delayMs }`. The client
-    // wrapper translates `delayMs` -> `delay` before the call reaches us,
-    // and DesktopRPCAPI.type translates back to `delayMs` for the service.
+    // DesktopRPCAPI exposes the capnweb wire shape used by the container:
+    //   - `type` takes `{ delay }` (HTTP/service use `delayMs`)
+    //   - `screenshot` / `screenshotRegion` always return base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP DesktopClient (overloaded `format: 'bytes'`, positional
+    // `screenshotRegion(region, options?)`, `{ delayMs }` for type). The
+    // client-side RPC wrapper in container-control/client.ts translates
+    // user calls down to this wire shape; DesktopRPCAPI.type translates
+    // `delay` back to `delayMs` for the service.
     return new DesktopRPCAPI(
       this.#deps.desktopService
     ) as unknown as SandboxDesktopAPI;

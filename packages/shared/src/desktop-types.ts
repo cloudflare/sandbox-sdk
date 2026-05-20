@@ -41,6 +41,24 @@ export interface DesktopProcessHealth {
 
 export type DesktopImageFormat = 'png' | 'jpeg' | 'webp';
 
+export interface DesktopScreenshotOptions {
+  /**
+   * How the SDK returns the screenshot payload to the caller.
+   * - `'base64'` (default): `data` is a base64-encoded string (also the wire format).
+   * - `'bytes'`: client-side convenience that base64-decodes the wire payload
+   *   into a `Uint8Array` before returning. The wire/server contract is
+   *   always base64.
+   */
+  format?: 'base64' | 'bytes';
+  imageFormat?: DesktopImageFormat;
+  quality?: number;
+  showCursor?: boolean;
+}
+
+/**
+ * Wire-shape request for the HTTP `/api/desktop/screenshot` endpoint and
+ * the capnweb `desktop.screenshot` RPC method.
+ */
 export interface DesktopScreenshotRequest {
   format?: 'base64';
   imageFormat?: DesktopImageFormat;
@@ -48,6 +66,10 @@ export interface DesktopScreenshotRequest {
   showCursor?: boolean;
 }
 
+/**
+ * Wire-shape request for the HTTP `/api/desktop/screenshot/region` endpoint
+ * and the capnweb `desktop.screenshotRegion` RPC method.
+ */
 export interface DesktopScreenshotRegionRequest extends DesktopScreenshotRequest {
   region: DesktopScreenshotRegion;
 }
@@ -59,12 +81,28 @@ export interface DesktopScreenshotRegion {
   height: number;
 }
 
+/**
+ * Screenshot payload returned to the SDK caller when `format` is `'base64'`
+ * (the default). Matches the wire shape sent by the container.
+ */
 export interface DesktopScreenshotResult {
   success: boolean;
   data: string;
   imageFormat: DesktopImageFormat;
   width: number;
   height: number;
+}
+
+/**
+ * Screenshot payload returned to the SDK caller when `format: 'bytes'` is
+ * requested. The SDK client decodes the base64 wire payload into a
+ * `Uint8Array`; the server/wire contract is unchanged.
+ */
+export interface DesktopScreenshotBytesResult extends Omit<
+  DesktopScreenshotResult,
+  'data'
+> {
+  data: Uint8Array;
 }
 
 // === Mouse ===
