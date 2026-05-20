@@ -316,7 +316,7 @@ export interface SandboxDesktopAPI {
     amount?: number
   ): Promise<void>;
   getCursorPosition(): Promise<DesktopCursorPosition>;
-  type(text: string, options?: { delay?: number }): Promise<void>;
+  type(text: string, options?: { delayMs?: number }): Promise<void>;
   press(key: string): Promise<void>;
   keyDown(key: string): Promise<void>;
   keyUp(key: string): Promise<void>;

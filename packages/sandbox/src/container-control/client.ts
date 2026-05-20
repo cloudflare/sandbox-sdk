@@ -582,7 +582,32 @@ export class ContainerControlClient {
     return wrapStub(this.getConnection().rpc().backup, this.renewActivity);
   }
   get desktop(): SandboxDesktopAPI {
-    return wrapStub(this.getConnection().rpc().desktop, this.renewActivity);
+    const stub = wrapStub(
+      this.getConnection().rpc().desktop,
+      this.renewActivity
+    );
+    // The capnweb RPC method `type` takes `{ delay }` on the wire while
+    // the user-facing SandboxDesktopAPI exposes `{ delayMs }` (matching
+    // the HTTP DesktopTypeRequest shape). Translate here so both
+    // transports present the same `delayMs` surface to callers.
+    return new Proxy(stub, {
+      get(target, prop, receiver) {
+        if (prop === 'type') {
+          return (text: string, options?: { delayMs?: number }) => {
+            const wireOptions =
+              options?.delayMs !== undefined
+                ? { delay: options.delayMs }
+                : undefined;
+            return (
+              target as unknown as {
+                type: (t: string, o?: { delay?: number }) => Promise<void>;
+              }
+            ).type(text, wireOptions);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    });
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);

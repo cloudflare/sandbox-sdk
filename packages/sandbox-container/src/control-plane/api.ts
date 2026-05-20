@@ -26,6 +26,7 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
+  SandboxDesktopAPI,
   TunnelInfo,
   WatchRequest
 } from '@repo/shared';
@@ -137,8 +138,14 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   get backup() {
     return new BackupRPCAPI(this.#deps.backupService);
   }
-  get desktop() {
-    return new DesktopRPCAPI(this.#deps.desktopService);
+  get desktop(): SandboxDesktopAPI {
+    // DesktopRPCAPI.type declares the capnweb wire shape `{ delay }` while
+    // SandboxDesktopAPI exposes the user-facing `{ delayMs }`. The client
+    // wrapper translates `delayMs` -> `delay` before the call reaches us,
+    // and DesktopRPCAPI.type translates back to `delayMs` for the service.
+    return new DesktopRPCAPI(
+      this.#deps.desktopService
+    ) as unknown as SandboxDesktopAPI;
   }
   get watch() {
     return new WatchRPCAPI(this.#deps.watchService);
@@ -1242,7 +1249,15 @@ class DesktopRPCAPI extends RpcTarget {
     );
   }
   async type(text: string, options?: { delay?: number }): Promise<void> {
-    throwIfError(await this.#svc.typeText({ text, ...options }));
+    // RPC wire uses `delay` (see SandboxDesktopAPI capnweb signature in
+    // the client wrapper); the service layer and HTTP wire use `delayMs`.
+    // Translate here so the field name is consistent with DesktopTypeRequest.
+    throwIfError(
+      await this.#svc.typeText({
+        text,
+        ...(options?.delay !== undefined && { delayMs: options.delay })
+      })
+    );
   }
   async press(key: string): Promise<void> {
     throwIfError(await this.#svc.keyPress({ key }));
