@@ -15,7 +15,7 @@
     "@repo/shared": "*",
     "acorn": "^8.14.0",
     "async-mutex": "^0.5.0",
-    "capnweb": "^0.6.1"
+    "capnweb": "^0.8.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "*",
