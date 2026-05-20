@@ -137,8 +137,6 @@ Notes:
   seconds while DNS propagates, even after `get()` resolves.
 - `*.trycloudflare.com` buffers `text/event-stream` responses.
   WebSockets work fine.
-- The musl/Alpine image variant does not ship cloudflared (no upstream
-  musl prebuilt); `sandbox.tunnels` is unavailable on that variant.
 - Local builds behind a TLS-intercepting proxy (e.g. Cloudflare WARP)
   need the host CA bundle injected at build time — see
   [DOCKER_README.md](../../DOCKER_README.md).
