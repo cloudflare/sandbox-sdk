@@ -98,11 +98,11 @@ export const OPENAPI_SCHEMA = {
       },
       MountBucketRequestOptions: {
         type: 'object',
-        required: ['endpoint'],
         properties: {
           endpoint: {
             type: 'string',
-            description: 'S3-compatible endpoint URL.',
+            description:
+              'S3-compatible endpoint URL for remote mounts. Mutually exclusive with top-level `binding`.',
             example: 'https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
           },
           readOnly: {
@@ -113,24 +113,38 @@ export const OPENAPI_SCHEMA = {
           prefix: {
             type: 'string',
             description:
-              'Optional prefix/subdirectory within the bucket to mount. Must start and end with `/`.',
-            example: '/uploads/images/'
+              'Optional prefix/subdirectory within the bucket to mount. Must start with `/`. Trailing slashes are stripped automatically.',
+            example: '/uploads/images'
           },
           credentials: {
             $ref: '#/components/schemas/MountBucketCredentials',
             description:
               'Explicit credentials. When omitted, the SDK auto-detects from Worker secrets (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY or AWS equivalents).'
+          },
+          s3fsOptions: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Advanced: Override or extend s3fs mount options for both remote mounts and R2 binding mounts.',
+            example: ['nomultipart']
           }
         }
       },
       MountBucketRequest: {
         type: 'object',
-        required: ['bucket', 'mountPath', 'options'],
+        required: ['mountPath', 'options'],
         properties: {
           bucket: {
             type: 'string',
-            description: 'Bucket name.',
+            description:
+              'Remote bucket name for endpoint-based S3-compatible mounts.',
             example: 'my-r2-bucket'
+          },
+          binding: {
+            type: 'string',
+            description:
+              'Worker R2 binding name for credential-less R2 binding mounts. Mutually exclusive with `options.endpoint`.',
+            example: 'MY_BUCKET'
           },
           mountPath: {
             type: 'string',

@@ -23,6 +23,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   PtyOptions,
+  R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
   RemoteMountBucketOptions,
@@ -85,7 +86,10 @@ import {
   buildS3fsSource,
   detectCredentials,
   detectProviderFromUrl,
+  isR2Bucket,
+  MissingCredentialsError,
   resolveS3fsOptions,
+  validateBucketBindingName,
   validateBucketName,
   validatePrefix
 } from './storage-mount';
@@ -94,10 +98,15 @@ import {
   InvalidMountConfigError,
   S3FSMountError
 } from './storage-mount/errors';
+import {
+  type R2EgressParams,
+  r2EgressHandler
+} from './storage-mount/r2-egress-handler';
 import type {
   FuseMountInfo,
   LocalSyncMountInfo,
-  MountInfo
+  MountInfo,
+  R2BindingMountInfo
 } from './storage-mount/types';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
@@ -137,6 +146,48 @@ type CachedSandboxConfiguration = {
   transport?: SandboxTransport;
 };
 
+type R2EgressContainerState = DurableObjectState<{}> & {
+  exports?: {
+    ContainerProxy?: (options: {
+      props: {
+        enableInternet?: boolean;
+        containerId: string;
+        className: string;
+        outboundByHostOverrides: Record<
+          string,
+          {
+            method: string;
+            params: R2EgressParams;
+          }
+        >;
+      };
+    }) => Fetcher;
+  };
+  container?: {
+    interceptOutboundHttp(host: string, fetcher: Fetcher): Promise<void>;
+  };
+};
+
+const R2_EGRESS_PROXY_TARGET_CLASS_NAME =
+  'CloudflareSandboxR2EgressProxyTarget';
+
+class R2EgressProxyTarget extends Container {}
+
+Object.defineProperty(R2EgressProxyTarget, 'name', {
+  value: R2_EGRESS_PROXY_TARGET_CLASS_NAME
+});
+
+R2EgressProxyTarget.outboundHandlers = { r2EgressMount: r2EgressHandler };
+
+function isFetcher(value: unknown): value is Fetcher {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'fetch' in value &&
+    typeof value.fetch === 'function'
+  );
+}
+
 type ConfigurableSandboxStub = {
   configure?: (configuration: SandboxConfiguration) => Promise<void>;
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
@@ -152,6 +203,12 @@ const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
 >();
+
+const R2_DEFAULT_S3FS_OPTIONS: Readonly<Record<string, string | boolean>> = {
+  stat_cache_expire: '60',
+  enable_noobj_cache: true,
+  multipart_size: '5'
+};
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
@@ -518,25 +575,6 @@ export function connect(stub: {
     const portSwitchedRequest = switchPort(request, port);
     return await stub.fetch(portSwitchedRequest);
   };
-}
-
-/**
- * Type guard for R2Bucket binding.
- * Checks for the minimal R2Bucket interface methods we use.
- */
-function isR2Bucket(value: unknown): value is R2Bucket {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'put' in value &&
-    typeof (value as Record<string, unknown>).put === 'function' &&
-    'get' in value &&
-    typeof (value as Record<string, unknown>).get === 'function' &&
-    'head' in value &&
-    typeof (value as Record<string, unknown>).head === 'function' &&
-    'delete' in value &&
-    typeof (value as Record<string, unknown>).delete === 'function'
-  );
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
@@ -1267,11 +1305,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return;
     }
 
-    await this.mountBucketFuse(
-      bucket,
-      mountPath,
-      options as RemoteMountBucketOptions
-    );
+    const remoteOptions = options as RemoteMountBucketOptions;
+    if (remoteOptions.endpoint === undefined) {
+      const envObj = this.env as Record<string, unknown>;
+      const binding = envObj[bucket];
+      if (isR2Bucket(binding)) {
+        await this.mountBucketR2Egress(
+          bucket,
+          mountPath,
+          options as R2BindingMountBucketOptions
+        );
+        return;
+      }
+      throw new InvalidMountConfigError(
+        `R2 binding "${bucket}" not found in Worker env. ` +
+          'Ensure the binding name matches the bucket binding configured in wrangler.jsonc.'
+      );
+    }
+
+    await this.mountBucketFuse(bucket, mountPath, remoteOptions);
   }
 
   /**
@@ -1356,6 +1408,165 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  private getR2EgressParams(): R2EgressParams {
+    const buckets: R2EgressParams['buckets'] = {};
+    for (const [, m] of this.activeMounts) {
+      if (m.mountType === 'r2-egress') {
+        buckets[m.bucket] = {
+          prefix: m.prefix,
+          readOnly: m.readOnly
+        };
+      }
+    }
+    return { buckets };
+  }
+
+  private validateR2EgressS3fsOptions(options?: string[]): void {
+    if (!options) return;
+
+    const protectedOptions = new Set(['passwd_file', 'url']);
+    for (const option of options) {
+      const [key] = option.split('=');
+      if (protectedOptions.has(key)) {
+        throw new InvalidMountConfigError(
+          `s3fs option "${key}" cannot be overridden for R2 binding mounts`
+        );
+      }
+    }
+  }
+
+  /**
+   * Credential-less R2 mount: egress interception routes s3fs requests to the
+   * R2 binding. No S3 credentials are needed in the container or Worker env.
+   */
+  private async mountBucketR2Egress(
+    bucket: string,
+    mountPath: string,
+    options: R2BindingMountBucketOptions
+  ): Promise<void> {
+    const mountStartTime = Date.now();
+    const prefix = options.prefix;
+    let mountOutcome: 'success' | 'error' = 'error';
+    let mountError: Error | undefined;
+
+    try {
+      validateBucketBindingName(bucket, mountPath);
+      this.validateMountPath(mountPath);
+      this.validateR2EgressS3fsOptions(options.s3fsOptions);
+
+      for (const [existingMountPath, mountInfo] of this.activeMounts) {
+        if (
+          mountInfo.mountType === 'r2-egress' &&
+          mountInfo.bucket === bucket &&
+          mountInfo.prefix !== prefix
+        ) {
+          throw new InvalidMountConfigError(
+            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different prefix. ` +
+              'Mount the same binding only once, or use the same prefix for additional mounts.'
+          );
+        }
+        if (
+          mountInfo.mountType === 'r2-egress' &&
+          mountInfo.bucket === bucket &&
+          mountInfo.readOnly !== (options.readOnly ?? false)
+        ) {
+          throw new InvalidMountConfigError(
+            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different readOnly setting. ` +
+              'Mount the same binding only once, or use the same readOnly value for additional mounts.'
+          );
+        }
+      }
+
+      const passwordFilePath = this.generatePasswordFilePath();
+      // s3fs requires a passwd file before it will issue requests; the R2
+      // egress handler resolves the Worker binding and ignores S3 signatures.
+      await this.createPasswordFile(passwordFilePath, bucket, {
+        accessKeyId: 'x',
+        secretAccessKey: 'x'
+      });
+
+      const mountInfo: R2BindingMountInfo = {
+        mountType: 'r2-egress',
+        bucket,
+        mountPath,
+        passwordFilePath,
+        mounted: false,
+        prefix,
+        readOnly: options.readOnly ?? false
+      };
+      this.activeMounts.set(mountPath, mountInfo);
+
+      await this.configureR2EgressOutbound(this.getR2EgressParams());
+
+      await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
+
+      const s3fsSource = bucket;
+      const s3fsOptions: Record<string, string | boolean> = {
+        passwd_file: passwordFilePath,
+        ...R2_DEFAULT_S3FS_OPTIONS,
+        ...parseS3fsOptions(resolveS3fsOptions('r2', options.s3fsOptions)),
+        use_path_request_style: true,
+        url: 'http://r2.internal',
+        ...(options.readOnly ? { ro: true } : {})
+      };
+
+      const optionsStr = shellEscape(serializeS3fsOptions(s3fsOptions));
+      const mountCmd = `s3fs ${shellEscape(s3fsSource)} ${shellEscape(mountPath)} -o ${optionsStr}`;
+      this.logger.debug('r2-egress: running s3fs', { mountCmd });
+      const result = await this.execInternal(mountCmd);
+      this.logger.debug('r2-egress: s3fs exited', {
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr
+      });
+      if (result.exitCode !== 0) {
+        throw new S3FSMountError(
+          `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+        );
+      }
+
+      const mountpointCheck = await this.execInternal(
+        `mountpoint -q ${shellEscape(mountPath)} && echo 'FUSE_MOUNTED' || echo 'NOT_FUSE_MOUNTED'`
+      );
+      this.logger.debug('r2-egress: mountpoint check', {
+        stdout: mountpointCheck.stdout.trim(),
+        exitCode: mountpointCheck.exitCode
+      });
+
+      if (mountpointCheck.stdout.trim() !== 'FUSE_MOUNTED') {
+        throw new S3FSMountError(
+          `s3fs exited 0 but mount was not established at ${mountPath}`
+        );
+      }
+
+      mountInfo.mounted = true;
+      mountOutcome = 'success';
+    } catch (error) {
+      mountError = error instanceof Error ? error : new Error(String(error));
+      const failedMount = this.activeMounts.get(mountPath);
+      this.activeMounts.delete(mountPath);
+      if (failedMount?.mountType === 'r2-egress') {
+        await this.deletePasswordFile(failedMount.passwordFilePath).catch(
+          () => {}
+        );
+      }
+      const remainingParams = this.getR2EgressParams();
+      await this.configureR2EgressOutbound(remainingParams).catch(() => {});
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.mount',
+        outcome: mountOutcome,
+        durationMs: Date.now() - mountStartTime,
+        bucket,
+        mountPath,
+        provider: 'r2',
+        prefix,
+        error: mountError
+      });
+    }
+  }
+
   /**
    * Production mount: S3FS-FUSE inside the container
    */
@@ -1365,7 +1576,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: RemoteMountBucketOptions
   ): Promise<void> {
     const mountStartTime = Date.now();
-    const prefix = options.prefix || undefined;
+    const prefix = options.prefix;
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
@@ -1525,6 +1736,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           // Only remove from tracking if unmount succeeded
           this.activeMounts.delete(mountPath);
 
+          if (mountInfo.mountType === 'r2-egress') {
+            await this.configureR2EgressOutbound(this.getR2EgressParams());
+          }
+
           // Remove the now-empty mount directory
           try {
             const cleanup = await this.execInternal(
@@ -1566,7 +1781,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Validate mount options
+   * Shared validation for mount path (absolute, not already in use).
+   */
+  private validateMountPath(mountPath: string): void {
+    if (!mountPath.startsWith('/')) {
+      throw new InvalidMountConfigError(
+        `Mount path must be absolute (start with /): "${mountPath}"`
+      );
+    }
+
+    if (this.activeMounts.has(mountPath)) {
+      const existingMount = this.activeMounts.get(mountPath);
+      throw new InvalidMountConfigError(
+        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
+          `Unmount the existing bucket first or use a different mount path.`
+      );
+    }
+  }
+
+  /**
+   * Validate mount options for remote (FUSE) mounts
    */
   private validateMountOptions(
     bucket: string,
@@ -1583,22 +1817,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     validateBucketName(bucket, mountPath);
-
-    // Validate mount path is absolute
-    if (!mountPath.startsWith('/')) {
-      throw new InvalidMountConfigError(
-        `Mount path must be absolute (start with /): "${mountPath}"`
-      );
-    }
-
-    // Check for duplicate mount path
-    if (this.activeMounts.has(mountPath)) {
-      const existingMount = this.activeMounts.get(mountPath);
-      throw new InvalidMountConfigError(
-        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
-          `Unmount the existing bucket first or use a different mount path.`
-      );
-    }
+    this.validateMountPath(mountPath);
 
     // Prefix validation is handled centrally in mountBucket()
   }
@@ -1737,6 +1956,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
+  private async unmountTrackedFuseMount(
+    mountPath: string,
+    mountInfo: FuseMountInfo | R2BindingMountInfo
+  ): Promise<void> {
+    if (!mountInfo.mounted) return;
+
+    this.logger.debug(
+      `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+    );
+    const result = await this.execInternal(
+      `fusermount -u ${shellEscape(mountPath)}`
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`
+      );
+    }
+    mountInfo.mounted = false;
+  }
+
   /**
    * In-flight `destroy()` promise. While set, concurrent callers coalesce
    * onto the same teardown instead of triggering a second one. Cleared when
@@ -1819,23 +2058,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             );
           }
         } else {
-          if (mountInfo.mounted) {
-            try {
-              this.logger.debug(
-                `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-              );
-              await this.execInternal(
-                `fusermount -u ${shellEscape(mountPath)}`
-              );
-              mountInfo.mounted = false;
-            } catch (error) {
-              mountFailures++;
-              const errorMsg =
-                error instanceof Error ? error.message : String(error);
-              this.logger.warn(
-                `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
-              );
-            }
+          try {
+            await this.unmountTrackedFuseMount(mountPath, mountInfo);
+          } catch (error) {
+            mountFailures++;
+            const errorMsg =
+              error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+            );
           }
 
           // Always cleanup password file for FUSE mounts
@@ -2084,9 +2315,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.client.disconnect();
 
     // Stop local sync managers before clearing the map.
+    let hadR2EgressMount = false;
     for (const [, m] of this.activeMounts) {
-      if (m.mountType === 'local-sync')
+      if (m.mountType === 'local-sync') {
         await m.syncManager.stop().catch(() => {});
+      } else if (m.mountType === 'r2-egress') {
+        hadR2EgressMount = true;
+      }
+    }
+    if (hadR2EgressMount) {
+      await this.configureR2EgressOutbound({ buckets: {} }).catch(() => {});
     }
 
     this.activeMounts.clear();
@@ -6016,5 +6254,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error: caughtError
       });
     }
+  }
+
+  private async configureR2EgressOutbound(
+    params: R2EgressParams
+  ): Promise<void> {
+    const ctx = this.ctx as R2EgressContainerState;
+    if (!ctx.container?.interceptOutboundHttp) {
+      throw new InvalidMountConfigError(
+        'R2 binding mounts require container outbound interception support'
+      );
+    }
+    if (!ctx.exports?.ContainerProxy) {
+      throw new InvalidMountConfigError(
+        'R2 binding mounts require exporting ContainerProxy from the Worker entrypoint'
+      );
+    }
+
+    const fetcher = ctx.exports.ContainerProxy({
+      props: {
+        enableInternet: this.enableInternet,
+        containerId: this.ctx.id.toString(),
+        className: R2_EGRESS_PROXY_TARGET_CLASS_NAME,
+        outboundByHostOverrides: {
+          'r2.internal': {
+            method: 'r2EgressMount',
+            params
+          }
+        }
+      }
+    });
+    if (!isFetcher(fetcher)) {
+      throw new InvalidMountConfigError(
+        'R2 binding mounts require ContainerProxy to return a valid Fetcher'
+      );
+    }
+
+    await ctx.container.interceptOutboundHttp('r2.internal', fetcher);
   }
 }

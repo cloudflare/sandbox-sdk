@@ -198,6 +198,7 @@ export type {
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
+  R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
   RemoteMountBucketOptions,

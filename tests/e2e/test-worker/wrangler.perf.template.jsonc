@@ -20,7 +20,12 @@
       "image": "{{IMAGE_SANDBOX}}",
       "name": "{{CONTAINER_NAME}}",
       "max_instances": 50,
-      "instance_type": "standard-2"
+      "instance_type": "standard-2",
+      "unsafe": {
+        "configuration": {
+          "durable_object_offset_instances": 25
+        }
+      }
     }
   ],
 
