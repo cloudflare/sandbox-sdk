@@ -337,7 +337,7 @@ export class SessionTerminatedError extends SandboxError<SessionTerminatedContex
 // ============================================================================
 
 /**
- * Error thrown when a port is already exposed
+ * Compatibility error for legacy port exposure registry responses.
  */
 export class PortAlreadyExposedError extends SandboxError<PortAlreadyExposedContext> {
   constructor(errorResponse: ErrorResponse<PortAlreadyExposedContext>) {
@@ -355,7 +355,7 @@ export class PortAlreadyExposedError extends SandboxError<PortAlreadyExposedCont
 }
 
 /**
- * Error thrown when a port is not exposed
+ * Compatibility error for legacy port exposure registry responses.
  */
 export class PortNotExposedError extends SandboxError<PortNotExposedContext> {
   constructor(errorResponse: ErrorResponse<PortNotExposedContext>) {
