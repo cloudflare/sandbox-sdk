@@ -24,6 +24,28 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Build a fetcher mock that routes by URL substring. Reused by the
+ * multi-step account-token tests where the resolver hits more than one
+ * endpoint (`/user/tokens/verify` → `/accounts` → `/accounts/:id/tokens/verify`)
+ * and each needs a different canned response.
+ *
+ * Routes are matched longest-substring-first so '/accounts/acct-1/tokens/verify'
+ * wins over '/accounts' when both are registered.
+ */
+function routedFetcher(routes: Record<string, Response>) {
+  const ordered = Object.entries(routes).sort(
+    ([a], [b]) => b.length - a.length
+  );
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    for (const [match, response] of ordered) {
+      if (url.includes(match)) return response.clone();
+    }
+    return new Response(`No mock route for ${url}`, { status: 599 });
+  });
+}
+
 describe('resolveAccountId', () => {
   describe('precedence', () => {
     it('returns the override env var when present', async () => {
@@ -159,6 +181,123 @@ describe('resolveAccountId', () => {
           { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
         )
       ).rejects.toThrow();
+    });
+
+    it('throws on 401 with code 1000 (account-owned token) when /accounts is not authorized', async () => {
+      // Reproduces the cfat- token shape we saw in the wild: /user/tokens/verify
+      // returns 1000 (account-owned token), and /accounts returns 9109
+      // because the token wasn't granted account:read.
+      const fetcher = routedFetcher({
+        '/user/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] },
+          401
+        ),
+        '/accounts': jsonResponse(
+          { success: false, errors: [{ code: 9109, message: 'Invalid access token' }] },
+          403
+        )
+      });
+      await expect(
+        resolveAccountId(
+          { CLOUDFLARE_API_TOKEN: 'cfat-xxx' },
+          { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
+        )
+      ).rejects.toThrow(/CLOUDFLARE_ACCOUNT_ID|account-owned/i);
+    });
+  });
+
+  describe('account-owned (cfat-) tokens', () => {
+    it('falls through to /accounts on 1000, picks single match, confirms via /accounts/:id/tokens/verify', async () => {
+      const fetcher = routedFetcher({
+        '/user/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000 }] },
+          401
+        ),
+        '/accounts': jsonResponse({
+          success: true,
+          result: [{ id: 'acct-cfat-1', name: 'My Account' }]
+        }),
+        '/accounts/acct-cfat-1/tokens/verify': jsonResponse({
+          success: true,
+          result: { id: 'tok-id', status: 'active' }
+        })
+      });
+
+      const id = await resolveAccountId(
+        { CLOUDFLARE_API_TOKEN: 'cfat-xxx' },
+        { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
+      );
+      expect(id).toBe('acct-cfat-1');
+      // All three endpoints were called exactly once, in order.
+      const urls = fetcher.mock.calls.map((c) => String(c[0]));
+      expect(urls).toEqual([
+        expect.stringContaining('/user/tokens/verify'),
+        expect.stringContaining('/accounts?'),
+        expect.stringContaining('/accounts/acct-cfat-1/tokens/verify')
+      ]);
+      // The /accounts probe uses per_page=2 to detect ambiguity cheaply.
+      expect(urls[1]).toContain('per_page=2');
+    });
+
+    it('throws when /accounts returns multiple accounts (ambiguous)', async () => {
+      const fetcher = routedFetcher({
+        '/user/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000 }] },
+          401
+        ),
+        '/accounts': jsonResponse({
+          success: true,
+          result: [
+            { id: 'acct-a' },
+            { id: 'acct-b' }
+          ]
+        })
+      });
+      await expect(
+        resolveAccountId(
+          { CLOUDFLARE_API_TOKEN: 'cfat-xxx' },
+          { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
+        )
+      ).rejects.toThrow(/multiple|ambiguous|CLOUDFLARE_ACCOUNT_ID/i);
+    });
+
+    it('throws when /accounts returns zero accounts', async () => {
+      const fetcher = routedFetcher({
+        '/user/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000 }] },
+          401
+        ),
+        '/accounts': jsonResponse({ success: true, result: [] })
+      });
+      await expect(
+        resolveAccountId(
+          { CLOUDFLARE_API_TOKEN: 'cfat-xxx' },
+          { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
+        )
+      ).rejects.toThrow(/no accounts|CLOUDFLARE_ACCOUNT_ID/i);
+    });
+
+    it('throws when /accounts/:id/tokens/verify rejects the inferred id', async () => {
+      const fetcher = routedFetcher({
+        '/user/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000 }] },
+          401
+        ),
+        '/accounts': jsonResponse({
+          success: true,
+          result: [{ id: 'acct-1' }]
+        }),
+        '/accounts/acct-1/tokens/verify': jsonResponse(
+          { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] },
+          401
+        )
+      });
+      await expect(
+        resolveAccountId(
+          { CLOUDFLARE_API_TOKEN: 'cfat-xxx' },
+          { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID', fetcher }
+        )
+      ).rejects.toThrow(/verify|invalid/i);
     });
   });
 

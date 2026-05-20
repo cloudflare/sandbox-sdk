@@ -19,6 +19,15 @@ import { getEnvString } from '@repo/shared';
 
 const TOKEN_VERIFY_URL =
   'https://api.cloudflare.com/client/v4/user/tokens/verify';
+const ACCOUNTS_LIST_URL = 'https://api.cloudflare.com/client/v4/accounts';
+
+/**
+ * Cloudflare error code returned by `GET /user/tokens/verify` when the
+ * presented token is an account-owned (`cfat-`) token rather than a
+ * user-owned one. Matches the heuristic wrangler uses in
+ * `src/user/whoami.ts` (`getTokenType`).
+ */
+const ACCOUNT_OWNED_TOKEN_CODE = 1000;
 
 export interface ResolveAccountIdOptions {
   /**
@@ -39,9 +48,22 @@ export interface ResolveAccountIdOptions {
  */
 interface TokenVerifyResponse {
   success?: boolean;
+  errors?: Array<{ code?: number; message?: string }>;
   result_info?: {
     account?: { id?: string };
   };
+}
+
+interface AccountsListResponse {
+  success?: boolean;
+  errors?: Array<{ code?: number; message?: string }>;
+  result?: Array<{ id?: string; name?: string }>;
+}
+
+interface AccountTokenVerifyResponse {
+  success?: boolean;
+  errors?: Array<{ code?: number; message?: string }>;
+  result?: { id?: string; status?: string };
 }
 
 export async function resolveAccountId(
@@ -75,14 +97,8 @@ export async function resolveAccountId(
     }
   });
 
-  if (!response.ok) {
-    throw new Error(
-      `Cloudflare token verification failed with status ${response.status}. ` +
-        `Check that CLOUDFLARE_API_TOKEN is valid or set ${options.overrideKey} ` +
-        `/ CLOUDFLARE_ACCOUNT_ID explicitly.`
-    );
-  }
-
+  // Drain the body whether we succeed or not so the caller-facing error
+  // can report the API error code (e.g. 1000 = account-owned token).
   let body: TokenVerifyResponse;
   try {
     body = (await response.json()) as TokenVerifyResponse;
@@ -93,14 +109,134 @@ export async function resolveAccountId(
     );
   }
 
-  const derived = body?.result_info?.account?.id;
-  if (!derived) {
+  if (response.ok && body?.success) {
+    const derived = body.result_info?.account?.id;
+    if (!derived) {
+      throw new Error(
+        'Cloudflare token is not scoped to a single account (ambiguous). ' +
+          `Set ${options.overrideKey} or CLOUDFLARE_ACCOUNT_ID explicitly.`
+      );
+    }
+    return derived;
+  }
+
+  // Wrangler's `getTokenType` uses the same heuristic: code 1000 on
+  // `/user/tokens/verify` means the token is account-owned (cfat-...)
+  // and can't be introspected via the user-scoped endpoint. Fall through
+  // to `/accounts` + `/accounts/:id/tokens/verify` to derive the id.
+  const isAccountOwned = body?.errors?.some(
+    (e) => e.code === ACCOUNT_OWNED_TOKEN_CODE
+  );
+  if (isAccountOwned) {
+    return await deriveAccountIdViaAccountToken(token, fetcher, options);
+  }
+
+  throw new Error(
+    `Cloudflare token verification failed with status ${response.status}. ` +
+      `Check that CLOUDFLARE_API_TOKEN is valid or set ${options.overrideKey} ` +
+      `/ CLOUDFLARE_ACCOUNT_ID explicitly.`
+  );
+}
+
+/**
+ * Account-owned token (cfat-) fallback: list the accounts the token can
+ * see, and — if there's exactly one — confirm with the account-scoped
+ * verify endpoint before returning the id.
+ *
+ * Common failure modes get specific, actionable error messages:
+ *   - `/accounts` 403 (token lacks `account:read`): tell the caller to
+ *     set `CLOUDFLARE_ACCOUNT_ID` explicitly.
+ *   - multiple accounts: same.
+ *   - zero accounts: same.
+ *   - confirm step fails: surface the API error code verbatim.
+ */
+async function deriveAccountIdViaAccountToken(
+  token: string,
+  fetcher: typeof fetch,
+  options: ResolveAccountIdOptions
+): Promise<string> {
+  // per_page=2 is the cheapest probe that still distinguishes one-vs-many.
+  const listResponse = await fetcher(
+    `${ACCOUNTS_LIST_URL}?per_page=2`,
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      }
+    }
+  );
+
+  let listBody: AccountsListResponse;
+  try {
+    listBody = (await listResponse.json()) as AccountsListResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Cloudflare token is not scoped to a single account (ambiguous). ` +
-        `Set ${options.overrideKey} or CLOUDFLARE_ACCOUNT_ID explicitly.`
+      `Cloudflare account-owned token: /accounts returned malformed JSON: ${message}`
     );
   }
-  return derived;
+
+  if (!listResponse.ok || !listBody?.success) {
+    throw new Error(
+      'Cloudflare account-owned token (cfat-...) detected, but ' +
+        `/accounts returned status ${listResponse.status}. The token may ` +
+        'lack account:read scope. Set CLOUDFLARE_ACCOUNT_ID explicitly to ' +
+        'skip introspection.'
+    );
+  }
+
+  const accounts = listBody.result ?? [];
+  if (accounts.length === 0) {
+    throw new Error(
+      'Cloudflare account-owned token has access to no accounts. ' +
+        'Set CLOUDFLARE_ACCOUNT_ID explicitly.'
+    );
+  }
+  if (accounts.length > 1) {
+    throw new Error(
+      'Cloudflare account-owned token has access to multiple accounts ' +
+        '(ambiguous). Set CLOUDFLARE_ACCOUNT_ID explicitly to disambiguate.'
+    );
+  }
+  const accountId = accounts[0]?.id;
+  if (!accountId) {
+    throw new Error(
+      'Cloudflare /accounts returned a result without an id field.'
+    );
+  }
+
+  // Confirm via the account-scoped verify endpoint. This is the canonical
+  // check for account-owned tokens, and it doubles as proof that the token
+  // is actually valid for the account we picked.
+  const verifyResponse = await fetcher(
+    `${ACCOUNTS_LIST_URL}/${encodeURIComponent(accountId)}/tokens/verify`,
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      }
+    }
+  );
+  let verifyBody: AccountTokenVerifyResponse;
+  try {
+    verifyBody = (await verifyResponse.json()) as AccountTokenVerifyResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Cloudflare account token verify returned malformed JSON: ${message}`
+    );
+  }
+  if (!verifyResponse.ok || !verifyBody?.success) {
+    const detail =
+      verifyBody?.errors?.map((e) => `${e.code}: ${e.message}`).join('; ') ??
+      `HTTP ${verifyResponse.status}`;
+    throw new Error(
+      `Cloudflare account token verify failed for account ${accountId}: ${detail}`
+    );
+  }
+  return accountId;
 }
 
 // ---------------------------------------------------------------------------
