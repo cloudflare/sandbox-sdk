@@ -102,3 +102,102 @@ export async function resolveAccountId(
   }
   return derived;
 }
+
+// ---------------------------------------------------------------------------
+// Zone id resolution
+// ---------------------------------------------------------------------------
+
+const ZONES_LIST_URL = 'https://api.cloudflare.com/client/v4/zones';
+
+export interface ResolveZoneIdOptions {
+  /** Cloudflare API token. Must be account- or zone-scoped.*/
+  token: string;
+  /**
+   * Account id the zone must belong to. The resolver scopes the zones
+   * list query to this account so a single multi-account token isn't
+   * tripped up by zones belonging to a different account.
+   */
+  accountId: string;
+  /**
+   * Override the `fetch` implementation for the zones list call.
+   * Defaults to the global `fetch`. Tests inject a mock here.
+   */
+  fetcher?: typeof fetch;
+}
+
+interface ZonesListResponse {
+  success?: boolean;
+  result?: Array<{ id?: string; name?: string }>;
+  errors?: Array<{ code?: number; message?: string }>;
+}
+
+/**
+ * Resolve a Cloudflare zone id.
+ *
+ * Precedence:
+ *   1. `CLOUDFLARE_ZONE_ID` env var.
+ *   2. The single zone the token can see under `accountId`, via
+ *      `GET /zones?account.id=<accountId>&per_page=2`.
+ *
+ * Step 2 deliberately fetches at most two results: one is the happy path,
+ * two (or more) means the token is ambiguous and we refuse to guess.
+ * Multi-zone tokens must set `CLOUDFLARE_ZONE_ID` explicitly so the
+ * caller's intent is unambiguous.
+ */
+export async function resolveZoneId(
+  env: Record<string, unknown>,
+  options: ResolveZoneIdOptions
+): Promise<string> {
+  const envZone = getEnvString(env, 'CLOUDFLARE_ZONE_ID');
+  if (envZone) return envZone;
+
+  const fetcher = options.fetcher ?? fetch;
+  const url = `${ZONES_LIST_URL}?account.id=${encodeURIComponent(options.accountId)}&per_page=2`;
+  const response = await fetcher(url, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${options.token}`,
+      'content-type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Cloudflare zones lookup failed with status ${response.status}. ` +
+        'Set CLOUDFLARE_ZONE_ID explicitly or grant the API token Zone:Read.'
+    );
+  }
+
+  let body: ZonesListResponse;
+  try {
+    body = (await response.json()) as ZonesListResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Cloudflare zones lookup returned malformed JSON: ${message}`
+    );
+  }
+
+  const zones = body.result ?? [];
+  if (zones.length === 0) {
+    throw new Error(
+      'Cloudflare API token has access to no zones in account ' +
+        `${options.accountId}. Set CLOUDFLARE_ZONE_ID explicitly or ` +
+        'grant the token Zone:Read on the intended zone.'
+    );
+  }
+  if (zones.length > 1) {
+    throw new Error(
+      'Cloudflare API token has access to multiple zones in account ' +
+        `${options.accountId} (ambiguous). Set CLOUDFLARE_ZONE_ID ` +
+        'explicitly to disambiguate.'
+    );
+  }
+  const zoneId = zones[0]?.id;
+  if (!zoneId) {
+    throw new Error(
+      'Cloudflare zones lookup returned a result without an id field.'
+    );
+  }
+  return zoneId;
+}

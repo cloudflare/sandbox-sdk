@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { resolveAccountId } from '../../src/tunnels/credentials';
+import { resolveAccountId, resolveZoneId } from '../../src/tunnels/credentials';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -176,5 +176,92 @@ describe('resolveAccountId', () => {
       expect(id).toBe('r2-override');
       expect(fetcher).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('resolveZoneId', () => {
+  it('returns CLOUDFLARE_ZONE_ID when set', async () => {
+    const fetcher = vi.fn();
+    const id = await resolveZoneId(
+      { CLOUDFLARE_ZONE_ID: 'env-zone' },
+      { token: 'tok', accountId: 'acct', fetcher }
+    );
+    expect(id).toBe('env-zone');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('queries the zones API when the env var is missing and returns the single match', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        success: true,
+        result: [{ id: 'token-zone', name: 'example.com' }]
+      })
+    );
+    const id = await resolveZoneId(
+      {},
+      { token: 'sekret', accountId: 'acct-123', fetcher }
+    );
+    expect(id).toBe('token-zone');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0];
+    // Scoped to the resolved account so multi-tenant tokens see only the
+    // account at hand.
+    expect(String(url)).toContain('/zones');
+    expect(String(url)).toContain('account.id=acct-123');
+    // per_page=2 is enough to detect ambiguity without paging.
+    expect(String(url)).toContain('per_page=2');
+    const headers = new Headers((init as RequestInit)?.headers);
+    expect(headers.get('authorization')).toBe('Bearer sekret');
+  });
+
+  it('treats empty CLOUDFLARE_ZONE_ID as unset', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        success: true,
+        result: [{ id: 'token-zone', name: 'example.com' }]
+      })
+    );
+    const id = await resolveZoneId(
+      { CLOUDFLARE_ZONE_ID: '' },
+      { token: 'tok', accountId: 'acct', fetcher }
+    );
+    expect(id).toBe('token-zone');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws when the token has access to no zones in the account', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ success: true, result: [] })
+    );
+    await expect(
+      resolveZoneId({}, { token: 'tok', accountId: 'acct', fetcher })
+    ).rejects.toThrow(/no zones|CLOUDFLARE_ZONE_ID/i);
+  });
+
+  it('throws when the token has access to multiple zones', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        success: true,
+        result: [
+          { id: 'zone-a', name: 'a.example.com' },
+          { id: 'zone-b', name: 'b.example.com' }
+        ]
+      })
+    );
+    await expect(
+      resolveZoneId({}, { token: 'tok', accountId: 'acct', fetcher })
+    ).rejects.toThrow(/multiple|ambiguous|CLOUDFLARE_ZONE_ID/i);
+  });
+
+  it('throws when the zones API responds with a non-2xx', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse(
+        { success: false, errors: [{ code: 9109 }] },
+        403
+      )
+    );
+    await expect(
+      resolveZoneId({}, { token: 'tok', accountId: 'acct', fetcher })
+    ).rejects.toThrow();
   });
 });

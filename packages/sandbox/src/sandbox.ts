@@ -108,7 +108,7 @@ import type {
   MountInfo,
   R2BindingMountInfo
 } from './storage-mount/types';
-import { resolveAccountId } from './tunnels/credentials';
+import { resolveAccountId, resolveZoneId } from './tunnels/credentials';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
   createTunnelsHandler,
@@ -653,6 +653,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * the precedence chain.
    */
   private tunnelAccountIdPromise: Promise<string> | null = null;
+
+  /**
+   * Lazily-resolved Cloudflare zone id for named-tunnel provisioning.
+   * Falls back to the single zone the token can see under the resolved
+   * account id when `CLOUDFLARE_ZONE_ID` is not set. Cached for the
+   * lifetime of this DO instance.
+   */
+  private tunnelZoneIdPromise: Promise<string> | null = null;
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -4255,18 +4263,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       getNamedTunnelConfig: async () => {
         const envObj = this.env as Record<string, unknown>;
         const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');
-        const zoneId = getEnvString(envObj, 'CLOUDFLARE_ZONE_ID');
-        const missing: string[] = [];
-        if (!token) missing.push('CLOUDFLARE_API_TOKEN');
-        if (!zoneId) missing.push('CLOUDFLARE_ZONE_ID');
-        if (missing.length > 0) {
+        if (!token) {
           throw new Error(
-            `Named tunnels require: ${missing.join(', ')}. ` +
-              'Set these as environment variables or secrets in your wrangler.jsonc.'
+            'Named tunnels require CLOUDFLARE_API_TOKEN. ' +
+              'Set it as a secret in your wrangler.jsonc.'
           );
         }
+        // Account id falls back to the token's single account via
+        // `/user/tokens/verify`; zone id falls back to the token's single
+        // zone in that account via `GET /zones`. Both throw clearly on
+        // ambiguity so callers know to set the env var explicitly.
         const accountId = await this.getTunnelAccountId();
-        return { token: token as string, accountId, zoneId: zoneId as string };
+        const zoneId = await this.getTunnelZoneId(token, accountId);
+        return { token, accountId, zoneId };
       }
     });
     this.tunnelsHandler = built.tunnels;
@@ -4291,6 +4300,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
     return this.tunnelAccountIdPromise;
+  }
+
+  /**
+   * Resolve the Cloudflare zone id used for named-tunnel provisioning.
+   *
+   * Memoised for the lifetime of this DO instance. Falls back to the
+   * single zone the token can see under `accountId` via `GET /zones`
+   * when `CLOUDFLARE_ZONE_ID` is not set.
+   */
+  private getTunnelZoneId(
+    token: string,
+    accountId: string
+  ): Promise<string> {
+    if (!this.tunnelZoneIdPromise) {
+      this.tunnelZoneIdPromise = resolveZoneId(
+        this.env as Record<string, unknown>,
+        { token, accountId }
+      );
+    }
+    return this.tunnelZoneIdPromise;
   }
 
   async isPortExposed(port: number): Promise<boolean> {

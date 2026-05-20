@@ -32,8 +32,7 @@ async function getTunnel(
   const tunnelName = readVar(env, 'TUNNEL_NAME');
   const hasNamedCreds =
     Boolean(tunnelName) &&
-    Boolean(readVar(env, 'CLOUDFLARE_API_TOKEN')) &&
-    Boolean(readVar(env, 'CLOUDFLARE_ZONE_ID'));
+    Boolean(readVar(env, 'CLOUDFLARE_API_TOKEN'))
 
   try {
     const tunnel = hasNamedCreds
@@ -45,7 +44,7 @@ async function getTunnel(
     // The SDK exposes `err.code` on its typed errors. When the container
     // can't find the cloudflared binary, surface that distinctly so the
     // user knows what to fix.
-    const code = (err as { code?: string })?.code;
+    const code = (err as { errorResponse?: { code?: string } })?.errorResponse?.code;
     if (code === 'CLOUDFLARED_NOT_FOUND') {
       return {
         tunnel: null,
