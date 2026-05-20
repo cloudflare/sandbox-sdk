@@ -108,6 +108,7 @@ import type {
   MountInfo,
   R2BindingMountInfo
 } from './storage-mount/types';
+import { resolveAccountId } from './tunnels/credentials';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
   createTunnelsHandler,
@@ -646,6 +647,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private r2Client: AwsClient | null = null;
 
   /**
+   * Lazily-resolved Cloudflare account id for named-tunnel provisioning.
+   * Resolved on first access via `tunnels/credentials.ts` and cached for
+   * the lifetime of this DO instance. See the credentials helper for
+   * the precedence chain.
+   */
+  private tunnelAccountIdPromise: Promise<string> | null = null;
+
+  /**
    * Default container startup timeouts (conservative for production)
    * Based on Cloudflare docs: "Containers take several minutes to provision"
    */
@@ -889,7 +898,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Read R2 presigned URL credentials for direct container-to-R2 backup transfers
-    this.r2AccountId = getEnvString(envObj, 'CLOUDFLARE_ACCOUNT_ID') ?? null;
+    // R2 account id precedence: CLOUDFLARE_R2_ACCOUNT_ID > CLOUDFLARE_ACCOUNT_ID.
+    // Token-derived fallback is intentionally not wired here because the
+    // backup path (requirePresignedUrlSupport) is synchronous; see
+    // tunnels/credentials.ts for the full chain that named tunnels use.
+    this.r2AccountId =
+      getEnvString(envObj, 'CLOUDFLARE_R2_ACCOUNT_ID') ??
+      getEnvString(envObj, 'CLOUDFLARE_ACCOUNT_ID') ??
+      null;
     this.r2AccessKeyId = getEnvString(envObj, 'R2_ACCESS_KEY_ID') ?? null;
     this.r2SecretAccessKey =
       getEnvString(envObj, 'R2_SECRET_ACCESS_KEY') ?? null;
@@ -4238,6 +4254,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.tunnelExitHandler = built.handleTunnelExit;
   }
 
+  /**
+   * Resolve the Cloudflare account id used for named-tunnel provisioning.
+   *
+   * Memoised for the lifetime of this DO instance. The first call may hit
+   * `GET /user/tokens/verify` to derive the account id from the configured
+   * `CLOUDFLARE_API_TOKEN`; subsequent calls return the cached promise.
+   *
+   * Throws via the resolver when no precedence step succeeds. Callers
+   * surface that error to user code at the `sandbox.tunnels.get()` site.
+   */
+  private getTunnelAccountId(): Promise<string> {
+    if (!this.tunnelAccountIdPromise) {
+      this.tunnelAccountIdPromise = resolveAccountId(
+        this.env as Record<string, unknown>,
+        { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID' }
+      );
+    }
+    return this.tunnelAccountIdPromise;
+  }
+
   async isPortExposed(port: number): Promise<boolean> {
     try {
       const sessionId = await this.ensureDefaultSession();
@@ -4817,7 +4853,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   } {
     if (!this.r2Client || !this.r2AccountId || !this.backupBucketName) {
       const missing: string[] = [];
-      if (!this.r2AccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
+      if (!this.r2AccountId)
+        missing.push('CLOUDFLARE_R2_ACCOUNT_ID or CLOUDFLARE_ACCOUNT_ID');
       if (!this.r2AccessKeyId) missing.push('R2_ACCESS_KEY_ID');
       if (!this.r2SecretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
       if (!this.backupBucketName) missing.push('BACKUP_BUCKET_NAME');
