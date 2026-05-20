@@ -367,6 +367,18 @@ export interface TunnelInfo {
 export interface SandboxTunnelsAPI {
   /** Spawn `cloudflared tunnel --url`. No credentials required. */
   runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
+  /**
+   * Spawn `cloudflared tunnel run --token <token> --url http://localhost:<port>`.
+   *
+   * The SDK is the source of truth for the hostname this tunnel binds to;
+   * the container only sees the opaque token and the local port. The
+   * returned `TunnelInfo` carries empty `url`/`hostname` fields — the SDK
+   * enriches them with the values from the Cloudflare API before handing
+   * the record to user code.
+   *
+   * The token must never be logged, persisted, or echoed back to callers.
+   */
+  runNamedTunnel(id: string, token: string, port: number): Promise<TunnelInfo>;
   /** Stop the cloudflared process for the given tunnel id. */
   destroyTunnel(id: string): Promise<{ success: true; id: string }>;
   /** List tunnels currently running inside the container. */

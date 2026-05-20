@@ -21,6 +21,24 @@ const QUICK_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 export interface TunnelManagerOptions {
   /** Local port to expose. */
   port: number;
+  /**
+   * Tunnel mode.
+   *
+   * - `'quick'` — spawn `cloudflared tunnel --url http://localhost:<port>`,
+   *   scrape the `*.trycloudflare.com` URL from stderr, and resolve once
+   *   `/ready` reports a live connection.
+   * - `'named'` — spawn `cloudflared tunnel run --token <token> --url`
+   *   `http://localhost:<port>`. The hostname is owned by the SDK; the
+   *   manager only confirms readiness via `/ready`.
+   *
+   * Defaults to `'quick'` for backward compatibility.
+   */
+  mode?: 'quick' | 'named';
+  /**
+   * Opaque cloudflared `--token` from the Cloudflare Tunnel API.
+   * Required when `mode === 'named'`. Never logged.
+   */
+  token?: string;
   /** Optional path to the cloudflared binary. Defaults to `cloudflared`. */
   binaryPath?: string;
   /** Override readiness timeout. */
@@ -41,6 +59,17 @@ export interface TunnelManagerOptions {
    */
   onExit?: (exitCode: number | null) => void | Promise<void>;
   logger: Logger;
+}
+
+export interface TunnelStartResult {
+  /**
+   * Public URL the tunnel resolves to, parsed from the cloudflared banner.
+   * Only populated for `'quick'` mode; `undefined` for `'named'` mode,
+   * where the hostname lives in the SDK layer.
+   */
+  url?: string;
+  /** PID of the cloudflared child process. */
+  pid: number;
 }
 
 export interface TunnelStartResult {
@@ -76,9 +105,19 @@ export class TunnelManager {
     if (this.proc) {
       throw new Error('TunnelManager: already started');
     }
+    const mode = this.opts.mode ?? 'quick';
+    if (mode === 'named' && !this.opts.token) {
+      throw new Error('TunnelManager: named mode requires a token');
+    }
 
     const args = this.buildArgs();
-    this.logger.info('Spawning cloudflared', { args });
+    // Never log the token. Quick mode has no token; for named mode we
+    // redact the value before logging.
+    const loggableArgs =
+      mode === 'named'
+        ? args.map((a, i) => (args[i - 1] === '--token' ? '<redacted>' : a))
+        : args;
+    this.logger.info('Spawning cloudflared', { mode, args: loggableArgs });
 
     const binary = this.opts.binaryPath ?? 'cloudflared';
     this.proc = Bun.spawn([binary, ...args], {
@@ -127,7 +166,9 @@ export class TunnelManager {
     const timeoutMs = this.opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     const url = await this.waitForReady(timeoutMs);
 
-    return { url, pid: this.proc.pid };
+    return url === undefined
+      ? { pid: this.proc.pid }
+      : { url, pid: this.proc.pid };
   }
 
   /** Send SIGTERM, then SIGKILL after `stopGraceMs`. */
@@ -168,8 +209,28 @@ export class TunnelManager {
 
   private buildArgs(): string[] {
     const localUrl = `http://localhost:${this.opts.port}`;
+    const mode = this.opts.mode ?? 'quick';
     // Always attach a metrics server on an ephemeral port so we can poll
     // /ready for a stable readiness signal.
+    if (mode === 'named') {
+      // `tunnel run --token <T>` runs a named tunnel using config_src=cloudflare.
+      // The token already identifies the tunnel; `--url` overrides the local
+      // forward address so we don't depend on the edge-side ingress config.
+      return [
+        'tunnel',
+        '--metrics',
+        '127.0.0.1:0',
+        '--no-autoupdate',
+        'run',
+        '--token',
+        // Non-null: validated at start() entry.
+        this.opts.token as string,
+        '--url',
+        localUrl
+      ];
+    }
+    // Quick mode: `cloudflared tunnel --url http://localhost:<port>`.
+    // JSON output makes the URL line easy to parse out of stderr.
     return [
       'tunnel',
       '--metrics',
@@ -246,11 +307,17 @@ export class TunnelManager {
   }
 
   /**
-   * Resolve once cloudflared is ready: we have a parsed
-   * `*.trycloudflare.com` URL **and** `/ready` reports >= 1 connection.
+   * Resolve once cloudflared is ready.
+   *
+   * - Quick mode: wait until we've parsed a `*.trycloudflare.com` URL
+   *   from stderr **and** `/ready` reports >= 1 connection. Returns
+   *   the URL.
+   * - Named mode: wait until `/ready` reports >= 1 connection. The SDK
+   *   owns the hostname; we resolve with `undefined`.
    */
-  private async waitForReady(timeoutMs: number): Promise<string> {
+  private async waitForReady(timeoutMs: number): Promise<string | undefined> {
     const deadline = Date.now() + timeoutMs;
+    const mode = this.opts.mode ?? 'quick';
 
     while (Date.now() < deadline) {
       if (this.exited) {
@@ -260,7 +327,10 @@ export class TunnelManager {
       }
 
       const ready = await this.checkReady();
-      if (ready && this.quickUrl) return this.quickUrl;
+      if (ready) {
+        if (mode === 'named') return undefined;
+        if (this.quickUrl) return this.quickUrl;
+      }
 
       await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
     }

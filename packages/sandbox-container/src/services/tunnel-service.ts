@@ -80,6 +80,11 @@ export class TunnelService {
 
     try {
       const { url } = await manager.start();
+      if (!url) {
+        // Should not happen: quick mode always parses a trycloudflare URL
+        // before resolving. Defensive guard so the type narrowing is clear.
+        throw new Error('Quick tunnel did not produce a public URL');
+      }
       const hostname = new URL(url).hostname;
       const info: TunnelInfo = {
         id,
@@ -96,6 +101,76 @@ export class TunnelService {
       const message = err instanceof Error ? err.message : String(err);
       return serviceError({
         message: `Failed to run quick tunnel: ${message}`,
+        code: 'TUNNEL_START_ERROR',
+        details: { tunnelId: id, port }
+      });
+    }
+  }
+
+  /**
+   * Run a named cloudflared tunnel backed by a Cloudflare-issued `--token`.
+   *
+   * The SDK is the source of truth for the hostname this tunnel maps to:
+   * the container only knows the local port and the opaque token. The
+   * returned `TunnelInfo` therefore carries empty `url`/`hostname` fields,
+   * which the SDK enriches with the values from the Cloudflare API before
+   * returning to user code.
+   *
+   * The `token` is never logged or persisted in the returned record.
+   */
+  async runNamedTunnel(
+    id: string,
+    token: string,
+    port: number,
+    options?: RunQuickTunnelOptions
+  ): Promise<ServiceResult<TunnelInfo>> {
+    if (this.tunnels.has(id)) {
+      return serviceError({
+        message: `Tunnel ${id} is already running`,
+        code: 'TUNNEL_ALREADY_RUNNING',
+        details: { tunnelId: id }
+      });
+    }
+
+    const manager = new TunnelManager({
+      port,
+      mode: 'named',
+      token,
+      logger: this.logger,
+      readyTimeoutMs: options?.readyTimeoutMs,
+      stopGraceMs: options?.stopGraceMs,
+      onExit: (code) => {
+        this.tunnels.delete(id);
+        const cb = this.getControlCallback();
+        if (!cb) return;
+        cb.onTunnelExit(id, port, code).catch((err) => {
+          this.logger.warn('onTunnelExit RPC failed', {
+            id,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        });
+      }
+    });
+
+    try {
+      await manager.start();
+      const info: TunnelInfo = {
+        id,
+        port,
+        // The SDK fills these in from the Cloudflare API. The container
+        // does not know the hostname for a token-driven tunnel.
+        url: '',
+        hostname: '',
+        createdAt: new Date().toISOString()
+      };
+      this.tunnels.set(id, { info, manager });
+      this.logger.info('Named tunnel running', { id, port });
+      return serviceSuccess(info);
+    } catch (err) {
+      await manager.stop().catch(() => {});
+      const message = err instanceof Error ? err.message : String(err);
+      return serviceError({
+        message: `Failed to run named tunnel: ${message}`,
         code: 'TUNNEL_START_ERROR',
         details: { tunnelId: id, port }
       });
