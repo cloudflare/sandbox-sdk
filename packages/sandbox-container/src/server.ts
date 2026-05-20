@@ -1,6 +1,7 @@
 import { createLogger, type SandboxControlCallback } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
+import { type BunWebSocketTransport, newBunWebSocketRpcSession } from 'capnweb';
 import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
 import { SandboxControlAPI } from './control-plane';
@@ -12,10 +13,6 @@ import {
   generateConnectionId,
   WebSocketAdapter
 } from './handlers/ws-adapter';
-import {
-  type BunWebSocketTransport,
-  newBunWebSocketRpcSession
-} from './lib/capnweb-bun';
 import { setupRoutes } from './routes/setup';
 
 export type CapnwebWSData = {

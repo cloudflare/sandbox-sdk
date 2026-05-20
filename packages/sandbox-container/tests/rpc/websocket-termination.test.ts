@@ -10,8 +10,11 @@
  * in production.
  */
 import { afterEach, describe, expect, it } from 'bun:test';
-import { newWebSocketRpcSession, RpcTarget } from 'capnweb';
-import { newBunWebSocketRpcSession } from '../../src/lib/capnweb-bun';
+import {
+  newBunWebSocketRpcSession,
+  newWebSocketRpcSession,
+  RpcTarget
+} from 'capnweb';
 
 class TestAPI extends RpcTarget {
   /** Long-running call: never resolves on its own. The test tears down the
