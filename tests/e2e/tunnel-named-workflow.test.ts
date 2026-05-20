@@ -1,5 +1,6 @@
 import type { Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { fetchWithRetry } from './helpers/fetch-with-retry';
 import {
   cleanupTestSandbox,
   createTestSandbox,
@@ -17,21 +18,22 @@ import {
  * Skipped unless:
  *   - `TEST_TRANSPORT=rpc` (route-based transport doesn't expose
  *     `sandbox.tunnels`), and
- *   - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` are set, and
- *   - `CLOUDFLARE_TUNNEL_TEST_NAME_PREFIX` is set (used as the `name`
- *     prefix so different CI runs don't collide on the same label).
+ *   - `CLOUDFLARE_API_TOKEN` is set on the worker env (the SDK infers
+ *     account id and zone id from the token when unambiguous; see
+ *     `tunnels/credentials.ts`).
  *
- * The test selects a fresh, random-suffixed `name` on each run so leftover
- * resources from a failed run don't poison the next.
+ * The test mints a fresh random suffix for the tunnel name on every run
+ * so concurrent CI shards never collide on the same label. A
+ * try/finally guarantees `destroyTunnel(port)` runs on assertion
+ * failure too, so a flaky run does not leak a tunnel resource or a DNS
+ * record on the configured zone.
  */
 
 const TUNNEL_TEST_PORT = 9881;
 
 const skipNamedTunnel =
   (process.env.TEST_TRANSPORT ?? 'http') !== 'rpc' ||
-  !process.env.CLOUDFLARE_API_TOKEN ||
-  !process.env.CLOUDFLARE_ZONE_ID ||
-  !process.env.CLOUDFLARE_TUNNEL_TEST_NAME_PREFIX;
+  !process.env.CLOUDFLARE_API_TOKEN;
 
 interface NamedTunnelInfoWire {
   id: string;
@@ -60,9 +62,12 @@ describe('Named tunnel round-trip', () => {
   test.skipIf(skipNamedTunnel)(
     'get(port, { name }) binds <name>.<zone> to the local port, destroy() removes it',
     async () => {
-      const prefix = process.env.CLOUDFLARE_TUNNEL_TEST_NAME_PREFIX as string;
-      const suffix = Math.random().toString(36).slice(2, 8);
-      const name = `${prefix}-${suffix}`;
+      // Generate the tunnel name at test time so concurrent CI shards never
+      // collide on the same label. 8 hex chars is enough randomness for a
+      // single test invocation; we also catch the "leftover from a previous
+      // crash" case via the SDK's retry-friendly findTunnelByName path.
+      const suffix = Math.random().toString(36).slice(2, 10);
+      const name = `e2e-${suffix}`;
       const marker = `named-tunnel-${suffix}`;
 
       // 1. Boot a tiny server inside the sandbox.
@@ -116,17 +121,18 @@ console.log("Server listening on port " + server.port);
       expect(waitPortResponse.status).toBe(200);
 
       // 2. Provision the named tunnel.
-      const tunnel = await getNamedTunnel(TUNNEL_TEST_PORT, name);
-      expect(tunnel.name).toBe(name);
-      expect(tunnel.port).toBe(TUNNEL_TEST_PORT);
-      // UUID format.
-      expect(tunnel.id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-      );
-      expect(tunnel.hostname).toMatch(new RegExp(`^${name}\\.`));
-      expect(tunnel.url).toBe(`https://${tunnel.hostname}`);
-
+      let tunnel: NamedTunnelInfoWire | null = null;
       try {
+        tunnel = await getNamedTunnel(TUNNEL_TEST_PORT, name);
+        expect(tunnel.name).toBe(name);
+        expect(tunnel.port).toBe(TUNNEL_TEST_PORT);
+        // UUID format.
+        expect(tunnel.id).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        );
+        expect(tunnel.hostname).toMatch(new RegExp(`^${name}\\.`));
+        expect(tunnel.url).toBe(`https://${tunnel.hostname}`);
+
         // 3. Idempotency: second get(port, { name }) returns the cached record.
         const second = await getNamedTunnel(TUNNEL_TEST_PORT, name);
         expect(second.id).toBe(tunnel.id);
@@ -134,7 +140,7 @@ console.log("Server listening on port " + server.port);
 
         // 4. list() reflects the cached tunnel.
         const listed = await listTunnels();
-        expect(listed.find((t) => t.id === tunnel.id)?.name).toBe(name);
+        expect(listed.find((t) => t.id === tunnel?.id)?.name).toBe(name);
 
         // 5. Fetch the marker through the public hostname. Edge
         //    propagation can take a few seconds even after /ready;
@@ -146,13 +152,20 @@ console.log("Server listening on port " + server.port);
         );
         expect(fetchedBody).toBe(marker);
       } finally {
-        // 6. Tear down. CF-side resources must be gone too.
-        await destroyTunnel(TUNNEL_TEST_PORT);
+        // 6. Tear down whether the test passed or failed. Best-effort:
+        //    a destroy failure here must not mask the original assertion
+        //    failure, so swallow the inner error.
+        await destroyTunnel(TUNNEL_TEST_PORT).catch(() => {});
         await fetch(`${workerUrl}/api/process/${processId}/kill`, {
           method: 'POST',
           headers
         }).catch(() => {});
       }
+
+      // The remaining assertions only run if the try block succeeded.
+      // Without this guard a teardown-time CF blip would obscure the
+      // real failure above.
+      if (!tunnel) return;
 
       // 7. The tunnel is no longer reachable from the public URL.
       //    Cloudflare returns an error page for a deleted tunnel; we
@@ -200,35 +213,3 @@ console.log("Server listening on port " + server.port);
     });
   }
 });
-
-async function fetchWithRetry(
-  url: string,
-  expectedBody: string,
-  opts: { tries: number; delayMs: number }
-): Promise<string> {
-  let lastError: unknown;
-  for (let i = 0; i < opts.tries; i++) {
-    try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(10_000)
-      });
-      if (response.ok) {
-        const body = await response.text();
-        if (body === expectedBody) return body;
-        lastError = new Error(
-          `Unexpected body (status ${response.status}): ${body.slice(0, 80)}`
-        );
-      } else {
-        lastError = new Error(`HTTP ${response.status}`);
-      }
-    } catch (err) {
-      lastError = err;
-    }
-    await new Promise((r) => setTimeout(r, opts.delayMs));
-  }
-  throw new Error(
-    `fetchWithRetry failed for ${url}: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`
-  );
-}
