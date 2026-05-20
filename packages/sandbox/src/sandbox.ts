@@ -57,6 +57,11 @@ import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
+import {
+  CurrentRuntimeIdentity,
+  type RuntimeIdentity,
+  type RuntimeScoped
+} from './current-runtime-identity';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -76,8 +81,15 @@ import {
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
+import {
+  PREVIEW_PROXY_HEADER,
+  PREVIEW_PROXY_HEADERS,
+  PREVIEW_PROXY_PORT_HEADER,
+  PREVIEW_PROXY_SANDBOX_ID_HEADER,
+  PREVIEW_PROXY_TOKEN_HEADER
+} from './preview-proxy-protocol';
+import { isLocalhostPattern } from './preview-url';
 import { proxyTerminal } from './pty';
-import { isLocalhostPattern } from './request-handler';
 import {
   SandboxSecurityError,
   sanitizeSandboxId,
@@ -130,6 +142,35 @@ type PortTokenEntry = {
   name?: string;
 };
 
+type PreviewURLRuntimeValidation =
+  | { status: 'invalid' }
+  | {
+      status: 'stale';
+      reason:
+        | 'runtime-not-healthy'
+        | 'runtime-not-running'
+        | 'missing-runtime-id'
+        | 'missing-activation'
+        | 'runtime-mismatch'
+        | 'token-mismatch';
+      containerStatus?: string;
+    }
+  | { status: 'active'; runtime: RuntimeIdentity };
+
+type PreviewPortActivation = RuntimeScoped<{
+  token: string;
+}>;
+
+type PreviewPortActivations = Record<string, PreviewPortActivation>;
+
+type PreviewStateStorage = Pick<
+  DurableObjectStorage | DurableObjectTransaction,
+  'get' | 'put' | 'delete'
+>;
+
+const PORT_TOKENS_STORAGE_KEY = 'portTokens';
+const ACTIVE_PREVIEW_PORTS_STORAGE_KEY = 'activePreviewPorts';
+
 type SandboxConfiguration = {
   sandboxName?: {
     name: string;
@@ -181,7 +222,9 @@ Object.defineProperty(R2EgressProxyTarget, 'name', {
   value: R2_EGRESS_PROXY_TARGET_CLASS_NAME
 });
 
-R2EgressProxyTarget.outboundHandlers = { r2EgressMount: r2EgressHandler };
+Object.defineProperty(R2EgressProxyTarget, 'outboundHandlers', {
+  value: { r2EgressMount: r2EgressHandler }
+});
 
 function isFetcher(value: unknown): value is Fetcher {
   return (
@@ -770,6 +813,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  private currentRuntime: CurrentRuntimeIdentity;
   private transport: SandboxTransport = 'http';
 
   /**
@@ -1041,6 +1085,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       component: 'sandbox-do',
       sandboxId: this.ctx.id.toString()
     });
+
+    this.currentRuntime = new CurrentRuntimeIdentity(
+      this.ctx.storage,
+      () => this.getState(),
+      () => this.ctx.container?.running === true
+    );
 
     // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
@@ -2189,6 +2239,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let caughtError: Error | undefined;
 
     try {
+      // Preview URL auth and activation are cleared before await-heavy
+      // teardown work. Concurrent preview traffic should observe missing
+      // auth or runtime state and fail from DO-owned state without reaching
+      // the container.
+      await this.ctx.storage.delete(PORT_TOKENS_STORAGE_KEY);
+      await this.clearActivePreviewPorts();
+      await this.currentRuntime.clear();
+
       // Best-effort desktop stop — only when container is already running
       if (this.ctx.container?.running) {
         try {
@@ -2231,15 +2289,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // portTokens is cleared while still inside destroy()'s try block:
-      // super.destroy() is not serialized by blockConcurrencyWhile, so
-      // other DO RPCs run during the await. With storage already cleared,
-      // a concurrent validatePortToken() from the preview URL proxy sees
-      // no token and returns unauthorized, and a concurrent startup path
-      // finds nothing to rehydrate via restoreExposedPorts(). Teardown is
-      // still not atomic against concurrent writers, but the preview URL
-      // authorization path is race-free.
-      await this.ctx.storage.delete('portTokens');
       // Tear down every tunnel this sandbox created — stops the
       // container-side cloudflared processes and removes the Cloudflare
       // tunnel + DNS resources for named tunnels. Runs before disconnect
@@ -2286,6 +2335,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStart() {
     this.logger.debug('Sandbox started');
 
+    await this.currentRuntime.markStarted();
+
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
       this.logger.error(
@@ -2293,23 +2344,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error instanceof Error ? error : new Error(String(error))
       );
     });
-
-    // Re-expose ports that were exposed before the container restarted.
-    // Tokens persist in DO storage across restarts (see onStop), but the
-    // container runtime has no memory of which ports were exposed. The base
-    // @cloudflare/containers class wraps onStart in blockConcurrencyWhile,
-    // so awaiting restore here keeps the DO gate held until restore
-    // completes — requests that arrive during the startup window (including
-    // validatePortToken calls from the Worker preview-URL proxy) queue
-    // behind it.
-    try {
-      await this.restoreExposedPorts();
-    } catch (error) {
-      this.logger.error(
-        'Failed to restore exposed ports after container start',
-        error instanceof Error ? error : new Error(String(error))
-      );
-    }
 
     // Reconcile tunnel storage with the fresh container. Quick tunnels
     // are unrecoverable (their `*.trycloudflare.com` URLs died with the
@@ -2330,84 +2364,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  /**
-   * Re-expose ports on the container runtime using tokens persisted in DO
-   * storage. Called from onStart() after a container (re)start.
-   *
-   * The DO storage holds the source of truth for which ports should be
-   * exposed, which tokens authorize them, and the friendly name (if any)
-   * that the caller set when first exposing the port. If a port is already
-   * exposed on the container this is a no-op for that port. Individual port
-   * failures are logged but do not abort the overall restore — a transient
-   * failure for one port must not prevent the others from being restored.
-   */
-  private async restoreExposedPorts(): Promise<void> {
-    const savedTokens = await this.readPortTokens();
-    const portEntries = Object.entries(savedTokens);
-    if (portEntries.length === 0) {
-      return;
-    }
-
-    const startTime = Date.now();
-    let restored = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    // Fetch the container's current exposed-port list once, then check
-    // membership in the loop. On a fresh restart this is empty; on a
-    // retry path (re-entering onStart) it may already contain entries
-    // that should be skipped.
-    const exposedSet = await this.client.ports
-      .getExposedPorts(DISABLE_SESSION_TOKEN)
-      .then((response) => new Set(response.ports.map((p) => p.port)))
-      .catch((error) => {
-        this.logger.warn(
-          'Failed to fetch exposed ports for restore; assuming none exposed',
-          { error: error instanceof Error ? error.message : String(error) }
-        );
-        return new Set<number>();
-      });
-
-    for (const [portStr, entry] of portEntries) {
-      const port = Number.parseInt(portStr, 10);
-      if (!Number.isFinite(port) || !validatePort(port)) {
-        this.logger.warn('Skipping restore of invalid port in storage', {
-          port: portStr
-        });
-        failed++;
-        continue;
-      }
-
-      if (exposedSet.has(port)) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        await this.client.ports.exposePort(
-          port,
-          DISABLE_SESSION_TOKEN,
-          entry.name
-        );
-        restored++;
-      } catch (error) {
-        failed++;
-        this.logger.warn('Failed to re-expose port on container restart', {
-          port,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    logCanonicalEvent(this.logger, {
-      event: 'port.restore',
-      outcome: failed === 0 ? 'success' : 'error',
-      durationMs: Date.now() - startTime,
-      restored,
-      skipped,
-      failed,
-      total: portEntries.length
-    });
+  override async stop(
+    signal?: Parameters<Container<Env>['stop']>[0]
+  ): Promise<void> {
+    await this.currentRuntime.clear();
+    await this.clearActivePreviewPorts();
+    await super.stop(signal);
   }
 
   /**
@@ -2416,16 +2378,57 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * ({ token, name? }). The legacy format predates port-name persistence and
    * can appear on any DO whose storage was written before that change.
    */
-  private async readPortTokens(): Promise<Record<string, PortTokenEntry>> {
+  private async readPortTokens(
+    storage: PreviewStateStorage = this.ctx.storage
+  ): Promise<Record<string, PortTokenEntry>> {
     const raw =
-      (await this.ctx.storage.get<Record<string, string | PortTokenEntry>>(
-        'portTokens'
+      (await storage.get<Record<string, string | PortTokenEntry>>(
+        PORT_TOKENS_STORAGE_KEY
       )) ?? {};
     const normalized: Record<string, PortTokenEntry> = {};
     for (const [port, value] of Object.entries(raw)) {
       normalized[port] = typeof value === 'string' ? { token: value } : value;
     }
     return normalized;
+  }
+
+  private async readActivePreviewPorts(
+    storage: PreviewStateStorage = this.ctx.storage
+  ): Promise<PreviewPortActivations> {
+    return (
+      (await storage.get<PreviewPortActivations>(
+        ACTIVE_PREVIEW_PORTS_STORAGE_KEY
+      )) ?? {}
+    );
+  }
+
+  private async writeActivePreviewPorts(
+    activations: PreviewPortActivations,
+    storage: PreviewStateStorage = this.ctx.storage
+  ): Promise<void> {
+    if (Object.keys(activations).length === 0) {
+      await storage.delete(ACTIVE_PREVIEW_PORTS_STORAGE_KEY);
+      return;
+    }
+
+    await storage.put(ACTIVE_PREVIEW_PORTS_STORAGE_KEY, activations);
+  }
+
+  private async readPreviewState(
+    storage: PreviewStateStorage = this.ctx.storage
+  ): Promise<{
+    tokens: Record<string, PortTokenEntry>;
+    activations: PreviewPortActivations;
+  }> {
+    const [tokens, activations] = await Promise.all([
+      this.readPortTokens(storage),
+      this.readActivePreviewPorts(storage)
+    ]);
+    return { tokens, activations };
+  }
+
+  private async clearActivePreviewPorts(): Promise<void> {
+    await this.ctx.storage.delete(ACTIVE_PREVIEW_PORTS_STORAGE_KEY);
   }
 
   /**
@@ -2486,6 +2489,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.defaultSessionInit = null;
 
+    await this.currentRuntime.clear();
+    await this.clearActivePreviewPorts();
+
     // Disconnect the active client so open sockets do not hold the DO alive.
     this.client.disconnect();
 
@@ -2505,11 +2511,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.activeMounts.clear();
 
     // Persist cleanup to storage so state is clean on next container start.
-    // Port tokens are preserved so preview URLs survive container restarts;
-    // they are only removed on explicit unexposePort() or full sandbox
-    // destroy(). onStart's restoreExposedPorts() replays those tokens into
-    // the container on the next start, which lets validatePortToken()
-    // answer from storage alone.
+    // Port tokens are durable authorization and survive container restarts;
+    // runtime-scoped preview activation is cleared separately above.
     await this.ctx.storage.delete('defaultSession');
   }
 
@@ -2833,6 +2836,145 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  private isPreviewProxyRequest(request: Request): boolean {
+    // These headers are internal control metadata added by proxyToSandbox()
+    // before the request enters this Durable Object.
+    return request.headers.get(PREVIEW_PROXY_HEADER) === '1';
+  }
+
+  private invalidPreviewTokenResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        error: 'Access denied: Invalid token or port not exposed',
+        code: 'INVALID_TOKEN'
+      }),
+      {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+  }
+
+  private stalePreviewURLResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        error: 'Preview URL is stale because the sandbox runtime is not active',
+        code: 'STALE_PREVIEW_URL'
+      }),
+      {
+        status: 410,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+  }
+
+  /**
+   * Detects unavailable-container responses produced by `fetchIfRunning()` and
+   * its shared forwarding helper in `@cloudflare/containers`.
+   */
+  private async isContainerUnavailableResponse(
+    response: Response
+  ): Promise<boolean> {
+    if (response.status !== 500 && response.status !== 503) {
+      return false;
+    }
+
+    const body = await response
+      .clone()
+      .text()
+      .catch(() => null);
+    return (
+      body === 'Container is not running' ||
+      body === 'Container suddenly disconnected, try again'
+    );
+  }
+
+  private buildPreviewProxyRequest(
+    request: Request,
+    port: number,
+    sandboxId: string
+  ): Request {
+    const url = new URL(request.url);
+    const proxyUrl = `http://localhost:${port}${url.pathname}${url.search}`;
+    const headers = new Headers(request.headers);
+    for (const header of PREVIEW_PROXY_HEADERS) {
+      headers.delete(header);
+    }
+    headers.set('X-Original-URL', request.url);
+    headers.set('X-Forwarded-Host', url.hostname);
+    headers.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+    headers.set('X-Sandbox-Name', this.sandboxName ?? sandboxId);
+
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (upgradeHeader?.toLowerCase() === 'websocket') {
+      // WebSocket upgrade requests keep the original Request object so the
+      // Workers runtime preserves upgrade semantics. fetchIfRunning() routes
+      // by the explicit port argument, while the request URL still provides
+      // the path and query.
+      return new Request(request, {
+        headers,
+        redirect: 'manual'
+      });
+    }
+
+    return new Request(proxyUrl, {
+      method: request.method,
+      headers,
+      body: request.body,
+      // @ts-expect-error - duplex required for body streaming in modern runtimes
+      duplex: 'half',
+      redirect: 'manual'
+    });
+  }
+
+  private async proxyPreviewRequest(request: Request): Promise<Response> {
+    const portValue = request.headers.get(PREVIEW_PROXY_PORT_HEADER);
+    const token = request.headers.get(PREVIEW_PROXY_TOKEN_HEADER);
+    const sandboxId = request.headers.get(PREVIEW_PROXY_SANDBOX_ID_HEADER);
+    const port =
+      portValue === null ? Number.NaN : Number.parseInt(portValue, 10);
+
+    if (!Number.isFinite(port) || !validatePort(port) || !token || !sandboxId) {
+      return this.invalidPreviewTokenResponse();
+    }
+
+    const proxyRequest = this.buildPreviewProxyRequest(
+      request,
+      port,
+      sandboxId
+    );
+
+    const validation = await this.validatePreviewURLForRuntime(port, token);
+    if (validation.status === 'invalid') {
+      return this.invalidPreviewTokenResponse();
+    }
+
+    if (validation.status === 'stale') {
+      this.logger.warn('Stale preview URL blocked', {
+        port,
+        sandboxId,
+        containerStatus: validation.containerStatus,
+        reason: validation.reason,
+        method: request.method
+      });
+      return this.stalePreviewURLResponse();
+    }
+
+    const response = await this.fetchIfRunning(proxyRequest, port);
+    if (
+      (await this.isContainerUnavailableResponse(response)) &&
+      !(await this.currentRuntime.isActive(validation.runtime))
+    ) {
+      return this.stalePreviewURLResponse();
+    }
+
+    return response;
+  }
+
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     // Extract or generate trace ID from request
@@ -2843,6 +2985,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const requestLogger = this.logger.child({ traceId, operation: 'fetch' });
 
     const url = new URL(request.url);
+
+    if (this.isPreviewProxyRequest(request)) {
+      return await this.proxyPreviewRequest(request);
+    }
 
     // Capture and store the sandbox name from the header if present
     if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
@@ -2892,7 +3038,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private determinePort(url: URL): number {
-    // Extract port from proxy requests (e.g., /proxy/8080/*)
+    // Direct DO fetch compatibility path used by switchPort()/wsConnect().
+    // Public preview URL traffic enters through proxyPreviewRequest() instead.
     const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
     if (proxyMatch) {
       return parseInt(proxyMatch[1], 10);
@@ -4210,32 +4357,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    let url: string;
-
-    // Try exposing port 6080; if already exposed, construct the URL from stored token
-    try {
-      const result = await this.exposePort(6080, {
-        hostname,
-        token: options?.token
-      });
-      url = result.url;
-    } catch {
-      // Port may already be exposed — look up the existing token from DO storage
-      const tokens = await this.readPortTokens();
-      const existingEntry = tokens['6080'];
-      if (existingEntry && this.sandboxName) {
-        url = this.constructPreviewUrl(
-          6080,
-          this.sandboxName,
-          hostname,
-          existingEntry.token
-        );
-      } else {
-        throw new Error(
-          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
-        );
-      }
-    }
+    const result = await this.exposePort(6080, {
+      hostname,
+      token: options?.token
+    });
+    const url = result.url;
 
     // Wait for the platform to detect port 6080 using the Containers runtime's
     // built-in port readiness mechanism (getTcpPort polling). This ensures the
@@ -4311,11 +4437,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
-   * Preview URLs survive transient container restarts: the token and any
-   * friendly name are persisted in Durable Object storage, and the port is
-   * automatically re-exposed on the container when it comes back up. Tokens
-   * are cleared only on explicit `unexposePort()` or full sandbox
-   * `destroy()`.
+   * Preview URL authorization survives transient container restarts, but
+   * forwarding is active only for the runtime where `exposePort()` was last
+   * called. Call `exposePort()` again after a restart to reactivate an
+   * existing URL for the current runtime.
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
@@ -4371,31 +4496,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      let token: string;
       if (options.token !== undefined) {
         this.validateCustomToken(options.token);
-        token = options.token;
-      } else {
-        token = this.generatePortToken();
       }
 
-      // Allow re-exposing same port with same token, but reject if another port uses this token
-      const tokens = await this.readPortTokens();
-      const existingPort = Object.entries(tokens).find(
-        ([p, entry]) => entry.token === token && p !== port.toString()
-      );
-      if (existingPort) {
-        throw new SandboxSecurityError(
-          `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
-        );
-      }
       const sessionId = this.serializeExecutionContext(
         await this.resolveExecution()
       );
-      await this.client.ports.exposePort(port, sessionId, options?.name);
 
-      tokens[port.toString()] = { token, name: options?.name };
-      await this.ctx.storage.put('portTokens', tokens);
+      await this.client.ports.exposePort(port, sessionId, options.name);
+
+      // onStart() may record runtime identity while ensureDefaultSession()
+      // starts the container. Re-read before falling back to markStarted() so
+      // normal start hooks remain the identity source.
+      let runtime = await this.currentRuntime.get();
+      runtime = runtime ?? (await this.currentRuntime.markStarted());
+      await this.currentRuntime.assertActive(runtime);
+
+      const token = await this.ctx.storage.transaction(async (txn) => {
+        const tokens = await this.readPortTokens(txn);
+        const existingEntry = tokens[port.toString()];
+        const nextToken =
+          options.token ?? existingEntry?.token ?? this.generatePortToken();
+
+        // Allow re-exposing same port with same token, but reject if another port uses this token
+        const existingPort = Object.entries(tokens).find(
+          ([p, entry]) => entry.token === nextToken && p !== port.toString()
+        );
+        if (existingPort) {
+          throw new SandboxSecurityError(
+            `Token '${nextToken}' is already in use by port ${existingPort[0]}. Please use a different token.`
+          );
+        }
+
+        const activations = await this.readActivePreviewPorts(txn);
+
+        tokens[port.toString()] = { token: nextToken, name: options.name };
+        activations[port.toString()] = runtime.scope({ token: nextToken });
+        await Promise.all([
+          txn.put(PORT_TOKENS_STORAGE_KEY, tokens),
+          this.writeActivePreviewPorts(activations, txn)
+        ]);
+
+        return nextToken;
+      });
+
+      // If a concurrent lifecycle hook records a newer runtime identity after
+      // the storage writes, fail instead of returning a URL that is stale on
+      // arrival. The stale activation remains harmless because preview
+      // forwarding requires ownership by the current runtime identity.
+      await this.currentRuntime.assertActive(runtime);
 
       const url = this.constructPreviewUrl(
         port,
@@ -4409,7 +4559,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return {
         url,
         port,
-        name: options?.name
+        name: options.name
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
@@ -4420,7 +4570,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         outcome,
         port,
         durationMs: Date.now() - exposeStartTime,
-        name: options?.name,
+        name: options.name,
         hostname: options.hostname,
         error: caughtError
       });
@@ -4451,6 +4601,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('portTokens', tokens);
       }
 
+      const activations = await this.readActivePreviewPorts();
+      if (activations[port.toString()]) {
+        delete activations[port.toString()];
+        await this.writeActivePreviewPorts(activations);
+      }
+
       const sessionId = this.serializeExecutionContext(
         await this.resolveExecution()
       );
@@ -4458,10 +4614,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.client.ports.unexposePort(port, sessionId);
       } catch (error) {
         // A container that was asleep when we entered wakes with an
-        // empty exposed-port registry; restoreExposedPorts() has
-        // nothing to replay because we just cleared the token. The
-        // container then reports the port was never exposed, which is
-        // the state we wanted.
+        // empty exposed-port registry. We already cleared durable auth
+        // and activation state, so a "not exposed" response is the state
+        // we wanted.
         if (!(error instanceof PortNotExposedError)) {
           throw error;
         }
@@ -4500,10 +4655,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // A port reported by the container with no corresponding token in
     // storage is an orphan. It cannot produce a valid preview URL (the
-    // token is what the URL binds to), so it is omitted from the
-    // result. The next container restart reconciles the inconsistency
-    // because restoreExposedPorts() rebuilds the container registry
-    // from storage.
+    // token is what the URL binds to), so it is omitted from the result.
     return response.ports.flatMap((port) => {
       const entry = tokens[port.port.toString()];
       if (!entry) {
@@ -4659,24 +4811,115 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
+  /**
+   * Checks durable preview URL authorization for a port/token pair.
+   *
+   * This does not check whether the port is activated for the current runtime
+   * and is not sufficient to decide whether preview traffic may forward.
+   */
   async validatePortToken(port: number, token: string): Promise<boolean> {
-    // Preview-URL auth answers from DO storage alone. onStart's
-    // restoreExposedPorts() replays storage into the container on restart,
-    // and destroy() clears portTokens before super.destroy() runs, so a
-    // storage read gives the right answer for the interleavings this
-    // method can race.
     const tokens = await this.readPortTokens();
     const entry = tokens[port.toString()];
     if (!entry) {
       return false;
     }
 
+    return this.previewTokensMatch(entry.token, token);
+  }
+
+  private async validatePreviewURLForRuntime(
+    port: number,
+    token: string
+  ): Promise<PreviewURLRuntimeValidation> {
+    const containerState = await this.getState();
+    const containerRunning = this.ctx.container?.running === true;
+    const { tokens, activations, runtime } = await this.ctx.storage.transaction(
+      async (txn) => {
+        const [previewState, runtime] = await Promise.all([
+          this.readPreviewState(txn),
+          this.currentRuntime.getStored(txn)
+        ]);
+        return { ...previewState, runtime };
+      }
+    );
+
+    const entry = tokens[port.toString()];
+    if (!entry) {
+      return { status: 'invalid' };
+    }
+
+    const tokenMatches = this.previewTokensMatch(entry.token, token);
+    if (!tokenMatches) {
+      return { status: 'invalid' };
+    }
+
+    if (containerState.status !== 'healthy') {
+      return {
+        status: 'stale',
+        reason: 'runtime-not-healthy',
+        containerStatus: containerState.status
+      };
+    }
+
+    if (!containerRunning) {
+      return {
+        status: 'stale',
+        reason: 'runtime-not-running',
+        containerStatus: containerState.status
+      };
+    }
+
+    if (!runtime) {
+      return {
+        status: 'stale',
+        reason: 'missing-runtime-id',
+        containerStatus: containerState.status
+      };
+    }
+
+    const activation = activations[port.toString()];
+    if (!activation) {
+      return {
+        status: 'stale',
+        reason: 'missing-activation',
+        containerStatus: containerState.status
+      };
+    }
+
+    if (!runtime.owns(activation)) {
+      return {
+        status: 'stale',
+        reason: 'runtime-mismatch',
+        containerStatus: containerState.status
+      };
+    }
+
+    const activationTokenMatches = this.previewTokensMatch(
+      activation.token,
+      token
+    );
+    if (!activationTokenMatches) {
+      this.logger.warn('Preview URL activation token mismatch', {
+        port,
+        runtimeIdentityID: runtime.id
+      });
+      return {
+        status: 'stale',
+        reason: 'token-mismatch',
+        containerStatus: containerState.status
+      };
+    }
+
+    return { status: 'active', runtime };
+  }
+
+  private previewTokensMatch(expected: string, actual: string): boolean {
     const encoder = new TextEncoder();
-    const a = encoder.encode(entry.token);
-    const b = encoder.encode(token);
+    const a = encoder.encode(expected);
+    const b = encoder.encode(actual);
 
     try {
-      // Workers runtime extends SubtleCrypto with timingSafeEqual
+      // Workers runtime extends SubtleCrypto with timingSafeEqual.
       return (
         crypto.subtle as SubtleCrypto & {
           timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
