@@ -18,6 +18,8 @@ export type {
   DesktopMouseUpRequest,
   DesktopProcessHealth,
   DesktopScreenSize,
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
   DesktopScreenshotRegion,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,

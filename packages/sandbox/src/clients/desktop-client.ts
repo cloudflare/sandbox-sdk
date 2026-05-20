@@ -1,3 +1,4 @@
+import type { DesktopProcessHealth, SandboxDesktopAPI } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -129,17 +130,27 @@ export interface Desktop {
   keyDown(key: KeyInput): Promise<void>;
   keyUp(key: KeyInput): Promise<void>;
   getScreenSize(): Promise<ScreenSizeResponse>;
-  getProcessStatus(
-    name: string
-  ): Promise<
-    BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-  >;
+  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
+}
+
+/**
+ * Decode a base64-encoded screenshot payload into a Uint8Array.
+ * Shared with the RPC client wrapper, which receives base64 over the
+ * wire and needs the same `format: 'bytes'` convenience.
+ */
+export function base64ToBytes(data: string): Uint8Array {
+  const binaryString = atob(data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 
 /**
  * Client for desktop environment lifecycle, input, and screen operations
  */
-export class DesktopClient extends BaseHttpClient {
+export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
   /**
    * Start the desktop environment with optional resolution and DPI.
    */
@@ -227,15 +238,9 @@ export class DesktopClient extends BaseHttpClient {
     );
 
     if (wantsBytes) {
-      const binaryString = atob(response.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
       return {
         ...response,
-        data: bytes
+        data: base64ToBytes(response.data)
       } as ScreenshotBytesResponse;
     }
 
@@ -279,15 +284,9 @@ export class DesktopClient extends BaseHttpClient {
     );
 
     if (wantsBytes) {
-      const binaryString = atob(response.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
       return {
         ...response,
-        data: bytes
+        data: base64ToBytes(response.data)
       } as ScreenshotBytesResponse;
     }
 
@@ -485,15 +484,9 @@ export class DesktopClient extends BaseHttpClient {
   /**
    * Get health status for a specific desktop process.
    */
-  async getProcessStatus(
-    name: string
-  ): Promise<
-    BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-  > {
-    const response = await this.get<
-      BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
-    >(`/api/desktop/process/${encodeURIComponent(name)}/status`);
-
-    return response;
+  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
+    return this.get<DesktopProcessHealth>(
+      `/api/desktop/process/${encodeURIComponent(name)}/status`
+    );
   }
 }

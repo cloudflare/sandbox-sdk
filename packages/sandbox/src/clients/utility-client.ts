@@ -1,3 +1,4 @@
+import type { SandboxUtilsAPI } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse, HttpClientOptions } from './types';
 
@@ -64,7 +65,7 @@ export interface DeleteSessionResponse extends BaseApiResponse {
 /**
  * Client for health checks and utility operations
  */
-export class UtilityClient extends BaseHttpClient {
+export class UtilityClient extends BaseHttpClient implements SandboxUtilsAPI {
   /**
    * Ping the sandbox to check if it's responsive
    */
@@ -129,5 +130,11 @@ export class UtilityClient extends BaseHttpClient {
       );
       return 'unknown';
     }
+  }
+
+  listSessions(): Promise<{ sessions: string[] }> {
+    throw new Error(
+      'listSessions requires the RPC transport. Set SANDBOX_TRANSPORT=rpc.'
+    );
   }
 }

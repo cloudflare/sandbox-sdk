@@ -1,4 +1,4 @@
-import type { GitCheckoutResult } from '@repo/shared';
+import type { GitCheckoutResult, SandboxGitAPI } from '@repo/shared';
 import {
   DEFAULT_GIT_CLONE_TIMEOUT_MS,
   extractRepoName,
@@ -26,7 +26,7 @@ export interface GitCheckoutRequest extends SessionRequest {
 /**
  * Client for Git repository operations
  */
-export class GitClient extends BaseHttpClient {
+export class GitClient extends BaseHttpClient implements SandboxGitAPI {
   private static readonly REQUEST_TIMEOUT_BUFFER_MS = 30_000;
 
   constructor(options: HttpClientOptions = {}) {

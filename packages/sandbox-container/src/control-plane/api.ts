@@ -8,6 +8,7 @@ import type {
   DesktopMouseDragRequest,
   DesktopMouseScrollRequest,
   DesktopMouseUpRequest,
+  DesktopProcessHealth,
   DesktopScreenSize,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
@@ -25,6 +26,7 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
+  SandboxDesktopAPI,
   TunnelInfo,
   WatchRequest
 } from '@repo/shared';
@@ -136,8 +138,19 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   get backup() {
     return new BackupRPCAPI(this.#deps.backupService);
   }
-  get desktop() {
-    return new DesktopRPCAPI(this.#deps.desktopService);
+  get desktop(): SandboxDesktopAPI {
+    // DesktopRPCAPI exposes the capnweb wire shape used by the container:
+    //   - `screenshot` / `screenshotRegion` always return base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP DesktopClient (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`). The
+    // client-side RPC wrapper in container-control/client.ts translates
+    // user calls down to this wire shape.
+    return new DesktopRPCAPI(
+      this.#deps.desktopService
+    ) as unknown as SandboxDesktopAPI;
   }
   get watch() {
     return new WatchRPCAPI(this.#deps.watchService);
@@ -1240,7 +1253,7 @@ class DesktopRPCAPI extends RpcTarget {
       await this.#svc.getCursorPosition()
     );
   }
-  async type(text: string, options?: { delay?: number }): Promise<void> {
+  async type(text: string, options?: { delayMs?: number }): Promise<void> {
     throwIfError(await this.#svc.typeText({ text, ...options }));
   }
   async press(key: string): Promise<void> {
@@ -1255,8 +1268,10 @@ class DesktopRPCAPI extends RpcTarget {
   async getScreenSize(): Promise<DesktopScreenSize> {
     return extractData<DesktopScreenSize>(await this.#svc.getScreenSize());
   }
-  async getProcessStatus(_name: string): Promise<DesktopStatusResult> {
-    return this.status();
+  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
+    return extractData<DesktopProcessHealth>(
+      await this.#svc.getProcessStatus(name)
+    );
   }
 }
 

@@ -70,6 +70,12 @@
  */
 
 import type {
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
+  DesktopScreenshotRegionRequest,
+  DesktopScreenshotRequest,
+  DesktopScreenshotResult,
   Logger,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -93,6 +99,7 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
+import { base64ToBytes } from '../clients/desktop-client';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import {
@@ -582,7 +589,60 @@ export class ContainerControlClient {
     return wrapStub(this.getConnection().rpc().backup, this.renewActivity);
   }
   get desktop(): SandboxDesktopAPI {
-    return wrapStub(this.getConnection().rpc().desktop, this.renewActivity);
+    const stub = wrapStub(
+      this.getConnection().rpc().desktop,
+      this.renewActivity
+    );
+    // The capnweb RPC stub exposes the wire shape used by the container:
+    //   - `screenshot` / `screenshotRegion` return only base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP `DesktopClient` (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`).
+    // Translate here so both transports present the same surface to callers
+    // without changing the wire format.
+    type DesktopRpcStub = {
+      screenshot: (
+        options?: DesktopScreenshotRequest
+      ) => Promise<DesktopScreenshotResult>;
+      screenshotRegion: (
+        request: DesktopScreenshotRegionRequest
+      ) => Promise<DesktopScreenshotResult>;
+    };
+    const wire = stub as unknown as DesktopRpcStub;
+    return new Proxy(stub, {
+      get(target, prop, receiver) {
+        if (prop === 'screenshot') {
+          return async (
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshot(rest);
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
+          };
+        }
+        if (prop === 'screenshotRegion') {
+          return async (
+            region: DesktopScreenshotRegion,
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshotRegion({ region, ...rest });
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    }) as unknown as SandboxDesktopAPI;
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);

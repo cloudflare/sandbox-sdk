@@ -8,9 +8,11 @@
 import type {
   DesktopCursorPosition,
   DesktopMouseButton,
+  DesktopProcessHealth,
   DesktopScreenSize,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
   DesktopScreenshotResult,
   DesktopScrollDirection,
   DesktopStartResult,
@@ -276,11 +278,26 @@ export interface SandboxDesktopAPI {
   stop(): Promise<DesktopStopResult>;
   status(): Promise<DesktopStatusResult>;
   screenshot(
-    options?: DesktopScreenshotRequest
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
+  ): Promise<DesktopScreenshotResult>;
+  screenshot(
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshot(
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
   ): Promise<DesktopScreenshotResult>;
   screenshotRegion(
-    request: DesktopScreenshotRegionRequest
-  ): Promise<DesktopScreenshotResult>;
+    region: DesktopScreenshotRegion,
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
   click(
     x: number,
     y: number,
@@ -315,12 +332,12 @@ export interface SandboxDesktopAPI {
     amount?: number
   ): Promise<void>;
   getCursorPosition(): Promise<DesktopCursorPosition>;
-  type(text: string, options?: { delay?: number }): Promise<void>;
+  type(text: string, options?: { delayMs?: number }): Promise<void>;
   press(key: string): Promise<void>;
   keyDown(key: string): Promise<void>;
   keyUp(key: string): Promise<void>;
   getScreenSize(): Promise<DesktopScreenSize>;
-  getProcessStatus(name: string): Promise<DesktopStatusResult>;
+  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
 }
 
 export interface SandboxWatchAPI {
