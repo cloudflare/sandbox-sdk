@@ -552,11 +552,11 @@ describe('DesktopClient', () => {
         )
       );
 
-      await client.type('slow typing', { delay: 50 });
+      await client.type('slow typing', { delayMs: 50 });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
       expect(body.text).toBe('slow typing');
-      expect(body.delay).toBe(50);
+      expect(body.delayMs).toBe(50);
     });
 
     it('should press a key', async () => {

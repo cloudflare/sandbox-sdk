@@ -34,7 +34,7 @@ export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
 export type KeyInput = string;
 
 export interface TypeOptions {
-  delay?: number;
+  delayMs?: number;
 }
 
 export interface DesktopStartResponse extends BaseApiResponse {
@@ -375,7 +375,7 @@ export class DesktopClient extends BaseHttpClient implements SandboxDesktopAPI {
   async type(text: string, options?: TypeOptions): Promise<void> {
     await this.post<BaseApiResponse>('/api/desktop/keyboard/type', {
       text,
-      ...(options?.delay !== undefined && { delay: options.delay })
+      ...(options?.delayMs !== undefined && { delayMs: options.delayMs })
     });
   }
 
