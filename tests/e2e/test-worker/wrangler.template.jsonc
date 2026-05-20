@@ -23,6 +23,7 @@
       "image": "{{IMAGE_SANDBOX}}",
       "name": "{{CONTAINER_NAME}}",
       "instance_type": "standard-4",
+      // CI parallelism can exceed 50 sandboxes; revisit if test sharding or parallelism changes.
       "max_instances": 64,
       "unsafe": {
         "configuration": {
