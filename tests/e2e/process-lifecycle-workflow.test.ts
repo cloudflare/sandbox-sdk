@@ -359,7 +359,7 @@ console.log("Line 3");
   );
 
   test.skipIf(skipPortExposureTests)(
-    'should return error when unexposing non-exposed port',
+    'should treat unexposing a non-exposed port as idempotent revocation',
     async () => {
       const unexposeResponse = await fetch(
         `${workerUrl}/api/exposed-ports/${PORT_LIFECYCLE_TEST_PORT}`,
@@ -369,10 +369,11 @@ console.log("Line 3");
         }
       );
 
-      expect(unexposeResponse.status).toBe(404);
-      const errorData = (await unexposeResponse.json()) as { error: string };
-      expect(errorData.error).toBeTruthy();
-      expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
+      expect(unexposeResponse.status).toBe(200);
+      await expect(unexposeResponse.json()).resolves.toMatchObject({
+        success: true,
+        port: PORT_LIFECYCLE_TEST_PORT
+      });
     },
     90000
   );
