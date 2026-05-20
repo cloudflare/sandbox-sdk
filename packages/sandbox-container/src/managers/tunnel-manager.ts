@@ -79,6 +79,33 @@ export interface TunnelStartResult {
   pid: number;
 }
 
+/**
+ * Sentinel thrown by `TunnelManager.start()` when `Bun.spawn` reports the
+ * `cloudflared` binary is missing on `$PATH`. The dedicated subclass lets
+ * callers (notably `TunnelService` and the SDK) distinguish a
+ * missing-binary failure from generic startup errors, and lets us scrub the
+ * `$PATH`-bearing message Bun emits — the literal `$` token confused
+ * downstream tooling.
+ */
+export class CloudflaredNotFoundError extends Error {
+  readonly binary: string;
+  constructor(binary: string, cause?: unknown) {
+    super(
+      `cloudflared binary not found at '${binary}'. ` +
+        'Install cloudflared and ensure it is reachable on PATH inside the container.'
+    );
+    this.name = 'CloudflaredNotFoundError';
+    this.binary = binary;
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+function isEnoent(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; errno?: unknown };
+  return e.code === 'ENOENT' || e.errno === -2;
+}
+
 export class TunnelManager {
   private readonly opts: TunnelManagerOptions;
   private readonly logger: Logger;
@@ -120,14 +147,21 @@ export class TunnelManager {
     this.logger.info('Spawning cloudflared', { mode, args: loggableArgs });
 
     const binary = this.opts.binaryPath ?? 'cloudflared';
-    this.proc = Bun.spawn([binary, ...args], {
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      // Put cloudflared in its own process group so SIGTERM/SIGKILL on its
-      // pid is scoped to it (and to any future children it spawns).
-      detached: true
-    }) as Subprocess<'ignore', 'pipe', 'pipe'>;
+    try {
+      this.proc = Bun.spawn([binary, ...args], {
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe',
+        // Put cloudflared in its own process group so SIGTERM/SIGKILL on its
+        // pid is scoped to it (and to any future children it spawns).
+        detached: true
+      }) as Subprocess<'ignore', 'pipe', 'pipe'>;
+    } catch (err) {
+      if (isEnoent(err)) {
+        throw new CloudflaredNotFoundError(binary, err);
+      }
+      throw err;
+    }
 
     // Track exit so the readiness loop can fail fast if cloudflared dies.
     // We also fire the consumer's onExit callback here so a single

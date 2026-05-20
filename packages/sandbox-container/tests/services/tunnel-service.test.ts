@@ -643,3 +643,74 @@ describe('TunnelService > runNamedTunnel', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Missing cloudflared binary
+// ---------------------------------------------------------------------------
+
+/**
+ * Bun.spawn raises a synchronous Error when the executable can't be found
+ * on $PATH. The wire shape matches what Bun actually emits:
+ *   `{ code: 'ENOENT', path: 'cloudflared', errno: -2,
+ *      message: 'Executable not found in $PATH: "cloudflared"' }`
+ * The literal `$PATH` in the message used to leak into capnweb-serialized
+ * error payloads and confused downstream tooling. TunnelService now
+ * surfaces this as a dedicated `CLOUDFLARED_NOT_FOUND` error with a
+ * human-readable message that the SDK / examples can detect.
+ */
+function makeEnoentError(): Error {
+  const err = new Error(
+    'Executable not found in $PATH: "cloudflared"'
+  ) as Error & { code?: string; path?: string; errno?: number };
+  err.code = 'ENOENT';
+  err.path = 'cloudflared';
+  err.errno = -2;
+  return err;
+}
+
+describe('TunnelService > cloudflared binary missing', () => {
+  it('runQuickTunnel returns CLOUDFLARED_NOT_FOUND when Bun.spawn throws ENOENT', async () => {
+    spawnSpy?.mockImplementation((() => {
+      throw makeEnoentError();
+    }) as never);
+    const service = new TunnelService(mockLogger);
+
+    const result = await service.runQuickTunnel('q-enoent', 8080);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('CLOUDFLARED_NOT_FOUND');
+    // Message must NOT contain the literal `$PATH` token — that string
+    // poisons capnweb-serialized error payloads downstream.
+    expect(result.error.message).not.toContain('$PATH');
+    expect(result.error.message).toContain('cloudflared');
+    expect(result.error.message).toMatch(/not found|missing|install/i);
+  });
+
+  it('runNamedTunnel returns CLOUDFLARED_NOT_FOUND when Bun.spawn throws ENOENT', async () => {
+    spawnSpy?.mockImplementation((() => {
+      throw makeEnoentError();
+    }) as never);
+    const service = new TunnelService(mockLogger);
+
+    const result = await service.runNamedTunnel('n-enoent', 'TOK', 8080);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('CLOUDFLARED_NOT_FOUND');
+    expect(result.error.message).not.toContain('$PATH');
+    expect(result.error.message).toContain('cloudflared');
+  });
+
+  it('passes through other spawn errors as TUNNEL_START_ERROR', async () => {
+    // Anything that isn't ENOENT keeps the generic error code so we
+    // don't accidentally mask unrelated failures.
+    spawnSpy?.mockImplementation((() => {
+      throw new Error('EACCES: permission denied');
+    }) as never);
+    const service = new TunnelService(mockLogger);
+
+    const result = await service.runQuickTunnel('q-eacces', 8080);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_START_ERROR');
+  });
+});

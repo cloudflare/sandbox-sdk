@@ -12,7 +12,10 @@
 import type { Logger, SandboxControlCallback, TunnelInfo } from '@repo/shared';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
-import { TunnelManager } from '../managers/tunnel-manager';
+import {
+  CloudflaredNotFoundError,
+  TunnelManager
+} from '../managers/tunnel-manager';
 
 export interface RunQuickTunnelOptions {
   /** Override the readiness timeout. Forwarded to TunnelManager. */
@@ -98,6 +101,13 @@ export class TunnelService {
       return serviceSuccess(info);
     } catch (err) {
       await manager.stop().catch(() => {});
+      if (err instanceof CloudflaredNotFoundError) {
+        return serviceError({
+          message: err.message,
+          code: 'CLOUDFLARED_NOT_FOUND',
+          details: { tunnelId: id, port, binary: err.binary }
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       return serviceError({
         message: `Failed to run quick tunnel: ${message}`,
@@ -168,6 +178,13 @@ export class TunnelService {
       return serviceSuccess(info);
     } catch (err) {
       await manager.stop().catch(() => {});
+      if (err instanceof CloudflaredNotFoundError) {
+        return serviceError({
+          message: err.message,
+          code: 'CLOUDFLARED_NOT_FOUND',
+          details: { tunnelId: id, port, binary: err.binary }
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       return serviceError({
         message: `Failed to run named tunnel: ${message}`,

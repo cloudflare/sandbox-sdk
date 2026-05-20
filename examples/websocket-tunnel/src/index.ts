@@ -16,10 +16,16 @@ const WS_PORT = 8080;
  *  - **Quick tunnel** otherwise. Zero-config, but the `*.trycloudflare.com`
  *    URL changes on every container restart.
  */
+interface TunnelResult {
+  tunnel: TunnelInfo | null;
+  /** Human-readable diagnostic surfaced to the user when `tunnel` is null. */
+  error?: string;
+}
+
 async function getTunnel(
   sandbox: ReturnType<typeof getSandbox>,
   env: Env
-): Promise<TunnelInfo | null> {
+): Promise<TunnelResult> {
   // Treat `TUNNEL_NAME` (and the required Cloudflare credentials) as the
   // opt-in switch. Any missing piece falls through to the zero-config quick
   // tunnel so the example still runs without setup.
@@ -30,13 +36,23 @@ async function getTunnel(
     Boolean(readVar(env, 'CLOUDFLARE_ZONE_ID'));
 
   try {
-    if (hasNamedCreds) {
-      return await sandbox.tunnels.get(WS_PORT, { name: tunnelName });
-    }
-    return await sandbox.tunnels.get(WS_PORT);
+    const tunnel = hasNamedCreds
+      ? await sandbox.tunnels.get(WS_PORT, { name: tunnelName })
+      : await sandbox.tunnels.get(WS_PORT);
+    return { tunnel };
   } catch (err) {
     console.error('Failed to provision tunnel:', err);
-    return null;
+    // The SDK exposes `err.code` on its typed errors. When the container
+    // can't find the cloudflared binary, surface that distinctly so the
+    // user knows what to fix.
+    const code = (err as { code?: string })?.code;
+    if (code === 'CLOUDFLARED_NOT_FOUND') {
+      return {
+        tunnel: null,
+        error: 'cloudflared could not be found on this system.'
+      };
+    }
+    return { tunnel: null };
   }
 }
 
@@ -63,10 +79,11 @@ export default {
       await proc.waitForPort(WS_PORT);
     }
 
-    const tunnel = await getTunnel(sandbox, env);
+    const { tunnel, error } = await getTunnel(sandbox, env);
     if (!tunnel) {
       return new Response(
-        'Unable to create Cloudflare Tunnel. Note, if you are running Cloudflare WARP you will need to disable WARP to access the tunnel in local development.',
+        error ??
+          'Unable to create Cloudflare Tunnel. Note, if you are running Cloudflare WARP you will need to disable WARP to access the tunnel in local development.',
         { status: 500 }
       );
     }
