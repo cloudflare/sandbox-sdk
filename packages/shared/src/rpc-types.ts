@@ -346,22 +346,48 @@ export interface SandboxWatchAPI {
 }
 
 /**
- * Public-facing tunnel record.
- *
- * Today only quick tunnels (`*.trycloudflare.com`) are supported. Future
- * PRs will add named tunnels, which will carry a `name: string` field;
- * `TunnelInfo` will then become a discriminated union keyed on the
- * presence of `name`. The quick variant declares `name?: never` so the
- * narrowing works without a breaking change here.
+ * Public-facing tunnel record. Discriminated on the presence of `name`:
+ * quick tunnels (`*.trycloudflare.com`) omit it, named tunnels carry the
+ * label that was passed to `get(port, { name })`.
  */
-export interface TunnelInfo {
+export type TunnelInfo = QuickTunnelInfo | NamedTunnelInfo;
+
+export interface QuickTunnelInfo {
   id: string;
   port: number;
+  /** `https://<random>.trycloudflare.com`. */
   url: string;
+  /** Hostname portion of `url`. */
   hostname: string;
   createdAt: string;
-  /** Reserved for the named-tunnel variant in a future PR. */
+  /** Absent on quick tunnels; narrows the union. */
   name?: never;
+}
+
+export interface NamedTunnelInfo {
+  /** Cloudflare tunnel UUID (8-4-4-4-12). */
+  id: string;
+  port: number;
+  /** `https://<hostname>`. */
+  url: string;
+  /** Full hostname bound to the tunnel (without scheme). */
+  hostname: string;
+  createdAt: string;
+  /** Label originally passed via `TunnelOptions.name`. */
+  name: string;
+}
+
+/**
+ * Options accepted by `sandbox.tunnels.get(port, options)`. Omitting
+ * `name` (or omitting the options object) selects the zero-config quick
+ * tunnel; setting `name` selects the named-tunnel flow.
+ */
+export interface TunnelOptions {
+  /**
+   * Single DNS label under the configured zone. The full hostname is
+   * `<name>.<zone-name>`. See `validateTunnelName` for the format rules.
+   */
+  name?: string;
 }
 
 export interface SandboxTunnelsAPI {

@@ -2105,6 +2105,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // sandbox's URLs are not resurrected after a new container
       // takes the same DO id.
       await this.ctx.storage.delete('tunnels');
+      await this.ctx.storage.delete('tunnels:meta');
 
       // Disconnect transport after all cleanup commands have completed
       this.client.disconnect();
@@ -2163,6 +2164,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // startup window sees the empty cache by the time it runs.
     try {
       await this.ctx.storage.delete('tunnels');
+      await this.ctx.storage.delete('tunnels:meta');
     } catch (error) {
       this.logger.error(
         'Failed to clear tunnel storage after container start',
@@ -4248,7 +4250,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const built = createTunnelsHandler({
       client: this.client,
       storage: this.ctx.storage,
-      logger: this.logger
+      logger: this.logger,
+      sandboxId: this.ctx.id.toString(),
+      getNamedTunnelConfig: async () => {
+        const envObj = this.env as Record<string, unknown>;
+        const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');
+        const zoneId = getEnvString(envObj, 'CLOUDFLARE_ZONE_ID');
+        const missing: string[] = [];
+        if (!token) missing.push('CLOUDFLARE_API_TOKEN');
+        if (!zoneId) missing.push('CLOUDFLARE_ZONE_ID');
+        if (missing.length > 0) {
+          throw new Error(
+            `Named tunnels require: ${missing.join(', ')}. ` +
+              'Set these as environment variables or secrets in your wrangler.jsonc.'
+          );
+        }
+        const accountId = await this.getTunnelAccountId();
+        return { token: token as string, accountId, zoneId: zoneId as string };
+      }
     });
     this.tunnelsHandler = built.tunnels;
     this.tunnelExitHandler = built.handleTunnelExit;

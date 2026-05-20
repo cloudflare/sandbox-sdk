@@ -52,19 +52,21 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
  * caller's perspective.
  */
 function makeStorage(initial?: Record<string, TunnelInfo>): TunnelsStorage {
-  let value: Record<string, TunnelInfo> | undefined = initial
-    ? { ...initial }
-    : undefined;
+  // Real DO storage is key/value; older tests only touched one key
+  // ('tunnels') so the shim used a single variable. Named tunnels add a
+  // sibling 'tunnels:meta' key, so the shim is now a true keyed map. The
+  // legacy `initial` argument continues to seed only the 'tunnels' key.
+  const data = new Map<string, unknown>();
+  if (initial) data.set('tunnels', { ...initial });
   let txQueue: Promise<unknown> = Promise.resolve();
   const storage = {
-    get: vi.fn(async () => value),
-    put: vi.fn(async (_key: string, next: Record<string, TunnelInfo>) => {
-      value = { ...next };
+    get: vi.fn(async (key: string) => data.get(key)),
+    put: vi.fn(async (key: string, next: unknown) => {
+      // Deep-clone-ish (JSON) so callers can't observe mutations across
+      // writes. Matches the structured-clone semantics of real DO storage.
+      data.set(key, JSON.parse(JSON.stringify(next)));
     }),
-    delete: vi.fn(async () => {
-      value = undefined;
-      return true;
-    }),
+    delete: vi.fn(async (key: string) => data.delete(key)),
     transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
       const next = txQueue.then(() => closure(storage));
       // Swallow rejection on the chain so a failed closure doesn't
@@ -133,10 +135,16 @@ describe('tunnels handler > get', () => {
     expect(info.id).toBe(id);
     expect(info.name).toBeUndefined();
 
-    // Storage is written under the port key.
-    expect(storage.put).toHaveBeenCalledTimes(1);
-    const [, stored] = (storage.put as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(stored).toEqual({ '8080': info });
+    // Storage is written: the tunnels map under the port key, and the
+    // sidecar meta map (carrying the options hash) keyed by port too.
+    expect(storage.put).toHaveBeenCalledTimes(2);
+    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
+    const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
+    expect(tunnelsPut?.[1]).toEqual({ '8080': info });
+    expect(metaPut?.[1]).toEqual({
+      '8080': { optionsHash: 'quick', mode: 'quick' }
+    });
   });
 
   it('cache hit: returns the stored record without any container RPC', async () => {
@@ -306,10 +314,14 @@ describe('tunnels handler > destroy', () => {
     await handler.destroy(8080);
 
     expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
-    // Storage entry is removed before the RPC.
+    // Storage entry is removed before the RPC. Both keys (info + meta)
+    // are cleared.
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
+    const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
+    expect(tunnelsPut?.[1]).toEqual({});
+    expect(metaPut?.[1]).toEqual({});
   });
 
   it('wraps the read-modify-write in storage.transaction()', async () => {
@@ -381,10 +393,11 @@ describe('tunnels handler > destroy', () => {
     );
 
     await expect(handler.destroy(8080)).resolves.toBeUndefined();
-    // Storage is still cleared.
+    // Storage is still cleared (both info + meta).
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
+    expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
   });
 
   it('does not roll back storage when the container call fails with a non-NOT_FOUND error', async () => {
@@ -403,8 +416,9 @@ describe('tunnels handler > destroy', () => {
     await expect(handler.destroy(8080)).rejects.toThrow('boom');
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
     // Storage was cleared before the RPC and is not restored on failure.
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
+    expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
   });
 });
 

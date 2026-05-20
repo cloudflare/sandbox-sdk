@@ -10,9 +10,29 @@
  */
 
 import { RpcTarget } from 'cloudflare:workers';
-import type { Logger, SandboxTunnelsAPI, TunnelInfo } from '@repo/shared';
+import type {
+  Logger,
+  NamedTunnelInfo,
+  QuickTunnelInfo,
+  SandboxTunnelsAPI,
+  TunnelInfo,
+  TunnelOptions
+} from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
-import { SandboxSecurityError, validatePort } from '../security';
+import {
+  SandboxSecurityError,
+  validatePort,
+  validateTunnelName
+} from '../security';
+import {
+  createTunnel,
+  deleteDnsRecord,
+  deleteTunnel,
+  findTunnelByName,
+  getTunnelToken,
+  getZoneName,
+  upsertCname
+} from './cloudflare-api';
 
 /** Subset of the RPC client this handler depends on. */
 interface TunnelsRPCClient {
@@ -47,10 +67,36 @@ export interface TunnelsHandlerHost {
   client: TunnelsRPCClient;
   storage: TunnelsStorage;
   logger: Logger;
+  /**
+   * Sandbox identifier used for tagging Cloudflare resources
+   * (`metadata.sandboxId` on tunnels, `comment: 'sandbox-<id>'` on DNS).
+   * Required only when callers exercise `get(port, { name })`; quick
+   * tunnels do not touch the Cloudflare API.
+   */
+  sandboxId?: string;
+  /**
+   * Lazy provider of the three credentials needed for named-tunnel
+   * provisioning. Called at most once per `get(port, { name })` invocation;
+   * the handler does not memoise the result across calls so a Worker
+   * binding change is observable without a redeploy.
+   *
+   * Throws (via the underlying resolver) when any required value is
+   * missing or unresolvable. The handler surfaces that error verbatim.
+   */
+  getNamedTunnelConfig?: () => Promise<{
+    token: string;
+    accountId: string;
+    zoneId: string;
+  }>;
+  /**
+   * Override the global `fetch` used for Cloudflare API calls. Defaults
+   * to the global `fetch`. Tests inject a mock here.
+   */
+  fetcher?: typeof fetch;
 }
 
 export interface TunnelsHandler {
-  get(port: number): Promise<TunnelInfo>;
+  get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
   list(): Promise<TunnelInfo[]>;
   destroy(portOrInfo: number | TunnelInfo): Promise<void>;
 }
@@ -76,7 +122,27 @@ export interface TunnelsHandle {
 /** DO storage key for the `port → TunnelInfo` map. */
 const STORAGE_KEY = 'tunnels';
 
+/**
+ * Sidecar storage key for per-port metadata the handler needs but the
+ * public `TunnelInfo` shape does not carry: the options hash used to
+ * detect divergent retries, and (for named tunnels) the DNS record id
+ * needed for cleanup. Kept under a separate key so the existing
+ * `tunnels` shape remains a clean `Record<port, TunnelInfo>`.
+ */
+const META_STORAGE_KEY = 'tunnels:meta';
+
 type TunnelMap = Record<string, TunnelInfo>;
+
+interface TunnelMetaEntry {
+  /** Stable hash of the `options` object the tunnel was created with. */
+  optionsHash: string;
+  /** Discriminator that mirrors the union in the public `TunnelInfo` shape. */
+  mode: 'quick' | 'named';
+  /** Cloudflare DNS record id for named tunnels; absent for quick. */
+  dnsRecordId?: string;
+}
+
+type TunnelMetaMap = Record<string, TunnelMetaEntry>;
 
 /** Per-port serializer shared between `TunnelsRpcTarget` and the exit hook. */
 type WithPortLock = <T>(port: number, fn: () => Promise<T>) => Promise<T>;
@@ -107,6 +173,22 @@ async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {
   return (await storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
 }
 
+async function readMetaMap(storage: TunnelsStorageTxn): Promise<TunnelMetaMap> {
+  return (await storage.get<TunnelMetaMap>(META_STORAGE_KEY)) ?? {};
+}
+
+/**
+ * Stable hash of `options`. Empty/undefined options collapse to the same
+ * hash so `get(port)`, `get(port, {})`, and `get(port, { name: undefined })`
+ * all hit the same cache entry. Named tunnels hash on `name` alone (the
+ * only option today); future fields will need to be added to this
+ * canonical form to be considered when comparing cached vs requested.
+ */
+function computeOptionsHash(options?: TunnelOptions): string {
+  if (!options || !options.name) return 'quick';
+  return `named:${options.name}`;
+}
+
 /**
  * Concrete `TunnelsHandler` implementation. Extends `RpcTarget` so it
  * can cross the Workers RPC boundary: the Sandbox DO is reachable from
@@ -119,6 +201,12 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
   // invoked from a Worker.
   readonly #host: TunnelsHandlerHost;
   readonly #withPortLock: WithPortLock;
+  /**
+   * Memoised zone name (e.g. `'example.com'`) for the configured
+   * `CLOUDFLARE_ZONE_ID`. Filled in lazily on the first named-tunnel
+   * `get()` so quick-tunnel callers never hit the zone-lookup endpoint.
+   */
+  #zoneNamePromise: Promise<string> | null = null;
 
   constructor(host: TunnelsHandlerHost, withPortLock: WithPortLock) {
     super();
@@ -126,36 +214,62 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     this.#withPortLock = withPortLock;
   }
 
-  async get(port: number): Promise<TunnelInfo> {
+  /**
+   * Resolve the zone name for the configured zone id. Memoised for the
+   * lifetime of this handler; the zone name doesn't change while a DO
+   * is alive, and one extra GET on first use is cheaper than threading
+   * the value through the host.
+   */
+  async #getZoneName(config: {
+    token: string;
+    zoneId: string;
+  }): Promise<string> {
+    if (!this.#zoneNamePromise) {
+      this.#zoneNamePromise = getZoneName({
+        token: config.token,
+        zoneId: config.zoneId,
+        fetcher: this.#host.fetcher
+      });
+    }
+    return this.#zoneNamePromise;
+  }
+
+  async get(port: number, options?: TunnelOptions): Promise<TunnelInfo> {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let cacheState: 'hit' | 'miss' = 'miss';
     let caughtError: Error | undefined;
     try {
       validateTunnelPort(port);
+      if (options?.name !== undefined) validateTunnelName(options.name);
+      const requestedHash = computeOptionsHash(options);
 
       const info = await this.#withPortLock(port, async () => {
         const map = await readMap(this.#host.storage);
         const existing = map[port.toString()];
         if (existing) {
+          const meta = await readMetaMap(this.#host.storage);
+          const cachedHash = meta[port.toString()]?.optionsHash;
+          // Quick tunnels created before the meta sidecar shipped, or
+          // any port whose meta entry was lost, fall back to comparing
+          // by discriminator alone so cache hits keep working.
+          const effectiveHash =
+            cachedHash ?? (existing.name ? `named:${existing.name}` : 'quick');
+          if (effectiveHash !== requestedHash) {
+            throw new Error(
+              `Tunnel on port ${port} was created with different options ` +
+                `(${effectiveHash} vs ${requestedHash}). ` +
+                `Call destroy(${port}) before changing tunnel options.`
+            );
+          }
           cacheState = 'hit';
           return existing;
         }
-        const id = `quick-${shortId()}`;
-        const spawned = await this.#host.client.tunnels.runQuickTunnel(
-          id,
-          port
-        );
-        // Atomic re-read + write. The lock orders same-port ops, but
-        // a concurrent get(otherPort) can still write the `tunnels` key
-        // between the cloudflared await above and here. transaction()
-        // retries on conflict so the cross-port write doesn't clobber.
-        await this.#host.storage.transaction(async (txn) => {
-          const nextMap = await readMap(txn);
-          nextMap[port.toString()] = spawned;
-          await txn.put(STORAGE_KEY, nextMap);
-        });
-        return spawned;
+
+        if (options?.name) {
+          return await this.#provisionNamedTunnel(port, options.name);
+        }
+        return await this.#provisionQuickTunnel(port);
       });
       outcome = 'success';
       return info;
@@ -174,6 +288,143 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     }
   }
 
+  /**
+   * Provision a fresh quick tunnel and persist it. Caller holds the
+   * per-port lock.
+   */
+  async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
+    const id = `quick-${shortId()}`;
+    const spawned = (await this.#host.client.tunnels.runQuickTunnel(
+      id,
+      port
+    )) as QuickTunnelInfo;
+    await this.#host.storage.transaction(async (txn) => {
+      const nextMap = await readMap(txn);
+      nextMap[port.toString()] = spawned;
+      await txn.put(STORAGE_KEY, nextMap);
+      const nextMeta = await readMetaMap(txn);
+      nextMeta[port.toString()] = { optionsHash: 'quick', mode: 'quick' };
+      await txn.put(META_STORAGE_KEY, nextMeta);
+    });
+    return spawned;
+  }
+
+  /**
+   * Provision a named tunnel end-to-end:
+   *   1. resolve credentials + zone name
+   *   2. reuse or create the Cloudflare tunnel resource
+   *   3. upsert the proxied CNAME (or reuse a matching one)
+   *   4. spawn cloudflared inside the container
+   *   5. persist the record + meta
+   *
+   * Failure between (2) and (5) intentionally leaves the Cloudflare-side
+   * resources in place so a retry can re-discover them via
+   * `findTunnelByName` and the DNS reuse path. See
+   * `.plans/09-named-tunnel-api.md § Retry-friendly failure model`.
+   */
+  async #provisionNamedTunnel(
+    port: number,
+    name: string
+  ): Promise<NamedTunnelInfo> {
+    if (!this.#host.sandboxId) {
+      throw new Error(
+        'Named tunnels require host.sandboxId on the tunnels handler.'
+      );
+    }
+    if (!this.#host.getNamedTunnelConfig) {
+      throw new Error(
+        'Named tunnels require host.getNamedTunnelConfig on the tunnels handler.'
+      );
+    }
+
+    const config = await this.#host.getNamedTunnelConfig();
+    const zoneName = await this.#getZoneName({
+      token: config.token,
+      zoneId: config.zoneId
+    });
+    const hostname = `${name}.${zoneName}`;
+    const sandboxId = this.#host.sandboxId;
+    const tunnelName = `sandbox-${sandboxId}-${name}`;
+
+    // Step 2: reuse an existing tagged tunnel if one is left over from
+    // a previous failed attempt, otherwise create a fresh one.
+    let tunnelId: string;
+    let tunnelToken: string;
+    const existingTunnel = await findTunnelByName({
+      token: config.token,
+      accountId: config.accountId,
+      tunnelName,
+      fetcher: this.#host.fetcher
+    });
+    if (existingTunnel) {
+      // Reuse the tagged tunnel left over from a previous failed attempt.
+      // The opaque `--token` is only returned at create-time, so we fetch
+      // it explicitly here. Re-POSTing the same name would 409 on
+      // Cloudflare's side.
+      tunnelId = existingTunnel.id;
+      tunnelToken = await getTunnelToken({
+        token: config.token,
+        accountId: config.accountId,
+        tunnelId,
+        fetcher: this.#host.fetcher
+      });
+    } else {
+      const created = await createTunnel({
+        token: config.token,
+        accountId: config.accountId,
+        tunnelName,
+        metadata: {
+          sandboxId,
+          createdBy: 'sandbox-sdk',
+          name,
+          port
+        },
+        fetcher: this.#host.fetcher
+      });
+      tunnelId = created.id;
+      tunnelToken = created.token;
+    }
+
+    // Step 3: upsert the proxied CNAME. Throws on conflict before any
+    // container work happens.
+    const dnsResult = await upsertCname({
+      token: config.token,
+      zoneId: config.zoneId,
+      hostname,
+      cnameTarget: `${tunnelId}.cfargotunnel.com`,
+      comment: `sandbox-${sandboxId}`,
+      fetcher: this.#host.fetcher
+    });
+
+    // Step 4: spawn cloudflared. If this fails, both the tunnel and
+    // the DNS record stay in place — see method-level docstring.
+    await this.#host.client.tunnels.runNamedTunnel(tunnelId, tunnelToken, port);
+
+    const info: NamedTunnelInfo = {
+      id: tunnelId,
+      port,
+      name,
+      hostname,
+      url: `https://${hostname}`,
+      createdAt: new Date().toISOString()
+    };
+
+    // Step 5: persist info + sidecar meta atomically.
+    await this.#host.storage.transaction(async (txn) => {
+      const nextMap = await readMap(txn);
+      nextMap[port.toString()] = info;
+      await txn.put(STORAGE_KEY, nextMap);
+      const nextMeta = await readMetaMap(txn);
+      nextMeta[port.toString()] = {
+        optionsHash: computeOptionsHash({ name }),
+        mode: 'named',
+        dnsRecordId: dnsResult.recordId
+      };
+      await txn.put(META_STORAGE_KEY, nextMeta);
+    });
+    return info;
+  }
+
   async destroy(portOrInfo: number | TunnelInfo): Promise<void> {
     const port = typeof portOrInfo === 'number' ? portOrInfo : portOrInfo.port;
     const startTime = Date.now();
@@ -189,6 +440,9 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           return;
         }
         tunnelId = existing.id;
+        const metaBefore = (await readMetaMap(this.#host.storage))[
+          port.toString()
+        ];
 
         // Clear storage first. Same ordering as portTokens (sandbox.ts):
         // a hypothetical reader that observes storage between the put
@@ -200,15 +454,71 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           const current = await readMap(txn);
           delete current[port.toString()];
           await txn.put(STORAGE_KEY, current);
+          const currentMeta = await readMetaMap(txn);
+          delete currentMeta[port.toString()];
+          await txn.put(META_STORAGE_KEY, currentMeta);
         });
 
+        // Stop cloudflared inside the container. TUNNEL_NOT_FOUND is
+        // swallowed so Cloudflare-side cleanup can still proceed.
         try {
           await this.#host.client.tunnels.destroyTunnel(existing.id);
         } catch (error) {
           if (!isTunnelNotFoundError(error)) throw error;
-          // Container already forgot — treat as success. Storage is
-          // already cleared above, so we're done.
+          // Container already forgot — fall through to CF cleanup.
         }
+
+        // Named-tunnel cleanup on Cloudflare. Best-effort: log failures
+        // but do not abort the rest of teardown. Quick tunnels short-circuit
+        // here because they have no CF-side resources.
+        if (metaBefore?.mode !== 'named') return;
+        if (!this.#host.getNamedTunnelConfig) return;
+
+        let config: { token: string; accountId: string; zoneId: string };
+        try {
+          config = await this.#host.getNamedTunnelConfig();
+        } catch (err) {
+          this.#host.logger.warn(
+            'tunnel.destroy: skipping CF cleanup, credentials unavailable',
+            {
+              port,
+              tunnelId,
+              error: err instanceof Error ? err.message : String(err)
+            }
+          );
+          return;
+        }
+
+        const fetcher = this.#host.fetcher;
+        await Promise.allSettled([
+          metaBefore.dnsRecordId
+            ? deleteDnsRecord({
+                token: config.token,
+                zoneId: config.zoneId,
+                recordId: metaBefore.dnsRecordId,
+                fetcher
+              }).catch((err) => {
+                this.#host.logger.warn('tunnel.destroy: dns delete failed', {
+                  port,
+                  tunnelId,
+                  recordId: metaBefore.dnsRecordId,
+                  error: err instanceof Error ? err.message : String(err)
+                });
+              })
+            : Promise.resolve(),
+          deleteTunnel({
+            token: config.token,
+            accountId: config.accountId,
+            tunnelId: existing.id,
+            fetcher
+          }).catch((err) => {
+            this.#host.logger.warn('tunnel.destroy: tunnel delete failed', {
+              port,
+              tunnelId,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          })
+        ]);
       });
       outcome = 'success';
     } catch (error) {
@@ -283,6 +593,9 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
         if (existing?.id === id) {
           delete map[port.toString()];
           await txn.put(STORAGE_KEY, map);
+          const meta = await readMetaMap(txn);
+          delete meta[port.toString()];
+          await txn.put(META_STORAGE_KEY, meta);
         }
       });
       logCanonicalEvent(host.logger, {

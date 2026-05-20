@@ -115,6 +115,8 @@ export type {
 } from './request-types.js';
 // RPC interface types (shared between SDK and container)
 export type {
+  NamedTunnelInfo,
+  QuickTunnelInfo,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -128,7 +130,8 @@ export type {
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
-  TunnelInfo
+  TunnelInfo,
+  TunnelOptions
 } from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';

@@ -200,6 +200,36 @@ export async function deleteTunnel(args: DeleteTunnelArgs): Promise<void> {
   );
 }
 
+export interface GetTunnelTokenArgs extends BaseArgs {
+  accountId: string;
+  tunnelId: string;
+}
+
+/**
+ * Fetch the opaque `--token` for an existing tunnel. Used on the retry
+ * path: when `findTunnelByName` discovers a tunnel left behind from a
+ * previous failed attempt, we need its token to run `cloudflared` again.
+ *
+ * The Cloudflare API returns the token as a bare quoted string in the
+ * `result` envelope (e.g. `"<base64-token>"`).
+ */
+export async function getTunnelToken(
+  args: GetTunnelTokenArgs
+): Promise<string> {
+  const fetcher = args.fetcher ?? fetch;
+  const result = await cfRequest<string>(
+    `${API_BASE}/accounts/${encodeURIComponent(args.accountId)}/cfd_tunnel/${encodeURIComponent(args.tunnelId)}/token`,
+    args.token,
+    fetcher
+  );
+  if (typeof result !== 'string' || result.length === 0) {
+    throw new Error(
+      `Cloudflare did not return a token for tunnel ${args.tunnelId}`
+    );
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Zones
 // ---------------------------------------------------------------------------

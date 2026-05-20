@@ -1,0 +1,637 @@
+/**
+ * Named-tunnel behavior tests for the SDK tunnels handler.
+ *
+ * Sibling to `tunnels-handler.test.ts` (which covers the quick-tunnel
+ * surface). This file exercises:
+ *   - the `get(port, { name })` flow end-to-end (tag/DNS/run/store)
+ *   - options-hash idempotency and the divergence guard
+ *   - retry reuse via tagged-resource lookup
+ *   - destroy() cleanup of the Cloudflare-side resources
+ *   - synchronous validation failures (name format, missing creds)
+ *
+ * Cloudflare API calls are mocked via `fetcher`; container RPC is the
+ * same `MockTunnelsClient` shape used by the quick-tunnel tests. The
+ * storage shim is the keyed one defined here.
+ */
+
+import type { Logger, TunnelInfo } from '@repo/shared';
+import { describe, expect, it, vi } from 'vitest';
+import { SandboxSecurityError } from '../src/security';
+import {
+  createTunnelsHandler,
+  type TunnelsStorage
+} from '../src/tunnels/tunnels-handler';
+
+function makeLogger(): Logger {
+  const log: Logger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn(() => log)
+  } as unknown as Logger;
+  return log;
+}
+
+interface MockTunnelsClient {
+  runQuickTunnel: ReturnType<typeof vi.fn>;
+  runNamedTunnel: ReturnType<typeof vi.fn>;
+  destroyTunnel: ReturnType<typeof vi.fn>;
+  listTunnels: ReturnType<typeof vi.fn>;
+}
+
+function makeClient(): { client: { tunnels: MockTunnelsClient } } {
+  return {
+    client: {
+      tunnels: {
+        runQuickTunnel: vi.fn(),
+        runNamedTunnel: vi.fn(),
+        destroyTunnel: vi.fn(),
+        listTunnels: vi.fn()
+      }
+    }
+  };
+}
+
+function makeStorage(): TunnelsStorage {
+  const data = new Map<string, unknown>();
+  let txQueue: Promise<unknown> = Promise.resolve();
+  const storage = {
+    get: vi.fn(async (key: string) => data.get(key)),
+    put: vi.fn(async (key: string, next: unknown) => {
+      data.set(key, JSON.parse(JSON.stringify(next)));
+    }),
+    delete: vi.fn(async (key: string) => data.delete(key)),
+    transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
+      const next = txQueue.then(() => closure(storage));
+      txQueue = next.catch(() => undefined);
+      return next;
+    })
+  } as unknown as TunnelsStorage;
+  return storage;
+}
+
+interface FakeCloudflare {
+  fetcher: ReturnType<typeof vi.fn>;
+  /** Map of `<METHOD> <url>` → handler. */
+  routes: Map<string, (init: RequestInit) => Promise<Response> | Response>;
+}
+
+function jsonOk(body: unknown): Response {
+  return new Response(JSON.stringify({ success: true, result: body }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' }
+  });
+}
+
+function makeFakeCloudflare(opts: {
+  zoneName?: string;
+  existingTunnels?: Array<{
+    id: string;
+    name: string;
+    deleted_at?: string | null;
+  }>;
+  existingDns?: Array<{
+    id: string;
+    type: string;
+    name: string;
+    content: string;
+    comment?: string | null;
+  }>;
+  createdTunnel?: { id: string; token: string };
+  createdDnsId?: string;
+}): FakeCloudflare {
+  const zoneName = opts.zoneName ?? 'example.com';
+  const createdTunnel = opts.createdTunnel ?? {
+    id: '11111111-2222-3333-4444-555555555555',
+    token: 'OPAQUE_TOKEN'
+  };
+  const createdDnsId = opts.createdDnsId ?? 'dns-id';
+  const existingTunnels = opts.existingTunnels ?? [];
+  const existingDns = opts.existingDns ?? [];
+
+  const routes = new Map<
+    string,
+    (init: RequestInit) => Promise<Response> | Response
+  >();
+
+  const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const method = (init?.method ?? 'GET').toUpperCase();
+
+    // Zone lookup.
+    if (method === 'GET' && /\/zones\/[^/]+$/.test(new URL(url).pathname)) {
+      return jsonOk({ id: 'zone-id', name: zoneName });
+    }
+
+    // List tunnels by name.
+    if (method === 'GET' && new URL(url).pathname.endsWith('/cfd_tunnel')) {
+      const u = new URL(url);
+      const wantedName = u.searchParams.get('name');
+      const matches = existingTunnels.filter((t) => t.name === wantedName);
+      return jsonOk(matches);
+    }
+
+    // Create tunnel.
+    if (method === 'POST' && new URL(url).pathname.endsWith('/cfd_tunnel')) {
+      return jsonOk(createdTunnel);
+    }
+
+    // Get tunnel token (reuse path).
+    if (
+      method === 'GET' &&
+      /\/cfd_tunnel\/[^/]+\/token$/.test(new URL(url).pathname)
+    ) {
+      return jsonOk('REUSED_TOKEN');
+    }
+
+    // Delete tunnel.
+    if (
+      method === 'DELETE' &&
+      /\/cfd_tunnel\/[^/]+$/.test(new URL(url).pathname)
+    ) {
+      return jsonOk({ id: 'deleted' });
+    }
+
+    // List DNS records.
+    if (method === 'GET' && new URL(url).pathname.endsWith('/dns_records')) {
+      const u = new URL(url);
+      const wanted = u.searchParams.get('name');
+      const matches = existingDns.filter((r) => r.name === wanted);
+      return jsonOk(matches);
+    }
+
+    // Create DNS record.
+    if (method === 'POST' && new URL(url).pathname.endsWith('/dns_records')) {
+      return jsonOk({ id: createdDnsId });
+    }
+
+    // Delete DNS record.
+    if (
+      method === 'DELETE' &&
+      /\/dns_records\/[^/]+$/.test(new URL(url).pathname)
+    ) {
+      return jsonOk({ id: 'deleted' });
+    }
+
+    return new Response(JSON.stringify({ success: false, errors: [] }), {
+      status: 500
+    });
+  });
+  return { fetcher, routes };
+}
+
+function makeHandler(opts?: {
+  sandboxId?: string;
+  fetcher?: typeof fetch;
+  config?: Partial<{
+    token: string;
+    accountId: string;
+    zoneId: string;
+  }>;
+  configError?: Error;
+}) {
+  const { client } = makeClient();
+  const storage = makeStorage();
+  const namedTunnelConfig = {
+    token: opts?.config?.token ?? 'TOK',
+    accountId: opts?.config?.accountId ?? 'ACCT',
+    zoneId: opts?.config?.zoneId ?? 'zone-id'
+  };
+  const built = createTunnelsHandler({
+    client: client as unknown as Parameters<
+      typeof createTunnelsHandler
+    >[0]['client'],
+    storage,
+    logger: makeLogger(),
+    sandboxId: opts?.sandboxId ?? 'sb1',
+    getNamedTunnelConfig: opts?.configError
+      ? async () => {
+          throw opts.configError as Error;
+        }
+      : async () => namedTunnelConfig,
+    fetcher: opts?.fetcher
+  });
+  return {
+    client,
+    storage,
+    tunnels: built.tunnels,
+    handleTunnelExit: built.handleTunnelExit
+  };
+}
+
+describe('tunnels handler > get(port, { name }) — named tunnel happy path', () => {
+  it('provisions a fresh named tunnel end-to-end', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const info = await tunnels.get(8080, { name: 'api' });
+
+    expect(info.id).toBe('11111111-2222-3333-4444-555555555555');
+    expect(info.port).toBe(8080);
+    expect(info.name).toBe('api');
+    expect(info.hostname).toBe('api.example.com');
+    expect(info.url).toBe('https://api.example.com');
+    expect(typeof info.createdAt).toBe('string');
+
+    // runNamedTunnel was called with the opaque token from the create
+    // response. The token must not leak into the returned info.
+    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
+    const [, token, port] = client.tunnels.runNamedTunnel.mock.calls[0];
+    expect(token).toBe('OPAQUE_TOKEN');
+    expect(port).toBe(8080);
+    expect(JSON.stringify(info)).not.toContain('OPAQUE_TOKEN');
+  });
+
+  it('tags the tunnel with sandboxId/createdBy/name/port', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb-xyz',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 9090,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    await tunnels.get(9090, { name: 'web' });
+
+    // The POST /cfd_tunnel call carries the metadata.
+    const createCall = cf.fetcher.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith('/cfd_tunnel') &&
+        (init as RequestInit)?.method === 'POST'
+    );
+    expect(createCall).toBeDefined();
+    const body = JSON.parse(String((createCall![1] as RequestInit).body));
+    expect(body.name).toBe('sandbox-sb-xyz-web');
+    expect(body.config_src).toBe('cloudflare');
+    expect(body.metadata).toEqual({
+      sandboxId: 'sb-xyz',
+      createdBy: 'sandbox-sdk',
+      name: 'web',
+      port: 9090
+    });
+  });
+
+  it('creates a proxied CNAME with sandbox-<id> comment', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb-dns',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+
+    const dnsCreate = cf.fetcher.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith('/dns_records') &&
+        (init as RequestInit)?.method === 'POST'
+    );
+    expect(dnsCreate).toBeDefined();
+    const body = JSON.parse(String((dnsCreate![1] as RequestInit).body));
+    expect(body.type).toBe('CNAME');
+    expect(body.name).toBe('api.example.com');
+    expect(body.content).toBe(
+      '11111111-2222-3333-4444-555555555555.cfargotunnel.com'
+    );
+    expect(body.proxied).toBe(true);
+    expect(body.comment).toBe('sandbox-sb-dns');
+  });
+});
+
+describe('tunnels handler > get(port, options) — idempotency / hash guard', () => {
+  it('returns the cached record on identical second call (no work performed)', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const first = await tunnels.get(8080, { name: 'api' });
+    cf.fetcher.mockClear();
+    client.tunnels.runNamedTunnel.mockClear();
+
+    const second = await tunnels.get(8080, { name: 'api' });
+    expect(second).toEqual(first);
+    // No CF API calls, no container RPC.
+    expect(cf.fetcher).not.toHaveBeenCalled();
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+  });
+
+  it('quick → named on same port throws', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValue({
+      id: 'quick-abcd1234',
+      port: 8080,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    await tunnels.get(8080);
+
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
+      /destroy/i
+    );
+  });
+
+  it('named → named with different name on same port throws', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+    await expect(tunnels.get(8080, { name: 'web' })).rejects.toThrow(
+      /destroy/i
+    );
+  });
+
+  it('get(port) and get(port, {}) hash to the same key', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValue({
+      id: 'quick-abcd1234',
+      port: 8080,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const a = await tunnels.get(8080);
+    const b = await tunnels.get(8080, {});
+    expect(b).toEqual(a);
+    // Only one container call.
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
+  it('reuses a tunnel left behind from a previous failed attempt', async () => {
+    const cf = makeFakeCloudflare({
+      existingTunnels: [
+        { id: 'reused-tun-id', name: 'sandbox-sb1-api', deleted_at: null }
+      ]
+    });
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: 'reused-tun-id',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const info = await tunnels.get(8080, { name: 'api' });
+    expect(info.id).toBe('reused-tun-id');
+
+    // No POST /cfd_tunnel — the existing tagged tunnel was reused.
+    const createTunnelCall = cf.fetcher.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith('/cfd_tunnel') &&
+        (init as RequestInit)?.method === 'POST'
+    );
+    expect(createTunnelCall).toBeUndefined();
+  });
+
+  it('throws when a DNS record exists pointing at different content', async () => {
+    const cf = makeFakeCloudflare({
+      existingDns: [
+        {
+          id: 'foreign-dns',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'someone-else.cfargotunnel.com',
+          comment: 'not-ours'
+        }
+      ]
+    });
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
+      /already exists|owned/i
+    );
+    // Container was never told to spawn cloudflared.
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+  });
+
+  it('leaves CF resources in place when cloudflared fails to become ready', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client, storage } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockRejectedValue(
+      new Error('cloudflared not ready')
+    );
+
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
+      /not ready/
+    );
+
+    // No DELETE was issued for the tunnel or the DNS record.
+    const deleteCalls = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit)?.method === 'DELETE'
+    );
+    expect(deleteCalls).toEqual([]);
+
+    // Storage was not written.
+    const tunnels1 = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels'
+    )) as unknown;
+    expect(tunnels1 ?? {}).toEqual({});
+  });
+});
+
+describe('tunnels handler > get(port, { name }) — synchronous validation', () => {
+  it('rejects invalid name format without any work', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+
+    await expect(
+      tunnels.get(8080, { name: 'BAD.NAME' })
+    ).rejects.toBeInstanceOf(SandboxSecurityError);
+    expect(cf.fetcher).not.toHaveBeenCalled();
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid port without any work', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+
+    await expect(tunnels.get(3000, { name: 'api' })).rejects.toThrow(/port/i);
+    expect(cf.fetcher).not.toHaveBeenCalled();
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+  });
+
+  it('propagates the credentials resolver error verbatim', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      configError: new Error('Missing CLOUDFLARE_API_TOKEN'),
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
+      /CLOUDFLARE_API_TOKEN/
+    );
+    expect(cf.fetcher).not.toHaveBeenCalled();
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+  });
+});
+
+describe('tunnels handler > destroy() for named tunnels', () => {
+  it('stops cloudflared, deletes the DNS record, and deletes the tunnel', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: '11111111-2222-3333-4444-555555555555'
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+    cf.fetcher.mockClear();
+    await tunnels.destroy(8080);
+
+    // Container was told to stop the cloudflared process.
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(
+      '11111111-2222-3333-4444-555555555555'
+    );
+
+    // CF API: one DELETE on the dns_records and one DELETE on the tunnel.
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(targets.some((t) => t.includes('/dns_records/'))).toBe(true);
+    expect(targets.some((t) => t.includes('/cfd_tunnel/'))).toBe(true);
+  });
+
+  it('quick-tunnel destroy() makes no Cloudflare API calls', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValue({
+      id: 'quick-abcd1234',
+      port: 8080,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: 'quick-abcd1234'
+    });
+
+    await tunnels.get(8080);
+    cf.fetcher.mockClear();
+    await tunnels.destroy(8080);
+
+    expect(cf.fetcher).not.toHaveBeenCalled();
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith('quick-abcd1234');
+  });
+
+  it('best-effort: a CF DELETE failure is logged but does not throw', async () => {
+    // First call resolves create OK, then DELETEs reject. We swap routes
+    // by replacing the fetcher implementation after setup.
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: '11111111-2222-3333-4444-555555555555'
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+
+    // Now poison the fetcher so all DELETEs fail.
+    cf.fetcher.mockImplementation(async (_input, init) => {
+      if ((init as RequestInit | undefined)?.method === 'DELETE') {
+        return new Response(
+          JSON.stringify({ success: false, errors: [{ code: 9999 }] }),
+          { status: 500 }
+        );
+      }
+      return new Response(JSON.stringify({ success: true, result: {} }), {
+        status: 200
+      });
+    });
+
+    // Should resolve, not reject, despite CF DELETE failures.
+    await expect(tunnels.destroy(8080)).resolves.toBeUndefined();
+  });
+});

@@ -17,6 +17,7 @@ import {
   deleteDnsRecord,
   deleteTunnel,
   findTunnelByName,
+  getTunnelToken,
   getZoneName,
   upsertCname
 } from '../../src/tunnels/cloudflare-api';
@@ -34,6 +35,7 @@ function jsonError(body: unknown, status = 400): Response {
     headers: { 'content-type': 'application/json' }
   });
 }
+
 
 describe('cloudflare-api > createTunnel', () => {
   it('POSTs to /accounts/:id/cfd_tunnel with config_src and metadata', async () => {
@@ -356,5 +358,34 @@ describe('cloudflare-api > deleteDnsRecord', () => {
         fetcher
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('cloudflare-api > getTunnelToken', () => {
+  it('returns the token string from the API envelope', async () => {
+    const fetcher = vi.fn(async () => jsonOk('OPAQUE_TOKEN_VALUE'));
+    const token = await getTunnelToken({
+      token: 'tok',
+      accountId: 'acct',
+      tunnelId: 'tun-uuid',
+      fetcher
+    });
+    expect(token).toBe('OPAQUE_TOKEN_VALUE');
+    const [url] = fetcher.mock.calls[0];
+    expect(String(url)).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acct/cfd_tunnel/tun-uuid/token'
+    );
+  });
+
+  it('throws when the envelope is missing a string token', async () => {
+    const fetcher = vi.fn(async () => jsonOk(null));
+    await expect(
+      getTunnelToken({
+        token: 'tok',
+        accountId: 'acct',
+        tunnelId: 'tun-uuid',
+        fetcher
+      })
+    ).rejects.toThrow(/did not return a token/i);
   });
 });
