@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.10.1-opencode
+FROM docker.io/cloudflare/sandbox:0.10.2-opencode
 
 # Clone sample project for the web UI to work with
 RUN git clone --depth 1 https://github.com/cloudflare/agents.git /home/user/agents
