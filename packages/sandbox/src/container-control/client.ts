@@ -594,18 +594,15 @@ export class ContainerControlClient {
       this.renewActivity
     );
     // The capnweb RPC stub exposes the wire shape used by the container:
-    //   - `type` takes `{ delay }` (HTTP/service use `delayMs`)
     //   - `screenshot` / `screenshotRegion` return only base64
     //   - `screenshotRegion` takes a single `{ region, ...options }` request
     //
     // SandboxDesktopAPI exposes the user-facing surface shared with the
     // HTTP `DesktopClient` (overloaded `format: 'bytes'` returning a
-    // Uint8Array, positional `screenshotRegion(region, options?)`, and
-    // `type` options shaped as `{ delayMs }`). Translate here so both
-    // transports present the same surface to callers without changing the
-    // wire format.
+    // Uint8Array, positional `screenshotRegion(region, options?)`).
+    // Translate here so both transports present the same surface to callers
+    // without changing the wire format.
     type DesktopRpcStub = {
-      type: (t: string, o?: { delay?: number }) => Promise<void>;
       screenshot: (
         options?: DesktopScreenshotRequest
       ) => Promise<DesktopScreenshotResult>;
@@ -616,15 +613,6 @@ export class ContainerControlClient {
     const wire = stub as unknown as DesktopRpcStub;
     return new Proxy(stub, {
       get(target, prop, receiver) {
-        if (prop === 'type') {
-          return (text: string, options?: { delayMs?: number }) => {
-            const wireOptions =
-              options?.delayMs !== undefined
-                ? { delay: options.delayMs }
-                : undefined;
-            return wire.type(text, wireOptions);
-          };
-        }
         if (prop === 'screenshot') {
           return async (
             options?: DesktopScreenshotOptions

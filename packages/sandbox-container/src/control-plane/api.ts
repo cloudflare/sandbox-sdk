@@ -140,16 +140,14 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get desktop(): SandboxDesktopAPI {
     // DesktopRPCAPI exposes the capnweb wire shape used by the container:
-    //   - `type` takes `{ delay }` (HTTP/service use `delayMs`)
     //   - `screenshot` / `screenshotRegion` always return base64
     //   - `screenshotRegion` takes a single `{ region, ...options }` request
     //
     // SandboxDesktopAPI exposes the user-facing surface shared with the
-    // HTTP DesktopClient (overloaded `format: 'bytes'`, positional
-    // `screenshotRegion(region, options?)`, `{ delayMs }` for type). The
+    // HTTP DesktopClient (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`). The
     // client-side RPC wrapper in container-control/client.ts translates
-    // user calls down to this wire shape; DesktopRPCAPI.type translates
-    // `delay` back to `delayMs` for the service.
+    // user calls down to this wire shape.
     return new DesktopRPCAPI(
       this.#deps.desktopService
     ) as unknown as SandboxDesktopAPI;
@@ -1255,16 +1253,8 @@ class DesktopRPCAPI extends RpcTarget {
       await this.#svc.getCursorPosition()
     );
   }
-  async type(text: string, options?: { delay?: number }): Promise<void> {
-    // RPC wire uses `delay` (see SandboxDesktopAPI capnweb signature in
-    // the client wrapper); the service layer and HTTP wire use `delayMs`.
-    // Translate here so the field name is consistent with DesktopTypeRequest.
-    throwIfError(
-      await this.#svc.typeText({
-        text,
-        ...(options?.delay !== undefined && { delayMs: options.delay })
-      })
-    );
+  async type(text: string, options?: { delayMs?: number }): Promise<void> {
+    throwIfError(await this.#svc.typeText({ text, ...options }));
   }
   async press(key: string): Promise<void> {
     throwIfError(await this.#svc.keyPress({ key }));
