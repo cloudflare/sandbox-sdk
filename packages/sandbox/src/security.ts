@@ -116,3 +116,48 @@ export function validateLanguage(language: string | undefined): void {
     );
   }
 }
+
+/**
+ * Validates a single DNS label for use as a Cloudflare Tunnel hostname.
+ *
+ * Used by `sandbox.tunnels.get(port, { name })` to reject obviously-bad
+ * input client-side before any network call. Whether the chosen label is
+ * actually available under the configured zone is left to the Cloudflare
+ * API (returned as a typed error).
+ *
+ * Rules:
+ * - 1–63 characters
+ * - Lowercase letters, digits, and internal hyphens only
+ * - No leading or trailing hyphen
+ * - No dots — multi-label hostnames need a delegated subdomain zone or
+ *   Advanced Certificate Manager, which are out of scope for this
+ *   feature. Universal SSL only covers `<label>.<zone>`.
+ *
+ * Throws `SandboxSecurityError` on any violation. Designed to be called
+ * before any other tunnel work so callers see a fast, deterministic
+ * failure.
+ */
+const TUNNEL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+export function validateTunnelName(name: string): void {
+  if (typeof name !== 'string') {
+    throw new SandboxSecurityError(
+      `Tunnel name must be a string. Received: ${typeof name}`,
+      'INVALID_TUNNEL_NAME'
+    );
+  }
+  if (name.length === 0 || name.length > 63) {
+    throw new SandboxSecurityError(
+      `Tunnel name '${name}' must be 1–63 characters long.`,
+      'INVALID_TUNNEL_NAME_LENGTH'
+    );
+  }
+  if (!TUNNEL_NAME_REGEX.test(name)) {
+    throw new SandboxSecurityError(
+      `Tunnel name '${name}' is not a valid DNS label. Use lowercase ` +
+        'letters, digits, and internal hyphens only (no dots, no ' +
+        'leading/trailing hyphens).',
+      'INVALID_TUNNEL_NAME_FORMAT'
+    );
+  }
+}
