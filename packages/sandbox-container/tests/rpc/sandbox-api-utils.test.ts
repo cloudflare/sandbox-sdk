@@ -94,13 +94,14 @@ describe('SandboxControlAPI utils.createSession', () => {
     }
 
     expect(caught).toBeDefined();
-    const payload = JSON.parse(caught!.message) as {
-      code: string;
-      message: string;
-      context: Record<string, unknown>;
+    const err = caught as {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
     };
-    expect(payload.code).toBe(ErrorCode.SESSION_ALREADY_EXISTS);
-    expect(payload.context).toEqual({
+    expect(err.code).toBe(ErrorCode.SESSION_ALREADY_EXISTS);
+    expect(err.message).toBe("Session 'sess-3' already exists");
+    expect(err.details).toEqual({
       sessionId: 'sess-3',
       containerPlacementId: 'placement-rpc-already'
     });
@@ -127,12 +128,9 @@ describe('SandboxControlAPI utils.createSession', () => {
     }
 
     expect(caught).toBeDefined();
-    const payload = JSON.parse(caught!.message) as {
-      code: string;
-      context: Record<string, unknown>;
-    };
-    expect(payload.code).toBe(ErrorCode.UNKNOWN_ERROR);
-    expect(payload.context).toEqual({ foo: 'bar' });
-    expect(payload.context.containerPlacementId).toBeUndefined();
+    const err = caught as { code?: string; details?: Record<string, unknown> };
+    expect(err.code).toBe(ErrorCode.UNKNOWN_ERROR);
+    expect(err.details).toEqual({ foo: 'bar' });
+    expect(err.details?.containerPlacementId).toBeUndefined();
   });
 });

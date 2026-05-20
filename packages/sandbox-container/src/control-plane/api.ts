@@ -68,26 +68,13 @@ export interface SandboxAPIDeps {
 }
 
 // ---------------------------------------------------------------------------
-// RPC error wrapper
+// RPC error helpers
 // ---------------------------------------------------------------------------
-
-class RPCError extends Error {
-  constructor(message: string) {
-    super(message);
-  }
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any ServiceResult variant
 function throwIfError(result: ServiceResult<any, any>): void {
   if (!result.success) {
-    const err = result.error;
-    throw new RPCError(
-      JSON.stringify({
-        code: err.code,
-        message: err.message,
-        context: err.details ?? {}
-      })
-    );
+    throw result.error;
   }
 }
 
@@ -1028,16 +1015,11 @@ class UtilsRPCAPI extends RpcTarget {
     ) {
       // Mirror the HTTP handler: surface placement ID on the duplicate-create
       // path so a restarted DO can capture it from the idempotent retry.
-      throw new RPCError(
-        JSON.stringify({
-          code: result.error.code,
-          message: result.error.message,
-          context: {
-            ...(result.error.details ?? {}),
-            containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
-          }
-        })
-      );
+      result.error.details = {
+        ...result.error.details,
+        containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
+      };
+      throw result.error;
     }
     throwIfError(result);
     return {
