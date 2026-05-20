@@ -216,7 +216,8 @@ function makeHandler(opts?: {
     client,
     storage,
     tunnels: built.tunnels,
-    handleTunnelExit: built.handleTunnelExit
+    handleTunnelExit: built.handleTunnelExit,
+    destroyAll: built.destroyAll
   };
 }
 
@@ -633,5 +634,103 @@ describe('tunnels handler > destroy() for named tunnels', () => {
 
     // Should resolve, not reject, despite CF DELETE failures.
     await expect(tunnels.destroy(8080)).resolves.toBeUndefined();
+  });
+});
+
+describe('tunnels handler > destroyAll()', () => {
+  it('tears down every stored tunnel — container, DNS, and CF tunnel resource', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client, destroyAll } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValueOnce({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValueOnce({
+      id: 'quick-abcd1234',
+      port: 9090,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: 'irrelevant'
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+    await tunnels.get(9090);
+    cf.fetcher.mockClear();
+
+    await destroyAll();
+
+    // Container told to stop BOTH tunnels.
+    const destroyedIds = client.tunnels.destroyTunnel.mock.calls.map(
+      (c) => c[0]
+    );
+    expect(destroyedIds.sort()).toEqual([
+      '11111111-2222-3333-4444-555555555555',
+      'quick-abcd1234'
+    ]);
+
+    // Named tunnel's CF resources removed; quick tunnel makes no CF calls.
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(targets.some((t) => t.includes('/dns_records/'))).toBe(true);
+    expect(targets.some((t) => t.includes('/cfd_tunnel/'))).toBe(true);
+
+    // Storage is empty after destroyAll — list() reflects truth.
+    expect(await tunnels.list()).toEqual([]);
+  });
+
+  it('is a no-op when no tunnels are stored', async () => {
+    const cf = makeFakeCloudflare({});
+    const { client, destroyAll } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    await expect(destroyAll()).resolves.toBeUndefined();
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(cf.fetcher).not.toHaveBeenCalled();
+  });
+
+  it('continues with the rest if one teardown fails (best-effort)', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client, destroyAll } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel
+      .mockResolvedValueOnce({
+        id: 'tun-1',
+        port: 8080,
+        url: '',
+        hostname: '',
+        createdAt: '2026-05-13T00:00:00.000Z'
+      })
+      .mockResolvedValueOnce({
+        id: 'tun-2',
+        port: 8081,
+        url: '',
+        hostname: '',
+        createdAt: '2026-05-13T00:00:00.000Z'
+      });
+    await tunnels.get(8080, { name: 'api' });
+    await tunnels.get(8081, { name: 'web' });
+
+    // First destroy throws; second should still happen.
+    client.tunnels.destroyTunnel
+      .mockRejectedValueOnce(new Error('container broken'))
+      .mockResolvedValueOnce({ success: true, id: 'tun-2' });
+
+    // destroyAll resolves even when individual destroys reject.
+    await expect(destroyAll()).resolves.toBeUndefined();
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(2);
   });
 });

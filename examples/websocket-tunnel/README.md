@@ -82,6 +82,21 @@ The first run will build the Docker container (2–3 minutes). Subsequent runs a
 
 Open `http://localhost:8787` in a browser. Click **Connect** to open the WebSocket connection, then **Send ping** to start the exchange. The log panel shows each message sent and received.
 
+## Cleaning up the tunnel
+
+Named tunnels persist on Cloudflare across container restarts so the next `sandbox.tunnels.get(port, { name })` rediscovers them and gives you the same hostname. That means the tunnel resource and DNS record will outlive a demo run unless you explicitly tear them down.
+
+The example exposes a `/destroy` route that calls `sandbox.destroy()`. Stopping the sandbox also stops every tunnel it created, deleting the Cloudflare tunnel + DNS record for named tunnels and shutting down `cloudflared` in the container. Quick tunnels (no `name`) are zero-config and have no Cloudflare-side resources to remove.
+
+```bash
+curl -X POST http://localhost:8787/destroy
+```
+
+After that, hitting the root URL again will provision a fresh tunnel (the named-tunnel variant gets the same hostname; the quick-tunnel variant gets a new `*.trycloudflare.com`).
+
+In your own apps, the same cleanup happens automatically when you call `sandbox.destroy()` for any reason — you do not need to call `sandbox.tunnels.destroy(port)` separately unless you want to remove a single tunnel while the sandbox keeps running.
+
+
 ## Deploy
 
 ```bash

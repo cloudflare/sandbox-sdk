@@ -594,6 +594,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // died; both fields are reset together on transport swap.
   private tunnelsHandler: TunnelsHandler | null = null;
   private tunnelExitHandler: TunnelExitHandler | null = null;
+  // destroyAll iterates the stored tunnel map and tears each one down on
+  // sandbox.destroy(). Stored separately so the public `tunnels` getter
+  // stays narrow (users don't see destroyAll).
+  private destroyAllTunnels: (() => Promise<void>) | null = null;
   // capnweb localMain exposed to the container side of the RPC
   // session. Constructed once in the constructor (the lazy accessor
   // keeps it pointing at the current `tunnelExitHandler` even as
@@ -986,6 +990,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // new client on next access. Same rationale as codeInterpreter.
         this.tunnelsHandler = null;
         this.tunnelExitHandler = null;
+        this.destroyAllTunnels = null;
         previousClient.disconnect();
       }
       if (storedTransport) {
@@ -1210,6 +1215,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // container did not restart.
     this.tunnelsHandler = null;
     this.tunnelExitHandler = null;
+    this.destroyAllTunnels = null;
     previousClient.disconnect();
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
@@ -2107,11 +2113,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // still not atomic against concurrent writers, but the preview URL
       // authorization path is race-free.
       await this.ctx.storage.delete('portTokens');
-      // Tunnels storage is the SDK's source of truth for which
-      // *.trycloudflare.com URLs are live. Clearing it ensures any
-      // post-destroy get() reads see an empty cache and a destroyed
-      // sandbox's URLs are not resurrected after a new container
-      // takes the same DO id.
+      // Tear down every tunnel this sandbox created — stops the
+      // container-side cloudflared processes and removes the Cloudflare
+      // tunnel + DNS resources for named tunnels. Runs before disconnect
+      // because destroyAll needs the container RPC. Best-effort per port;
+      // a failure on one doesn't block the rest of teardown.
+      //
+      // Lazily build the handler so destroyAll runs even on a sandbox
+      // that never accessed `tunnels` during its lifetime — storage may
+      // hold records from a prior incarnation under the same DO id.
+      try {
+        this.ensureTunnelsBuilt();
+        await this.destroyAllTunnels?.();
+      } catch (error) {
+        this.logger.warn('Failed to tear down tunnels during destroy()', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      // destroyAll clears storage per port, but defensively wipe both
+      // keys here too so any leftover record from a partial failure
+      // doesn't ghost-revive on the next sandbox under the same DO id.
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
 
@@ -4280,6 +4301,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
     this.tunnelsHandler = built.tunnels;
     this.tunnelExitHandler = built.handleTunnelExit;
+    this.destroyAllTunnels = built.destroyAll;
   }
 
   /**

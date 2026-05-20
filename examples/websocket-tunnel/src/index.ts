@@ -63,6 +63,27 @@ function readVar(env: Env, key: string): string {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // Explicit teardown route. `sandbox.destroy()` stops the container,
+    // and the SDK cleans up every tunnel the sandbox provisioned (including
+    // the Cloudflare tunnel and DNS records for named tunnels). Useful for
+    // ending a demo run without leaving named-tunnel resources behind on
+    // your zone.
+    if (url.pathname === '/destroy' && request.method === 'POST') {
+      const sandbox = getSandbox(env.Sandbox, 'websocket-demo');
+      try {
+        await sandbox.destroy();
+        return new Response('sandbox destroyed; tunnel cleaned up', {
+          status: 200
+        });
+      } catch (err) {
+        return new Response(
+          `destroy failed: ${err instanceof Error ? err.message : String(err)}`,
+          { status: 500 }
+        );
+      }
+    }
+
     if (url.pathname !== '/') {
       return env.Assets.fetch(request);
     }

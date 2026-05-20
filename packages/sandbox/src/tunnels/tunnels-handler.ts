@@ -117,6 +117,16 @@ export type TunnelExitHandler = (
 export interface TunnelsHandle {
   tunnels: TunnelsHandler;
   handleTunnelExit: TunnelExitHandler;
+  /**
+   * Tear down every tunnel currently stored. Called by the Sandbox DO's
+   * `destroy()` so the Cloudflare-side resources don't outlive the
+   * sandbox that provisioned them.
+   *
+   * Best-effort: a failure on one port is logged but doesn't abort the
+   * rest. NOT part of the public `TunnelsHandler` surface — users don't
+   * call this; they call `destroy(port)` for an individual tunnel.
+   */
+  destroyAll: () => Promise<void>;
 }
 
 /** DO storage key for the `port → TunnelInfo` map. */
@@ -609,8 +619,36 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
     });
   };
 
+  /**
+   * Iterate every stored tunnel and call `tunnels.destroy(port)` on it,
+   * sequentially. Each `destroy()` already swallows container-side
+   * TUNNEL_NOT_FOUND and best-effort-logs Cloudflare-side failures; we
+   * wrap the call in catch-and-log here too so a transport-level error
+   * on one port can't poison the rest of the teardown.
+   *
+   * Sequential rather than parallel: each destroy() takes the per-port
+   * lock and writes storage; serialising avoids piling up Cloudflare API
+   * calls during sandbox.destroy(). The cost is small (handful of ports
+   * at most for the common case).
+   */
+  const destroyAll = async (): Promise<void> => {
+    const map = await readMap(host.storage);
+    const ports = Object.keys(map).map((p) => Number(p));
+    for (const port of ports) {
+      try {
+        await tunnels.destroy(port);
+      } catch (err) {
+        host.logger.warn('tunnels.destroyAll: destroy(port) failed', {
+          port,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  };
+
   return {
     tunnels,
-    handleTunnelExit
+    handleTunnelExit,
+    destroyAll
   };
 }
