@@ -190,7 +190,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const body = await this.parseRequestBody<DeleteFileRequest>(request);
 
-    const result = await this.fileService.deleteFile(body.path);
+    const result = await this.fileService.deleteFile(body.path, body.sessionId);
 
     if (result.success) {
       const response: DeleteFileResult = {
@@ -213,7 +213,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
 
     const result = await this.fileService.renameFile(
       body.oldPath,
-      body.newPath
+      body.newPath,
+      body.sessionId
     );
 
     if (result.success) {
@@ -238,7 +239,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
 
     const result = await this.fileService.moveFile(
       body.sourcePath,
-      body.destinationPath
+      body.destinationPath,
+      body.sessionId
     );
 
     if (result.success) {
@@ -261,9 +263,13 @@ export class FileHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const body = await this.parseRequestBody<MkdirRequest>(request);
 
-    const result = await this.fileService.createDirectory(body.path, {
-      recursive: body.recursive
-    });
+    const result = await this.fileService.createDirectory(
+      body.path,
+      {
+        recursive: body.recursive
+      },
+      body.sessionId
+    );
 
     if (result.success) {
       const response: MkdirResult = {

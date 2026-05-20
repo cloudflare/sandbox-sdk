@@ -394,6 +394,13 @@ export interface LogEvent {
 
 export interface StreamOptions extends BaseExecOptions {
   /**
+   * Optional session ID to run the streaming command in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
+
+  /**
    * Buffer size for streaming output
    */
   bufferSize?: number;
@@ -463,6 +470,17 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
+
+  /**
+   * When true (the default), implicit operations automatically create and reuse
+   * a persistent default shell session. Set to false to run implicit top-level
+   * operations sessionlessly, where each command spawns a fresh process with no
+   * shared shell state. Explicit per-call session IDs are not supported when
+   * this is false.
+   *
+   * Default: true
+   */
+  enableDefaultSession?: boolean;
 
   /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
@@ -678,6 +696,12 @@ export interface FileInfo {
 export interface ListFilesOptions {
   recursive?: boolean;
   includeHidden?: boolean;
+  /**
+   * Optional session ID used to resolve relative paths and execution context.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
 }
 
 export interface ListFilesResult {

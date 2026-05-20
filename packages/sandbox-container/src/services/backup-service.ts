@@ -7,7 +7,8 @@ import {
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
-import type { SessionManager } from './session-manager';
+import type { RawExecResult } from '../session';
+import type { ExecutionService } from './execution-service';
 
 export const BACKUP_WORK_DIR = '/var/backups';
 const BACKUP_MOUNTS_DIR = '/var/backups/mounts';
@@ -116,8 +117,18 @@ interface UploadedBackupPart {
 export class BackupService {
   constructor(
     private logger: Logger,
-    private sessionManager: SessionManager
+    private executionService: ExecutionService
   ) {}
+
+  private async executeInternal(
+    sessionId: string,
+    command: string
+  ): Promise<ServiceResult<RawExecResult>> {
+    return this.executionService.execute(command, {
+      sessionId,
+      origin: 'internal'
+    });
+  }
 
   /**
    * Create a squashfs archive from a directory.
@@ -162,10 +173,9 @@ export class BackupService {
         });
       }
       // Ensure the work directory exists
-      const mkdirResult = await this.sessionManager.executeInSession(
+      const mkdirResult = await this.executeInternal(
         sessionId,
-        `mkdir -p ${shellEscape(BACKUP_WORK_DIR)}`,
-        { origin: 'internal' }
+        `mkdir -p ${shellEscape(BACKUP_WORK_DIR)}`
       );
       if (!mkdirResult.success) {
         outcome = 'error';
@@ -178,10 +188,9 @@ export class BackupService {
       }
 
       // Verify the source directory exists
-      const checkResult = await this.sessionManager.executeInSession(
+      const checkResult = await this.executeInternal(
         sessionId,
-        `test -d ${shellEscape(dir)}`,
-        { origin: 'internal' }
+        `test -d ${shellEscape(dir)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
         errorMessage = 'Source directory does not exist';
@@ -194,10 +203,9 @@ export class BackupService {
 
       // Pre-flight check: verify mksquashfs binary exists
       // This provides a clearer error than "command not found" from bash
-      const checkBinaryResult = await this.sessionManager.executeInSession(
+      const checkBinaryResult = await this.executeInternal(
         sessionId,
-        `test -x ${BIN.mksquashfs} && echo exists || echo "missing: ${BIN.mksquashfs}"`,
-        { origin: 'internal' }
+        `test -x ${BIN.mksquashfs} && echo exists || echo "missing: ${BIN.mksquashfs}"`
       );
       if (
         checkBinaryResult.success &&
@@ -244,10 +252,9 @@ export class BackupService {
       ];
 
       if (excludePatterns.length > 0) {
-        const writeExcludeResult = await this.sessionManager.executeInSession(
+        const writeExcludeResult = await this.executeInternal(
           sessionId,
-          `printf '%s\\n' ${excludePatterns.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`,
-          { origin: 'internal' }
+          `printf '%s\\n' ${excludePatterns.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
         );
         if (
           !writeExcludeResult.success ||
@@ -282,11 +289,7 @@ export class BackupService {
       }
       const squashCmd = squashCmdParts.join(' ');
 
-      const createResult = await this.sessionManager.executeInSession(
-        sessionId,
-        squashCmd,
-        { origin: 'internal' }
-      );
+      const createResult = await this.executeInternal(sessionId, squashCmd);
 
       if (!createResult.success) {
         errorMessage = 'Failed to create squashfs archive';
@@ -313,10 +316,9 @@ export class BackupService {
 
       // Get the archive size
       // `stat -c` is GNU/Linux-specific (the container is always Linux)
-      const statResult = await this.sessionManager.executeInSession(
+      const statResult = await this.executeInternal(
         sessionId,
-        `stat -c %s ${shellEscape(archivePath)}`,
-        { origin: 'internal' }
+        `stat -c %s ${shellEscape(archivePath)}`
       );
 
       sizeBytes = 0;
@@ -340,18 +342,15 @@ export class BackupService {
       });
     } finally {
       if (shouldCleanupExcludeFile) {
-        await this.sessionManager
-          .executeInSession(
-            sessionId,
-            `rm -f ${shellEscape(excludeFilePath)}`,
-            { origin: 'internal' }
-          )
-          .catch((err) => {
-            opLogger.warn('Failed to clean up exclude file', {
-              excludeFilePath,
-              error: err instanceof Error ? err.message : String(err)
-            });
+        await this.executeInternal(
+          sessionId,
+          `rm -f ${shellEscape(excludeFilePath)}`
+        ).catch((err) => {
+          opLogger.warn('Failed to clean up exclude file', {
+            excludeFilePath,
+            error: err instanceof Error ? err.message : String(err)
           });
+        });
       }
 
       logCanonicalEvent(this.logger, {
@@ -372,10 +371,9 @@ export class BackupService {
     sessionId: string,
     opLogger: Logger
   ): Promise<string[]> {
-    const gitAvailableResult = await this.sessionManager.executeInSession(
+    const gitAvailableResult = await this.executeInternal(
       sessionId,
-      'command -v git >/dev/null 2>&1',
-      { origin: 'internal' }
+      'command -v git >/dev/null 2>&1'
     );
     if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
       opLogger.warn(
@@ -385,10 +383,9 @@ export class BackupService {
       return [];
     }
 
-    const insideWorkTreeResult = await this.sessionManager.executeInSession(
+    const insideWorkTreeResult = await this.executeInternal(
       sessionId,
-      `git -C ${shellEscape(dir)} rev-parse --is-inside-work-tree`,
-      { origin: 'internal' }
+      `git -C ${shellEscape(dir)} rev-parse --is-inside-work-tree`
     );
     if (
       !insideWorkTreeResult.success ||
@@ -405,10 +402,9 @@ export class BackupService {
     // relative to the directory mksquashfs will archive.
     // Use core.quotePath=false to ensure special characters (spaces, unicode)
     // are output literally rather than quoted, so they match archive entries.
-    const ignoredFilesResult = await this.sessionManager.executeInSession(
+    const ignoredFilesResult = await this.executeInternal(
       sessionId,
-      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files --others -i --exclude-standard -- .`,
-      { origin: 'internal' }
+      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files --others -i --exclude-standard -- .`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
@@ -603,10 +599,9 @@ export class BackupService {
       const upperDir = `${mountBase}/upper`;
       const workDir = `${mountBase}/work`;
       // Verify the archive exists
-      const checkResult = await this.sessionManager.executeInSession(
+      const checkResult = await this.executeInternal(
         sessionId,
-        `test -f ${shellEscape(archivePath)}`,
-        { origin: 'internal' }
+        `test -f ${shellEscape(archivePath)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
         errorMessage = 'Archive file does not exist';
@@ -618,10 +613,9 @@ export class BackupService {
       }
 
       // Unmount the overlay on `dir` (from a previous restore of any backup).
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null; true`,
-        { origin: 'internal' }
+        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null; true`
       );
 
       // Tear down all previous mount bases for this backup ID.
@@ -629,24 +623,21 @@ export class BackupService {
       // those before removing the directories.  The glob covers both the
       // new suffixed layout (UUID_*) and the legacy unsuffixed layout (UUID/).
       const mountGlob = `${BACKUP_MOUNTS_DIR}/${backupId}`;
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; ${BIN.fusermount} -uz "$d" 2>/dev/null; done; true`,
-        { origin: 'internal' }
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; ${BIN.fusermount} -uz "$d" 2>/dev/null; done; true`
       );
 
       // Remove old mount bases (best-effort)
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`,
-        { origin: 'internal' }
+        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
 
       // Create fresh mount directories
-      const mkdirResult = await this.sessionManager.executeInSession(
+      const mkdirResult = await this.executeInternal(
         sessionId,
-        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`,
-        { origin: 'internal' }
+        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
       );
       if (!mkdirResult.success) {
         errorMessage = 'Failed to create mount directories';
@@ -667,10 +658,9 @@ export class BackupService {
 
       // Mount squashfs as the lower (read-only) layer
       const squashMountCmd = `${BIN.squashfuse} ${shellEscape(archivePath)} ${shellEscape(lowerDir)}`;
-      const squashMountResult = await this.sessionManager.executeInSession(
+      const squashMountResult = await this.executeInternal(
         sessionId,
-        squashMountCmd,
-        { origin: 'internal' }
+        squashMountCmd
       );
       if (!squashMountResult.success) {
         errorMessage = 'Failed to mount squashfs';
@@ -698,17 +688,15 @@ export class BackupService {
         shellEscape(dir)
       ].join(' ');
 
-      const overlayMountResult = await this.sessionManager.executeInSession(
+      const overlayMountResult = await this.executeInternal(
         sessionId,
-        overlayMountCmd,
-        { origin: 'internal' }
+        overlayMountCmd
       );
       if (!overlayMountResult.success) {
         // Cleanup: unmount squashfs on failure
-        await this.sessionManager.executeInSession(
+        await this.executeInternal(
           sessionId,
-          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`,
-          { origin: 'internal' }
+          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
         errorMessage = 'Failed to mount overlayfs';
         return serviceError({
@@ -719,10 +707,9 @@ export class BackupService {
       }
       if (overlayMountResult.data.exitCode !== 0) {
         // Cleanup: unmount squashfs on failure
-        await this.sessionManager.executeInSession(
+        await this.executeInternal(
           sessionId,
-          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`,
-          { origin: 'internal' }
+          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
         errorMessage = 'Failed to mount overlayfs';
         return serviceError({
@@ -741,13 +728,10 @@ export class BackupService {
       // Best-effort cleanup of any FUSE mounts that may have been established.
       // Clean up the overlay on dir; per-restore lowerDir is scoped inside try
       // and cleaned up by the mount-base glob teardown on the next restore.
-      await this.sessionManager
-        .executeInSession(
-          sessionId,
-          `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || true`,
-          { origin: 'internal' }
-        )
-        .catch(() => {});
+      await this.executeInternal(
+        sessionId,
+        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || true`
+      ).catch(() => {});
       return serviceError({
         message: `Unexpected error restoring backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -814,25 +798,22 @@ export class BackupService {
 
     try {
       // Unmount overlayfs first
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || umount ${shellEscape(dir)} 2>/dev/null || true`,
-        { origin: 'internal' }
+        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || umount ${shellEscape(dir)} 2>/dev/null || true`
       );
 
       // Unmount squashfuse on all mount bases for this backup ID
       // (both suffixed UUID_* and legacy unsuffixed UUID)
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; done; true`,
-        { origin: 'internal' }
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; done; true`
       );
 
       // Verify overlay mount is gone before removing directories
-      const mountCheck = await this.sessionManager.executeInSession(
+      const mountCheck = await this.executeInternal(
         sessionId,
-        `mountpoint -q ${shellEscape(dir)} 2>/dev/null && echo "mounted" || echo "unmounted"`,
-        { origin: 'internal' }
+        `mountpoint -q ${shellEscape(dir)} 2>/dev/null && echo "mounted" || echo "unmounted"`
       );
       if (mountCheck.success && mountCheck.data.stdout.trim() === 'mounted') {
         errorMessage = `Overlay mount still active at ${dir}`;
@@ -844,10 +825,9 @@ export class BackupService {
       }
 
       // Clean up all mount directories for this backup ID (but keep the archive)
-      await this.sessionManager.executeInSession(
+      await this.executeInternal(
         sessionId,
-        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`,
-        { origin: 'internal' }
+        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
 
       outcome = 'success';

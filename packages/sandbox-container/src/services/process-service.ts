@@ -13,8 +13,8 @@ import type {
   ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
+import type { ExecutionService } from './execution-service';
 import type { ProcessStore } from './process-store';
-import type { SessionManager } from './session-manager';
 
 // Re-export types for use by ProcessStore implementations
 export type { ProcessRecord, ProcessStatus } from '../core/types';
@@ -30,14 +30,14 @@ export class ProcessService {
   constructor(
     private store: ProcessStore,
     private logger: Logger,
-    private sessionManager: SessionManager
+    private executionService: ExecutionService
   ) {
     this.manager = new ProcessManager();
   }
 
   /**
-   * Start a background process via SessionManager
-   * Semantically identical to executeCommandStream() - both use SessionManager
+   * Start a background process via the unified execution path.
+   * Semantically identical to executeCommandStream() - both use ExecutionService.
    * The difference is conceptual: startProcess() runs in background for long-lived processes
    */
   async startProcess(
@@ -52,18 +52,14 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<CommandResult>> {
     try {
-      // Always use SessionManager for execution (unified model)
-      const sessionId = options.sessionId || 'default';
-      const result = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        {
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          origin: options.origin
-        }
-      );
+      // Always use ExecutionService for command execution
+      const result = await this.executionService.execute(command, {
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        timeoutMs: options.timeoutMs,
+        env: options.env,
+        origin: options.origin
+      });
 
       if (!result.success) {
         return result as ServiceResult<CommandResult>;
@@ -100,7 +96,7 @@ export class ProcessService {
   }
 
   /**
-   * Execute a command with streaming output via SessionManager
+   * Execute a command with streaming output via the unified execution path
    * Used by both execStream() and startProcess()
    */
   async executeCommandStream(
@@ -128,26 +124,27 @@ export class ProcessService {
         options
       );
 
-      // 3. Build full process record with commandHandle instead of subprocess
-      const sessionId = options.sessionId || 'default';
+      // 3. Build full process record. commandHandle is attached only after
+      // ExecutionService returns the authoritative session/pid binding.
       const processRecord: ProcessRecord = {
-        ...processRecordData,
-        commandHandle: {
-          sessionId,
-          commandId: processRecordData.id // Use process ID as command ID
-        }
+        ...processRecordData
       };
+      let executionSessionId = options.sessionId ?? 'default';
 
       // 4. Store record (data layer)
       await this.store.create(processRecord);
 
-      // 5. Execute command via SessionManager with streaming
+      // 5. Execute command with streaming and bind it to the process record
       // Pass process ID as commandId for tracking and killing
       // CRITICAL: Await the initial result to ensure command is tracked before returning
-      const streamResult = await this.sessionManager.executeStreamInSession(
-        sessionId,
-        command,
-        async (event) => {
+      const streamResult = await this.executionService.executeStream(command, {
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        env: options.env,
+        origin: options.origin,
+        commandId: processRecordData.id,
+        background: true,
+        onEvent: async (event) => {
           // Route events to process record listeners
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
@@ -159,7 +156,7 @@ export class ProcessService {
               pid: event.pid,
               durationMs: Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
@@ -192,7 +189,7 @@ export class ProcessService {
                   ? endTime.getTime() - processRecord.startTime.getTime()
                   : Date.now() - startTime,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               origin: options.origin
             });
 
@@ -228,26 +225,25 @@ export class ProcessService {
               outcome: 'error',
               command,
               processId: processRecord.id,
-              sessionId,
+              sessionId: executionSessionId,
               durationMs: Date.now() - startTime,
               errorMessage: event.error,
               error: new Error(event.error),
               origin: options.origin
             });
           }
-        },
-        {
-          cwd: options.cwd,
-          env: options.env,
-          origin: options.origin
-        },
-        processRecordData.id, // Pass process ID as commandId for tracking and killing
-        { background: true } // Release lock after startup
-      );
+        }
+      });
 
       if (!streamResult.success) {
         return streamResult as ServiceResult<ProcessRecord>;
       }
+
+      executionSessionId = streamResult.data.commandHandle.sessionId;
+      processRecord.commandHandle = streamResult.data.commandHandle;
+      await this.store.update(processRecord.id, {
+        commandHandle: streamResult.data.commandHandle
+      });
 
       // Store streaming promise so getLogs() can await it for completed processes
       // This ensures all output is captured before returning logs
@@ -371,7 +367,7 @@ export class ProcessService {
         };
       }
 
-      // All processes use SessionManager for unified execution model
+      // All processes use ExecutionService for the unified execution model
       if (!process.commandHandle) {
         // Process has no commandHandle - likely already completed or malformed
         return {
@@ -379,10 +375,7 @@ export class ProcessService {
         };
       }
 
-      const result = await this.sessionManager.killCommand(
-        process.commandHandle.sessionId,
-        process.commandHandle.commandId
-      );
+      const result = await this.executionService.kill(process.commandHandle);
 
       if (result.success) {
         await this.store.update(id, {

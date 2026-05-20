@@ -15,7 +15,7 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
 import { GitManager, gitCloneTimeoutSeconds } from '../managers/git-manager';
-import type { SessionManager } from './session-manager';
+import type { ExecutionService } from './execution-service';
 
 export interface SecurityService {
   validateGitUrl(url: string): { isValid: boolean; errors: string[] };
@@ -27,7 +27,7 @@ export class GitService {
 
   constructor(
     private security: SecurityService,
-    private sessionManager: SessionManager,
+    private executionService: ExecutionService,
     private logger: Logger
   ) {
     this.manager = new GitManager();
@@ -137,8 +137,8 @@ export class GitService {
       );
       const command = this.buildCommand(args);
 
-      const result = await this.sessionManager
-        .withSession(sessionId, async (exec) => {
+      const result = await this.executionService
+        .withExecution({ sessionId }, async (exec) => {
           // Execute git clone
           const cloneResult = await exec(command, { origin: 'internal' });
 
@@ -294,12 +294,12 @@ export class GitService {
       const args = this.manager.buildCheckoutArgs(branch);
       const command = this.buildCommand(args);
 
-      // Execute git checkout (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
+      // Execute git checkout through the unified execution path
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         outcome = 'error';
@@ -385,12 +385,12 @@ export class GitService {
       const args = this.manager.buildGetCurrentBranchArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
+      // Execute command through the unified execution path
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<string>;
@@ -460,12 +460,12 @@ export class GitService {
       const args = this.manager.buildListBranchesArgs();
       const command = this.buildCommand(args);
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
+      // Execute command through the unified execution path
+      const execResult = await this.executionService.execute(command, {
         sessionId,
-        command,
-        { cwd: repoPath, origin: 'internal' }
-      );
+        cwd: repoPath,
+        origin: 'internal'
+      });
 
       if (!execResult.success) {
         return execResult as ServiceResult<string[]>;

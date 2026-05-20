@@ -157,8 +157,7 @@ export interface KillProcessResponse {
 
 export interface KillAllProcessesResponse {
   success: true;
-  message: string;
-  killedCount: number;
+  cleanedCount: number;
   timestamp: string;
 }
 
@@ -241,6 +240,12 @@ export type ProcessStatus =
   | 'killed'
   | 'error';
 
+export interface ProcessCommandHandle {
+  sessionId: string;
+  commandId: string;
+  pid?: number;
+}
+
 export interface ProcessRecord {
   id: string;
   pid?: number;
@@ -254,11 +259,7 @@ export interface ProcessRecord {
   stderr: string;
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
-  // Unified execution model: All processes use SessionManager
-  commandHandle?: {
-    sessionId: string;
-    commandId: string;
-  };
+  commandHandle?: ProcessCommandHandle;
   // Promise that resolves when all streaming events have been processed
   streamingComplete?: Promise<void>;
   // For isolation layer (file-based IPC)
