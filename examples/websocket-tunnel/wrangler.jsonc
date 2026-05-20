@@ -10,15 +10,6 @@
   },
   "vars": {
     "SANDBOX_TRANSPORT": "rpc"
-    // Optional — set these (and the CLOUDFLARE_API_TOKEN secret) to bind
-    // the demo to a stable hostname under your zone instead of getting
-    // a fresh `*.trycloudflare.com` URL on every container restart:
-    //
-    //   "CLOUDFLARE_ZONE_ID": "<your zone id>",
-    //   "TUNNEL_NAME": "ws-demo"
-    //
-    // Then `npx wrangler secret put CLOUDFLARE_API_TOKEN`. The token
-    // needs Account → Cloudflare Tunnel → Edit and Zone → DNS → Edit.
   },
   "compatibility_date": "2026-04-22",
   "compatibility_flags": ["nodejs_compat"],

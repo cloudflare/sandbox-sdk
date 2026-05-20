@@ -1,0 +1,24 @@
+# Copy this file to `.dev.vars` and fill in real values. `.dev.vars` is
+# gitignored. For production, use `npx wrangler secret put` for the token
+# and add the non-secret variables to `wrangler.jsonc` under `vars`.
+#
+# All variables are optional. Without them the worker falls back to the
+# zero-config quick tunnel (`*.trycloudflare.com`).
+
+# Cloudflare API token. Required to enable named tunnels. Needs:
+#   - Account · Cloudflare Tunnel · Edit
+#   - Zone · DNS · Edit
+#   - Zone · Zone · Read
+# Plus optionally `Account · Account Settings · Read` so the SDK can
+# infer CLOUDFLARE_ACCOUNT_ID from the token when it's unambiguous.
+CLOUDFLARE_API_TOKEN=
+
+# Single DNS label under your zone. The resulting hostname will be
+# `<TUNNEL_NAME>.<your-zone>`. Universal SSL only covers single-label
+# hostnames, so this must not contain dots.
+TUNNEL_NAME=ws-demo
+
+# Optional. Set these only when the SDK's token-based inference is
+# ambiguous (the token has access to more than one account or zone).
+# CLOUDFLARE_ACCOUNT_ID=
+# CLOUDFLARE_ZONE_ID=

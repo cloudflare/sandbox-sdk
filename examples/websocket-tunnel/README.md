@@ -37,11 +37,12 @@ To bind the demo to a stable hostname instead of `*.trycloudflare.com`:
 
 1. Pick a hostname label (e.g. `ws-demo`) and a zone you control. The resulting hostname will be `<label>.<your-zone>`. Universal SSL only covers `<label>.<zone>`, so the label must be a single DNS label (no dots).
 2. Create a Cloudflare API token with the scopes listed below.
-3. Stash the token as a secret and set `TUNNEL_NAME`:
+3. Copy `.dev.vars.example` to `.dev.vars` and fill in `CLOUDFLARE_API_TOKEN` + `TUNNEL_NAME`. Wrangler loads `.dev.vars` automatically on `npm run dev`. For production, run:
 
     ```bash
     npx wrangler secret put CLOUDFLARE_API_TOKEN
-    # then add TUNNEL_NAME=ws-demo to wrangler.jsonc `vars`
+    # then set TUNNEL_NAME (and optionally the account/zone ids — see below)
+    # under `vars` in wrangler.jsonc
     ```
 
 Re-run `npm run dev` and the demo will use the named tunnel.
@@ -63,7 +64,7 @@ Both **User API Tokens** (created from *My Profile → API Tokens*) and **Accoun
 
 #### When to set the env vars explicitly
 
-If the token has access to **more than one account** or **more than one zone**, inference is ambiguous and the SDK throws a clear error asking you to set the relevant env var. In that case add the missing id(s) to `wrangler.jsonc` under `vars`:
+If the token has access to **more than one account** or **more than one zone**, inference is ambiguous and the SDK throws a clear error asking you to set the relevant env var. In that case uncomment the `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID` lines in `.dev.vars` (for local dev) or add them under `vars` in `wrangler.jsonc` (for production):
 
 ```jsonc
 "vars": {
