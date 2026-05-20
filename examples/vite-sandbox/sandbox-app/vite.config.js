@@ -19,13 +19,13 @@ function incrementCounter() {
 }
 
 export default defineConfig({
-  base: process.env.VITE_BASE,
   plugins: [react(), incrementCounter()],
   server: {
     host: process.env.VITE_HOST ?? '0.0.0.0',
     port: process.env.VITE_PORT ?? 5173,
+    allowedHosts: ['.trycloudflare.com', '.localhost'],
     hmr: {
-      clientPort: process.env.VITE_HMR_CLIENT_PORT
+      clientPort: 443
     }
   }
 });
