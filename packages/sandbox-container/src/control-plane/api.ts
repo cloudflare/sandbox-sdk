@@ -178,6 +178,7 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<{
     success: boolean;
@@ -191,7 +192,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      origin: options?.origin
     });
     const data = extractData<CommandResult>(result);
     return {
@@ -211,6 +213,7 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
@@ -218,7 +221,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      origin: options?.origin
     });
 
     if (!result.success) {
