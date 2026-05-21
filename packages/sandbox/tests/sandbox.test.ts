@@ -1,4 +1,5 @@
 import { Container } from '@cloudflare/containers';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PortNotExposedError, ProcessNotFoundError } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
@@ -392,6 +393,62 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('should not expose the sessionless token on exec results', async () => {
+      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
+        success: true,
+        stdout: 'sessionless',
+        stderr: '',
+        exitCode: 0,
+        command: 'printf sessionless',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      const result = await sandbox.execWithSessionToken(
+        'printf sessionless',
+        DISABLE_SESSION_TOKEN
+      );
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'printf sessionless',
+        DISABLE_SESSION_TOKEN,
+        undefined
+      );
+      expect(result.sessionId).toBeUndefined();
+    });
+
+    it('should not expose the sessionless token on streaming exec results', async () => {
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"type":"complete","exitCode":0}\n\n'
+              )
+            );
+            controller.close();
+          }
+        })
+      );
+
+      const result = await sandbox.execWithSessionToken(
+        'printf sessionless',
+        DISABLE_SESSION_TOKEN,
+        { stream: true, onOutput: vi.fn() }
+      );
+
+      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+        'printf sessionless',
+        DISABLE_SESSION_TOKEN,
+        {
+          timeoutMs: undefined,
+          env: undefined,
+          cwd: undefined,
+          origin: undefined
+        }
+      );
+      expect(result.sessionId).toBeUndefined();
+    });
+
     it('should reuse default session across multiple operations', async () => {
       await sandbox.exec('echo test1');
       await sandbox.writeFile('/test.txt', 'content');
@@ -513,6 +570,58 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(started.sessionId).toBe(listed[0].sessionId);
       expect(started.sessionId).toBe(fetched?.sessionId);
       expect(sandbox.client.utils.createSession).toHaveBeenCalledOnce();
+    });
+
+    it('should not expose the sessionless token on process objects', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-sessionless',
+        pid: 4321,
+        command: 'sleep 10',
+        timestamp: new Date().toISOString()
+      } as any);
+      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
+        success: true,
+        processes: [
+          {
+            id: 'proc-sessionless',
+            pid: 4321,
+            command: 'sleep 10',
+            status: 'running',
+            startTime: new Date().toISOString()
+          }
+        ],
+        timestamp: new Date().toISOString()
+      } as any);
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-sessionless',
+          pid: 4321,
+          command: 'sleep 10',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      const process = await sandbox.startProcess(
+        'sleep 10',
+        undefined,
+        DISABLE_SESSION_TOKEN
+      );
+      const processes = await sandbox.listProcesses(DISABLE_SESSION_TOKEN);
+      const fetched = await sandbox.getProcess(
+        'proc-sessionless',
+        DISABLE_SESSION_TOKEN
+      );
+
+      expect(
+        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
+      ).toBe(DISABLE_SESSION_TOKEN);
+      expect(process.sessionId).toBeUndefined();
+      expect(processes[0].sessionId).toBeUndefined();
+      expect(fetched?.sessionId).toBeUndefined();
     });
 
     it('should use default session for git operations', async () => {

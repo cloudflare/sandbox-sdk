@@ -362,6 +362,27 @@ describe('getSandbox', () => {
       });
     });
 
+    it('routes implicit process reads through the sessionless token when default sessions are disabled', async () => {
+      mockStub.listProcesses = vi.fn().mockResolvedValue([]);
+      mockStub.getProcess = vi.fn().mockResolvedValue(null);
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.listProcesses();
+      await sandbox.getProcess('proc-sessionless');
+
+      expect(mockStub.listProcesses).toHaveBeenCalledWith(
+        DISABLE_SESSION_TOKEN
+      );
+      expect(mockStub.getProcess).toHaveBeenCalledWith(
+        'proc-sessionless',
+        DISABLE_SESSION_TOKEN
+      );
+    });
+
     it('routes implicit watch through the sessionless token when default sessions are disabled', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
 

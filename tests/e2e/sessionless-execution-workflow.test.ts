@@ -168,6 +168,54 @@ describe('Sessionless Execution Workflow', () => {
       scopedList.files.some((file) => file.name === 'session-only.txt')
     ).toBe(true);
 
+    const headerScopedListResponse = await fetch(
+      `${workerUrl}/api/list-files`,
+      {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'X-Session-Id': sessionData.sessionId
+        },
+        body: JSON.stringify({
+          path: '.'
+        })
+      }
+    );
+    expect(headerScopedListResponse.status).toBe(200);
+    const headerScopedList =
+      (await headerScopedListResponse.json()) as ListFilesResult;
+    expect(
+      headerScopedList.files.some((file) => file.name === 'session-only.txt')
+    ).toBe(true);
+
+    const headerSessionHeaders = {
+      ...headers,
+      'X-Session-Id': sessionData.sessionId
+    };
+    const headerSetMarker = await executeCommand(
+      workerUrl,
+      headerSessionHeaders,
+      'export HEADER_SESSION_MARKER=present && printf "$HEADER_SESSION_MARKER"'
+    );
+    expect(headerSetMarker.success).toBe(true);
+    expect(headerSetMarker.stdout).toBe('present');
+
+    const headerReadMarker = await executeCommand(
+      workerUrl,
+      headerSessionHeaders,
+      'printf "${HEADER_SESSION_MARKER:-missing}"'
+    );
+    expect(headerReadMarker.success).toBe(true);
+    expect(headerReadMarker.stdout).toBe('present');
+
+    const implicitReadMarker = await executeCommand(
+      workerUrl,
+      headers,
+      'printf "${HEADER_SESSION_MARKER:-missing}"'
+    );
+    expect(implicitReadMarker.success).toBe(true);
+    expect(implicitReadMarker.stdout).toBe('missing');
+
     const implicitListResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,

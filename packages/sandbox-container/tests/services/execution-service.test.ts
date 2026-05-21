@@ -122,7 +122,7 @@ describe('ExecutionService', () => {
     expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
   });
 
-  it('times out sessionless execution and returns the timeout exit code', async () => {
+  it('terminates timed-out sessionless execution and returns the timeout exit code', async () => {
     const result = await executionService.execute('sleep 1', {
       sessionId: DISABLE_SESSION_TOKEN,
       cwd: process.cwd(),

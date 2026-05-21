@@ -549,8 +549,14 @@ export function getSandbox<T extends Sandbox<any>>(
             ...processOptions,
             sessionId: DISABLE_SESSION_TOKEN
           }),
-    listProcesses: () => stub.listProcesses(),
-    getProcess: (id: string) => stub.getProcess(id),
+    listProcesses: () =>
+      useDefaultSession
+        ? stub.listProcesses()
+        : stub.listProcesses(DISABLE_SESSION_TOKEN),
+    getProcess: (id: string) =>
+      useDefaultSession
+        ? stub.getProcess(id)
+        : stub.getProcess(id, DISABLE_SESSION_TOKEN),
     execStream: (command: string, streamOptions?: StreamOptions) => {
       if (useDefaultSession || streamOptions?.sessionId !== undefined) {
         return stub.execStream(command, streamOptions);
@@ -3069,6 +3075,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return context.sessionId;
   }
 
+  private getPublicExecutionSessionId(sessionId: string): string | undefined {
+    return sessionId === DISABLE_SESSION_TOKEN ? undefined : sessionId;
+  }
+
   /**
    * Resolves the session ID to annotate returned Process objects.
    *
@@ -3083,6 +3093,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): string | undefined {
     if (explicitSessionId !== undefined) {
       this.validateExplicitSessionId(explicitSessionId);
+      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
+        return undefined;
+      }
       return explicitSessionId;
     }
 
@@ -3141,8 +3154,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  // Enhanced exec method - always returns ExecResult with optional streaming
-  // This replaces the old exec method to match ISandbox interface
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const context = await this.resolveExecution();
     const session = this.serializeExecutionContext(context);
@@ -3214,10 +3225,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
 
         const duration = Date.now() - startTime;
+        const publicSessionId = this.getPublicExecutionSessionId(sessionId);
         result = this.mapExecuteResponseToExecResult(
           response,
           duration,
-          sessionId
+          publicSessionId
         );
       }
 
@@ -3245,7 +3257,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
-        sessionId,
+        sessionId: this.getPublicExecutionSessionId(sessionId),
         origin: options?.origin ?? 'user',
         error: execError ?? undefined,
         errorMessage: execError?.message
@@ -3307,7 +3319,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               command,
               duration,
               timestamp,
-              sessionId
+              sessionId: this.getPublicExecutionSessionId(sessionId)
             };
           }
 
@@ -3808,6 +3820,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const execution = await this.resolveExecution(sessionId);
       const session = this.serializeExecutionContext(execution);
+      const processSession = this.getProcessSessionBinding(session);
       const executionOptions = this.buildExecutionRequestOptions(session, {
         timeout: options?.timeout,
         env: options?.env,
@@ -3840,7 +3853,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           endTime: undefined,
           exitCode: undefined
         },
-        session
+        processSession
       );
 
       // Call onStart callback if provided
