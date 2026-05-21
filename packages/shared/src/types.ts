@@ -1065,8 +1065,8 @@ export interface ExecutionSession {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(): Promise<Process[]>;
-  getProcess(id: string): Promise<Process | null>;
+  listProcesses(sessionId?: string): Promise<Process[]>;
+  getProcess(id: string, sessionId?: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
@@ -1377,8 +1377,8 @@ export interface ISandbox {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(): Promise<Process[]>;
-  getProcess(id: string): Promise<Process | null>;
+  listProcesses(sessionId?: string): Promise<Process[]>;
+  getProcess(id: string, sessionId?: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 

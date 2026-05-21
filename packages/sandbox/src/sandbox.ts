@@ -589,10 +589,12 @@ export function getSandbox<T extends Sandbox<any>>(
         useDefaultSession || fileOptions.sessionId !== undefined
           ? fileOptions
           : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
-      return stub.readFile(
-        path,
-        options as { encoding: 'none'; sessionId?: string }
-      );
+
+      if (options.encoding === 'none') {
+        return stub.readFile(path, options);
+      }
+
+      return stub.readFile(path, options);
     },
     readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
       useDefaultSession || fileOptions.sessionId !== undefined

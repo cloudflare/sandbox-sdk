@@ -18,6 +18,7 @@ import type { SessionManager } from './session-manager';
 const BASH_PATH = '/bin/bash';
 const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_CWD = '/workspace';
+const SESSIONLESS_DISPLAY_NAME = 'sessionless';
 const SESSIONLESS_TIMEOUT_EXIT_CODE = 124;
 const SESSIONLESS_KILL_GRACE_PERIOD_MS = 5_000;
 const SESSIONLESS_FORCE_KILL_WAIT_MS = 1_000;
@@ -312,7 +313,7 @@ export class ExecutionService {
       caughtError = error instanceof Error ? error : new Error(String(error));
 
       return serviceError({
-        message: `Failed to execute command '${command}' in session '${DISABLE_SESSION_TOKEN}': ${caughtError.message}`,
+        message: `Failed to execute command '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${caughtError.message}`,
         code: ErrorCode.COMMAND_EXECUTION_ERROR,
         details: {
           command,
@@ -326,7 +327,7 @@ export class ExecutionService {
         command,
         exitCode,
         durationMs: Date.now() - startTime,
-        sessionId: DISABLE_SESSION_TOKEN,
+        sessionId: SESSIONLESS_DISPLAY_NAME,
         origin: options.origin ?? 'user',
         error: caughtError,
         errorMessage: caughtError?.message
@@ -379,7 +380,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to execute streaming command '${command}' in session '${DISABLE_SESSION_TOKEN}': ${errorMessage}`,
+        message: `Failed to execute streaming command '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
         code: ErrorCode.STREAM_START_ERROR,
         details: {
           command,
@@ -450,6 +451,7 @@ export class ExecutionService {
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
+      // Process-group signaling reaches descendants that remain in the group.
       detached: true
     });
   }

@@ -128,6 +128,24 @@ describe('Sessionless Execution Workflow', () => {
     expect(error).toBeUndefined();
   }, 90000);
 
+  test('should time out implicit commands when default sessions are disabled', async () => {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'sleep 1',
+        timeout: 50
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as ExecResult;
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(124);
+    expect(result.stderr).toContain('Command timed out after 50ms');
+  }, 90000);
+
   test('should allow explicit session IDs when default sessions are disabled', async () => {
     const testDir = sandbox!.uniquePath('session-list-files');
     const filePath = `${testDir}/session-only.txt`;
