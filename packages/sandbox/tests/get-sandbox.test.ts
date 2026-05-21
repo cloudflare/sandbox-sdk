@@ -383,6 +383,25 @@ describe('getSandbox', () => {
       );
     });
 
+    it('preserves explicit sessionIds for process reads when default sessions are disabled', async () => {
+      mockStub.listProcesses = vi.fn().mockResolvedValue([]);
+      mockStub.getProcess = vi.fn().mockResolvedValue(null);
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: false
+      });
+
+      await sandbox.listProcesses('explicit-session');
+      await sandbox.getProcess('proc-explicit', 'explicit-session');
+
+      expect(mockStub.listProcesses).toHaveBeenCalledWith('explicit-session');
+      expect(mockStub.getProcess).toHaveBeenCalledWith(
+        'proc-explicit',
+        'explicit-session'
+      );
+    });
+
     it('routes implicit watch through the sessionless token when default sessions are disabled', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
 

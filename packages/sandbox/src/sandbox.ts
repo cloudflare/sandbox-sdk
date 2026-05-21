@@ -549,13 +549,13 @@ export function getSandbox<T extends Sandbox<any>>(
             ...processOptions,
             sessionId: DISABLE_SESSION_TOKEN
           }),
-    listProcesses: () =>
-      useDefaultSession
-        ? stub.listProcesses()
+    listProcesses: (sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.listProcesses(sessionId)
         : stub.listProcesses(DISABLE_SESSION_TOKEN),
-    getProcess: (id: string) =>
-      useDefaultSession
-        ? stub.getProcess(id)
+    getProcess: (id: string, sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.getProcess(id, sessionId)
         : stub.getProcess(id, DISABLE_SESSION_TOKEN),
     execStream: (command: string, streamOptions?: StreamOptions) => {
       if (useDefaultSession || streamOptions?.sessionId !== undefined) {
