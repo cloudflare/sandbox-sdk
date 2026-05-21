@@ -249,10 +249,12 @@ export class ExecutionService {
     overrides?: NestedExecutionOptions,
     config: { inheritOuterCwd?: boolean } = {}
   ): NestedExecutionOptions | undefined {
+    const cwd =
+      overrides?.cwd ??
+      (config.inheritOuterCwd !== false ? defaults.cwd : undefined);
+
     const merged: NestedExecutionOptions = {
-      ...(config.inheritOuterCwd !== false && {
-        cwd: overrides?.cwd ?? defaults.cwd
-      }),
+      cwd,
       env:
         defaults.env || overrides?.env
           ? { ...defaults.env, ...overrides?.env }
@@ -442,7 +444,7 @@ export class ExecutionService {
     command: string,
     options: ExecutionOptions
   ): SpawnedExecutionProcess {
-    return Bun.spawn([BASH_PATH, '-lc', command], {
+    return Bun.spawn([BASH_PATH, '-c', command], {
       cwd: options.cwd ?? DEFAULT_CWD,
       env: this.buildEnv(options.env),
       stdin: 'ignore',
@@ -481,19 +483,25 @@ export class ExecutionService {
     }
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
 
     try {
       const exitCode = await Promise.race<number>([
         spawned.exited,
         new Promise<number>((_, reject) => {
           timeoutId = setTimeout(() => {
+            timedOut = true;
             reject(new Error(`Command timed out after ${timeoutMs}ms`));
           }, timeoutMs);
         })
       ]);
 
       return { exitCode, timedOut: false };
-    } catch {
+    } catch (error) {
+      if (!timedOut) {
+        throw error;
+      }
+
       await this.terminateProcessTree(spawned.pid);
       await spawned.exited.catch(() => {});
 

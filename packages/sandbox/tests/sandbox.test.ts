@@ -429,21 +429,26 @@ describe('Sandbox - Automatic Session Management', () => {
           }
         })
       );
+      await sandbox.setEnvVars({ SANDBOX_LEVEL_ENV: 'from-sandbox' });
 
       const result = await sandbox.execWithSessionToken(
         'printf sessionless',
         DISABLE_SESSION_TOKEN,
-        { stream: true, onOutput: vi.fn() }
+        {
+          stream: true,
+          onOutput: vi.fn(),
+          env: { CALL_LEVEL_ENV: 'from-call' }
+        }
       );
 
       expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
         'printf sessionless',
         DISABLE_SESSION_TOKEN,
         {
-          timeoutMs: undefined,
-          env: undefined,
-          cwd: undefined,
-          origin: undefined
+          env: {
+            SANDBOX_LEVEL_ENV: 'from-sandbox',
+            CALL_LEVEL_ENV: 'from-call'
+          }
         }
       );
       expect(result.sessionId).toBeUndefined();
@@ -835,6 +840,13 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('explicit session creation', () => {
+    it('should reject the internal sentinel as a session ID', async () => {
+      await expect(
+        sandbox.createSession({ id: DISABLE_SESSION_TOKEN })
+      ).rejects.toThrow('reserved for internal use');
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
     it('should create isolated execution session', async () => {
       vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
         success: true,

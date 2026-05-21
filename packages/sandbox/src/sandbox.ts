@@ -585,19 +585,14 @@ export function getSandbox<T extends Sandbox<any>>(
         | { encoding: 'none'; sessionId?: string }
         | { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string } = {}
     ) => {
-      if (fileOptions.encoding === 'none') {
-        const options =
-          useDefaultSession || fileOptions.sessionId !== undefined
-            ? fileOptions
-            : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
-        return stub.readFile(path, options);
-      }
-
       const options =
         useDefaultSession || fileOptions.sessionId !== undefined
           ? fileOptions
           : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
-      return stub.readFile(path, options);
+      return stub.readFile(
+        path,
+        options as { encoding: 'none'; sessionId?: string }
+      );
     },
     readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
       useDefaultSession || fileOptions.sessionId !== undefined
@@ -3193,15 +3188,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
+      const commandOptions = this.buildExecutionRequestOptions(
+        sessionId,
+        options
+      );
       const stream = await this.client.commands.executeStream(
         command,
         sessionId,
-        {
-          timeoutMs: options.timeout,
-          env: options.env,
-          cwd: options.cwd,
-          origin: options.origin
-        }
+        commandOptions
       );
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
@@ -4676,6 +4670,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
     const sessionId = options?.id || `session-${Date.now()}`;
+    if (sessionId === DISABLE_SESSION_TOKEN) {
+      throw new Error(
+        `Session ID '${DISABLE_SESSION_TOKEN}' is reserved for internal use`
+      );
+    }
 
     const mergedEnv = {
       ...this.envVars,

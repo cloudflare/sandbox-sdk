@@ -232,6 +232,7 @@ describe('ExecutionService', () => {
       origin: 'internal'
     });
     expect(exec).toHaveBeenNthCalledWith(2, 'printf overridden', {
+      cwd: '/workspace/override',
       env: { OUTER_TEST_ENV: 'from-inner' },
       timeoutMs: 25,
       origin: 'user'
