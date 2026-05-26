@@ -234,10 +234,16 @@ function computeOptionsHash(options?: TunnelOptions): string {
 }
 
 /**
- * Concrete `TunnelsHandler` implementation. Extends `RpcTarget` so it
- * can cross the Workers RPC boundary: the Sandbox DO is reachable from
- * Workers via Workers RPC (`stub.tunnels.get(port)`), and only
- * `RpcTarget` instances are passed by reference across that boundary.
+ * Concrete `TunnelsHandler` implementation.
+ *
+ * Extends `RpcTarget` for forward compatibility with direct Workers RPC
+ * pipelining (`stub.tunnels.get(port)`): only `RpcTarget` instances may
+ * be passed by reference across the Workers RPC boundary. Today the
+ * public `sandbox.tunnels` proxy in `getSandbox()` dispatches through
+ * `stub.callTunnels(method, args)` instead — pipelining through
+ * property getters is broken under the vite-plugin runtime — so the
+ * `RpcTarget` base is not on the hot call path. It is retained so the
+ * pipelining shape works once that constraint lifts.
  */
 class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
   // ECMAScript private fields (not TS `private`) so they are not
