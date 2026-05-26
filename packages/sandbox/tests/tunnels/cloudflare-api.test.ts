@@ -356,6 +356,31 @@ describe('cloudflare-api > upsertCNAME', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('reuses an existing record when content matches even if comment has drifted', async () => {
+    // The CNAME content `<tunnel-id>.cfargotunnel.com` is the
+    // authoritative "this record points at our tunnel" check — only
+    // the holder of the tunnel id could have created it. The comment
+    // is free text that operators commonly edit through the dashboard,
+    // so treating it as a structural key was too fragile.
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      jsonOk([
+        {
+          id: 'dns-id',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'tun-uuid.cfargotunnel.com',
+          // Operator edited the comment from the dashboard.
+          comment: 'sandbox-sb1 (renamed by ops)',
+          proxied: true
+        }
+      ])
+    );
+    const result = await upsertCNAME({ ...baseArgs, fetcher });
+    expect(result.recordId).toBe('dns-id');
+    expect(result.reused).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('throws when an existing record points to different content', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(
       jsonOk([

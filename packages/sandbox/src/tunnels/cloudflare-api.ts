@@ -349,9 +349,12 @@ export async function upsertCNAME(
     (r) => r.type === 'CNAME' && r.name === args.hostname
   );
   if (existing) {
-    const sameContent = existing.content === args.cnameTarget;
-    const sameComment = (existing.comment ?? '') === args.comment;
-    if (sameContent && sameComment) {
+    // The CNAME content `<tunnel-id>.cfargotunnel.com` is the
+    // authoritative "ours" check: only the holder of the tunnel id
+    // could have asked Cloudflare to mint that target. Comment is
+    // free text that operators commonly edit through the dashboard,
+    // so we deliberately do not key reuse on it.
+    if (existing.content === args.cnameTarget) {
       return { recordId: existing.id, reused: true };
     }
     throw new Error(
