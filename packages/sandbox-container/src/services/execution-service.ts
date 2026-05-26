@@ -226,14 +226,14 @@ export class ExecutionService {
   }
 
   private resolveTarget(sessionId?: string): ExecutionTarget {
-    const resolved = this.canonicalizeExecutionSessionId(sessionId);
+    const resolved = this.resolveExecutionSessionId(sessionId);
 
     return resolved === DISABLE_SESSION_TOKEN
       ? { kind: 'sessionless' }
       : { kind: 'session', sessionId: resolved };
   }
 
-  private canonicalizeExecutionSessionId(sessionId?: string): string {
+  private resolveExecutionSessionId(sessionId?: string): string {
     if (sessionId && sessionId.trim().length > 0) {
       return sessionId;
     }
