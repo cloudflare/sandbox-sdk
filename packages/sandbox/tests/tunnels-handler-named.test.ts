@@ -388,6 +388,73 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
     );
   });
 
+  it('re-provisions when CLOUDFLARE_ZONE_ID changes between calls (no stale URL)', async () => {
+    // First call resolves zoneId='zone-old' (zone name example-old.com).
+    // Then the resolver flips to zoneId='zone-new' (zone name
+    // example-new.com), simulating a Worker redeploy with a different
+    // CLOUDFLARE_ZONE_ID. The next get(port, { name }) must NOT return
+    // the cached info pointing at the old zone — the URL would resolve
+    // to nothing live. It must re-provision against the new zone.
+    const { client } = makeClient();
+    const storage = makeStorage();
+    const logger = makeLogger();
+    let zoneState = { zoneId: 'zone-old', zoneName: 'example-old.com' };
+    const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET' && url.endsWith(`/zones/${zoneState.zoneId}`)) {
+        return jsonOk({ id: zoneState.zoneId, name: zoneState.zoneName });
+      }
+      if (method === 'GET' && url.includes('/cfd_tunnel?name=')) {
+        return jsonOk([]);
+      }
+      if (method === 'POST' && url.endsWith('/cfd_tunnel')) {
+        return jsonOk({
+          id: `tun-${zoneState.zoneId}`,
+          token: 'OPAQUE'
+        });
+      }
+      if (method === 'GET' && url.includes('/dns_records?')) {
+        return jsonOk([]);
+      }
+      if (method === 'POST' && url.includes('/dns_records')) {
+        return jsonOk({ id: `dns-${zoneState.zoneId}` });
+      }
+      throw new Error(`Unhandled ${method} ${url}`);
+    });
+    const built = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger,
+      sandboxId: 'sb1',
+      getNamedTunnelConfig: async () => ({
+        token: 'TOK',
+        accountId: 'ACCT',
+        zoneId: zoneState.zoneId
+      }),
+      fetcher: fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockImplementation(async (id: string) => ({
+      id,
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    }));
+
+    const first = await built.tunnels.get(8080, { name: 'api' });
+    expect(first.hostname).toBe('api.example-old.com');
+
+    // Flip the zone behind the resolver's back.
+    zoneState = { zoneId: 'zone-new', zoneName: 'example-new.com' };
+
+    const second = await built.tunnels.get(8080, { name: 'api' });
+    expect(second.hostname).toBe('api.example-new.com');
+    expect(second.id).toBe('tun-zone-new');
+  });
+
   it('get(port) and get(port, {}) hash to the same key', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({

@@ -149,6 +149,15 @@ interface TunnelMetaEntry {
   /** Cloudflare DNS record id for named tunnels; absent for quick. */
   dnsRecordId?: string;
   /**
+   * Resolved `(accountId, zoneId)` the named tunnel was provisioned
+   * against. Compared on cache hit to detect env-var changes that
+   * would otherwise silently serve a stale URL (the cached
+   * `TunnelInfo.hostname` is `<name>.<old-zone-name>` and would no
+   * longer resolve to a live tunnel). Absent on quick tunnels.
+   */
+  accountId?: string;
+  zoneId?: string;
+  /**
    * Set by `pruneTunnelsForRestart` on container restart for named
    * tunnels. The Cloudflare-side resources (tunnel + DNS) survive the
    * restart, but the `cloudflared` process inside the container died
@@ -324,6 +333,30 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           if (metaEntry?.needsRespawn && existing.name) {
             return await this.#provisionNamedTunnel(port, existing.name);
           }
+          // Config-drift check for named tunnels: if CLOUDFLARE_ZONE_ID
+          // (or the resolved account id) changed since the tunnel was
+          // provisioned, the cached `hostname` is stale and would no
+          // longer resolve. Re-provision against the current config;
+          // `#provisionNamedTunnel` handles tunnel + DNS reuse via the
+          // `findTunnelByName` and `upsertCNAME` paths.
+          if (existing.name && this.#host.getNamedTunnelConfig) {
+            const currentConfig = await this.#host.getNamedTunnelConfig();
+            const storedAccountId = metaEntry?.accountId;
+            const storedZoneId = metaEntry?.zoneId;
+            if (
+              (storedAccountId !== undefined &&
+                storedAccountId !== currentConfig.accountId) ||
+              (storedZoneId !== undefined &&
+                storedZoneId !== currentConfig.zoneId)
+            ) {
+              // The cached zone name is for the old zone id; clear it
+              // so `#provisionNamedTunnel` re-resolves against the new
+              // one. Without this, `hostname` would be `<name>.<old
+              // zone name>` even after re-provision.
+              this.#zoneNamePromise = null;
+              return await this.#provisionNamedTunnel(port, existing.name);
+            }
+          }
           cacheState = 'hit';
           return existing;
         }
@@ -483,7 +516,9 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       const nextMeta = await readMetaMap(txn);
       nextMeta[port.toString()] = {
         optionsHash: computeOptionsHash({ name }),
-        dnsRecordId: dnsResult.recordId
+        dnsRecordId: dnsResult.recordId,
+        accountId: config.accountId,
+        zoneId: config.zoneId
       };
       await txn.put(META_STORAGE_KEY, nextMeta);
     });
