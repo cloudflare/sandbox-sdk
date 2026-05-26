@@ -136,16 +136,29 @@ async function cfRequest<T>(
 
 /**
  * Heuristic for the "tags are an Enterprise-only feature" error class.
- * Cloudflare's documented codes shift over time and the API also bounces
- * with HTTP 403 + a free-text message; match by message substring to
- * stay robust across both shapes. Used by the create-tunnel and
- * create-DNS paths to fall back to an untagged request automatically.
+ * Empirically grounded against a non-Enterprise account:
+ *
+ *   - DNS create with `tags: [...]` on a non-Enterprise zone rejects with
+ *     Cloudflare error code 9300 and the message "DNS record has N tags,
+ *     exceeding the quota of 0.". The error string `cfRequest` constructs
+ *     embeds both the code and the message, so we match on either signal.
+ *   - Tunnel create with `tags: [...]` silently succeeds and drops the
+ *     field on the floor (no error to retry on). The fallback wrapper
+ *     therefore costs nothing on tunnel writes.
+ *
+ * Generic "requires Enterprise" phrasing is also matched as a forward-
+ * compatibility hedge in case Cloudflare changes the response shape on
+ * future endpoints.
  */
 function isEnterpriseOnlyTagError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
+  // Code 9300 is the observed DNS "tags exceed quota" code.
+  if (msg.includes('9300') && msg.includes('tag')) return true;
+  // Generic phrasings used by Cloudflare's documented Enterprise gates.
   if (!msg.includes('tag')) return false;
   return (
+    msg.includes('quota') ||
     msg.includes('enterprise') ||
     msg.includes('not allowed') ||
     msg.includes('not entitled') ||
@@ -215,9 +228,12 @@ export async function createTunnel(
   args: CreateTunnelArgs
 ): Promise<CreatedTunnel> {
   const fetcher = args.fetcher ?? fetch;
-  // Tags are an Enterprise feature; `createWithTagFallback` retries
-  // without the `tags` field on a documented Enterprise-only error so
-  // non-enterprise accounts still succeed.
+  // The `/cfd_tunnel` endpoint silently ignores unknown body fields,
+  // including `tags`, so today this is effectively a no-op on the wire
+  // — the tagging story for tunnels lives on the Resource Tagging API
+  // (PUT /accounts/{id}/tags). We keep the inline field in case the
+  // endpoint adopts it later; the wrapper handles the Enterprise-only
+  // fallback for DNS (see upsertCNAME), where it does fire.
   const result = await createWithTagFallback(args.metadata.sandboxId, (tags) =>
     cfRequest<{ id: string; token: string }>(
       `${API_BASE}/accounts/${encodeURIComponent(args.accountId)}/cfd_tunnel`,

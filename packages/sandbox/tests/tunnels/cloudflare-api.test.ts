@@ -424,6 +424,42 @@ describe('cloudflare-api > upsertCNAME', () => {
     // 1 list + 2 create attempts.
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
+  it('falls back when DNS rejects with the observed code-9300 "exceeds quota" error', async () => {
+    // Regression for the heuristic: the real Cloudflare error for
+    // tagging a DNS record on a non-Enterprise zone is code 9300 with
+    // the message "DNS record has N tags, exceeding the quota of 0.".
+    // The previous heuristic only matched 'enterprise' / 'not allowed'
+    // and would have let this error propagate to the user.
+    let attempts = 0;
+    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') return jsonOK([]);
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            errors: [
+              {
+                code: 9300,
+                message: 'DNS record has 1 tags, exceeding the quota of 0.'
+              }
+            ]
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return jsonOK({ id: 'dns-id' });
+    });
+    const result = await upsertCNAME({
+      ...baseArgs,
+      sandboxId: 'sb1',
+      fetcher
+    });
+    expect(result.recordId).toBe('dns-id');
+    expect(result.reused).toBe(false);
+    expect(attempts).toBe(2);
+  });
 
   it('reuses an existing record when content + comment match', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(
