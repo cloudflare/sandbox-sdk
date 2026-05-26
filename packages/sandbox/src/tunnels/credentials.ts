@@ -22,6 +22,39 @@ const TOKEN_VERIFY_URL =
 const ACCOUNTS_LIST_URL = 'https://api.cloudflare.com/client/v4/accounts';
 
 /**
+ * Per-request timeout for the credential introspection calls below.
+ * Without one a hung Cloudflare control-plane call wedges every
+ * first-time named-tunnel `get()` on the DO (the resolver promises are
+ * memoised on `Sandbox`, so the first caller's hang is everyone's hang).
+ */
+const CREDENTIALS_TIMEOUT_MS = 10_000;
+
+/**
+ * Fetch wrapper that adds an `AbortSignal.timeout` and surfaces a
+ * timeout as a labelled `Error` so the caller can blame the right URL.
+ */
+async function fetchWithTimeout(
+  fetcher: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = CREDENTIALS_TIMEOUT_MS
+): Promise<Response> {
+  try {
+    return await fetcher(url, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new Error(
+        `Cloudflare API request to ${url} timed out after ${timeoutMs}ms`
+      );
+    }
+    throw err;
+  }
+}
+
+/**
  * Cloudflare error code returned by `GET /user/tokens/verify` when the
  * presented token is an account-owned (`cfat-`) token rather than a
  * user-owned one. Matches the heuristic wrangler uses in
@@ -89,7 +122,7 @@ export async function resolveAccountId(
   }
 
   const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(TOKEN_VERIFY_URL, {
+  const response = await fetchWithTimeout(fetcher, TOKEN_VERIFY_URL, {
     method: 'GET',
     headers: {
       authorization: `Bearer ${token}`,
@@ -156,7 +189,8 @@ async function deriveAccountIdViaAccountToken(
   options: ResolveAccountIdOptions
 ): Promise<string> {
   // per_page=2 is the cheapest probe that still distinguishes one-vs-many.
-  const listResponse = await fetcher(
+  const listResponse = await fetchWithTimeout(
+    fetcher,
     `${ACCOUNTS_LIST_URL}?per_page=2`,
     {
       method: 'GET',
@@ -209,7 +243,8 @@ async function deriveAccountIdViaAccountToken(
   // Confirm via the account-scoped verify endpoint. This is the canonical
   // check for account-owned tokens, and it doubles as proof that the token
   // is actually valid for the account we picked.
-  const verifyResponse = await fetcher(
+  const verifyResponse = await fetchWithTimeout(
+    fetcher,
     `${ACCOUNTS_LIST_URL}/${encodeURIComponent(accountId)}/tokens/verify`,
     {
       method: 'GET',
@@ -289,7 +324,7 @@ export async function resolveZoneId(
 
   const fetcher = options.fetcher ?? fetch;
   const url = `${ZONES_LIST_URL}?account.id=${encodeURIComponent(options.accountId)}&per_page=2`;
-  const response = await fetcher(url, {
+  const response = await fetchWithTimeout(fetcher, url, {
     method: 'GET',
     headers: {
       authorization: `Bearer ${options.token}`,

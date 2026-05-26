@@ -36,7 +36,6 @@ function jsonError(body: unknown, status = 400): Response {
   });
 }
 
-
 describe('cloudflare-api > createTunnel', () => {
   it('POSTs to /accounts/:id/cfd_tunnel with config_src and metadata', async () => {
     const fetcher = vi.fn(async () =>
@@ -387,5 +386,48 @@ describe('cloudflare-api > getTunnelToken', () => {
         fetcher
       })
     ).rejects.toThrow(/did not return a token/i);
+  });
+});
+
+describe('cloudflare-api > request timeout', () => {
+  it('translates a TimeoutError from fetch into a labelled timeout error', async () => {
+    // The wrapper attaches `signal: AbortSignal.timeout(...)` to every
+    // request and translates the resulting `TimeoutError` into a clear
+    // message. Simulate that by rejecting the fetch synchronously with
+    // a TimeoutError-shaped error so the assertion runs instantly
+    // instead of waiting on the real 10s timer.
+    const fetcher = vi.fn(async () => {
+      const err = new Error('signal timed out');
+      err.name = 'TimeoutError';
+      throw err;
+    });
+
+    await expect(
+      getZoneName({
+        token: 'tok',
+        zoneId: 'zone-uuid',
+        fetcher: fetcher as unknown as typeof fetch
+      })
+    ).rejects.toThrow(/timed out after \d+ms/);
+  });
+
+  it('attaches an AbortSignal to every request', async () => {
+    let observedSignal: AbortSignal | null | undefined;
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      observedSignal = init?.signal;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          result: { id: 'z', name: 'example.com' }
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    });
+    await getZoneName({
+      token: 'tok',
+      zoneId: 'zone-uuid',
+      fetcher: fetcher as unknown as typeof fetch
+    });
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
   });
 });
