@@ -112,6 +112,7 @@ import { resolveAccountId, resolveZoneId } from './tunnels/credentials';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import {
   createTunnelsHandler,
+  pruneTunnelsForRestart,
   type TunnelExitHandler,
   type TunnelsHandler
 } from './tunnels/tunnels-handler';
@@ -2184,19 +2185,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Tunnels are NOT restored across container restart. Every
-    // cloudflared process the container was running died with it, so
-    // every stored *.trycloudflare.com URL is dead. Clearing storage
-    // here means the next get(port) call takes the miss branch and
-    // spawns a fresh tunnel with a new URL. We do this inside onStart's
+    // Reconcile tunnel storage with the fresh container. Quick tunnels
+    // are unrecoverable (their `*.trycloudflare.com` URLs died with the
+    // `cloudflared` process); named tunnels survive on Cloudflare's
+    // side and can be respawned by reusing the existing tunnel + DNS
+    // record. `pruneTunnelsForRestart` drops quick entries and marks
+    // named entries `needsRespawn`, preserving the metadata the SDK
+    // needs to clean those up on `destroy()`. Done inside onStart's
     // blockConcurrencyWhile gate so any get() that arrived during the
-    // startup window sees the empty cache by the time it runs.
+    // startup window sees the reconciled cache by the time it runs.
     try {
-      await this.ctx.storage.delete('tunnels');
-      await this.ctx.storage.delete('tunnels:meta');
+      await pruneTunnelsForRestart(this.ctx.storage);
     } catch (error) {
       this.logger.error(
-        'Failed to clear tunnel storage after container start',
+        'Failed to reconcile tunnel storage after container start',
         error instanceof Error ? error : new Error(String(error))
       );
     }
@@ -4331,10 +4333,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * single zone the token can see under `accountId` via `GET /zones`
    * when `CLOUDFLARE_ZONE_ID` is not set.
    */
-  private getTunnelZoneId(
-    token: string,
-    accountId: string
-  ): Promise<string> {
+  private getTunnelZoneId(token: string, accountId: string): Promise<string> {
     if (!this.tunnelZoneIdPromise) {
       this.tunnelZoneIdPromise = resolveZoneId(
         this.env as Record<string, unknown>,

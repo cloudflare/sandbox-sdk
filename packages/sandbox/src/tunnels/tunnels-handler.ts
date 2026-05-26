@@ -148,6 +148,17 @@ interface TunnelMetaEntry {
   optionsHash: string;
   /** Cloudflare DNS record id for named tunnels; absent for quick. */
   dnsRecordId?: string;
+  /**
+   * Set by `pruneTunnelsForRestart` on container restart for named
+   * tunnels. The Cloudflare-side resources (tunnel + DNS) survive the
+   * restart, but the `cloudflared` process inside the container died
+   * with it. The next `get(port, { name })` call sees this flag on a
+   * cache hit and falls through to `#provisionNamedTunnel`, which
+   * reuses the existing tunnel via `findTunnelByName` and respawns
+   * `cloudflared`. Absent on quick tunnels (which are dropped from
+   * storage outright on restart).
+   */
+  needsRespawn?: boolean;
 }
 
 type TunnelMetaMap = Record<string, TunnelMetaEntry>;
@@ -257,7 +268,8 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         const existing = map[port.toString()];
         if (existing) {
           const meta = await readMetaMap(this.#host.storage);
-          const cachedHash = meta[port.toString()]?.optionsHash;
+          const metaEntry = meta[port.toString()];
+          const cachedHash = metaEntry?.optionsHash;
           // Quick tunnels created before the meta sidecar shipped, or
           // any port whose meta entry was lost, fall back to comparing
           // by discriminator alone so cache hits keep working.
@@ -268,6 +280,15 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
               `Tunnel on port ${port} was created with different options. ` +
                 `Call destroy(${port}) before changing tunnel options.`
             );
+          }
+          // Container restart marker: the CF-side tunnel + DNS still
+          // exist, but `cloudflared` died with the container. Fall
+          // through to the named-tunnel provision path, which reuses
+          // the tagged tunnel via `findTunnelByName` and respawns the
+          // process. Only named tunnels get this branch; quick tunnels
+          // were dropped from storage by `pruneTunnelsForRestart`.
+          if (metaEntry?.needsRespawn && existing.name) {
+            return await this.#provisionNamedTunnel(port, existing.name);
           }
           cacheState = 'hit';
           return existing;
@@ -649,4 +670,58 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
     handleTunnelExit,
     destroyAll
   };
+}
+
+/**
+ * Reconcile storage with a fresh container.
+ *
+ * Called from `Sandbox.onStart()` after every container restart. The
+ * `cloudflared` processes the container was running all died with it, so
+ * any stored record is *not* currently backed by a running tunnel.
+ *
+ * Two tunnel flavours, two recovery stories:
+ *
+ *   - Quick tunnels: the `*.trycloudflare.com` URL is bound to the dead
+ *     `cloudflared` process. Nothing on Cloudflare's side outlives the
+ *     container, and the URL is unrecoverable. Drop the record from both
+ *     maps so the next `get(port)` takes the miss branch and mints a new
+ *     URL.
+ *   - Named tunnels: the Cloudflare-side tunnel + DNS record survive.
+ *     The hostname is stable, the DNS still resolves to
+ *     `<tunnelId>.cfargotunnel.com`, and the next caller can reuse both
+ *     by walking the same `findTunnelByName` / `upsertCNAME` path the
+ *     SDK uses for retries. Keep the record in storage and mark the
+ *     meta entry `needsRespawn: true`; the next `get(port, { name })`
+ *     cache hit falls through to `#provisionNamedTunnel` to respawn
+ *     `cloudflared`.
+ *
+ * Crucially, named-tunnel metadata (including `dnsRecordId`) is
+ * preserved so `destroy(port)` and `sandbox.destroy()` can still clean
+ * up the Cloudflare-side resources after a restart. Wiping meta
+ * unconditionally — the previous behaviour — silently leaked the tunnel
+ * and DNS record on every restart.
+ */
+export async function pruneTunnelsForRestart(
+  storage: TunnelsStorage
+): Promise<void> {
+  await storage.transaction(async (txn) => {
+    const map = await readMap(txn);
+    const meta = await readMetaMap(txn);
+    const nextMap: TunnelMap = {};
+    const nextMeta: TunnelMetaMap = {};
+    for (const [portKey, info] of Object.entries(map)) {
+      // Discriminate by the public `name` field on `TunnelInfo`: named
+      // tunnels carry the user-provided label, quick tunnels omit it.
+      if (info.name) {
+        nextMap[portKey] = info;
+        nextMeta[portKey] = {
+          ...(meta[portKey] ?? { optionsHash: `named:${info.name}` }),
+          needsRespawn: true
+        };
+      }
+      // Quick tunnels are dropped from both maps by omission.
+    }
+    await txn.put(STORAGE_KEY, nextMap);
+    await txn.put(META_STORAGE_KEY, nextMeta);
+  });
 }

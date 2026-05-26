@@ -1441,19 +1441,62 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('tunnels lifecycle storage', () => {
-    it('onStart() clears the tunnels storage key', async () => {
-      const deletedKeys: string[] = [];
-      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
-        deletedKeys.push(String(key));
-        return true;
+    it('onStart() preserves named-tunnel records across restart and drops quick ones', async () => {
+      // `pruneTunnelsForRestart` walks the tunnels map: quick tunnels
+      // (no `name`) get dropped, named tunnels stay and gain
+      // `needsRespawn: true` in meta so destroy() can still clean up
+      // their Cloudflare-side resources after the restart.
+      const storedTunnels: Record<string, unknown> = {
+        '8080': {
+          id: 'quick-abc',
+          port: 8080,
+          url: 'https://x.trycloudflare.com',
+          hostname: 'x.trycloudflare.com',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        },
+        '8081': {
+          id: 'uuid-1',
+          port: 8081,
+          name: 'app',
+          hostname: 'app.example.com',
+          url: 'https://app.example.com',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        }
+      };
+      const storedMeta: Record<string, unknown> = {
+        '8080': { optionsHash: 'quick' },
+        '8081': { optionsHash: 'named:app', dnsRecordId: 'rec-1' }
+      };
+      const puts: Array<{ key: string; value: unknown }> = [];
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        if (key === 'tunnels') return storedTunnels as any;
+        if (key === 'tunnels:meta') return storedMeta as any;
+        return undefined as any;
       });
-      // restoreExposedPorts reads portTokens; make it a no-op so the
-      // tunnels-clear branch is reachable.
-      vi.mocked(mockCtx.storage!.get).mockResolvedValue(undefined as any);
+      vi.mocked(mockCtx.storage!.put).mockImplementation(
+        async (key: string, value: unknown) => {
+          puts.push({ key, value });
+        }
+      );
+      // The handler uses storage.transaction; the test mock passes the
+      // storage object itself through, which is good enough here.
+      (mockCtx.storage as unknown as { transaction: unknown }).transaction = vi
+        .fn()
+        .mockImplementation(
+          async (closure: (txn: unknown) => Promise<unknown>) =>
+            closure(mockCtx.storage)
+        );
 
       await (sandbox as any).onStart();
 
-      expect(deletedKeys).toContain('tunnels');
+      const nextTunnels = puts.find((p) => p.key === 'tunnels')
+        ?.value as Record<string, { name?: string }>;
+      const nextMeta = puts.find((p) => p.key === 'tunnels:meta')
+        ?.value as Record<string, { needsRespawn?: boolean }>;
+      expect(nextTunnels).toBeDefined();
+      expect(Object.keys(nextTunnels)).toEqual(['8081']);
+      expect(nextMeta?.['8081']?.needsRespawn).toBe(true);
+      expect(nextMeta?.['8080']).toBeUndefined();
     });
 
     it('destroy() deletes the tunnels storage key', async () => {
@@ -2752,13 +2795,11 @@ describe('Sandbox.getProcess()', () => {
       (sb as any).client = {
         getTransportMode: () => 'rpc',
         utils: {
-          createSession: vi
-            .fn()
-            .mockResolvedValue({
-              success: true,
-              id: 'default',
-              message: 'ok'
-            } as any)
+          createSession: vi.fn().mockResolvedValue({
+            success: true,
+            id: 'default',
+            message: 'ok'
+          } as any)
         },
         processes: {}
       };

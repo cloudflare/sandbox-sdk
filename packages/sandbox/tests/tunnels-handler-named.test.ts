@@ -496,6 +496,77 @@ describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
   });
 });
 
+describe('tunnels handler > restart respawn via needsRespawn flag', () => {
+  it('respawns cloudflared and reuses the CF tunnel + DNS on cache hit when needsRespawn is set', async () => {
+    // Simulate the post-restart state: the tunnel + meta entries are
+    // still in storage (because pruneTunnelsForRestart kept them) with
+    // `needsRespawn: true` on the meta entry. The CF-side tunnel is
+    // discoverable by name and the DNS record matches what we'd upsert.
+    const cf = makeFakeCloudflare({
+      existingTunnels: [
+        { id: 'kept-tun-id', name: 'sandbox-sb1-api', deleted_at: null }
+      ],
+      existingDns: [
+        {
+          id: 'kept-dns-id',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'kept-tun-id.cfargotunnel.com',
+          comment: 'sandbox-sb1'
+        }
+      ]
+    });
+    const { tunnels, client, storage } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    // Seed storage as pruneTunnelsForRestart would leave it.
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: 'kept-tun-id',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        url: 'https://api.example.com',
+        createdAt: '2026-05-01T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'named:api',
+        dnsRecordId: 'kept-dns-id',
+        needsRespawn: true
+      }
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: 'kept-tun-id',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const info = await tunnels.get(8080, { name: 'api' });
+
+    // cloudflared was respawned with the reused tunnel id.
+    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
+    expect(info.id).toBe('kept-tun-id');
+    expect(info.hostname).toBe('api.example.com');
+    // No POST /cfd_tunnel — reuse path only.
+    const createTunnelCall = cf.fetcher.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith('/cfd_tunnel') &&
+        (init as RequestInit)?.method === 'POST'
+    );
+    expect(createTunnelCall).toBeUndefined();
+    // The fresh meta write clears `needsRespawn`.
+    const meta = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels:meta'
+    )) as Record<string, { needsRespawn?: boolean }>;
+    expect(meta['8080']?.needsRespawn).toBeUndefined();
+  });
+});
+
 describe('tunnels handler > get(port, { name }) — synchronous validation', () => {
   it('rejects invalid name format without any work', async () => {
     const cf = makeFakeCloudflare({});

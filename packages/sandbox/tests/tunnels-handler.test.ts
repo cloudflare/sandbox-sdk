@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
+  pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
 } from '../src/tunnels/tunnels-handler';
@@ -680,5 +681,55 @@ describe('route-based SandboxClient.tunnels placeholder', () => {
     expect(() =>
       (client.tunnels as unknown as { destroy: () => void }).destroy()
     ).toThrow(/RPC transport/);
+  });
+});
+
+describe('pruneTunnelsForRestart', () => {
+  it('drops quick-tunnel entries and marks named ones for respawn', async () => {
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: 'quick-abc',
+        port: 8080,
+        url: 'https://x.trycloudflare.com',
+        hostname: 'x.trycloudflare.com',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      },
+      '8081': {
+        id: 'uuid-1',
+        port: 8081,
+        name: 'app',
+        hostname: 'app.example.com',
+        url: 'https://app.example.com',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': { optionsHash: 'quick' },
+      '8081': { optionsHash: 'named:app', dnsRecordId: 'rec-1' }
+    });
+
+    await pruneTunnelsForRestart(storage);
+
+    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels'
+    )) as Record<string, { name?: string }>;
+    const nextMeta = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels:meta'
+    )) as Record<string, { needsRespawn?: boolean; dnsRecordId?: string }>;
+    expect(Object.keys(nextTunnels)).toEqual(['8081']);
+    expect(nextMeta['8081']?.needsRespawn).toBe(true);
+    // dnsRecordId is preserved so destroy() can still clean up.
+    expect(nextMeta['8081']?.dnsRecordId).toBe('rec-1');
+    expect(nextMeta['8080']).toBeUndefined();
+  });
+
+  it('is a no-op on empty storage', async () => {
+    const storage = makeStorage();
+    await pruneTunnelsForRestart(storage);
+    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels'
+    )) as Record<string, unknown>;
+    expect(nextTunnels).toEqual({});
   });
 });
