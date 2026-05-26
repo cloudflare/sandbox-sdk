@@ -98,12 +98,15 @@ function isEnoent(err: unknown): boolean {
 /**
  * Mask a cloudflared `--token` value for logging. Keeps the first 5
  * characters (enough to correlate against Cloudflare's dashboard token
- * preview) and replaces the rest with `*` so the secret never lands in
- * a log line in full.
+ * preview) followed by a constant-width `***` placeholder. The mask is
+ * the same width regardless of the input so the log line does not leak
+ * the secret's byte length — even though Cloudflare tokens are a known
+ * fixed format, treating length as non-sensitive in logs is a habit
+ * better not built.
  */
 function maskToken(token: string): string {
-  if (token.length <= 5) return '*'.repeat(token.length);
-  return token.slice(0, 5) + '*'.repeat(token.length - 5);
+  if (token.length <= 5) return '***';
+  return `${token.slice(0, 5)}***`;
 }
 
 export class TunnelManager {
