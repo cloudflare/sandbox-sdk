@@ -4313,15 +4313,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * `GET /user/tokens/verify` to derive the account id from the configured
    * `CLOUDFLARE_API_TOKEN`; subsequent calls return the cached promise.
    *
-   * Throws via the resolver when no precedence step succeeds. Callers
-   * surface that error to user code at the `sandbox.tunnels.get()` site.
+   * Only successful resolutions are cached: a rejected lookup clears the
+   * slot so the next caller retries. Otherwise a transient failure on
+   * first use would permanently poison every later named-tunnel `get()`
+   * on this DO instance.
    */
   private getTunnelAccountId(): Promise<string> {
     if (!this.tunnelAccountIdPromise) {
-      this.tunnelAccountIdPromise = resolveAccountId(
-        this.env as Record<string, unknown>,
-        { overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID' }
-      );
+      const pending = resolveAccountId(this.env as Record<string, unknown>, {
+        overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID'
+      });
+      this.tunnelAccountIdPromise = pending;
+      pending.catch(() => {
+        if (this.tunnelAccountIdPromise === pending) {
+          this.tunnelAccountIdPromise = null;
+        }
+      });
     }
     return this.tunnelAccountIdPromise;
   }
@@ -4331,14 +4338,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *
    * Memoised for the lifetime of this DO instance. Falls back to the
    * single zone the token can see under `accountId` via `GET /zones`
-   * when `CLOUDFLARE_ZONE_ID` is not set.
+   * when `CLOUDFLARE_ZONE_ID` is not set. Failed lookups clear the cache
+   * so the next caller retries — see `getTunnelAccountId` for the
+   * rationale.
    */
   private getTunnelZoneId(token: string, accountId: string): Promise<string> {
     if (!this.tunnelZoneIdPromise) {
-      this.tunnelZoneIdPromise = resolveZoneId(
-        this.env as Record<string, unknown>,
-        { token, accountId }
-      );
+      const pending = resolveZoneId(this.env as Record<string, unknown>, {
+        token,
+        accountId
+      });
+      this.tunnelZoneIdPromise = pending;
+      pending.catch(() => {
+        if (this.tunnelZoneIdPromise === pending) {
+          this.tunnelZoneIdPromise = null;
+        }
+      });
     }
     return this.tunnelZoneIdPromise;
   }

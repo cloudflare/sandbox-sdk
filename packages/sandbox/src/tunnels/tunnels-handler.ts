@@ -224,6 +224,11 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
    * Memoised zone name (e.g. `'example.com'`) for the configured
    * `CLOUDFLARE_ZONE_ID`. Filled in lazily on the first named-tunnel
    * `get()` so quick-tunnel callers never hit the zone-lookup endpoint.
+   *
+   * Only successful resolutions are cached: a rejected lookup clears
+   * the slot so the next caller retries, instead of permanently
+   * poisoning every subsequent named-tunnel `get()` on the DO with the
+   * same transient error.
    */
   #zoneNamePromise: Promise<string> | null = null;
 
@@ -238,16 +243,29 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
    * lifetime of this handler; the zone name doesn't change while a DO
    * is alive, and one extra GET on first use is cheaper than threading
    * the value through the host.
+   *
+   * On failure the cached promise is cleared so the next caller retries.
+   * Without that, a transient 5xx on the first call would permanently
+   * poison every subsequent named-tunnel `get()` until the DO restarts.
    */
   async #getZoneName(config: {
     token: string;
     zoneId: string;
   }): Promise<string> {
     if (!this.#zoneNamePromise) {
-      this.#zoneNamePromise = getZoneName({
+      const pending = getZoneName({
         token: config.token,
         zoneId: config.zoneId,
         fetcher: this.#host.fetcher
+      });
+      this.#zoneNamePromise = pending;
+      // Side-effect handler: clear the cache if `pending` rejects so the
+      // next caller retries. Callers `await this.#zoneNamePromise`
+      // directly, so they still observe the rejection unchanged.
+      pending.catch(() => {
+        if (this.#zoneNamePromise === pending) {
+          this.#zoneNamePromise = null;
+        }
       });
     }
     return this.#zoneNamePromise;

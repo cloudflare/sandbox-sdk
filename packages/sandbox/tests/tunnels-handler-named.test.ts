@@ -606,6 +606,68 @@ describe('tunnels handler > get(port, { name }) — synchronous validation', () 
   });
 });
 
+describe('tunnels handler > zone name caching', () => {
+  it('retries getZoneName after a transient failure (cache cleared on rejection)', async () => {
+    // First /zones/<id> call rejects; second succeeds. Without the
+    // failure-clearing logic the rejection would be cached and every
+    // subsequent named-tunnel get() would re-throw the same error.
+    let zoneCallCount = 0;
+    const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET' && url.endsWith('/zones/zone-id')) {
+        zoneCallCount += 1;
+        if (zoneCallCount === 1) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              errors: [{ code: 500, message: 'flake' }]
+            }),
+            { status: 500, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return jsonOk({ id: 'zone-id', name: 'example.com' });
+      }
+      if (method === 'GET' && url.includes('/cfd_tunnel?name=')) {
+        return jsonOk([]);
+      }
+      if (method === 'POST' && url.endsWith('/cfd_tunnel')) {
+        return jsonOk({
+          id: '11111111-2222-3333-4444-555555555555',
+          token: 'OPAQUE'
+        });
+      }
+      if (method === 'GET' && url.includes('/dns_records?')) {
+        return jsonOk([]);
+      }
+      if (method === 'POST' && url.includes('/dns_records')) {
+        return jsonOk({ id: 'dns-id' });
+      }
+      throw new Error(`Unhandled ${method} ${url}`);
+    });
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    // First call observes the 500 and rejects.
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
+      /Cloudflare API error/
+    );
+    // Second call retries the zone lookup and succeeds end-to-end.
+    const info = await tunnels.get(8080, { name: 'api' });
+    expect(info.hostname).toBe('api.example.com');
+    expect(zoneCallCount).toBe(2);
+  });
+});
+
 describe('tunnels handler > destroy() for named tunnels', () => {
   it('stops cloudflared, deletes the DNS record, and deletes the tunnel', async () => {
     const cf = makeFakeCloudflare({});
