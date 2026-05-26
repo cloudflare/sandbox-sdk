@@ -9,7 +9,8 @@ export default {
 
     // Route API requests to Compiler DO
     if (url.pathname === '/validate') {
-      // Use session ID from header to isolate per user
+      // Route each browser session to its own Compiler DO. Do not use
+      // sandbox sessions as a user isolation boundary.
       const sessionId = request.headers.get('X-Session-ID');
       if (!sessionId) {
         return Response.json(

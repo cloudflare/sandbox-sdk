@@ -1263,9 +1263,10 @@ export interface RemoteMountBucketOptions {
    * Optional prefix/subdirectory within the bucket to mount.
    *
    * When specified, only the contents under this prefix will be visible
-   * at the mount point, enabling multi-tenant isolation within a single bucket.
+   * at the mount point. Use prefixes to limit a sandbox to the bucket
+   * path it needs.
    *
-   * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
+   * Must start with '/' (e.g., '/workspaces/project123' or '/data/uploads/')
    */
   prefix?: string;
 }

@@ -21,8 +21,8 @@ interface Message {
 }
 
 /**
- * Get or create a session ID for this user.
- * The session ID is stored in localStorage and persists across browser sessions.
+ * Get or create a browser-local workspace ID.
+ * The ID is stored in localStorage and maps to one sandbox workspace.
  */
 function getOrCreateSessionId(): string {
   let sessionId = localStorage.getItem('session-id');

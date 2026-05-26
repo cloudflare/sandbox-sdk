@@ -2,14 +2,14 @@
 
 Real-time terminal sharing powered by Cloudflare Sandbox. Like Google Docs, but for your shell.
 
-Multiple users join a room, share a single sandbox terminal, and see each other's input in real-time with presence indicators and typing notifications.
+Participants in the same room intentionally share one sandbox terminal and see the same input, output, presence, and typing indicators in real time. Treat a room as a shared workspace. Do not use rooms or sessions as boundaries between independent users or accounts.
 
 ## Features
 
 - **Shared terminal**: Every participant sees the same PTY output as it happens
 - **Room system**: Create rooms, share links, browse and join active rooms
-- **Presence**: See who's in the room with colored avatars and typing indicators
-- **Session isolation**: Each room gets its own sandbox session so rooms don't interfere
+- **Presence**: See who is in the room with colored avatars and typing indicators
+- **Room workspaces**: Each room gets its own sandbox, with its own files and processes
 - **Live room list**: Homepage updates in real-time as rooms are created or emptied
 
 ## Architecture
@@ -29,7 +29,7 @@ Browser (xterm.js + SandboxAddon)
 RoomRegistry DO                           Tracks active rooms globally
 ```
 
-**Terminal connection**: The browser connects directly to the sandbox container's PTY through a WebSocket that the SDK proxies transparently. There's no JSON protocol for terminal I/O — raw bytes flow between xterm.js and the container's PTY via `SandboxAddon`.
+**Terminal connection**: The browser connects directly to the sandbox container's PTY through a WebSocket that the SDK proxies transparently. Terminal I/O does not use a JSON protocol — raw bytes flow between xterm.js and the container's PTY via `SandboxAddon`.
 
 **Room connection**: A separate WebSocket to the Room DO handles presence (joins, leaves, typing indicators). This keeps the collaboration layer decoupled from terminal I/O.
 
@@ -40,13 +40,13 @@ RoomRegistry DO                           Tracks active rooms globally
 The Worker routes requests to the appropriate Durable Object:
 
 ```typescript
-// Terminal: proxy WebSocket directly to a sandbox session's PTY
-const sandbox = getSandbox(env.Sandbox, 'shared-terminal');
-const session = await sandbox.getSession(sessionId);
+// Terminal: proxy WebSocket directly to the room sandbox PTY
+const sandbox = getSandbox(env.Sandbox, `room-${roomId}`);
+const session = await sandbox.getSession('default');
 return session.terminal(request);
 ```
 
-Each room maps to a session ID (`room-${roomId}`), so different rooms get isolated shell environments within the same sandbox container.
+Each room maps to a sandbox ID (`room-${roomId}`), so room workspaces do not share a filesystem, processes, or environment variables. In production, derive sandbox IDs from the authenticated user or a user-owned workspace.
 
 ### Client side
 
@@ -62,7 +62,7 @@ const sandboxAddon = new SandboxAddon({
 });
 
 terminal.loadAddon(sandboxAddon);
-sandboxAddon.connect({ sandboxId: 'shared-terminal', sessionId });
+sandboxAddon.connect({ sandboxId: sessionId, sessionId });
 ```
 
 ## Getting Started
