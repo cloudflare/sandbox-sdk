@@ -9,10 +9,13 @@ const WS_PORT = 8080;
  * inside the sandbox.
  *
  * Two modes:
- *  - **Named tunnel** when `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
- *    and `TUNNEL_NAME` are all set. The tunnel binds the user-controlled
- *    hostname `<TUNNEL_NAME>.<zone>` and survives DO eviction (the SDK
- *    rediscovers the tagged Cloudflare resources on re-run).
+ *  - **Named tunnel** when `CLOUDFLARE_API_TOKEN` and `TUNNEL_NAME` are
+ *    set. The tunnel binds the user-controlled hostname
+ *    `<TUNNEL_NAME>.<zone>` and survives DO eviction (the SDK rediscovers
+ *    the tagged Cloudflare resources on re-run). `CLOUDFLARE_ACCOUNT_ID`
+ *    and `CLOUDFLARE_ZONE_ID` are inferred from the token when it is
+ *    scoped to a single account/zone; set them explicitly to
+ *    disambiguate.
  *  - **Quick tunnel** otherwise. Zero-config, but the `*.trycloudflare.com`
  *    URL changes on every container restart.
  */
@@ -31,8 +34,7 @@ async function getTunnel(
   // tunnel so the example still runs without setup.
   const tunnelName = readVar(env, 'TUNNEL_NAME');
   const hasNamedCreds =
-    Boolean(tunnelName) &&
-    Boolean(readVar(env, 'CLOUDFLARE_API_TOKEN'))
+    Boolean(tunnelName) && Boolean(readVar(env, 'CLOUDFLARE_API_TOKEN'));
 
   try {
     const tunnel = hasNamedCreds
@@ -44,7 +46,8 @@ async function getTunnel(
     // The SDK exposes `err.code` on its typed errors. When the container
     // can't find the cloudflared binary, surface that distinctly so the
     // user knows what to fix.
-    const code = (err as { errorResponse?: { code?: string } })?.errorResponse?.code;
+    const code = (err as { errorResponse?: { code?: string } })?.errorResponse
+      ?.code;
     if (code === 'CLOUDFLARED_NOT_FOUND') {
       return {
         tunnel: null,
