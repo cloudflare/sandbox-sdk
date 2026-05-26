@@ -739,10 +739,13 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
    * wrap the call in catch-and-log here too so a transport-level error
    * on one port can't poison the rest of the teardown.
    *
-   * Sequential rather than parallel: each destroy() takes the per-port
-   * lock and writes storage; serialising avoids piling up Cloudflare API
-   * calls during sandbox.destroy(). The cost is small (handful of ports
-   * at most for the common case).
+   * Each port is processed sequentially: this caps the *number of
+   * concurrent ports* in flight at one. Note that an individual
+   * destroy() still fans the DNS-delete and tunnel-delete out via
+   * `Promise.allSettled` internally — so "sequential" here means
+   * "one port at a time", not "one Cloudflare API call at a time".
+   * The handful of ports we expect in the common case makes the
+   * trade-off cheap.
    */
   const destroyAll = async (): Promise<void> => {
     const map = await readMap(host.storage);
