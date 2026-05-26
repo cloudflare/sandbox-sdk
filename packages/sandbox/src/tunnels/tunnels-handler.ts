@@ -541,11 +541,16 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         try {
           config = await this.#host.getNamedTunnelConfig();
         } catch (err) {
+          // CF cleanup is skipped; surface the orphaned resource ids so
+          // an operator can clean up by hand. Without dnsRecordId in
+          // particular, the leaked CNAME is hard to find from the
+          // dashboard without grepping by tunnel target.
           this.#host.logger.warn(
             'tunnel.destroy: skipping CF cleanup, credentials unavailable',
             {
               port,
               tunnelId,
+              dnsRecordId: metaBefore.dnsRecordId,
               error: err instanceof Error ? err.message : String(err)
             }
           );

@@ -193,6 +193,7 @@ function makeHandler(opts?: {
 }) {
   const { client } = makeClient();
   const storage = makeStorage();
+  const logger = makeLogger();
   const namedTunnelConfig = {
     token: opts?.config?.token ?? 'TOK',
     accountId: opts?.config?.accountId ?? 'ACCT',
@@ -203,7 +204,7 @@ function makeHandler(opts?: {
       typeof createTunnelsHandler
     >[0]['client'],
     storage,
-    logger: makeLogger(),
+    logger,
     sandboxId: opts?.sandboxId ?? 'sb1',
     getNamedTunnelConfig: opts?.configError
       ? async () => {
@@ -215,6 +216,7 @@ function makeHandler(opts?: {
   return {
     client,
     storage,
+    logger,
     tunnels: built.tunnels,
     handleTunnelExit: built.handleTunnelExit,
     destroyAll: built.destroyAll
@@ -767,6 +769,59 @@ describe('tunnels handler > destroy() for named tunnels', () => {
 
     // Should resolve, not reject, despite CF DELETE failures.
     await expect(tunnels.destroy(8080)).resolves.toBeUndefined();
+  });
+
+  it('includes dnsRecordId in the warn log when CF cleanup is skipped due to missing credentials', async () => {
+    // First call provisions a named tunnel with config available. Then
+    // we flip the resolver to throw, simulating a token revocation
+    // between get() and destroy(). The warn log must surface both the
+    // tunnelId and the dnsRecordId so an operator can clean up by hand.
+    const cf = makeFakeCloudflare({});
+    const { client } = makeClient();
+    const storage = makeStorage();
+    const logger = makeLogger();
+    let configShouldFail = false;
+    const built = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger,
+      sandboxId: 'sb1',
+      getNamedTunnelConfig: async () => {
+        if (configShouldFail) {
+          throw new Error('CLOUDFLARE_API_TOKEN unbound');
+        }
+        return { token: 'TOK', accountId: 'ACCT', zoneId: 'zone-id' };
+      },
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: '11111111-2222-3333-4444-555555555555',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: '11111111-2222-3333-4444-555555555555'
+    });
+
+    await built.tunnels.get(8080, { name: 'api' });
+    configShouldFail = true;
+    await expect(built.tunnels.destroy(8080)).resolves.toBeUndefined();
+
+    // The warn line must include enough information to identify the
+    // orphaned Cloudflare resources (tunnel + DNS record).
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const skipWarn = warnCalls.find(([msg]) =>
+      String(msg).includes('skipping CF cleanup')
+    );
+    expect(skipWarn).toBeDefined();
+    const context = skipWarn?.[1] as Record<string, unknown> | undefined;
+    expect(context?.tunnelId).toBe('11111111-2222-3333-4444-555555555555');
+    expect(context?.dnsRecordId).toBe('dns-id');
   });
 });
 
