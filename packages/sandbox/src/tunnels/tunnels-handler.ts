@@ -183,9 +183,25 @@ function shortId(): string {
     .join('');
 }
 
+/**
+ * Match the structured `TUNNEL_NOT_FOUND` code emitted by the container's
+ * `TunnelService.destroyTunnel`. Translated SandboxErrors expose the code
+ * both as a top-level `code` field and on the nested `errorResponse.code`;
+ * check both shapes for forward-compatibility.
+ *
+ * Previous versions matched by substring on `error.message`, which
+ * false-positived on any error whose message merely quoted the literal
+ * `TUNNEL_NOT_FOUND` token.
+ */
 function isTunnelNotFoundError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('TUNNEL_NOT_FOUND');
+  if (!error || typeof error !== 'object') return false;
+  const e = error as {
+    code?: unknown;
+    errorResponse?: { code?: unknown };
+  };
+  if (e.code === 'TUNNEL_NOT_FOUND') return true;
+  if (e.errorResponse?.code === 'TUNNEL_NOT_FOUND') return true;
+  return false;
 }
 
 async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {

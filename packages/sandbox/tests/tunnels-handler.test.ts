@@ -389,9 +389,17 @@ describe('tunnels handler > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockRejectedValue(
-      new Error('TUNNEL_NOT_FOUND: tunnel quick-gone is not running')
+    // Production shape: the container emits a SandboxError carrying
+    // `code: 'TUNNEL_NOT_FOUND'` in `errorResponse`. The handler must
+    // match on the code, not on substring.
+    const notFound = Object.assign(
+      new Error('Tunnel quick-gone is not running'),
+      {
+        errorResponse: { code: 'TUNNEL_NOT_FOUND' },
+        code: 'TUNNEL_NOT_FOUND'
+      }
     );
+    client.tunnels.destroyTunnel.mockRejectedValue(notFound);
 
     await expect(handler.destroy(8080)).resolves.toBeUndefined();
     // Storage is still cleared (both info + meta).
@@ -399,6 +407,30 @@ describe('tunnels handler > destroy', () => {
     expect(putCalls).toHaveLength(2);
     expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
     expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
+  });
+
+  it('does NOT swallow an unrelated error whose message merely contains the literal TUNNEL_NOT_FOUND', async () => {
+    // Regression for the previous substring-match heuristic. A wrapped
+    // error whose message happens to embed `TUNNEL_NOT_FOUND` (for
+    // example, an upstream report quoting the original error) must
+    // surface to the caller, not be silently swallowed as "already gone".
+    const record = makeRecord({ id: 'quick-real0000real00', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const { tunnels: handler } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    client.tunnels.destroyTunnel.mockRejectedValue(
+      new Error('rpc transport failure: original was TUNNEL_NOT_FOUND')
+    );
+
+    await expect(handler.destroy(8080)).rejects.toThrow(
+      /rpc transport failure/
+    );
   });
 
   it('does not roll back storage when the container call fails with a non-NOT_FOUND error', async () => {
