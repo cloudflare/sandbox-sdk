@@ -37,7 +37,7 @@ function routedFetcher(routes: Record<string, Response>) {
   const ordered = Object.entries(routes).sort(
     ([a], [b]) => b.length - a.length
   );
-  return vi.fn(async (input: string | URL | Request) => {
+  return vi.fn<typeof fetch>(async (input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input.toString();
     for (const [match, response] of ordered) {
       if (url.includes(match)) return response.clone();
@@ -77,7 +77,7 @@ describe('resolveAccountId', () => {
     });
 
     it('verifies the token when neither override nor account env is set', async () => {
-      const fetcher = vi.fn(async () =>
+      const fetcher = vi.fn<typeof fetch>(async () =>
         jsonResponse({
           success: true,
           result: { id: 'tok-id', status: 'active' },
@@ -146,7 +146,7 @@ describe('resolveAccountId', () => {
     });
 
     it('throws when the token-verify response is not 200', async () => {
-      const fetcher = vi.fn(async () =>
+      const fetcher = vi.fn<typeof fetch>(async () =>
         jsonResponse({ success: false, errors: [{ code: 9109 }] }, 401)
       );
       await expect(
@@ -160,7 +160,7 @@ describe('resolveAccountId', () => {
     it('throws when token-verify succeeds but the token is not scoped to an account', async () => {
       // result_info.account.id missing means the token has user-scoped
       // permissions only and cannot identify a single account.
-      const fetcher = vi.fn(async () =>
+      const fetcher = vi.fn<typeof fetch>(async () =>
         jsonResponse({ success: true, result: { status: 'active' } })
       );
       await expect(
@@ -189,11 +189,17 @@ describe('resolveAccountId', () => {
       // because the token wasn't granted account:read.
       const fetcher = routedFetcher({
         '/user/tokens/verify': jsonResponse(
-          { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] },
+          {
+            success: false,
+            errors: [{ code: 1000, message: 'Invalid API Token' }]
+          },
           401
         ),
         '/accounts': jsonResponse(
-          { success: false, errors: [{ code: 9109, message: 'Invalid access token' }] },
+          {
+            success: false,
+            errors: [{ code: 9109, message: 'Invalid access token' }]
+          },
           403
         )
       });
@@ -247,10 +253,7 @@ describe('resolveAccountId', () => {
         ),
         '/accounts': jsonResponse({
           success: true,
-          result: [
-            { id: 'acct-a' },
-            { id: 'acct-b' }
-          ]
+          result: [{ id: 'acct-a' }, { id: 'acct-b' }]
         })
       });
       await expect(
@@ -288,7 +291,10 @@ describe('resolveAccountId', () => {
           result: [{ id: 'acct-1' }]
         }),
         '/accounts/acct-1/tokens/verify': jsonResponse(
-          { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] },
+          {
+            success: false,
+            errors: [{ code: 1000, message: 'Invalid API Token' }]
+          },
           401
         )
       });
@@ -330,7 +336,7 @@ describe('resolveZoneId', () => {
   });
 
   it('queries the zones API when the env var is missing and returns the single match', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonResponse({
         success: true,
         result: [{ id: 'token-zone', name: 'example.com' }]
@@ -354,7 +360,7 @@ describe('resolveZoneId', () => {
   });
 
   it('treats empty CLOUDFLARE_ZONE_ID as unset', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonResponse({
         success: true,
         result: [{ id: 'token-zone', name: 'example.com' }]
@@ -369,7 +375,7 @@ describe('resolveZoneId', () => {
   });
 
   it('throws when the token has access to no zones in the account', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonResponse({ success: true, result: [] })
     );
     await expect(
@@ -378,7 +384,7 @@ describe('resolveZoneId', () => {
   });
 
   it('throws when the token has access to multiple zones', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonResponse({
         success: true,
         result: [
@@ -393,11 +399,8 @@ describe('resolveZoneId', () => {
   });
 
   it('throws when the zones API responds with a non-2xx', async () => {
-    const fetcher = vi.fn(async () =>
-      jsonResponse(
-        { success: false, errors: [{ code: 9109 }] },
-        403
-      )
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: false, errors: [{ code: 9109 }] }, 403)
     );
     await expect(
       resolveZoneId({}, { token: 'tok', accountId: 'acct', fetcher })

@@ -38,7 +38,7 @@ function jsonError(body: unknown, status = 400): Response {
 
 describe('cloudflare-api > createTunnel', () => {
   it('POSTs to /accounts/:id/cfd_tunnel with config_src and metadata', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK({ id: 'tun-uuid', token: 'OPAQUE_TOKEN', account_tag: 'acct' })
     );
     const result = await createTunnel({
@@ -78,7 +78,7 @@ describe('cloudflare-api > createTunnel', () => {
   });
 
   it('throws when the API returns success: false', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonError({ success: false, errors: [{ code: 1004, message: 'bad' }] })
     );
     await expect(
@@ -98,7 +98,7 @@ describe('cloudflare-api > createTunnel', () => {
   });
 
   it('throws on transport-level errors with a clear message', async () => {
-    const fetcher = vi.fn(async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
       throw new Error('ECONNRESET');
     });
     await expect(
@@ -123,7 +123,7 @@ describe('cloudflare-api > createTunnel', () => {
     // tagged create first, then retries cleanly without tags on the
     // documented "requires enterprise" failure code.
     let attempts = 0;
-    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init?: RequestInit) => {
       attempts += 1;
       const body = JSON.parse(String(init?.body)) as {
         tags?: unknown;
@@ -170,7 +170,7 @@ describe('cloudflare-api > createTunnel', () => {
 
 describe('cloudflare-api > findTunnelByName', () => {
   it('returns the first non-deleted tunnel with a matching name', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK([
         {
           id: 'old',
@@ -198,7 +198,7 @@ describe('cloudflare-api > findTunnelByName', () => {
   });
 
   it('returns null when no tunnel matches', async () => {
-    const fetcher = vi.fn(async () => jsonOK([]));
+    const fetcher = vi.fn<typeof fetch>(async () => jsonOK([]));
     const found = await findTunnelByName({
       token: 'tok',
       accountId: 'acct',
@@ -209,7 +209,7 @@ describe('cloudflare-api > findTunnelByName', () => {
   });
 
   it('treats all-deleted matches as null', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK([{ id: 't', name: 'x', deleted_at: '2026-01-01T00:00:00Z' }])
     );
     const found = await findTunnelByName({
@@ -228,7 +228,7 @@ describe('cloudflare-api > findTunnelByName', () => {
     // "created by this sandbox" check, and the docstring promises
     // reconciliation uses it — so when expectedSandboxId is passed and
     // the metadata disagrees, refuse to claim the tunnel.
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK([
         {
           id: 'foreign',
@@ -249,7 +249,7 @@ describe('cloudflare-api > findTunnelByName', () => {
   });
 
   it('returns the tunnel when metadata.sandboxId matches expectedSandboxId', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK([
         {
           id: 'ours',
@@ -272,7 +272,7 @@ describe('cloudflare-api > findTunnelByName', () => {
 
 describe('cloudflare-api > deleteTunnel', () => {
   it('DELETEs the tunnel resource and resolves on 200', async () => {
-    const fetcher = vi.fn(async () => jsonOK({ id: 'tun-uuid' }));
+    const fetcher = vi.fn<typeof fetch>(async () => jsonOK({ id: 'tun-uuid' }));
     await deleteTunnel({
       token: 'tok',
       accountId: 'acct',
@@ -287,7 +287,7 @@ describe('cloudflare-api > deleteTunnel', () => {
   });
 
   it('treats 404 as a successful (already-gone) outcome', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonError({ success: false, errors: [{ code: 1003 }] }, 404)
     );
     await expect(
@@ -301,7 +301,7 @@ describe('cloudflare-api > deleteTunnel', () => {
   });
 
   it('throws on other API failures', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonError(
         { success: false, errors: [{ code: 1006, message: 'forbidden' }] },
         403
@@ -320,7 +320,7 @@ describe('cloudflare-api > deleteTunnel', () => {
 
 describe('cloudflare-api > getZoneName', () => {
   it('returns the zone name for a given zone id', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonOK({ id: 'zone-id', name: 'example.com' })
     );
     const name = await getZoneName({
@@ -335,7 +335,7 @@ describe('cloudflare-api > getZoneName', () => {
   });
 
   it('throws when the zone fetch fails', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonError({ success: false, errors: [{ code: 7003 }] }, 404)
     );
     await expect(
@@ -388,7 +388,7 @@ describe('cloudflare-api > upsertCNAME', () => {
 
   it('sends sandboxId as a DNS tag and retries without tags on enterprise-only error', async () => {
     let attempts = 0;
-    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init?: RequestInit) => {
       const method = (init?.method ?? 'GET').toUpperCase();
       if (method === 'GET') return jsonOK([]); // list
       attempts += 1;
@@ -431,7 +431,7 @@ describe('cloudflare-api > upsertCNAME', () => {
     // The previous heuristic only matched 'enterprise' / 'not allowed'
     // and would have let this error propagate to the user.
     let attempts = 0;
-    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init?: RequestInit) => {
       const method = (init?.method ?? 'GET').toUpperCase();
       if (method === 'GET') return jsonOK([]);
       attempts += 1;
@@ -529,7 +529,7 @@ describe('cloudflare-api > upsertCNAME', () => {
 
 describe('cloudflare-api > deleteDNSRecord', () => {
   it('DELETEs the dns record id', async () => {
-    const fetcher = vi.fn(async () => jsonOK({ id: 'dns-id' }));
+    const fetcher = vi.fn<typeof fetch>(async () => jsonOK({ id: 'dns-id' }));
     await deleteDNSRecord({
       token: 'tok',
       zoneId: 'zone-id',
@@ -544,7 +544,7 @@ describe('cloudflare-api > deleteDNSRecord', () => {
   });
 
   it('treats 404 as success', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       jsonError({ success: false, errors: [{ code: 81044 }] }, 404)
     );
     await expect(
@@ -560,7 +560,9 @@ describe('cloudflare-api > deleteDNSRecord', () => {
 
 describe('cloudflare-api > getTunnelToken', () => {
   it('returns the token string from the API envelope', async () => {
-    const fetcher = vi.fn(async () => jsonOK('OPAQUE_TOKEN_VALUE'));
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      jsonOK('OPAQUE_TOKEN_VALUE')
+    );
     const token = await getTunnelToken({
       token: 'tok',
       accountId: 'acct',
@@ -575,7 +577,7 @@ describe('cloudflare-api > getTunnelToken', () => {
   });
 
   it('throws when the envelope is missing a string token', async () => {
-    const fetcher = vi.fn(async () => jsonOK(null));
+    const fetcher = vi.fn<typeof fetch>(async () => jsonOK(null));
     await expect(
       getTunnelToken({
         token: 'tok',
@@ -594,7 +596,7 @@ describe('cloudflare-api > request timeout', () => {
     // message. Simulate that by rejecting the fetch synchronously with
     // a TimeoutError-shaped error so the assertion runs instantly
     // instead of waiting on the real 10s timer.
-    const fetcher = vi.fn(async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
       const err = new Error('signal timed out');
       err.name = 'TimeoutError';
       throw err;
@@ -611,7 +613,7 @@ describe('cloudflare-api > request timeout', () => {
 
   it('attaches an AbortSignal to every request', async () => {
     let observedSignal: AbortSignal | null | undefined;
-    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init?: RequestInit) => {
       observedSignal = init?.signal;
       return new Response(
         JSON.stringify({
