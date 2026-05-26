@@ -2,15 +2,52 @@
 ARG BUN_VERSION=1
 # Node version — override via --build-arg NODE_VERSION=24
 ARG NODE_VERSION=24
-# cloudflared release — shared across glibc runtime-base and the musl builder.
-# Bump this together with the Go base image tag below.
+# cloudflared release — shared across glibc and musl image variants.
+# Bump this together with the architecture-specific checksums below.
 ARG CLOUDFLARED_VERSION=2026.3.0
-# Go base image used to compile the musl-static cloudflared binary.
-# Must match (or exceed) the `go` directive in the chosen cloudflared
-# release's go.mod. 2026.3.0 declares `go 1.24.0`.
-ARG CLOUDFLARED_GO_VERSION=1.24
 FROM oven/bun:${BUN_VERSION} AS bun-binary
 FROM node:${NODE_VERSION}-slim AS node-runtime
+
+# ============================================================================
+# cloudflared (Cloudflare Tunnel daemon) — enables sandbox.tunnels.*
+# Version pin lives at the top of this Dockerfile as a global ARG, shared
+# by every image variant so they ship the same release.
+# ============================================================================
+FROM alpine:3.21 AS cloudflared-binary
+
+ARG TARGETARCH
+ARG CLOUDFLARED_VERSION
+ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
+ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
+
+# Inject the host's extra CA bundle when downloading behind a TLS-intercepting
+# proxy (e.g. Cloudflare WARP / Zero Trust). No-op when the secret isn't passed.
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt; \
+        mkdir -p /usr/local/share/ca-certificates && \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt; \
+    fi && \
+    apk add --no-cache ca-certificates curl && \
+    if [ -f /usr/local/share/ca-certificates/wrangler-dev-ca.crt ]; then \
+        update-ca-certificates; \
+    fi
+
+RUN set -eux; \
+    arch="${TARGETARCH:-}"; \
+    if [ -z "$arch" ]; then \
+      arch="$(apk --print-arch)"; \
+    fi; \
+    case "$arch" in \
+      amd64|x86_64) suffix=amd64; sha="${CLOUDFLARED_SHA256_AMD64}" ;; \
+      arm64|aarch64) suffix=arm64; sha="${CLOUDFLARED_SHA256_ARM64}" ;; \
+      *) echo "Unsupported arch for cloudflared: $arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${suffix}"; \
+    curl -fsSL -o /cloudflared "$url"; \
+    echo "$sha  /cloudflared" | sha256sum -c -; \
+    chmod +x /cloudflared; \
+    /cloudflared --version
 
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
@@ -159,26 +196,8 @@ COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javas
 # Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
 COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
-# ============================================================================
-# cloudflared (Cloudflare Tunnel daemon) — enables sandbox.tunnels.*
-# Version pin lives at the top of this Dockerfile as a global ARG, shared
-# with the musl builder stage so both image variants ship the same release.
-# ============================================================================
-ARG CLOUDFLARED_VERSION
-ARG CLOUDFLARED_SHA256_AMD64=4a9e50e6d6d798e90fcd01933151a90bf7edd99a0a55c28ad18f2e16263a5c30
-ARG CLOUDFLARED_SHA256_ARM64=0755ba4cbab59980e6148367fcf53a8f3ec85a97deefd63c2420cf7850769bee
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) suffix=amd64; sha="${CLOUDFLARED_SHA256_AMD64}" ;; \
-      arm64) suffix=arm64; sha="${CLOUDFLARED_SHA256_ARM64}" ;; \
-      *) echo "Unsupported arch for cloudflared: $arch" >&2; exit 1 ;; \
-    esac; \
-    url="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${suffix}"; \
-    curl -fsSL -o /usr/local/bin/cloudflared "$url"; \
-    echo "$sha  /usr/local/bin/cloudflared" | sha256sum -c -; \
-    chmod +x /usr/local/bin/cloudflared; \
-    cloudflared --version
+COPY --from=cloudflared-binary /cloudflared /usr/local/bin/cloudflared
+RUN cloudflared --version
 
 # Inject the host's extra CA bundle when running locally behind a TLS-
 # intercepting proxy (e.g. Cloudflare WARP / Zero Trust). See
@@ -321,54 +340,6 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=0
 ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
-# Stage 5d-builder: cloudflared static musl binary
-# Compiles cloudflared with CGO disabled inside a musl-based Go image so
-# the resulting ELF runs natively on Alpine without gcompat. Built for the
-# build's TARGETARCH so multi-arch buildx invocations produce matching
-# binaries for amd64 and arm64.
-# ============================================================================
-ARG CLOUDFLARED_GO_VERSION
-FROM golang:${CLOUDFLARED_GO_VERSION}-alpine AS cloudflared-musl-builder
-
-ARG CLOUDFLARED_VERSION
-ARG TARGETARCH
-
-# Inject the host's extra CA bundle when building behind a TLS-intercepting
-# proxy (e.g. Cloudflare WARP). Copies the cert to both the live bundle and
-# /usr/local/share/ca-certificates/ so that update-ca-certificates (run after
-# apk) does not discard it. No-op when the secret isn't passed.
-RUN --mount=type=secret,id=wrangler_ca \
-    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
-        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt; \
-        mkdir -p /usr/local/share/ca-certificates && \
-        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt; \
-    fi && \
-    apk add --no-cache git ca-certificates file && \
-    if [ -f /usr/local/share/ca-certificates/wrangler-dev-ca.crt ]; then \
-        update-ca-certificates; \
-    fi
-
-WORKDIR /build
-RUN git clone --depth 1 --branch ${CLOUDFLARED_VERSION} \
-    https://github.com/cloudflare/cloudflared.git .
-
-# Cache Go build and module outputs across CI runs so repeat builds are fast.
-# `-X main.Version` mirrors cloudflared's upstream Makefile so
-# `cloudflared --version` reports the real release tag instead of "DEV".
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go/pkg/mod \
-    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-      go build \
-        -mod=vendor \
-        -tags "netgo osusergo" \
-        -ldflags="-X main.Version=${CLOUDFLARED_VERSION} -X main.BuildTime=${BUILD_TIME} -extldflags '-static' -s -w" \
-        -o /cloudflared \
-        github.com/cloudflare/cloudflared/cmd/cloudflared
-
-RUN file /cloudflared | grep -q "statically linked"
-
-# ============================================================================
 # Stage 5d: Musl image - Alpine-based with musl-linked binary
 # ============================================================================
 FROM alpine:3.21 AS musl
@@ -393,9 +364,9 @@ RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse
 
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
-# cloudflared (Cloudflare Tunnel daemon) — musl-static binary built from
-# source. Enables sandbox.tunnels.* on the Alpine variant.
-COPY --from=cloudflared-musl-builder /cloudflared /usr/local/bin/cloudflared
+# The Alpine variant uses the same cloudflared release asset as the glibc
+# variants. It is a static binary that runs on musl without gcompat.
+COPY --from=cloudflared-binary /cloudflared /usr/local/bin/cloudflared
 RUN cloudflared --version
 
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox
