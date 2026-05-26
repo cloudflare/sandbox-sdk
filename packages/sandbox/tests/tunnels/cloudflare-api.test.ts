@@ -170,6 +170,54 @@ describe('cloudflare-api > findTunnelByName', () => {
     });
     expect(found).toBeNull();
   });
+
+  it('treats a name match with mismatching metadata.sandboxId as null when expectedSandboxId is set', async () => {
+    // Defensive: tunnel name encodes <sandboxId>-<name>, but a malicious
+    // or buggy caller could construct a tunnel with the same name under
+    // a different sandbox. The metadata tag is the authoritative
+    // "created by this sandbox" check, and the docstring promises
+    // reconciliation uses it — so when expectedSandboxId is passed and
+    // the metadata disagrees, refuse to claim the tunnel.
+    const fetcher = vi.fn(async () =>
+      jsonOk([
+        {
+          id: 'foreign',
+          name: 'sandbox-sb-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'other-sandbox', createdBy: 'sandbox-sdk' }
+        }
+      ])
+    );
+    const found = await findTunnelByName({
+      token: 'tok',
+      accountId: 'acct',
+      tunnelName: 'sandbox-sb-api',
+      expectedSandboxId: 'sb',
+      fetcher
+    });
+    expect(found).toBeNull();
+  });
+
+  it('returns the tunnel when metadata.sandboxId matches expectedSandboxId', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonOk([
+        {
+          id: 'ours',
+          name: 'sandbox-sb-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb', createdBy: 'sandbox-sdk' }
+        }
+      ])
+    );
+    const found = await findTunnelByName({
+      token: 'tok',
+      accountId: 'acct',
+      tunnelName: 'sandbox-sb-api',
+      expectedSandboxId: 'sb',
+      fetcher
+    });
+    expect(found?.id).toBe('ours');
+  });
 });
 
 describe('cloudflare-api > deleteTunnel', () => {

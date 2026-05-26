@@ -416,6 +416,10 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       token: config.token,
       accountId: config.accountId,
       tunnelName,
+      // Verify the tunnel's metadata.sandboxId tag matches this sandbox
+      // before reusing it; defends against name collisions across
+      // sandboxes.
+      expectedSandboxId: sandboxId,
       fetcher: this.#host.fetcher
     });
     if (existingTunnel) {

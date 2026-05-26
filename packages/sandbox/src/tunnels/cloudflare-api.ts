@@ -182,6 +182,17 @@ export async function createTunnel(
 export interface FindTunnelArgs extends BaseArgs {
   accountId: string;
   tunnelName: string;
+  /**
+   * When set, only return tunnels whose `metadata.sandboxId` equals this
+   * value. Otherwise the function matches by name alone.
+   *
+   * Use this to defend against the case where two sandboxes happen to
+   * mint the same tunnel name (the name conventionally encodes the
+   * sandbox id, but the API does not enforce that): without the
+   * metadata check, sandbox B's `findTunnelByName` would happily claim
+   * sandbox A's tunnel and start managing it.
+   */
+  expectedSandboxId?: string;
 }
 
 export interface ExistingTunnel {
@@ -193,6 +204,12 @@ export interface ExistingTunnel {
  * Look up an existing tunnel by exact name match. Filters out tunnels
  * marked `deleted_at != null` defensively in case the API ignores the
  * `is_deleted=false` query parameter.
+ *
+ * When `expectedSandboxId` is provided, also verify that the tunnel's
+ * `metadata.sandboxId` tag matches — this is the authoritative "this
+ * resource was created by this sandbox" check, and the tag is set by
+ * `createTunnel`. Mismatches are treated as "not found" so the caller
+ * falls through to creating a fresh tunnel.
  */
 export async function findTunnelByName(
   args: FindTunnelArgs
@@ -202,11 +219,21 @@ export async function findTunnelByName(
     `${API_BASE}/accounts/${encodeURIComponent(args.accountId)}/cfd_tunnel` +
     `?name=${encodeURIComponent(args.tunnelName)}&is_deleted=false`;
   const result = await cfRequest<
-    Array<{ id: string; name: string; deleted_at?: string | null }>
+    Array<{
+      id: string;
+      name: string;
+      deleted_at?: string | null;
+      metadata?: unknown;
+    }>
   >(url, args.token, fetcher);
   if (!result) return null;
   const live = result.find((t) => !t.deleted_at);
-  return live ? { id: live.id, name: live.name } : null;
+  if (!live) return null;
+  if (args.expectedSandboxId !== undefined) {
+    const meta = live.metadata as { sandboxId?: unknown } | undefined;
+    if (meta?.sandboxId !== args.expectedSandboxId) return null;
+  }
+  return { id: live.id, name: live.name };
 }
 
 export interface DeleteTunnelArgs extends BaseArgs {

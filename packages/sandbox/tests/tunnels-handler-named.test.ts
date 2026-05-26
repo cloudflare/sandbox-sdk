@@ -90,6 +90,7 @@ function makeFakeCloudflare(opts: {
     id: string;
     name: string;
     deleted_at?: string | null;
+    metadata?: unknown;
   }>;
   existingDns?: Array<{
     id: string;
@@ -412,7 +413,12 @@ describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
   it('reuses a tunnel left behind from a previous failed attempt', async () => {
     const cf = makeFakeCloudflare({
       existingTunnels: [
-        { id: 'reused-tun-id', name: 'sandbox-sb1-api', deleted_at: null }
+        {
+          id: 'reused-tun-id',
+          name: 'sandbox-sb1-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb1', createdBy: 'sandbox-sdk' }
+        }
       ]
     });
     const { tunnels, client } = makeHandler({
@@ -506,7 +512,12 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
     // discoverable by name and the DNS record matches what we'd upsert.
     const cf = makeFakeCloudflare({
       existingTunnels: [
-        { id: 'kept-tun-id', name: 'sandbox-sb1-api', deleted_at: null }
+        {
+          id: 'kept-tun-id',
+          name: 'sandbox-sb1-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb1', createdBy: 'sandbox-sdk' }
+        }
       ],
       existingDns: [
         {
