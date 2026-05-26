@@ -1,11 +1,11 @@
 import type { Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { fetchWithRetry } from './helpers/fetch-with-retry';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   type TestSandbox
 } from './helpers/global-sandbox';
-import { fetchWithRetry } from './helpers/fetch-with-retry';
 
 /**
  * Quick tunnel round-trip.
@@ -373,4 +373,3 @@ Bun.serve({
     });
   }
 });
-
