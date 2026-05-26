@@ -542,6 +542,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       hostname,
       cnameTarget: `${tunnelId}.cfargotunnel.com`,
       comment: `sandbox-${sandboxId}`,
+      sandboxId,
       fetcher: this.#host.fetcher
     });
 

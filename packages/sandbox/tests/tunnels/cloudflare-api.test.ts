@@ -22,7 +22,7 @@ import {
   upsertCNAME
 } from '../../src/tunnels/cloudflare-api';
 
-function jsonOk(body: unknown): Response {
+function jsonOK(body: unknown): Response {
   return new Response(JSON.stringify({ success: true, result: body }), {
     status: 200,
     headers: { 'content-type': 'application/json' }
@@ -39,7 +39,7 @@ function jsonError(body: unknown, status = 400): Response {
 describe('cloudflare-api > createTunnel', () => {
   it('POSTs to /accounts/:id/cfd_tunnel with config_src and metadata', async () => {
     const fetcher = vi.fn(async () =>
-      jsonOk({ id: 'tun-uuid', token: 'OPAQUE_TOKEN', account_tag: 'acct' })
+      jsonOK({ id: 'tun-uuid', token: 'OPAQUE_TOKEN', account_tag: 'acct' })
     );
     const result = await createTunnel({
       token: 'tok',
@@ -116,12 +116,62 @@ describe('cloudflare-api > createTunnel', () => {
       })
     ).rejects.toThrow(/ECONNRESET/);
   });
+
+  it('sends sandboxId as a tag and retries without tags on enterprise-only error', async () => {
+    // Tags are an enterprise feature on Cloudflare; non-enterprise
+    // accounts reject the request. Verify that the SDK attempts the
+    // tagged create first, then retries cleanly without tags on the
+    // documented "requires enterprise" failure code.
+    let attempts = 0;
+    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+      attempts += 1;
+      const body = JSON.parse(String(init?.body)) as {
+        tags?: unknown;
+      };
+      if (attempts === 1) {
+        // First attempt carries tags.
+        expect(body.tags).toEqual(['sandboxId:sb1']);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            errors: [
+              {
+                code: 1101,
+                message: 'tags are only available on Enterprise plans'
+              }
+            ]
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' }
+          }
+        );
+      }
+      // Retry must strip tags.
+      expect(body.tags).toBeUndefined();
+      return jsonOK({ id: 'tun-uuid', token: 'OPAQUE_TOKEN' });
+    });
+    const result = await createTunnel({
+      token: 'tok',
+      accountId: 'acct-id',
+      tunnelName: 'sandbox-sb1-api',
+      metadata: {
+        sandboxId: 'sb1',
+        createdBy: 'sandbox-sdk',
+        name: 'api',
+        port: 8080
+      },
+      fetcher
+    });
+    expect(result.id).toBe('tun-uuid');
+    expect(attempts).toBe(2);
+  });
 });
 
 describe('cloudflare-api > findTunnelByName', () => {
   it('returns the first non-deleted tunnel with a matching name', async () => {
     const fetcher = vi.fn(async () =>
-      jsonOk([
+      jsonOK([
         {
           id: 'old',
           name: 'sandbox-sb-api',
@@ -148,7 +198,7 @@ describe('cloudflare-api > findTunnelByName', () => {
   });
 
   it('returns null when no tunnel matches', async () => {
-    const fetcher = vi.fn(async () => jsonOk([]));
+    const fetcher = vi.fn(async () => jsonOK([]));
     const found = await findTunnelByName({
       token: 'tok',
       accountId: 'acct',
@@ -160,7 +210,7 @@ describe('cloudflare-api > findTunnelByName', () => {
 
   it('treats all-deleted matches as null', async () => {
     const fetcher = vi.fn(async () =>
-      jsonOk([{ id: 't', name: 'x', deleted_at: '2026-01-01T00:00:00Z' }])
+      jsonOK([{ id: 't', name: 'x', deleted_at: '2026-01-01T00:00:00Z' }])
     );
     const found = await findTunnelByName({
       token: 'tok',
@@ -179,7 +229,7 @@ describe('cloudflare-api > findTunnelByName', () => {
     // reconciliation uses it — so when expectedSandboxId is passed and
     // the metadata disagrees, refuse to claim the tunnel.
     const fetcher = vi.fn(async () =>
-      jsonOk([
+      jsonOK([
         {
           id: 'foreign',
           name: 'sandbox-sb-api',
@@ -200,7 +250,7 @@ describe('cloudflare-api > findTunnelByName', () => {
 
   it('returns the tunnel when metadata.sandboxId matches expectedSandboxId', async () => {
     const fetcher = vi.fn(async () =>
-      jsonOk([
+      jsonOK([
         {
           id: 'ours',
           name: 'sandbox-sb-api',
@@ -222,7 +272,7 @@ describe('cloudflare-api > findTunnelByName', () => {
 
 describe('cloudflare-api > deleteTunnel', () => {
   it('DELETEs the tunnel resource and resolves on 200', async () => {
-    const fetcher = vi.fn(async () => jsonOk({ id: 'tun-uuid' }));
+    const fetcher = vi.fn(async () => jsonOK({ id: 'tun-uuid' }));
     await deleteTunnel({
       token: 'tok',
       accountId: 'acct',
@@ -271,7 +321,7 @@ describe('cloudflare-api > deleteTunnel', () => {
 describe('cloudflare-api > getZoneName', () => {
   it('returns the zone name for a given zone id', async () => {
     const fetcher = vi.fn(async () =>
-      jsonOk({ id: 'zone-id', name: 'example.com' })
+      jsonOK({ id: 'zone-id', name: 'example.com' })
     );
     const name = await getZoneName({
       token: 'tok',
@@ -308,9 +358,9 @@ describe('cloudflare-api > upsertCNAME', () => {
     const fetcher = vi
       .fn()
       // list -> empty
-      .mockResolvedValueOnce(jsonOk([]))
+      .mockResolvedValueOnce(jsonOK([]))
       // create -> ok
-      .mockResolvedValueOnce(jsonOk({ id: 'dns-id' }));
+      .mockResolvedValueOnce(jsonOK({ id: 'dns-id' }));
     const result = await upsertCNAME({ ...baseArgs, fetcher });
     expect(result.recordId).toBe('dns-id');
     expect(result.reused).toBe(false);
@@ -336,9 +386,48 @@ describe('cloudflare-api > upsertCNAME', () => {
     expect(body.comment).toBe('sandbox-sb1');
   });
 
+  it('sends sandboxId as a DNS tag and retries without tags on enterprise-only error', async () => {
+    let attempts = 0;
+    const fetcher = vi.fn(async (_url, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') return jsonOK([]); // list
+      attempts += 1;
+      const body = JSON.parse(String(init?.body)) as { tags?: unknown };
+      if (attempts === 1) {
+        expect(body.tags).toEqual(['sandboxId:sb1']);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            errors: [
+              {
+                code: 1101,
+                message: 'tags are only available on Enterprise plans'
+              }
+            ]
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' }
+          }
+        );
+      }
+      expect(body.tags).toBeUndefined();
+      return jsonOK({ id: 'dns-id' });
+    });
+    const result = await upsertCNAME({
+      ...baseArgs,
+      sandboxId: 'sb1',
+      fetcher
+    });
+    expect(result.recordId).toBe('dns-id');
+    expect(result.reused).toBe(false);
+    // 1 list + 2 create attempts.
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it('reuses an existing record when content + comment match', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(
-      jsonOk([
+      jsonOK([
         {
           id: 'dns-id',
           type: 'CNAME',
@@ -363,7 +452,7 @@ describe('cloudflare-api > upsertCNAME', () => {
     // is free text that operators commonly edit through the dashboard,
     // so treating it as a structural key was too fragile.
     const fetcher = vi.fn().mockResolvedValueOnce(
-      jsonOk([
+      jsonOK([
         {
           id: 'dns-id',
           type: 'CNAME',
@@ -383,7 +472,7 @@ describe('cloudflare-api > upsertCNAME', () => {
 
   it('throws when an existing record points to different content', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(
-      jsonOk([
+      jsonOK([
         {
           id: 'other-dns',
           type: 'CNAME',
@@ -404,7 +493,7 @@ describe('cloudflare-api > upsertCNAME', () => {
 
 describe('cloudflare-api > deleteDNSRecord', () => {
   it('DELETEs the dns record id', async () => {
-    const fetcher = vi.fn(async () => jsonOk({ id: 'dns-id' }));
+    const fetcher = vi.fn(async () => jsonOK({ id: 'dns-id' }));
     await deleteDNSRecord({
       token: 'tok',
       zoneId: 'zone-id',
@@ -435,7 +524,7 @@ describe('cloudflare-api > deleteDNSRecord', () => {
 
 describe('cloudflare-api > getTunnelToken', () => {
   it('returns the token string from the API envelope', async () => {
-    const fetcher = vi.fn(async () => jsonOk('OPAQUE_TOKEN_VALUE'));
+    const fetcher = vi.fn(async () => jsonOK('OPAQUE_TOKEN_VALUE'));
     const token = await getTunnelToken({
       token: 'tok',
       accountId: 'acct',
@@ -450,7 +539,7 @@ describe('cloudflare-api > getTunnelToken', () => {
   });
 
   it('throws when the envelope is missing a string token', async () => {
-    const fetcher = vi.fn(async () => jsonOk(null));
+    const fetcher = vi.fn(async () => jsonOK(null));
     await expect(
       getTunnelToken({
         token: 'tok',

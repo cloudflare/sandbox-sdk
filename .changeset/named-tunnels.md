@@ -8,5 +8,3 @@ Add named-tunnel support to `sandbox.tunnels.get(port, { name })`. Named tunnels
 const tunnel = await sandbox.tunnels.get(8080, { name: 'app' });
 console.log(tunnel.url); // → https://app.example.com
 ```
-
-Requires `CLOUDFLARE_API_TOKEN` to be set as a Worker secret with `Account:Cloudflare Tunnel:Edit`, `Zone:DNS:Edit`, and — for account-owned (`cfat-`) tokens — `Account:Account Settings:Read`. `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_ZONE_ID` are inferred from the token when it is scoped to a single account/zone; set them explicitly to disambiguate. `CLOUDFLARE_TUNNEL_ACCOUNT_ID` overrides the account id for tunnel provisioning only.

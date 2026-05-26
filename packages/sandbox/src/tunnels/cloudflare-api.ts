@@ -19,7 +19,7 @@
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 
 /** Cloudflare's standard envelope around every response. */
-interface CloudflareEnvelope<T> {
+interface CloudflareResponse<T> {
   success: boolean;
   result?: T;
   errors?: Array<{ code?: number; message?: string }>;
@@ -111,9 +111,9 @@ async function cfRequest<T>(
     return undefined;
   }
 
-  let envelope: CloudflareEnvelope<T>;
+  let envelope: CloudflareResponse<T>;
   try {
-    envelope = (await response.json()) as CloudflareEnvelope<T>;
+    envelope = (await response.json()) as CloudflareResponse<T>;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -132,6 +132,63 @@ async function cfRequest<T>(
   }
 
   return envelope.result;
+}
+
+/**
+ * Heuristic for the "tags are an Enterprise-only feature" error class.
+ * Cloudflare's documented codes shift over time and the API also bounces
+ * with HTTP 403 + a free-text message; match by message substring to
+ * stay robust across both shapes. Used by the create-tunnel and
+ * create-DNS paths to fall back to an untagged request automatically.
+ */
+function isEnterpriseOnlyTagError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  if (!msg.includes('tag')) return false;
+  return (
+    msg.includes('enterprise') ||
+    msg.includes('not allowed') ||
+    msg.includes('not entitled') ||
+    msg.includes('not available') ||
+    msg.includes('not supported')
+  );
+}
+
+/**
+ * Build the `tags` field attached to created Cloudflare resources. The
+ * tag is `sandboxId:<id>`, the same key used in DNS comments / tunnel
+ * metadata; together they let an operator find every resource a given
+ * sandbox owns from the Cloudflare dashboard.
+ *
+ * Tags are an Enterprise-only feature. The wrapper `createWithTagFallback`
+ * automatically retries the request without tags on the documented
+ * "requires Enterprise" error so non-enterprise accounts succeed without
+ * any configuration.
+ */
+function buildSandboxTags(sandboxId: string | undefined): string[] | undefined {
+  if (!sandboxId) return undefined;
+  return [`sandboxId:${sandboxId}`];
+}
+
+/**
+ * Wrap a tagged-create request with an automatic tag-strip retry. The
+ * callback receives `tags`: pass it through to the request body as-is on
+ * the first call (`undefined` on the retry). The retry only fires for
+ * the Enterprise-only tag error class; any other failure surfaces
+ * verbatim.
+ */
+async function createWithTagFallback<T>(
+  sandboxId: string | undefined,
+  send: (tags: string[] | undefined) => Promise<T>
+): Promise<T> {
+  const tags = buildSandboxTags(sandboxId);
+  if (!tags) return send(undefined);
+  try {
+    return await send(tags);
+  } catch (err) {
+    if (!isEnterpriseOnlyTagError(err)) throw err;
+    return send(undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,20 +215,26 @@ export async function createTunnel(
   args: CreateTunnelArgs
 ): Promise<CreatedTunnel> {
   const fetcher = args.fetcher ?? fetch;
-  const result = await cfRequest<{ id: string; token: string }>(
-    `${API_BASE}/accounts/${encodeURIComponent(args.accountId)}/cfd_tunnel`,
-    args.token,
-    fetcher,
-    {
-      method: 'POST',
-      body: {
-        name: args.tunnelName,
-        // `cloudflare` lets cloudflared run with just --token, no local
-        // config file. The alternative `local` requires a YAML config.
-        config_src: 'cloudflare',
-        metadata: args.metadata
+  // Tags are an Enterprise feature; `createWithTagFallback` retries
+  // without the `tags` field on a documented Enterprise-only error so
+  // non-enterprise accounts still succeed.
+  const result = await createWithTagFallback(args.metadata.sandboxId, (tags) =>
+    cfRequest<{ id: string; token: string }>(
+      `${API_BASE}/accounts/${encodeURIComponent(args.accountId)}/cfd_tunnel`,
+      args.token,
+      fetcher,
+      {
+        method: 'POST',
+        body: {
+          name: args.tunnelName,
+          // `cloudflare` lets cloudflared run with just --token, no local
+          // config file. The alternative `local` requires a YAML config.
+          config_src: 'cloudflare',
+          metadata: args.metadata,
+          ...(tags ? { tags } : {})
+        }
       }
-    }
+    )
   );
   if (!result) {
     throw new Error('Cloudflare tunnel create returned no result body');
@@ -318,6 +381,13 @@ export interface UpsertCNAMEArgs extends BaseArgs {
   cnameTarget: string;
   /** `sandbox-<sandbox-id>` — used both for tagging and reuse matching. */
   comment: string;
+  /**
+   * Sandbox id used to build the `sandboxId:<id>` Cloudflare tag
+   * attached to the created DNS record. Tags are an Enterprise-only
+   * feature; the create call falls back to an untagged record on the
+   * documented "requires Enterprise" error. Omit to skip tagging.
+   */
+  sandboxId?: string;
 }
 
 export interface UpsertCNAMEResult {
@@ -365,20 +435,23 @@ export async function upsertCNAME(
     );
   }
 
-  const createResult = await cfRequest<{ id: string }>(
-    `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records`,
-    args.token,
-    fetcher,
-    {
-      method: 'POST',
-      body: {
-        type: 'CNAME',
-        name: args.hostname,
-        content: args.cnameTarget,
-        proxied: true,
-        comment: args.comment
+  const createResult = await createWithTagFallback(args.sandboxId, (tags) =>
+    cfRequest<{ id: string }>(
+      `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records`,
+      args.token,
+      fetcher,
+      {
+        method: 'POST',
+        body: {
+          type: 'CNAME',
+          name: args.hostname,
+          content: args.cnameTarget,
+          proxied: true,
+          comment: args.comment,
+          ...(tags ? { tags } : {})
+        }
       }
-    }
+    )
   );
   if (!createResult) {
     throw new Error('Cloudflare DNS create returned no result body');
