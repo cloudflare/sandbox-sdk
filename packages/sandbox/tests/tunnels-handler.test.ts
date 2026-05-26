@@ -654,6 +654,39 @@ describe('tunnels handler > handleTunnelExit', () => {
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(final).toEqual({ '8080': info });
   });
+
+  it('logs an error canonical event when the storage transaction throws', async () => {
+    // Inject a storage shim whose transaction() rejects. Without proper
+    // try/catch around the canonical-log emit, the failure would escape
+    // the port-lock chain unobserved and no event would be logged.
+    const logger = makeLogger();
+    const failingStorage = {
+      get: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+      transaction: vi.fn().mockRejectedValue(new Error('boom'))
+    } as unknown as TunnelsStorage;
+    const { client } = makeClient();
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage: failingStorage,
+      logger
+    });
+
+    // The handler must surface the rejection to the caller so the
+    // port-lock chain and any awaiter see it — silently swallowing
+    // would hide the bug.
+    await expect(handleTunnelExit('quick-x', 8080, 0)).rejects.toThrow(/boom/);
+
+    // And a canonical event with outcome: 'error' must have been logged.
+    const errorCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const eventCall = errorCalls.find(([msg]) =>
+      String(msg).includes('tunnel.exit')
+    );
+    expect(eventCall).toBeDefined();
+  });
 });
 
 describe('TunnelsHandler public surface', () => {

@@ -629,31 +629,41 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
 
   const handleTunnelExit: TunnelExitHandler = async (id, port, exitCode) => {
     const startTime = Date.now();
-    await withPortLock(port, async () => {
-      await host.storage.transaction(async (txn) => {
-        const map = await readMap(txn);
-        const existing = map[port.toString()];
-        // Defensive: only clear if storage still references this exact
-        // tunnel id. Without this check, a sequence like "old
-        // cloudflared dies → new get() spawns fresh → old callback
-        // fires" would clobber the new record.
-        if (existing?.id === id) {
-          delete map[port.toString()];
-          await txn.put(STORAGE_KEY, map);
-          const meta = await readMetaMap(txn);
-          delete meta[port.toString()];
-          await txn.put(META_STORAGE_KEY, meta);
-        }
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    try {
+      await withPortLock(port, async () => {
+        await host.storage.transaction(async (txn) => {
+          const map = await readMap(txn);
+          const existing = map[port.toString()];
+          // Defensive: only clear if storage still references this exact
+          // tunnel id. Without this check, a sequence like "old
+          // cloudflared dies → new get() spawns fresh → old callback
+          // fires" would clobber the new record.
+          if (existing?.id === id) {
+            delete map[port.toString()];
+            await txn.put(STORAGE_KEY, map);
+            const meta = await readMetaMap(txn);
+            delete meta[port.toString()];
+            await txn.put(META_STORAGE_KEY, meta);
+          }
+        });
       });
+      outcome = 'success';
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
       logCanonicalEvent(host.logger, {
         event: 'tunnel.exit',
-        outcome: 'success',
+        outcome,
         port,
         tunnelId: id,
         exitCode: exitCode ?? undefined,
-        durationMs: Date.now() - startTime
+        durationMs: Date.now() - startTime,
+        error: caughtError
       });
-    });
+    }
   };
 
   /**
