@@ -225,12 +225,26 @@ async function readMetaMap(storage: TunnelsStorageTxn): Promise<TunnelMetaMap> {
  * Stable hash of `options`. Empty/undefined options collapse to the same
  * hash so `get(port)`, `get(port, {})`, and `get(port, { name: undefined })`
  * all hit the same cache entry. Named tunnels hash on `name` alone (the
- * only option today); future fields will need to be added to this
- * canonical form to be considered when comparing cached vs requested.
+ * only option today).
+ *
+ * The `v1:` prefix exists so a future addition of a second option (e.g.
+ * `subdomain`) can change the canonical form without colliding with an
+ * older record's hash. Comparison goes through `optionsHashesEqual`, which
+ * normalises legacy unversioned hashes (`quick`, `named:foo`) to their v1
+ * form before equality, so upgrading does not invalidate cached records.
  */
 function computeOptionsHash(options?: TunnelOptions): string {
-  if (!options || !options.name) return 'quick';
-  return `named:${options.name}`;
+  if (!options || !options.name) return 'v1:quick';
+  return `v1:named:${options.name}`;
+}
+
+/** Strip the optional `v1:` prefix so legacy hashes compare equal. */
+function normaliseHash(hash: string): string {
+  return hash.startsWith('v1:') ? hash.slice(3) : hash;
+}
+
+function optionsHashesEqual(a: string, b: string): boolean {
+  return normaliseHash(a) === normaliseHash(b);
 }
 
 /**
@@ -323,8 +337,9 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           // any port whose meta entry was lost, fall back to comparing
           // by discriminator alone so cache hits keep working.
           const effectiveHash =
-            cachedHash ?? (existing.name ? `named:${existing.name}` : 'quick');
-          if (effectiveHash !== requestedHash) {
+            cachedHash ??
+            (existing.name ? `v1:named:${existing.name}` : 'v1:quick');
+          if (!optionsHashesEqual(effectiveHash, requestedHash)) {
             throw new Error(
               `Tunnel on port ${port} was created with different options. ` +
                 `Call destroy(${port}) before changing tunnel options.`
@@ -404,7 +419,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       nextMap[port.toString()] = spawned;
       await txn.put(STORAGE_KEY, nextMap);
       const nextMeta = await readMetaMap(txn);
-      nextMeta[port.toString()] = { optionsHash: 'quick' };
+      nextMeta[port.toString()] = { optionsHash: 'v1:quick' };
       await txn.put(META_STORAGE_KEY, nextMeta);
     });
     return spawned;
@@ -812,7 +827,7 @@ export async function pruneTunnelsForRestart(
       if (info.name) {
         nextMap[portKey] = info;
         nextMeta[portKey] = {
-          ...(meta[portKey] ?? { optionsHash: `named:${info.name}` }),
+          ...(meta[portKey] ?? { optionsHash: `v1:named:${info.name}` }),
           needsRespawn: true
         };
       }

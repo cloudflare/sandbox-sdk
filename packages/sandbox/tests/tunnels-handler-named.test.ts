@@ -474,6 +474,44 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
     // Only one container call.
     expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
   });
+
+  it('treats legacy unversioned hashes as equivalent to v1: hashes on cache hit', async () => {
+    // Forward compat: an existing deploy may have stored optionsHash
+    // 'quick' or 'named:foo' (no version prefix). After the format
+    // bumps to 'v1:quick' / 'v1:named:foo', the cache-hit comparison
+    // must treat the two as the same to avoid flipping every live
+    // tunnel into the "different options" error path on upgrade.
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client, storage } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    // Seed storage with a legacy (unversioned) named-tunnel record.
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: '11111111-2222-3333-4444-555555555555',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        url: 'https://api.example.com',
+        createdAt: '2026-05-01T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'named:api',
+        dnsRecordId: 'kept-dns-id',
+        accountId: 'ACCT',
+        zoneId: 'zone-id'
+      }
+    });
+
+    const info = await tunnels.get(8080, { name: 'api' });
+    expect(info.hostname).toBe('api.example.com');
+    // Cache hit: no container call, no CF API calls.
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(cf.fetcher).not.toHaveBeenCalled();
+  });
 });
 
 describe('tunnels handler > get(port, { name }) — retry / reuse', () => {

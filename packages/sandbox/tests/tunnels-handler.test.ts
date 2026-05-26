@@ -144,7 +144,7 @@ describe('tunnels handler > get', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
     expect(metaPut?.[1]).toEqual({
-      '8080': { optionsHash: 'quick' }
+      '8080': { optionsHash: 'v1:quick' }
     });
   });
 
