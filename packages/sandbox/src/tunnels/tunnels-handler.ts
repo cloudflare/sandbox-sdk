@@ -193,24 +193,32 @@ function shortId(): string {
 }
 
 /**
- * Match the structured `TUNNEL_NOT_FOUND` code emitted by the container's
- * `TunnelService.destroyTunnel`. Translated SandboxErrors expose the code
- * both as a top-level `code` field and on the nested `errorResponse.code`;
- * check both shapes for forward-compatibility.
+ * Match a structured SandboxError code anywhere on the error — translated
+ * SandboxErrors expose the code both as a top-level `code` field and on
+ * the nested `errorResponse.code`. Used for the few error codes the SDK
+ * recognises and recovers from (TUNNEL_NOT_FOUND, TUNNEL_ALREADY_RUNNING).
  *
  * Previous versions matched by substring on `error.message`, which
  * false-positived on any error whose message merely quoted the literal
- * `TUNNEL_NOT_FOUND` token.
+ * code token.
  */
-function isTunnelNotFoundError(error: unknown): boolean {
+function hasErrorCode(error: unknown, code: string): boolean {
   if (!error || typeof error !== 'object') return false;
   const e = error as {
     code?: unknown;
     errorResponse?: { code?: unknown };
   };
-  if (e.code === 'TUNNEL_NOT_FOUND') return true;
-  if (e.errorResponse?.code === 'TUNNEL_NOT_FOUND') return true;
+  if (e.code === code) return true;
+  if (e.errorResponse?.code === code) return true;
   return false;
+}
+
+function isTunnelNotFoundError(error: unknown): boolean {
+  return hasErrorCode(error, 'TUNNEL_NOT_FOUND');
+}
+
+function isTunnelAlreadyRunningError(error: unknown): boolean {
+  return hasErrorCode(error, 'TUNNEL_ALREADY_RUNNING');
 }
 
 async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {
@@ -407,22 +415,43 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
   /**
    * Provision a fresh quick tunnel and persist it. Caller holds the
    * per-port lock.
+   *
+   * Quick-tunnel ids are minted from a 32-bit random source. Collisions
+   * are astronomically unlikely, but if the container happens to already
+   * have one running under the freshly-minted id it rejects with
+   * TUNNEL_ALREADY_RUNNING. Mint a fresh id and try again rather than
+   * surfacing the confusing error — the retry budget caps the loop so a
+   * persistent failure still surfaces.
    */
   async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
-    const id = `quick-${shortId()}`;
-    const spawned = (await this.#host.client.tunnels.runQuickTunnel(
-      id,
-      port
-    )) as QuickTunnelInfo;
-    await this.#host.storage.transaction(async (txn) => {
-      const nextMap = await readMap(txn);
-      nextMap[port.toString()] = spawned;
-      await txn.put(STORAGE_KEY, nextMap);
-      const nextMeta = await readMetaMap(txn);
-      nextMeta[port.toString()] = { optionsHash: 'v1:quick' };
-      await txn.put(META_STORAGE_KEY, nextMeta);
-    });
-    return spawned;
+    const MAX_ID_RETRIES = 3;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
+      const id = `quick-${shortId()}`;
+      try {
+        const spawned = (await this.#host.client.tunnels.runQuickTunnel(
+          id,
+          port
+        )) as QuickTunnelInfo;
+        await this.#host.storage.transaction(async (txn) => {
+          const nextMap = await readMap(txn);
+          nextMap[port.toString()] = spawned;
+          await txn.put(STORAGE_KEY, nextMap);
+          const nextMeta = await readMetaMap(txn);
+          nextMeta[port.toString()] = { optionsHash: 'v1:quick' };
+          await txn.put(META_STORAGE_KEY, nextMeta);
+        });
+        return spawned;
+      } catch (err) {
+        if (!isTunnelAlreadyRunningError(err)) throw err;
+        // Collision: try again with a fresh id.
+        lastError = err;
+      }
+    }
+    // Exhausted the retry budget. Surface the last collision error so the
+    // caller sees something diagnosable; in practice this branch is
+    // unreachable given the 32-bit id space and per-sandbox tunnel count.
+    throw lastError ?? new Error('Failed to mint a unique quick-tunnel id');
   }
 
   /**

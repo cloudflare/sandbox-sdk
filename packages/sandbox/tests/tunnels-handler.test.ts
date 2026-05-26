@@ -148,6 +148,38 @@ describe('tunnels handler > get', () => {
     });
   });
 
+  it('retries with a fresh id when the container reports TUNNEL_ALREADY_RUNNING', async () => {
+    // shortId() picks a 32-bit random id, so collisions are vanishingly
+    // rare — but when they do happen, the container rejects the second
+    // spawn with TUNNEL_ALREADY_RUNNING. Without a retry, the user-facing
+    // get() call rejects with a confusing error for a transient event the
+    // SDK can recover from on its own.
+    const { client, handler } = makeHandler();
+    let attempts = 0;
+    const collision = Object.assign(
+      new Error('Tunnel quick-xxxx is already running'),
+      {
+        code: 'TUNNEL_ALREADY_RUNNING',
+        errorResponse: { code: 'TUNNEL_ALREADY_RUNNING' }
+      }
+    );
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => {
+        attempts += 1;
+        if (attempts === 1) throw collision;
+        return makeRecord({ id, port });
+      }
+    );
+
+    const info = await handler.get(8080);
+    expect(attempts).toBe(2);
+    // Two distinct ids — the retry must mint a fresh one, not reuse.
+    const firstId = client.tunnels.runQuickTunnel.mock.calls[0][0];
+    const secondId = client.tunnels.runQuickTunnel.mock.calls[1][0];
+    expect(firstId).not.toBe(secondId);
+    expect(info.id).toBe(secondId);
+  });
+
   it('cache hit: returns the stored record without any container RPC', async () => {
     const record = makeRecord({ id: 'quick-cached0000cached', port: 8080 });
     const { client } = makeClient();
