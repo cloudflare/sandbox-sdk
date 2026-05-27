@@ -747,17 +747,44 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
         await host.storage.transaction(async (txn) => {
           const map = await readMap(txn);
           const existing = map[port.toString()];
-          // Defensive: only clear if storage still references this exact
+          // Defensive: only act if storage still references this exact
           // tunnel id. Without this check, a sequence like "old
           // cloudflared dies → new get() spawns fresh → old callback
           // fires" would clobber the new record.
-          if (existing?.id === id) {
-            delete map[port.toString()];
-            await txn.put(STORAGE_KEY, map);
+          if (existing?.id !== id) return;
+
+          if (existing.name) {
+            // Named tunnel. The Cloudflare-side tunnel and DNS record
+            // are still live; preserving meta (especially `dnsRecordId`,
+            // `accountId`, `zoneId`) is what lets `destroy(port)` clean
+            // them up later. Mark `needsRespawn` so the next
+            // `get(port, { name })` cache hit falls through to the
+            // existing reuse path — same shape as the container-restart
+            // recovery in `pruneTunnelsForRestart`. We deliberately do
+            // not auto-respawn here: cloudflared exits can be caused by
+            // permanent failures (token revoked, tunnel deleted out of
+            // band) that would crash-loop without a backoff/circuit
+            // breaker, and the symmetric "wait for next get()" is the
+            // same contract container restart already offers.
             const meta = await readMetaMap(txn);
-            delete meta[port.toString()];
+            meta[port.toString()] = {
+              ...meta[port.toString()],
+              optionsHash:
+                meta[port.toString()]?.optionsHash ??
+                `v1:named:${existing.name}`,
+              needsRespawn: true
+            };
             await txn.put(META_STORAGE_KEY, meta);
+            return;
           }
+
+          // Quick tunnel: the `*.trycloudflare.com` URL died with the
+          // process and cannot be recovered. Drop both entries.
+          delete map[port.toString()];
+          await txn.put(STORAGE_KEY, map);
+          const meta = await readMetaMap(txn);
+          delete meta[port.toString()];
+          await txn.put(META_STORAGE_KEY, meta);
         });
       });
       outcome = 'success';

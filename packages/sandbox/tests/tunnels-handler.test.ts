@@ -636,6 +636,82 @@ describe('tunnels handler > handleTunnelExit', () => {
     await expect(tunnels.list()).resolves.toEqual([]);
   });
 
+  it('preserves named-tunnel meta and marks needsRespawn on unsolicited exit', async () => {
+    // Quick tunnels can be wiped outright: the *.trycloudflare.com URL
+    // dies with cloudflared. Named tunnels are different — the CF-side
+    // tunnel and DNS record are still live, and the SDK needs `dnsRecordId`
+    // (plus `accountId`/`zoneId` for the drift-aware destroy path) to
+    // clean them up later. So mirror `pruneTunnelsForRestart`: keep the
+    // record + meta, mark `needsRespawn: true`. The next get(port, { name })
+    // takes the existing reuse path and respawns cloudflared.
+    const record: TunnelInfo = {
+      id: 'tunnel-uuid-named',
+      port: 8080,
+      name: 'api',
+      hostname: 'api.example.com',
+      url: 'https://api.example.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    };
+    const { client } = makeClient();
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': record
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'kept-dns-id',
+        accountId: 'acct-A',
+        zoneId: 'zone-A'
+      }
+    });
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await handleTunnelExit('tunnel-uuid-named', 8080, 0);
+
+    // The tunnel record is left in place so list() still surfaces the
+    // (now-detached) hostname — the next get() will respawn cloudflared.
+    const tunnels = (await storage.get<Record<string, TunnelInfo>>(
+      'tunnels'
+    )) as Record<string, TunnelInfo>;
+    expect(tunnels['8080']).toBeDefined();
+    expect(tunnels['8080'].id).toBe('tunnel-uuid-named');
+
+    // Meta is preserved verbatim, with `needsRespawn` flipped on so the
+    // next get(port, { name }) cache hit falls through to provision.
+    const meta = (await storage.get<
+      Record<
+        string,
+        {
+          optionsHash: string;
+          dnsRecordId?: string;
+          accountId?: string;
+          zoneId?: string;
+          needsRespawn?: boolean;
+        }
+      >
+    >('tunnels:meta')) as Record<
+      string,
+      {
+        optionsHash: string;
+        dnsRecordId?: string;
+        accountId?: string;
+        zoneId?: string;
+        needsRespawn?: boolean;
+      }
+    >;
+    expect(meta['8080']?.dnsRecordId).toBe('kept-dns-id');
+    expect(meta['8080']?.accountId).toBe('acct-A');
+    expect(meta['8080']?.zoneId).toBe('zone-A');
+    expect(meta['8080']?.needsRespawn).toBe(true);
+  });
+
   it('is a no-op when the stored id has been replaced (id-mismatch safety net)', async () => {
     const newer = makeRecord({ id: 'quick-newer000newer00', port: 8080 });
     const { client } = makeClient();
