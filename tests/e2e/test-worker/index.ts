@@ -218,6 +218,11 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
+    const enableDefaultSessionHeader = request.headers.get(
+      'X-Sandbox-Enable-Default-Session'
+    );
+    const enableDefaultSession =
+      enableDefaultSessionHeader === 'false' ? false : undefined;
 
     // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
@@ -239,7 +244,8 @@ export default {
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
       transport,
-      ...(sleepAfter !== null && { sleepAfter })
+      ...(sleepAfter !== null && { sleepAfter }),
+      ...(enableDefaultSession !== undefined && { enableDefaultSession })
     });
 
     // Get session ID from header (optional)
@@ -518,8 +524,8 @@ console.log('Terminal server on port ' + port);
       }
 
       if (url.pathname === '/api/state' && request.method === 'GET') {
-        const state = await sandbox.getState();
-        return new Response(JSON.stringify(state), {
+        const result = await sandbox.getState();
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
