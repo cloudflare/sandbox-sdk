@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>S3 Sandbox Terminal</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #f78166;
+        --accent-hover: #ffa07a;
+        --dim: #7d8590;
+        --panel: #161b22;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+          Roboto, sans-serif;
+      }
+      #app {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Landing overlay */
+      #landing {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        text-align: center;
+        padding: 2rem;
+      }
+      #landing h1 {
+        font-size: 2rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      #landing p {
+        margin: 0;
+        max-width: 30rem;
+        color: var(--dim);
+        line-height: 1.5;
+      }
+      #landing code {
+        background: var(--panel);
+        padding: 0.1em 0.4em;
+        border-radius: 4px;
+        font-size: 0.9em;
+      }
+      #start-btn {
+        background: var(--accent);
+        border: none;
+        color: #0d1117;
+        font-weight: 600;
+        font-size: 1rem;
+        padding: 0.75rem 2rem;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      #start-btn:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      #start-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      #status {
+        font-size: 0.85rem;
+        color: var(--dim);
+        min-height: 1.2em;
+      }
+      #status.error { color: #f85149; }
+
+      /* Terminal view */
+      #term-view {
+        flex: 1;
+        display: none;
+        flex-direction: column;
+      }
+      #term-view.active { display: flex; }
+      #term-header {
+        background: var(--panel);
+        padding: 0.4rem 0.75rem;
+        font-size: 0.8rem;
+        color: var(--dim);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #21262d;
+      }
+      #term-header strong { color: var(--fg); }
+      #terminal {
+        flex: 1;
+        padding: 0.5rem;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      #terminal .xterm { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Landing screen with Start button -->
+      <div id="landing">
+        <h1>S3 Sandbox Terminal</h1>
+        <p>
+          Click <strong>Start</strong> to spin up a fresh sandbox container,
+          mount the configured S3 bucket at <code>/mnt/s3</code>, and drop you
+          into an interactive shell. Type <code>exit</code> to close the
+          session and the bucket will be unmounted.
+        </p>
+        <button id="start-btn">Start</button>
+        <div id="status"></div>
+      </div>
+
+      <!-- Terminal view -->
+      <div id="term-view">
+        <div id="term-header">
+          <span><strong>S3 Sandbox</strong> &mdash; <span id="term-meta"></span></span>
+          <span id="term-state">connecting…</span>
+        </div>
+        <div id="terminal"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+      import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
+
+      const $ = (id) => document.getElementById(id);
+      const landing = $('landing');
+      const termView = $('term-view');
+      const startBtn = $('start-btn');
+      const status = $('status');
+      const termMeta = $('term-meta');
+      const termState = $('term-state');
+
+      function setStatus(text, isError = false) {
+        status.textContent = text;
+        status.classList.toggle('error', isError);
+      }
+
+      function showLanding() {
+        landing.style.display = 'flex';
+        termView.classList.remove('active');
+        startBtn.disabled = false;
+        startBtn.textContent = 'Start';
+      }
+
+      function showTerminal() {
+        landing.style.display = 'none';
+        termView.classList.add('active');
+      }
+
+      /**
+       * Drive a single session: create sandbox, open WebSocket, render terminal,
+       * clean up on exit. Returns a Promise that resolves when the session ends.
+       */
+      async function runSession() {
+        setStatus('Provisioning sandbox & mounting bucket…');
+        const res = await fetch('/api/session', { method: 'POST' });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Failed to create session (${res.status}): ${body}`);
+        }
+        const { sandboxId } = await res.json();
+
+        termMeta.textContent = sandboxId;
+        termState.textContent = 'connecting…';
+        showTerminal();
+
+        // xterm setup
+        const term = new Terminal({
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+          fontSize: 13,
+          cursorBlink: true,
+          theme: {
+            background: '#0d1117',
+            foreground: '#e6edf3',
+            cursor: '#f78166',
+          },
+        });
+        const fit = new FitAddon();
+        term.loadAddon(fit);
+        term.open($('terminal'));
+        fit.fit();
+
+        // Connect WebSocket to the PTY proxy
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsURL = `${wsProto}//${location.host}/ws/terminal/${sandboxId}`;
+        const ws = new WebSocket(wsURL);
+        ws.binaryType = 'arraybuffer';
+
+        const encoder = new TextEncoder();
+        let ready = false;
+
+        // Forward terminal input to the PTY
+        const dataDisp = term.onData((d) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(encoder.encode(d));
+          }
+        });
+
+        const sendResize = () => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'resize',
+              cols: term.cols,
+              rows: term.rows,
+            }));
+          }
+        };
+        const resizeDisp = term.onResize(sendResize);
+
+        // Re-fit on window resize
+        const onWindowResize = () => fit.fit();
+        window.addEventListener('resize', onWindowResize);
+
+        // Wait for the session to end
+        await new Promise((resolve) => {
+          ws.addEventListener('message', (ev) => {
+            if (ev.data instanceof ArrayBuffer) {
+              term.write(new Uint8Array(ev.data));
+              return;
+            }
+            // Control messages are JSON strings
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'ready') {
+                ready = true;
+                termState.textContent = 'connected';
+                sendResize();
+                term.focus();
+              } else if (msg.type === 'exit') {
+                termState.textContent = `exited (${msg.code ?? '?'})`;
+                ws.close();
+                resolve();
+              } else if (msg.type === 'error') {
+                termState.textContent = `error: ${msg.message ?? 'unknown'}`;
+              }
+            } catch {
+              // ignore non-JSON strings
+            }
+          });
+          ws.addEventListener('close', () => {
+            if (!ready) termState.textContent = 'connection failed';
+            resolve();
+          });
+          ws.addEventListener('error', () => {
+            termState.textContent = 'connection error';
+          });
+        });
+
+        // Tear down xterm + listeners
+        dataDisp.dispose();
+        resizeDisp.dispose();
+        window.removeEventListener('resize', onWindowResize);
+        term.dispose();
+
+        // Best-effort cleanup: unmount the bucket. The DO will be evicted
+        // shortly after; this just flushes pending writes.
+        try {
+          await fetch(`/api/session/${sandboxId}/cleanup`, { method: 'POST' });
+        } catch {
+          // ignore — cleanup is best-effort
+        }
+      }
+
+      startBtn.addEventListener('click', async () => {
+        startBtn.disabled = true;
+        startBtn.textContent = 'Starting…';
+        setStatus('');
+        try {
+          await runSession();
+          setStatus('Session ended.');
+        } catch (err) {
+          console.error(err);
+          setStatus(err.message ?? String(err), true);
+        } finally {
+          showLanding();
+        }
+      });
+    </script>
+  </body>
+</html>

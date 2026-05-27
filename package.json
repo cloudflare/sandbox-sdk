@@ -63,12 +63,12 @@
     "sherif": "^1.9.0",
     "tsdown": "^0.16.7",
     "tsx": "^4.20.6",
-    "turbo": "^2.6.1",
+    "turbo": "^2.9.14",
     "typescript": "^5.9.3",
     "vite": "^7.3.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.76.0",
-    "ws": "^8.18.3"
+    "ws": "^8.20.1"
   },
   "private": true,
   "packageManager": "npm@11.6.4"

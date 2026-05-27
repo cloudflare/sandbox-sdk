@@ -18,6 +18,8 @@ export type {
   DesktopMouseUpRequest,
   DesktopProcessHealth,
   DesktopScreenSize,
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
   DesktopScreenshotRegion,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
@@ -116,14 +118,17 @@ export type {
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
+  SandboxControlCallback,
   SandboxDesktopAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTunnelsAPI,
   SandboxUtilsAPI,
-  SandboxWatchAPI
+  SandboxWatchAPI,
+  TunnelInfo
 } from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
@@ -195,6 +200,7 @@ export type {
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
+  R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
   RemoteMountBucketOptions,

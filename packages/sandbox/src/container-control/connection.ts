@@ -47,6 +47,25 @@ export interface ContainerControlConnectionOptions {
    * `WebSocketTransport`. Set to 0 to disable retries.
    */
   retryTimeoutMs?: number;
+  /**
+   * Optional `localMain` exposed to the container side of the capnweb
+   * session. The container reaches it via
+   * `session.getRemoteMain()` and uses it for control-plane callbacks
+   * (e.g. notifying the DO when a tunnel's cloudflared process has
+   * exited). When omitted, the container sees an empty remote main.
+   */
+  localMain?: any;
+  /**
+   * Invoked when an active WebSocket transitions to closed/errored.
+   * Fired at most once per successful connection from the WS event
+   * handlers in `doConnect`. Gives owners a synchronous teardown
+   * signal so recovery doesn't depend on a periodic poller running
+   * inside what may be an idle isolate.
+   *
+   * Not fired for `doConnect` failures (the rejected `connect()`
+   * promise is the signal in that case) nor for `disconnect()`.
+   */
+  onClose?: () => void;
 }
 
 /**
@@ -67,15 +86,20 @@ export class ContainerControlConnection {
   private readonly port: number;
   private readonly logger: Logger;
   private retryTimeoutMs: number;
+  private readonly onClose: (() => void) | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
     this.port = options.port ?? 3000;
     this.logger = options.logger ?? createNoOpLogger();
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
+    this.onClose = options.onClose;
 
     this.transport = new DeferredTransport();
-    this.session = new RpcSession<SandboxAPI>(this.transport);
+    this.session = new RpcSession<SandboxAPI>(
+      this.transport,
+      options.localMain
+    );
     this.stub = this.session.getRemoteMain();
   }
 
@@ -128,6 +152,13 @@ export class ContainerControlConnection {
       // Stub may already be disposed
     }
     if (this.ws) {
+      // Unbind first so a late `close` / `error` event dispatched by
+      // the runtime after we've decided this connection is dead can't
+      // reach a successor that the owner installed in our place — see
+      // the WebSocket-listener-unbinding tests in container-connection
+      // for the race this prevents.
+      this.ws.removeEventListener('close', this.onWebSocketClose);
+      this.ws.removeEventListener('error', this.onWebSocketError);
       try {
         this.ws.close();
       } catch {
@@ -152,6 +183,47 @@ export class ContainerControlConnection {
   // Internal
   // -----------------------------------------------------------------------
 
+  /**
+   * Run the owner-provided `onClose` callback exactly once per call,
+   * swallowing any errors so a buggy listener can't keep the connection
+   * object in a half-torn-down state.
+   */
+  private fireOnClose(): void {
+    if (!this.onClose) return;
+    try {
+      this.onClose();
+    } catch (err) {
+      this.logger.warn('ContainerControlConnection onClose handler threw', {
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
+
+  /**
+   * WebSocket `close` listener. Defined as a bound arrow field so the
+   * same reference can be passed to both `addEventListener` and
+   * `removeEventListener` — a fresh anonymous lambda would silently
+   * fail to unbind.
+   */
+  private onWebSocketClose = (): void => {
+    const wasConnected = this.connected;
+    this.connected = false;
+    this.ws = null;
+    this.logger.debug('ContainerControlConnection WebSocket closed');
+    if (wasConnected) this.fireOnClose();
+  };
+
+  /**
+   * WebSocket `error` listener. Same field-form rationale as
+   * {@link onWebSocketClose}.
+   */
+  private onWebSocketError = (): void => {
+    const wasConnected = this.connected;
+    this.connected = false;
+    this.ws = null;
+    if (wasConnected) this.fireOnClose();
+  };
+
   private async doConnect(): Promise<void> {
     try {
       const response = await this.fetchUpgradeWithRetry();
@@ -172,16 +244,8 @@ export class ContainerControlConnection {
       // Workers WebSockets require explicit accept() before use
       (ws as unknown as { accept: () => void }).accept();
 
-      ws.addEventListener('close', () => {
-        this.connected = false;
-        this.ws = null;
-        this.logger.debug('ContainerControlConnection WebSocket closed');
-      });
-
-      ws.addEventListener('error', () => {
-        this.connected = false;
-        this.ws = null;
-      });
+      ws.addEventListener('close', this.onWebSocketClose);
+      ws.addEventListener('error', this.onWebSocketError);
 
       this.ws = ws;
       this.transport.activate(ws);

@@ -3,7 +3,8 @@ import type {
   PortCloseResult,
   PortExposeResult,
   PortListResult,
-  PortWatchRequest
+  PortWatchRequest,
+  SandboxPortsAPI
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
@@ -25,7 +26,7 @@ export interface UnexposePortRequest {
 /**
  * Client for port management and preview URL operations
  */
-export class PortClient extends BaseHttpClient {
+export class PortClient extends BaseHttpClient implements SandboxPortsAPI {
   /**
    * Expose a port and get a preview URL
    * @param port - Port number to expose

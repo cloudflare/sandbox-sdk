@@ -1,6 +1,6 @@
 import { Container } from '@cloudflare/containers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PortNotExposedError } from '../src/errors';
+import { PortNotExposedError, ProcessNotFoundError } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -1440,6 +1440,38 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('tunnels lifecycle storage', () => {
+    it('onStart() clears the tunnels storage key', async () => {
+      const deletedKeys: string[] = [];
+      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
+        deletedKeys.push(String(key));
+        return true;
+      });
+      // restoreExposedPorts reads portTokens; make it a no-op so the
+      // tunnels-clear branch is reachable.
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue(undefined as any);
+
+      await (sandbox as any).onStart();
+
+      expect(deletedKeys).toContain('tunnels');
+    });
+
+    it('destroy() deletes the tunnels storage key', async () => {
+      const deletedKeys: string[] = [];
+      vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
+        deletedKeys.push(String(key));
+        return true;
+      });
+      vi.spyOn(Container.prototype, 'destroy').mockImplementation(
+        async () => {}
+      );
+
+      await sandbox.destroy();
+
+      expect(deletedKeys).toContain('tunnels');
+    });
+  });
+
   describe('validatePortToken', () => {
     beforeEach(() => {
       // Spy on getExposedPorts so a regression that reintroduces the
@@ -2685,5 +2717,82 @@ describe('Sandbox - Automatic Session Management', () => {
         )
       ).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sandbox.getProcess() — behaviour across HTTP and RPC transports
+// ---------------------------------------------------------------------------
+
+describe('Sandbox.getProcess()', () => {
+  async function makeSandbox(transport: 'http' | 'rpc') {
+    const ctx = {
+      storage: {
+        get: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+        list: vi.fn().mockResolvedValue(new Map())
+      } as any,
+      blockConcurrencyWhile: vi
+        .fn()
+        .mockImplementation(<T>(cb: () => Promise<T>) => cb()),
+      waitUntil: vi.fn(),
+      id: { toString: () => 'test-id', equals: vi.fn(), name: 'test' } as any
+    };
+    const env = transport === 'rpc' ? { SANDBOX_TRANSPORT: 'rpc' } : {};
+    const sb = new Sandbox(ctx as any, env);
+    await vi.waitFor(() =>
+      expect(ctx.blockConcurrencyWhile).toHaveBeenCalled()
+    );
+    // For RPC transport, sb.client is a ContainerControlClient whose sub-stubs
+    // are capnweb Proxies that reject vi.spyOn. Replace the whole client with a
+    // plain mock object after construction — the individual tests fill in the
+    // methods they need.
+    if (transport === 'rpc') {
+      (sb as any).client = {
+        getTransportMode: () => 'rpc',
+        utils: {
+          createSession: vi
+            .fn()
+            .mockResolvedValue({
+              success: true,
+              id: 'default',
+              message: 'ok'
+            } as any)
+        },
+        processes: {}
+      };
+    } else {
+      vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'default',
+        message: 'ok'
+      } as any);
+    }
+    return sb;
+  }
+
+  it('HTTP: response with no process field returns null', async () => {
+    const sb = await makeSandbox('http');
+    vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
+      success: true,
+      process: undefined,
+      timestamp: ''
+    } as any);
+    expect(await sb.getProcess('x')).toBeNull();
+  });
+
+  it('RPC: thrown ProcessNotFoundError returns null', async () => {
+    const sb = await makeSandbox('rpc');
+    (sb.client.processes as any).getProcess = vi.fn().mockRejectedValue(
+      new ProcessNotFoundError({
+        code: 'PROCESS_NOT_FOUND',
+        message: 'Process x not found',
+        context: { processId: 'x' },
+        httpStatus: 404,
+        timestamp: ''
+      } as any)
+    );
+    expect(await sb.getProcess('x')).toBeNull();
   });
 });

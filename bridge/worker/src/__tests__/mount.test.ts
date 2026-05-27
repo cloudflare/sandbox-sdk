@@ -71,9 +71,9 @@ describe('POST /v1/sandbox/:id/mount', () => {
       options: { endpoint: 'https://s3.us-west-2.amazonaws.com' }
     });
 
-    const call = mockSandbox.mountBucket.mock.calls[0];
-    expect(call[2]).toEqual({ endpoint: 'https://s3.us-west-2.amazonaws.com' });
-    expect(call[2]).not.toHaveProperty('credentials');
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('my-bucket', '/mnt/data', {
+      endpoint: 'https://s3.us-west-2.amazonaws.com'
+    });
   });
 
   it('passes prefix option', async () => {
@@ -108,14 +108,83 @@ describe('POST /v1/sandbox/:id/mount', () => {
     });
   });
 
-  it('rejects missing bucket', async () => {
+  it('mounts a Worker R2 binding when binding is provided', async () => {
     const res = await mountRequest({
+      binding: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { readOnly: true, prefix: '/uploads/' }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      readOnly: true,
+      prefix: '/uploads/'
+    });
+  });
+
+  it('mounts a Worker R2 binding from explicit binding', async () => {
+    const res = await mountRequest({
+      binding: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { readOnly: true, prefix: '/uploads/' }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      readOnly: true,
+      prefix: '/uploads/'
+    });
+  });
+
+  it('rejects binding with endpoint', async () => {
+    const res = await mountRequest({
+      binding: 'MY_BUCKET',
       mountPath: '/mnt/data',
       options: { endpoint: 'https://acct.r2.cloudflarestorage.com' }
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('bucket');
+    expect(body.error).toContain('either binding or options.endpoint');
+  });
+
+  it('passes s3fsOptions for R2 binding mounts', async () => {
+    const res = await mountRequest({
+      binding: 'MY_BUCKET',
+      mountPath: '/mnt/data',
+      options: { s3fsOptions: ['nomultipart', 'nomixupload'] }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('MY_BUCKET', '/mnt/data', {
+      s3fsOptions: ['nomultipart', 'nomixupload']
+    });
+  });
+
+  it('passes s3fsOptions for remote mounts', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: ['nomultipart']
+      }
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockSandbox.mountBucket).toHaveBeenCalledWith('my-bucket', '/mnt/data', {
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      s3fsOptions: ['nomultipart']
+    });
+  });
+
+  it('rejects missing bucket and binding', async () => {
+    const res = await mountRequest({
+      mountPath: '/mnt/data',
+      options: {}
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('binding');
   });
 
   it('rejects missing mountPath', async () => {
@@ -149,15 +218,96 @@ describe('POST /v1/sandbox/:id/mount', () => {
     expect(body.error).toContain('options');
   });
 
-  it('rejects missing endpoint', async () => {
+  it('rejects array options', async () => {
     const res = await mountRequest({
       bucket: 'my-bucket',
       mountPath: '/mnt/data',
-      options: {}
+      options: [] as unknown as Record<string, unknown>
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('options');
+  });
+
+  it('rejects non-string endpoint values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: { endpoint: 123 }
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('endpoint');
+  });
+
+  it('rejects non-array s3fsOptions values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: 'nomultipart'
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('s3fsOptions');
+  });
+
+  it('rejects non-string s3fsOptions entries', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        s3fsOptions: ['nomultipart', 123]
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('s3fsOptions');
+  });
+
+  it('rejects non-boolean readOnly values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        readOnly: 'true'
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('readOnly');
+  });
+
+  it('rejects non-string prefix values', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        prefix: 123
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('prefix');
+  });
+
+  it('rejects malformed credentials', async () => {
+    const res = await mountRequest({
+      bucket: 'my-bucket',
+      mountPath: '/mnt/data',
+      options: {
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID' }
+      }
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('credentials');
   });
 
   it('rejects invalid JSON body', async () => {

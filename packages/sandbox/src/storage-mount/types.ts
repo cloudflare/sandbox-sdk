@@ -8,7 +8,7 @@ import type { LocalMountSyncManager } from '../local-mount-sync';
 /**
  * Internal tracking information for active mounts
  */
-export type MountInfo = FuseMountInfo | LocalSyncMountInfo;
+export type MountInfo = FuseMountInfo | LocalSyncMountInfo | R2BindingMountInfo;
 
 export interface FuseMountInfo {
   mountType: 'fuse';
@@ -27,3 +27,15 @@ export interface LocalSyncMountInfo {
   syncManager: LocalMountSyncManager;
   mounted: boolean;
 }
+
+export interface R2BindingMountInfo {
+  mountType: 'r2-egress';
+  bucket: string;
+  mountPath: string;
+  passwordFilePath: string;
+  mounted: boolean;
+  prefix?: string;
+  readOnly: boolean;
+}
+
+export type R2EgressMountInfo = R2BindingMountInfo;

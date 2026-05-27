@@ -3,6 +3,7 @@ import type {
   CreateBackupResponse,
   RestoreBackupRequest,
   RestoreBackupResponse,
+  SandboxBackupAPI,
   UploadPartsRequest,
   UploadPartsResponse
 } from '@repo/shared';
@@ -15,7 +16,7 @@ import { BaseHttpClient } from './base-client';
  * The container creates/extracts squashfs archives locally.
  * R2 upload/download is handled by the Sandbox DO, not by this client.
  */
-export class BackupClient extends BaseHttpClient {
+export class BackupClient extends BaseHttpClient implements SandboxBackupAPI {
   /**
    * Tell the container to create a squashfs archive from a directory.
    * @param dir - Directory to back up

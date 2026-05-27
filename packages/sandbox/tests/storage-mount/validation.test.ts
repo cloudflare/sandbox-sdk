@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildS3fsSource,
+  validateBucketBindingName,
   validateBucketName,
   validatePrefix
 } from '../../src/storage-mount/validation';
@@ -44,6 +45,33 @@ describe('validateBucketName', () => {
     (bucket) => {
       expect(() => validateBucketName(bucket, '/mount')).toThrow(
         'Invalid bucket name'
+      );
+    }
+  );
+});
+
+describe('validateBucketBindingName', () => {
+  it.each(['MY_BUCKET', 'my_bucket', '_bucket1', 'Bucket123'])(
+    'accepts valid binding name: %s',
+    (bucket) => {
+      expect(() => validateBucketBindingName(bucket, '/mount')).not.toThrow();
+    }
+  );
+
+  it('rejects binding name with colon and suggests prefix option', () => {
+    expect(() =>
+      validateBucketBindingName('MY_BUCKET:/data/path', '/mount')
+    ).toThrow("Bucket name cannot contain ':'");
+    expect(() =>
+      validateBucketBindingName('MY_BUCKET:/data/path', '/mount')
+    ).toThrow("prefix: '/data/path'");
+  });
+
+  it.each(['has spaces', 'my-bucket', '1startsWithNumber'])(
+    'rejects invalid binding name: %s',
+    (bucket) => {
+      expect(() => validateBucketBindingName(bucket, '/mount')).toThrow(
+        'Invalid R2 binding name'
       );
     }
   );

@@ -8,6 +8,7 @@ import type {
   DesktopMouseDragRequest,
   DesktopMouseScrollRequest,
   DesktopMouseUpRequest,
+  DesktopProcessHealth,
   DesktopScreenSize,
   DesktopScreenshotRegionRequest,
   DesktopScreenshotRequest,
@@ -25,6 +26,8 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
+  SandboxDesktopAPI,
+  TunnelInfo,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -47,6 +50,7 @@ import type {
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
+import type { TunnelService } from '../services/tunnel-service';
 import type { WatchService } from '../services/watch-service';
 
 export interface SandboxAPIDeps {
@@ -58,6 +62,7 @@ export interface SandboxAPIDeps {
   backupService: BackupService;
   desktopService: DesktopService;
   watchService: WatchService;
+  tunnelService: TunnelService;
   sessionManager: SessionManager;
   logger: Logger;
 }
@@ -133,11 +138,25 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   get backup() {
     return new BackupRPCAPI(this.#deps.backupService);
   }
-  get desktop() {
-    return new DesktopRPCAPI(this.#deps.desktopService);
+  get desktop(): SandboxDesktopAPI {
+    // DesktopRPCAPI exposes the capnweb wire shape used by the container:
+    //   - `screenshot` / `screenshotRegion` always return base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP DesktopClient (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`). The
+    // client-side RPC wrapper in container-control/client.ts translates
+    // user calls down to this wire shape.
+    return new DesktopRPCAPI(
+      this.#deps.desktopService
+    ) as unknown as SandboxDesktopAPI;
   }
   get watch() {
     return new WatchRPCAPI(this.#deps.watchService);
+  }
+  get tunnels() {
+    return new TunnelsRPCAPI(this.#deps.tunnelService);
   }
 }
 
@@ -1234,7 +1253,7 @@ class DesktopRPCAPI extends RpcTarget {
       await this.#svc.getCursorPosition()
     );
   }
-  async type(text: string, options?: { delay?: number }): Promise<void> {
+  async type(text: string, options?: { delayMs?: number }): Promise<void> {
     throwIfError(await this.#svc.typeText({ text, ...options }));
   }
   async press(key: string): Promise<void> {
@@ -1249,8 +1268,10 @@ class DesktopRPCAPI extends RpcTarget {
   async getScreenSize(): Promise<DesktopScreenSize> {
     return extractData<DesktopScreenSize>(await this.#svc.getScreenSize());
   }
-  async getProcessStatus(_name: string): Promise<DesktopStatusResult> {
-    return this.status();
+  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
+    return extractData<DesktopProcessHealth>(
+      await this.#svc.getProcessStatus(name)
+    );
   }
 }
 
@@ -1288,5 +1309,32 @@ class WatchRPCAPI extends RpcTarget {
       since: request.since
     });
     return extractData<CheckChangesResult>(result);
+  }
+}
+
+// ===========================================================================
+// Tunnels (cloudflared-based preview alternative)
+// ===========================================================================
+
+class TunnelsRPCAPI extends RpcTarget {
+  #svc: TunnelService;
+  constructor(svc: TunnelService) {
+    super();
+    this.#svc = svc;
+  }
+
+  async runQuickTunnel(id: string, port: number): Promise<TunnelInfo> {
+    const result = await this.#svc.runQuickTunnel(id, port);
+    return extractData<TunnelInfo>(result);
+  }
+
+  async destroyTunnel(id: string): Promise<{ success: true; id: string }> {
+    const result = await this.#svc.destroyTunnel(id);
+    throwIfError(result);
+    return { success: true, id };
+  }
+
+  async listTunnels(): Promise<TunnelInfo[]> {
+    return this.#svc.list();
   }
 }

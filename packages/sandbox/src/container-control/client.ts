@@ -70,6 +70,12 @@
  */
 
 import type {
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
+  DesktopScreenshotRegionRequest,
+  DesktopScreenshotRequest,
+  DesktopScreenshotResult,
   Logger,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -80,6 +86,7 @@ import type {
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTransport,
+  SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -92,6 +99,7 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
+import { base64ToBytes } from '../clients/desktop-client';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import {
@@ -381,20 +389,24 @@ export class ContainerControlClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
-  /**
-   * Set the first time the poller observes `conn.isConnected() === true`,
-   * cleared in `destroyConnection()`. Lets us distinguish "the WebSocket
-   * upgrade is still in progress" (don't tear down) from "we were
-   * connected and the peer went away" (do tear down).
-   */
-  private wasEverConnected = false;
 
   constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
       stub: options.stub,
       port: options.port,
+      localMain: options.localMain,
       logger: options.logger,
-      retryTimeoutMs: options.retryTimeoutMs
+      retryTimeoutMs: options.retryTimeoutMs,
+      // Event-driven failure recovery: when the live WebSocket closes
+      // or errors, tear the connection down inside the same turn of
+      // the event loop so the next RPC call builds a fresh one. The
+      // 1Hz busy-poll fallback can't be relied on here — `setInterval`
+      // callbacks don't fire while the DO isolate sits idle between
+      // requests, which is exactly the state the isolate enters after
+      // every in-flight RPC rejects with a peer-closed error.
+      onClose: () => {
+        if (this.conn) this.destroyConnection();
+      }
     };
     this.idleDisconnectMs =
       options.idleDisconnectMs ?? DEFAULT_IDLE_DISCONNECT_MS;
@@ -450,23 +462,17 @@ export class ContainerControlClient {
     const conn = this.conn;
     if (!conn) return;
     if (!conn.isConnected()) {
-      // Two distinct cases share the same `isConnected() === false`
-      // signal:
-      //   1. The WebSocket upgrade is still in progress — we constructed
-      //      the connection in getConnection() but doConnect() hasn't
-      //      resolved yet. Sends are queued in the deferred transport.
-      //      Tearing down here would drop those queued calls on the floor.
-      //   2. We were connected and the peer went away (container crash,
-      //      network blip). The session is dead, we must release
-      //      inflight and stop polling.
-      // `wasEverConnected` distinguishes them: it flips to true the first
-      // time we observe a live connection below.
-      if (this.wasEverConnected) {
-        this.destroyConnection();
-      }
+      // The WebSocket upgrade is still in progress (or a freshly
+      // recreated connection hasn't finished doConnect() yet). Sends
+      // are queued in the deferred transport and will flush once the
+      // upgrade resolves — don't tear down here.
+      //
+      // Failure recovery (a peer that disconnected after we connected)
+      // is handled synchronously by `ContainerControlConnection`'s
+      // `onClose` callback firing `destroyConnection()`, which nulls
+      // `this.conn` before the poller could observe it.
       return;
     }
-    this.wasEverConnected = true;
 
     const { imports, exports } = conn.getStats();
     const isBusy =
@@ -521,7 +527,7 @@ export class ContainerControlClient {
         imports <= IDLE_IMPORT_THRESHOLD &&
         exports <= IDLE_EXPORT_THRESHOLD
       ) {
-        this.logger.debug('Disconnecting idle capnweb connection');
+        this.logger.debug('Disconnecting idle RPC connection');
         this.destroyConnection();
       }
     }, this.idleDisconnectMs);
@@ -547,7 +553,6 @@ export class ContainerControlClient {
       this.conn.disconnect();
       this.conn = null;
     }
-    this.wasEverConnected = false;
   }
 
   // -------------------------------------------------------------------------
@@ -584,10 +589,66 @@ export class ContainerControlClient {
     return wrapStub(this.getConnection().rpc().backup, this.renewActivity);
   }
   get desktop(): SandboxDesktopAPI {
-    return wrapStub(this.getConnection().rpc().desktop, this.renewActivity);
+    const stub = wrapStub(
+      this.getConnection().rpc().desktop,
+      this.renewActivity
+    );
+    // The capnweb RPC stub exposes the wire shape used by the container:
+    //   - `screenshot` / `screenshotRegion` return only base64
+    //   - `screenshotRegion` takes a single `{ region, ...options }` request
+    //
+    // SandboxDesktopAPI exposes the user-facing surface shared with the
+    // HTTP `DesktopClient` (overloaded `format: 'bytes'` returning a
+    // Uint8Array, positional `screenshotRegion(region, options?)`).
+    // Translate here so both transports present the same surface to callers
+    // without changing the wire format.
+    type DesktopRpcStub = {
+      screenshot: (
+        options?: DesktopScreenshotRequest
+      ) => Promise<DesktopScreenshotResult>;
+      screenshotRegion: (
+        request: DesktopScreenshotRegionRequest
+      ) => Promise<DesktopScreenshotResult>;
+    };
+    const wire = stub as unknown as DesktopRpcStub;
+    return new Proxy(stub, {
+      get(target, prop, receiver) {
+        if (prop === 'screenshot') {
+          return async (
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshot(rest);
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
+          };
+        }
+        if (prop === 'screenshotRegion') {
+          return async (
+            region: DesktopScreenshotRegion,
+            options?: DesktopScreenshotOptions
+          ): Promise<
+            DesktopScreenshotResult | DesktopScreenshotBytesResult
+          > => {
+            const { format, ...rest } = options ?? {};
+            const result = await wire.screenshotRegion({ region, ...rest });
+            return format === 'bytes'
+              ? { ...result, data: base64ToBytes(result.data) }
+              : result;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    }) as unknown as SandboxDesktopAPI;
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(this.getConnection().rpc().watch, this.renewActivity);
+  }
+  get tunnels(): SandboxTunnelsAPI {
+    return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);

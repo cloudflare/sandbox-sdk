@@ -14,7 +14,12 @@
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
-import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+import {
+  ContainerProxy,
+  getSandbox,
+  proxyToSandbox,
+  Sandbox
+} from '@cloudflare/sandbox';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -37,6 +42,7 @@ import type {
 
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
+export { ContainerProxy };
 export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
@@ -985,6 +991,57 @@ console.log('Terminal server on port ' + port);
             headers: { 'Content-Type': 'application/json' }
           });
         }
+      }
+
+      // Tunnels (RPC-only)
+      if (url.pathname === '/api/tunnel/get' && request.method === 'POST') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const info = await sandbox.tunnels.get(body.port);
+        return new Response(JSON.stringify(info), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/tunnel/list' && request.method === 'GET') {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const tunnels = await sandbox.tunnels.list();
+        return new Response(JSON.stringify({ tunnels }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/tunnel/') &&
+        request.method === 'DELETE'
+      ) {
+        if (transport !== 'rpc') {
+          return new Response(
+            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const portStr = url.pathname.slice('/api/tunnel/'.length);
+        const port = Number.parseInt(portStr, 10);
+        if (!Number.isFinite(port)) {
+          return new Response(
+            JSON.stringify({ error: `Invalid port: ${portStr}` }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        await sandbox.tunnels.destroy(port);
+        return new Response(JSON.stringify({ success: true, port }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // Environment variables

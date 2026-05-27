@@ -1,4 +1,4 @@
-import { createLogger } from '@repo/shared';
+import { createLogger, type SandboxControlCallback } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { trustRuntimeCert } from './cert';
@@ -82,6 +82,7 @@ async function createApplication(): Promise<{
     backupService: container.get('backupService'),
     desktopService: container.get('desktopService'),
     watchService: container.get('watchService'),
+    tunnelService: container.get('tunnelService'),
     sessionManager: container.get('sessionManager'),
     logger
   });
@@ -141,7 +142,7 @@ async function createApplication(): Promise<{
         }
 
         if (url.pathname === '/rpc') {
-          logger.info('Establishing capnweb connection');
+          logger.info('Establishing RPC connection');
           const upgraded = server.upgrade(req, {
             data: {
               type: 'capnweb' as const,
@@ -200,12 +201,18 @@ export async function startServer(): Promise<ServerInstance> {
                 } catch {}
               });
           } else if (ws.data.type === 'capnweb') {
-            const { transport } = newBunWebSocketRpcSession(
+            const { stub, transport } = newBunWebSocketRpcSession(
               ws,
               app.controlPlaneAPI
             );
             ws.data.transport = transport;
-            logger.debug('capnweb session initialized', {
+            // Capture the peer's remote main (the DO's
+            // SandboxControlCallback) so the container can push
+            // events back — e.g. tunnel-exit notifications.
+            app.container.setControlCallback(
+              stub as unknown as SandboxControlCallback
+            );
+            logger.debug('RPC session initialized', {
               connectionId: ws.data.connectionId
             });
           } else {
@@ -226,6 +233,10 @@ export async function startServer(): Promise<ServerInstance> {
               .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
+            // Forget the peer's control callback. Subsequent tunnel
+            // exits resolve `null` from the accessor and become no-ops
+            // until a new session opens.
+            app.container.setControlCallback(null);
           } else {
             app.wsAdapter.onClose(ws, code, reason);
           }
@@ -284,6 +295,7 @@ export async function startServer(): Promise<ServerInstance> {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
+        const tunnelService = app.container.get('tunnelService');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -295,6 +307,7 @@ export async function startServer(): Promise<ServerInstance> {
         await desktopService.destroy();
         await processService.destroy();
         portService.destroy();
+        await tunnelService.destroyAll();
 
         logger.info('Services cleaned up successfully');
       } catch (error) {

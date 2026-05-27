@@ -57,7 +57,7 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
 1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.10.1`). Update the tag to match the SDK version.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.10.2`). Update the tag to match the SDK version.
 
 Both versions should match — the SDK and container image are released together. After updating:
 
@@ -261,17 +261,28 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
   -d '{"bucket": "my-bucket", "mountPath": "/mnt/data", "options": {"endpoint": "https://ACCT.r2.cloudflarestorage.com"}}'
 ```
 
+To mount a Worker R2 binding without credentials, provide the top-level `binding`
+field and omit `options.endpoint`:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"binding": "MY_BUCKET", "mountPath": "/mnt/data", "options": {"prefix": "/uploads/"}}'
+```
+
 **Request body:**
 
-| Field                                 | Type    | Required | Description                                    |
-| ------------------------------------- | ------- | -------- | ---------------------------------------------- |
-| `bucket`                              | string  | yes      | Bucket name                                    |
-| `mountPath`                           | string  | yes      | Absolute path in the container to mount at     |
-| `options.endpoint`                    | string  | yes      | S3-compatible endpoint URL                     |
-| `options.readOnly`                    | boolean | no       | Mount as read-only (default: false)            |
-| `options.prefix`                      | string  | no       | Subdirectory prefix within the bucket          |
-| `options.credentials.accessKeyId`     | string  | no       | Explicit access key (auto-detected if omitted) |
-| `options.credentials.secretAccessKey` | string  | no       | Explicit secret key (auto-detected if omitted) |
+| Field                                 | Type    | Required | Description                                                                     |
+| ------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------- |
+| `bucket`                              | string  | no       | Remote bucket name for endpoint-based S3-compatible mounts                      |
+| `binding`                             | string  | no       | Worker R2 binding name for credential-less R2 binding mounts                    |
+| `mountPath`                           | string  | yes      | Absolute path in the container to mount at                                      |
+| `options.endpoint`                    | string  | no       | S3-compatible endpoint URL for remote mounts; mutually exclusive with `binding` |
+| `options.readOnly`                    | boolean | no       | Mount as read-only (default: false)                                             |
+| `options.prefix`                      | string  | no       | Subdirectory prefix within the bucket                                           |
+| `options.credentials.accessKeyId`     | string  | no       | Explicit access key (auto-detected if omitted)                                  |
+| `options.credentials.secretAccessKey` | string  | no       | Explicit secret key (auto-detected if omitted)                                  |
 
 Credentials are optional — the SDK auto-detects from Worker secrets (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`).
 

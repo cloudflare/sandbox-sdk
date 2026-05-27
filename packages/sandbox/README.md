@@ -98,6 +98,51 @@ export default {
 };
 ```
 
+## Quick tunnels
+
+`sandbox.tunnels.get(port)` exposes a service running inside the
+sandbox on a `*.trycloudflare.com` URL. No Cloudflare account or DNS
+setup required — cloudflared opens a persistent QUIC connection to
+Cloudflare's edge and Cloudflare hands back a hostname.
+
+```ts
+// Inside a Worker with an RPC-transport sandbox:
+const tunnel = await sandbox.tunnels.get(8080);
+console.log(tunnel.url);
+// → https://random-words-here.trycloudflare.com
+
+// Repeated calls for the same port return the same record:
+const same = await sandbox.tunnels.get(8080);
+console.log(same.url === tunnel.url); // true
+
+// Tear down by port number or by the record:
+await sandbox.tunnels.destroy(8080);
+// or: await sandbox.tunnels.destroy(tunnel);
+```
+
+`get()` is idempotent: it consults a per-sandbox cache in Durable
+Object storage, returns the cached record on a hit, and only spawns a
+fresh cloudflared process on a miss. `list()` returns every cached
+tunnel.
+
+Notes:
+
+- Requires the RPC transport. The route-based transport's `tunnels`
+  stub throws "RPC transport required".
+- URLs do **not** survive a container restart. Cloudflare assigns the
+  hostname during cloudflared's startup handshake, so every restart
+  yields a new URL. The SDK clears its cache on container start, so
+  the next `get(port)` after a restart returns a fresh record.
+- The first fetch through a brand-new URL can take a couple of
+  seconds while DNS propagates, even after `get()` resolves.
+- `*.trycloudflare.com` buffers `text/event-stream` responses.
+  WebSockets work fine.
+- The musl/Alpine image variant does not ship cloudflared (no upstream
+  musl prebuilt); `sandbox.tunnels` is unavailable on that variant.
+- Local builds behind a TLS-intercepting proxy (e.g. Cloudflare WARP)
+  need the host CA bundle injected at build time — see
+  [DOCKER_README.md](../../DOCKER_README.md).
+
 ## Documentation
 
 **📖 [Full Documentation](https://developers.cloudflare.com/sandbox/)**
@@ -115,6 +160,7 @@ export default {
 - **File System Access** - Read, write, and manage files
 - **Command Execution** - Run any command with streaming support
 - **Preview URLs** - Expose services with public URLs
+- **Quick tunnels** - Zero-config `*.trycloudflare.com` URLs via `sandbox.tunnels.get(port)`
 - **Git Integration** - Clone repositories directly
 
 ## Contributing

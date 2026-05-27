@@ -19,7 +19,7 @@ All images are published as tags on `cloudflare/sandbox`:
 These images are designed to be used with the [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) SDK. Reference them in your project's `Dockerfile`:
 
 ```dockerfile
-FROM cloudflare/sandbox:0.10.1-python
+FROM cloudflare/sandbox:0.10.2-python
 ```
 
 Then configure your `wrangler.toml` to use the image:
@@ -47,6 +47,41 @@ docker buildx build \
 ## Architecture
 
 Each image runs a lightweight HTTP server (port 3000) that the Sandbox SDK communicates with. The server handles command execution, file operations, process management, and port exposure. Images are built for `linux/amd64`.
+
+## Local development behind a TLS-intercepting proxy
+
+If your machine runs Cloudflare WARP / Zero Trust (or any other proxy
+that re-signs TLS with a corporate root), the sandbox container must
+trust that root or outbound HTTPS calls fail with
+`x509: certificate signed by unknown authority`. The Dockerfile accepts
+a `wrangler_ca` build secret that gets appended to the image's CA
+bundle and registered with `update-ca-certificates`:
+
+```bash
+docker build \
+  -f packages/sandbox/Dockerfile \
+  --target default \
+  --secret id=wrangler_ca,src="$NODE_EXTRA_CA_CERTS" \
+  -t my-sandbox-image .
+```
+
+WARP's installer sets `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and
+`REQUESTS_CA_BUNDLE` to a bundle that includes the corporate root, so
+passing `$NODE_EXTRA_CA_CERTS` is the easiest way to wire it through.
+Local builds done via `npm run docker:rebuild` already pass this
+secret — you only need this when invoking `docker build` directly.
+
+When the secret isn't passed (CI, fresh checkout without WARP), the
+build is a no-op and the resulting image trusts only the standard
+public CAs.
+
+**Known limitation for `sandbox.tunnels`.** Even with the CA bundle
+trusted, WARP's Zero Trust egress policy can block outbound traffic
+to `api.trycloudflare.com` and the cloudflared edge endpoints
+outright. When that happens, `tunnels.create()` hangs waiting for the
+edge handshake and eventually times out. The workaround is to run
+with WARP disabled or to add an egress exception for those
+destinations.
 
 ## Documentation
 

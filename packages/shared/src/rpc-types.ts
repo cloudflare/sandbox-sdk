@@ -8,9 +8,11 @@
 import type {
   DesktopCursorPosition,
   DesktopMouseButton,
+  DesktopProcessHealth,
   DesktopScreenSize,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
+  DesktopScreenshotBytesResult,
+  DesktopScreenshotOptions,
+  DesktopScreenshotRegion,
   DesktopScreenshotResult,
   DesktopScrollDirection,
   DesktopStartResult,
@@ -70,6 +72,7 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   desktop: SandboxDesktopAPI;
   watch: SandboxWatchAPI;
+  tunnels: SandboxTunnelsAPI;
 }
 
 export interface SandboxCommandsAPI {
@@ -275,11 +278,26 @@ export interface SandboxDesktopAPI {
   stop(): Promise<DesktopStopResult>;
   status(): Promise<DesktopStatusResult>;
   screenshot(
-    options?: DesktopScreenshotRequest
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
+  ): Promise<DesktopScreenshotResult>;
+  screenshot(
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshot(
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions & { format?: 'base64' }
   ): Promise<DesktopScreenshotResult>;
   screenshotRegion(
-    request: DesktopScreenshotRegionRequest
-  ): Promise<DesktopScreenshotResult>;
+    region: DesktopScreenshotRegion,
+    options: DesktopScreenshotOptions & { format: 'bytes' }
+  ): Promise<DesktopScreenshotBytesResult>;
+  screenshotRegion(
+    region: DesktopScreenshotRegion,
+    options?: DesktopScreenshotOptions
+  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
   click(
     x: number,
     y: number,
@@ -314,15 +332,66 @@ export interface SandboxDesktopAPI {
     amount?: number
   ): Promise<void>;
   getCursorPosition(): Promise<DesktopCursorPosition>;
-  type(text: string, options?: { delay?: number }): Promise<void>;
+  type(text: string, options?: { delayMs?: number }): Promise<void>;
   press(key: string): Promise<void>;
   keyDown(key: string): Promise<void>;
   keyUp(key: string): Promise<void>;
   getScreenSize(): Promise<DesktopScreenSize>;
-  getProcessStatus(name: string): Promise<DesktopStatusResult>;
+  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
 }
 
 export interface SandboxWatchAPI {
   watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>>;
   checkChanges(request: CheckChangesRequest): Promise<CheckChangesResult>;
+}
+
+/**
+ * Public-facing tunnel record.
+ *
+ * Today only quick tunnels (`*.trycloudflare.com`) are supported. Future
+ * PRs will add named tunnels, which will carry a `name: string` field;
+ * `TunnelInfo` will then become a discriminated union keyed on the
+ * presence of `name`. The quick variant declares `name?: never` so the
+ * narrowing works without a breaking change here.
+ */
+export interface TunnelInfo {
+  id: string;
+  port: number;
+  url: string;
+  hostname: string;
+  createdAt: string;
+  /** Reserved for the named-tunnel variant in a future PR. */
+  name?: never;
+}
+
+export interface SandboxTunnelsAPI {
+  /** Spawn `cloudflared tunnel --url`. No credentials required. */
+  runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
+  /** Stop the cloudflared process for the given tunnel id. */
+  destroyTunnel(id: string): Promise<{ success: true; id: string }>;
+  /** List tunnels currently running inside the container. */
+  listTunnels(): Promise<TunnelInfo[]>;
+}
+
+/**
+ * RPC surface the Sandbox DO exposes to the container over the existing
+ * capnweb session. The container reaches it via
+ * `session.getRemoteMain<SandboxControlCallback>()` and invokes methods
+ * to push control-plane events (today: tunnel exits) back to the DO.
+ *
+ * One stable target per sandbox; not per-tunnel. Reusable seam for
+ * future container→DO events.
+ */
+export interface SandboxControlCallback {
+  /**
+   * Called by the container when a `cloudflared` process exits for any
+   * reason — SIGTERM from `destroyTunnel`, container-initiated SIGKILL,
+   * network failure, segfault. `exitCode` is `null` if the process was
+   * signalled rather than exited cleanly.
+   */
+  onTunnelExit(
+    id: string,
+    port: number,
+    exitCode: number | null
+  ): Promise<void>;
 }

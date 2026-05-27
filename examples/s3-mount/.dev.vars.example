@@ -1,0 +1,6 @@
+# IAM access key for the broker user (output by `./scripts/setup`).
+BROKER_AWS_ACCESS_KEY_ID=
+BROKER_AWS_SECRET_ACCESS_KEY=
+
+# ARN of the container role that the broker assumes via STS.
+AWS_ROLE_ARN=

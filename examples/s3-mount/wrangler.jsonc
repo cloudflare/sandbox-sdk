@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sandbox-s3-mount-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+
+  // Container configuration — basic instance type for FUSE workloads
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 10
+    }
+  ],
+
+  // Durable Objects bindings
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+
+  // DO migrations
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    }
+  ],
+
+  // Configurable vars — override via wrangler.toml [vars] or environment
+  "vars": {
+    "SANDBOX_TRANSPORT": "rpc",
+    "AWS_REGION": "us-east-1",
+    "S3_BUCKET_NAME": "my-bucket",
+    "STS_DURATION_SECONDS": "3600"
+  },
+
+  // Static assets — the single-page UI lives in ./public/index.html
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./public"
+  }
+}

@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
 import { BackupHandler } from '../handlers/backup-handler';
 import { DesktopHandler } from '../handlers/desktop-handler';
@@ -25,6 +25,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { TunnelService } from '../services/tunnel-service';
 import { WatchService } from '../services/watch-service';
 
 export interface Dependencies {
@@ -37,6 +38,7 @@ export interface Dependencies {
   backupService: BackupService;
   desktopService: DesktopService;
   watchService: WatchService;
+  tunnelService: TunnelService;
 
   // Infrastructure
   logger: Logger;
@@ -65,6 +67,11 @@ export interface Dependencies {
 export class Container {
   private dependencies: Partial<Dependencies> = {};
   private initialized = false;
+  // Latest capnweb remote main observed from a `capnweb` WS upgrade.
+  // Updated on every session open so tunnel exits and other future
+  // container→DO events route to the current peer. Cleared by the WS
+  // close handler. `null` between connections.
+  private controlCallback: SandboxControlCallback | null = null;
 
   get<T extends keyof Dependencies>(key: T): Dependencies[T] {
     if (!this.initialized) {
@@ -87,6 +94,20 @@ export class Container {
     implementation: Dependencies[T]
   ): void {
     this.dependencies[key] = implementation;
+  }
+
+  /**
+   * Set / clear the DO-side control callback exposed via the current
+   * capnweb session's remote main. Called from `server.ts` on each
+   * `capnweb` WS open (with the new peer) and on close (with `null`).
+   */
+  setControlCallback(cb: SandboxControlCallback | null): void {
+    this.controlCallback = cb;
+  }
+
+  /** Returns the current peer's control callback or `null`. */
+  getControlCallback(): SandboxControlCallback | null {
+    return this.controlCallback;
   }
 
   async initialize(): Promise<void> {
@@ -130,6 +151,9 @@ export class Container {
     const backupService = new BackupService(logger, sessionManager);
     const desktopService = new DesktopService(logger);
     const watchService = new WatchService(logger);
+    const tunnelService = new TunnelService(logger, () =>
+      this.getControlCallback()
+    );
 
     // Initialize handlers
     const backupHandler = new BackupHandler(backupService, logger);
@@ -163,6 +187,7 @@ export class Container {
       backupService,
       desktopService,
       watchService,
+      tunnelService,
 
       // Infrastructure
       logger,
