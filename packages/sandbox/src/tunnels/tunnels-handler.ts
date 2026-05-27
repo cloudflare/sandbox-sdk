@@ -648,11 +648,21 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         }
 
         const fetcher = this.#host.fetcher;
+        // Prefer the account/zone the tunnel was provisioned in over the
+        // currently-resolved config. Without this, a user who rotated
+        // CLOUDFLARE_ZONE_ID (or CLOUDFLARE_TUNNEL_ACCOUNT_ID) between
+        // get() and destroy() would issue DELETE against the new zone/
+        // account and orphan the original resources. Stored values are
+        // absent on records created before the meta gained these fields;
+        // fall back to the resolved config so legacy records still get
+        // cleaned up (no drift was tracked for them anyway).
+        const accountId = metaBefore.accountId ?? config.accountId;
+        const zoneId = metaBefore.zoneId ?? config.zoneId;
         await Promise.allSettled([
           metaBefore.dnsRecordId
             ? deleteDNSRecord({
                 token: config.token,
-                zoneId: config.zoneId,
+                zoneId,
                 recordId: metaBefore.dnsRecordId,
                 fetcher
               }).catch((err) => {
@@ -660,19 +670,21 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
                   port,
                   tunnelId,
                   recordId: metaBefore.dnsRecordId,
+                  zoneId,
                   error: err instanceof Error ? err.message : String(err)
                 });
               })
             : Promise.resolve(),
           deleteTunnel({
             token: config.token,
-            accountId: config.accountId,
+            accountId,
             tunnelId: existing.id,
             fetcher
           }).catch((err) => {
             this.#host.logger.warn('tunnel.destroy: tunnel delete failed', {
               port,
               tunnelId,
+              accountId,
               error: err instanceof Error ? err.message : String(err)
             });
           })

@@ -823,6 +823,79 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     expect(targets.some((t) => t.includes('/cfd_tunnel/'))).toBe(true);
   });
 
+  it('uses stored accountId/zoneId from meta when the resolved config has drifted', async () => {
+    // Tunnel was provisioned under (acct-A, zone-A) and its meta entry
+    // records that. The user then changed CLOUDFLARE_ZONE_ID /
+    // CLOUDFLARE_TUNNEL_ACCOUNT_ID, so the resolver now returns
+    // (acct-B, zone-B). destroy() must clean up the original resources,
+    // not point DELETE at the current (wrong) account/zone — otherwise
+    // we'd 404 against zone-B while orphaning the live record in zone-A.
+    const { client } = makeClient();
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: 'tunnel-uuid-stored',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        url: 'https://api.example.com',
+        createdAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'dns-in-zone-A',
+        accountId: 'acct-A',
+        zoneId: 'zone-A'
+      }
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: 'tunnel-uuid-stored'
+    });
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ success: true, result: {} }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
+    const built = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger(),
+      sandboxId: 'sb1',
+      getNamedTunnelConfig: async () => ({
+        token: 'TOK',
+        accountId: 'acct-B',
+        zoneId: 'zone-B'
+      }),
+      fetcher: fetcher as unknown as typeof fetch
+    });
+
+    await built.tunnels.destroy(8080);
+
+    const deletes = fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    // DNS delete must target zone-A (where the record lives), not zone-B.
+    expect(
+      targets.some((t) => t.includes('/zones/zone-A/dns_records/dns-in-zone-A'))
+    ).toBe(true);
+    expect(targets.some((t) => t.includes('/zones/zone-B/'))).toBe(false);
+    // Tunnel delete must target acct-A.
+    expect(
+      targets.some((t) =>
+        t.includes('/accounts/acct-A/cfd_tunnel/tunnel-uuid-stored')
+      )
+    ).toBe(true);
+    expect(targets.some((t) => t.includes('/accounts/acct-B/'))).toBe(false);
+  });
+
   it('quick-tunnel destroy() makes no Cloudflare API calls', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
