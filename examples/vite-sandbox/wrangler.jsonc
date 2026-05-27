@@ -3,7 +3,6 @@
   "name": "sandbox-vite",
   "main": "src/worker.js",
   "assets": {
-    "directory": "./",
     "not_found_handling": "none"
   },
   "vars": {
