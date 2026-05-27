@@ -147,6 +147,7 @@ const IDLE_EXPORT_THRESHOLD = 1;
 // Error translation
 // ---------------------------------------------------------------------------
 
+/** Legacy JSON-in-message payload shape — see `translateRPCError`. */
 interface RPCErrorPayload {
   code: string;
   message: string;
@@ -156,12 +157,47 @@ interface RPCErrorPayload {
 /**
  * Translate a capnweb-propagated error into a typed SandboxError.
  *
- * capnweb only preserves `error.name` and `error.message` across the wire.
- * The container encodes the full error as a JSON object in the message
- * string: `{"code":"...","message":"...","context":{...}}`.
+ * Two wire formats are supported for backward compatibility with older
+ * container images:
+ *
+ *  1. Propagated error properties (capnweb >= 0.8.0). The container throws a
+ *     `ServiceError`-shaped object with own enumerable `code` and `details`
+ *     properties. capnweb walks `Object.keys()` and reconstructs those fields
+ *     on the SDK side.
+ *  2. Legacy JSON-encoded message. Older containers encoded the structured
+ *     payload as a JSON string in `error.message`.
+ *
+ * The JSON-fallback branch can be removed once all older container images are
+ * no longer in service.
  */
 export function translateRPCError(error: unknown): never {
   if (error instanceof Error) {
+    // Format (1): propagated error properties. Distinguish from arbitrary
+    // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
+    // code against the ErrorCode registry.
+    const propagated = error as Error & {
+      code?: unknown;
+      details?: unknown;
+    };
+    if (
+      typeof propagated.code === 'string' &&
+      Object.hasOwn(ErrorCode, propagated.code)
+    ) {
+      const code = propagated.code as ErrorCode;
+      const context =
+        propagated.details && typeof propagated.details === 'object'
+          ? (propagated.details as Record<string, unknown>)
+          : {};
+      throw createErrorFromResponse({
+        code,
+        message: error.message,
+        context,
+        httpStatus: getHttpStatus(code),
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Format (2): legacy JSON-encoded structured error in `message`.
     let payload: RPCErrorPayload | undefined;
     try {
       payload = JSON.parse(error.message) as RPCErrorPayload;
