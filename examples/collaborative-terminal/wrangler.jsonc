@@ -12,7 +12,9 @@
       "class_name": "Sandbox",
       "image": "./Dockerfile",
       "instance_type": "standard-4",
-      "max_instances": 1
+      // Each active room uses its own sandbox container. Increase this to
+      // support the expected number of simultaneously active rooms.
+      "max_instances": 5
     }
   ],
   "durable_objects": {

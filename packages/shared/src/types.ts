@@ -1265,7 +1265,7 @@ export interface RemoteMountBucketOptions {
    * When specified, only the contents under this prefix are visible at the
    * mount point, scoping the mount to a subdirectory of the bucket.
    *
-   * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
+   * Must start with '/' (e.g., '/workspaces/project123' or '/data/uploads/')
    */
   prefix?: string;
 }

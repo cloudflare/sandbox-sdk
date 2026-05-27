@@ -1,15 +1,18 @@
 /**
  * Collaborative Terminal - "Google Docs for Bash"
  *
- * This example demonstrates how to build a multi-user terminal where:
- * - Multiple users can connect to the same PTY session
- * - Everyone sees the same terminal output in real-time
- * - Users can take turns sending commands
- * - Presence indicators show who's connected
+ * This example demonstrates how to build a collaborative terminal where:
+ * - Participants in the same room connect to the same PTY session
+ * - Everyone sees the same terminal output in real time
+ * - Participants can take turns sending commands
+ * - Presence indicators show who is connected
+ *
+ * Treat a room as a shared workspace. Do not use rooms or sessions as
+ * boundaries between independent users or accounts.
  *
  * Architecture:
  * - A separate Room Durable Object manages collaboration/presence
- * - The Room DO uses getSandbox() to interact with a shared Sandbox
+ * - The Room DO uses getSandbox() to interact with the room Sandbox
  * - PTY I/O uses WebSocket connection to container for low latency
  */
 
@@ -112,8 +115,8 @@ export class Room implements DurableObject {
     try {
       console.log(`[Room ${this.roomId}] Creating PTY...`);
 
-      // Get sandbox instance using helper
-      const sandbox = getSandbox(this.env.Sandbox, `shared-sandbox`);
+      // Each room has a dedicated sandbox workspace.
+      const sandbox = getSandbox(this.env.Sandbox, `room-${this.roomId}`);
 
       // Colored prompt - user@sandbox with orange accent
       const PS1 =

@@ -24,9 +24,10 @@ export default function RoomPage({ params }: Route.ComponentProps) {
   const otherRooms = rooms.filter((r) => r.roomId !== roomId);
   const switchRoom = useCallback(
     (newRoomId: string) => {
+      const sandboxId = `room-${newRoomId}`;
       addonRef.current?.connect({
-        sandboxId: 'shared-terminal',
-        sessionId: `room-${newRoomId}`
+        sandboxId,
+        sessionId: sandboxId
       });
       navigate(`/room/${newRoomId}`, { replace: true });
     },
@@ -130,7 +131,7 @@ export default function RoomPage({ params }: Route.ComponentProps) {
                   }
                 >
                   <Terminal
-                    sandboxId="shared-terminal"
+                    sandboxId={room.sessionId}
                     sessionId={room.sessionId}
                     onTyping={sendTyping}
                     onAddonReady={(addon) => {
