@@ -48,6 +48,8 @@ return session.terminal(request);
 
 Each room maps to a sandbox ID (`room-${roomId}`), so room workspaces do not share a filesystem, processes, or environment variables. In production, derive sandbox IDs from the authenticated user or a user-owned workspace.
 
+Because an active room uses its own sandbox container, the `containers[].max_instances` value in `wrangler.jsonc` must be at least the number of simultaneously active rooms you intend to support. Increase it before deployment when serving more rooms concurrently.
+
 ### Client side
 
 The terminal component uses `SandboxAddon` from `@cloudflare/sandbox/xterm` to handle the WebSocket connection, resize events, and reconnection:
