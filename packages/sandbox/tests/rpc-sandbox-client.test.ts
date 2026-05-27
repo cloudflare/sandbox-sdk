@@ -318,10 +318,12 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(FileNotFoundError);
   });
 
-  it('ignores foreign `code` values that are not in the ErrorCode registry', async () => {
+  it('ignores Node-style syscall `code` values that do not look like application codes', async () => {
     // Node syscalls and other libraries decorate Errors with codes like
     // 'ENOENT'. Those must not be mistaken for a structured RPC error —
-    // they fall through to transport classification.
+    // they fall through to transport classification. The discriminator is
+    // UPPER_SNAKE_CASE: a code with no underscore (ENOENT, EACCES) is
+    // assumed to be a system code, not an application code.
     const translateRPCError = await loadFn();
     const { RPCTransportError } = await loadErr();
     const err = Object.assign(new Error('Peer closed WebSocket: 1006 '), {
@@ -337,6 +339,32 @@ describe('translateRPCError', () => {
     expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
       'peer_closed'
     );
+  });
+
+  it('accepts UPPER_SNAKE_CASE `code` values not registered in ErrorCode', async () => {
+    // Newer container builds may emit codes the SDK does not know about
+    // yet (e.g. DESKTOP_INPUT_FAILED, TUNNEL_NOT_FOUND). These follow the
+    // application-code convention and must be propagated as a generic
+    // SandboxError carrying the original code, message, and context —
+    // not misclassified as a transport failure.
+    const translateRPCError = await loadFn();
+    const { SandboxError, RPCTransportError } = await loadErr();
+    const err = Object.assign(new Error('tunnel quick-gone is not running'), {
+      code: 'TUNNEL_NOT_FOUND',
+      details: { id: 'quick-gone' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(SandboxError);
+    expect(thrown).not.toBeInstanceOf(RPCTransportError);
+    const sandboxErr = thrown as InstanceType<typeof SandboxError>;
+    expect(sandboxErr.code).toBe('TUNNEL_NOT_FOUND');
+    expect(sandboxErr.message).toContain('tunnel quick-gone is not running');
+    expect(sandboxErr.context).toEqual({ id: 'quick-gone' });
   });
 
   // -------------------------------------------------------------------------

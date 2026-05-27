@@ -155,6 +155,24 @@ interface RPCErrorPayload {
 }
 
 /**
+ * Detect application error codes propagated from the container.
+ *
+ * Application codes are UPPER_SNAKE_CASE with at least one underscore
+ * (e.g. `FILE_NOT_FOUND`, `TUNNEL_NOT_FOUND`). The underscore requirement
+ * is what separates them from Node.js system error codes like `ENOENT`,
+ * `EACCES`, and `EPIPE`, which are uppercase but contain no underscore.
+ *
+ * Using a structural heuristic (rather than membership in the `ErrorCode`
+ * registry) lets the SDK accept codes from newer container builds without
+ * needing both sides to ship in lockstep. Unknown-but-shaped codes still
+ * flow through `createErrorFromResponse`, whose `default` branch produces
+ * a generic `SandboxError` carrying the code, message, and context.
+ */
+function isApplicationErrorCode(code: string): boolean {
+  return /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(code);
+}
+
+/**
  * Translate a capnweb-propagated error into a typed SandboxError.
  *
  * Two wire formats are supported for backward compatibility with older
@@ -173,15 +191,23 @@ interface RPCErrorPayload {
 export function translateRPCError(error: unknown): never {
   if (error instanceof Error) {
     // Format (1): propagated error properties. Distinguish from arbitrary
-    // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
-    // code against the ErrorCode registry.
+    // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking that
+    // the code follows the UPPER_SNAKE_CASE convention used by application
+    // error codes. The convention requires at least one underscore, which
+    // naturally excludes Node syscall codes like ENOENT, EACCES, EPIPE.
+    //
+    // Codes that look application-shaped but are not in the ErrorCode
+    // registry (e.g. newer container builds that defined a code the SDK
+    // doesn't know about yet) still flow through `createErrorFromResponse`,
+    // whose `default` branch produces a `SandboxError` carrying the code,
+    // message, and context verbatim.
     const propagated = error as Error & {
       code?: unknown;
       details?: unknown;
     };
     if (
       typeof propagated.code === 'string' &&
-      Object.hasOwn(ErrorCode, propagated.code)
+      isApplicationErrorCode(propagated.code)
     ) {
       const code = propagated.code as ErrorCode;
       const context =
