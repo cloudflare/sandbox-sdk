@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.10.3
+
+### Patch Changes
+
+- [#715](https://github.com/cloudflare/sandbox-sdk/pull/715) [`453b577`](https://github.com/cloudflare/sandbox-sdk/commit/453b5771be61e4e7d6a6d1a1088801e7303cd244) Thanks [@aron-cf](https://github.com/aron-cf)! - Upgrade `capnweb` to `0.8.0`.
+
+- [#714](https://github.com/cloudflare/sandbox-sdk/pull/714) [`0ec4f42`](https://github.com/cloudflare/sandbox-sdk/commit/0ec4f421d4177ece777ef82a6ec466d6428fab06) Thanks [@aron-cf](https://github.com/aron-cf)! - Bundle `cloudflared` into the musl/Alpine images.
+
+- [#706](https://github.com/cloudflare/sandbox-sdk/pull/706) [`ae5f9a1`](https://github.com/cloudflare/sandbox-sdk/commit/ae5f9a10aa45dc59a48c8b9a30c5c14ea16cf75b) Thanks [@scuffi](https://github.com/scuffi)! - Add sessionless execution mode with a configurable default-session policy.
+
+  Set `enableDefaultSession: false` in `SandboxOptions` to run implicit top-level operations without a persistent shell — each command gets a fresh process with no shared state. The option is scoped to the sandbox object returned by `getSandbox(...)`; explicit per-call session IDs continue to target that session.
+
 ## 0.10.2
 
 ### Patch Changes
