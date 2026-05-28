@@ -21,6 +21,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/containers": "^0.3.0"
+    "@cloudflare/containers": "^0.3.5"
   }
 }

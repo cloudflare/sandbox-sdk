@@ -82,6 +82,10 @@ import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import {
+  forwardPreviewRequest,
+  type PreviewTCPPort
+} from './preview-forwarding';
+import {
   PREVIEW_PROXY_HEADER,
   PREVIEW_PROXY_HEADERS,
   PREVIEW_PROXY_PORT_HEADER,
@@ -211,6 +215,17 @@ type R2EgressContainerState = DurableObjectState<{}> & {
   container?: {
     interceptOutboundHttp(host: string, fetcher: Fetcher): Promise<void>;
   };
+};
+
+type PreviewForwardingContainerState = DurableObjectState<{}> & {
+  container?: {
+    running: boolean;
+    getTcpPort(port: number): PreviewTCPPort;
+  };
+};
+
+type PreviewForwardingLifecycleState = {
+  inflightRequests?: number;
 };
 
 const R2_EGRESS_PROXY_TARGET_CLASS_NAME =
@@ -2879,25 +2894,68 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  /**
-   * Detects unavailable-container responses produced by `fetchIfRunning()` and
-   * its shared forwarding helper in `@cloudflare/containers`.
-   */
-  private async isContainerUnavailableResponse(
-    response: Response
-  ): Promise<boolean> {
-    if (response.status !== 500 && response.status !== 503) {
-      return false;
+  private getPreviewForwardingContainer(): PreviewForwardingContainerState['container'] {
+    return (this.ctx as PreviewForwardingContainerState).container;
+  }
+
+  private beginPreviewForward(): () => void {
+    const lifecycle = this as unknown as PreviewForwardingLifecycleState;
+    lifecycle.inflightRequests = (lifecycle.inflightRequests ?? 0) + 1;
+    this.renewActivityTimeout();
+
+    let settled = false;
+    return () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      lifecycle.inflightRequests = Math.max(
+        0,
+        (lifecycle.inflightRequests ?? 0) - 1
+      );
+      if (lifecycle.inflightRequests === 0) {
+        this.renewActivityTimeout();
+      }
+    };
+  }
+
+  private async fetchPreviewIfRunning(
+    request: Request,
+    port: number,
+    runtime: RuntimeIdentity
+  ): Promise<Response> {
+    const container = this.getPreviewForwardingContainer();
+    const state = await this.getState();
+
+    if (!container?.running || state.status !== 'healthy') {
+      return this.stalePreviewURLResponse();
     }
 
-    const body = await response
-      .clone()
-      .text()
-      .catch(() => null);
-    return (
-      body === 'Container is not running' ||
-      body === 'Container suddenly disconnected, try again'
-    );
+    if (!(await this.currentRuntime.isActive(runtime))) {
+      return this.stalePreviewURLResponse();
+    }
+
+    const tcpPort = container.getTcpPort(port);
+
+    // Keep dispatch adjacent to the final runtime check above. Stale preview
+    // traffic must not observe an active runtime and then reach a different
+    // runtime through another async interleaving.
+    const result = await forwardPreviewRequest(tcpPort, request, {
+      beginForward: () => this.beginPreviewForward(),
+      renewActivity: () => this.renewActivityTimeout()
+    });
+
+    if (result.status === 'network-lost') {
+      if (!(await this.currentRuntime.isActive(runtime))) {
+        return this.stalePreviewURLResponse();
+      }
+
+      return new Response('Container suddenly disconnected, try again', {
+        status: 500
+      });
+    }
+
+    return result.response;
   }
 
   private buildPreviewProxyRequest(
@@ -2919,7 +2977,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const upgradeHeader = request.headers.get('Upgrade');
     if (upgradeHeader?.toLowerCase() === 'websocket') {
       // WebSocket upgrade requests keep the original Request object so the
-      // Workers runtime preserves upgrade semantics. fetchIfRunning() routes
+      // Workers runtime preserves upgrade semantics. Preview forwarding routes
       // by the explicit port argument, while the request URL still provides
       // the path and query.
       return new Request(request, {
@@ -2971,15 +3029,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return this.stalePreviewURLResponse();
     }
 
-    const response = await this.fetchIfRunning(proxyRequest, port);
-    if (
-      (await this.isContainerUnavailableResponse(response)) &&
-      !(await this.currentRuntime.isActive(validation.runtime))
-    ) {
-      return this.stalePreviewURLResponse();
-    }
-
-    return response;
+    return await this.fetchPreviewIfRunning(
+      proxyRequest,
+      port,
+      validation.runtime
+    );
   }
 
   // Override fetch to route internal container requests to appropriate ports

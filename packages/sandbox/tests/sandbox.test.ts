@@ -45,8 +45,8 @@ vi.mock('@cloudflare/containers', () => {
       // Mock implementation for HTTP path
       return new Response('Mock Container HTTP fetch');
     }
-    async fetchIfRunning(request: Request, port: number): Promise<Response> {
-      return new Response(`Mock running fetch ${port}`);
+    async startAndWaitForPorts(): Promise<void> {
+      // No-op: real container startup is not needed in tests.
     }
     async destroy(): Promise<void> {
       // No-op: real container destroy is not needed in tests; individual
@@ -83,7 +83,11 @@ interface MockCtx {
   storage: MockStorage;
   blockConcurrencyWhile: ReturnType<typeof vi.fn>;
   waitUntil: ReturnType<typeof vi.fn>;
-  container: { running: boolean };
+  container: {
+    running: boolean;
+    getTcpPort?: ReturnType<typeof vi.fn>;
+    start?: ReturnType<typeof vi.fn>;
+  };
   id: {
     toString: () => string;
     equals: ReturnType<typeof vi.fn>;
@@ -129,6 +133,38 @@ function mockPreviewStorageGet(
   );
 }
 
+function createPreviewProxyRequest(path = '/api'): Request {
+  return new Request(
+    `https://8080-test-sandbox-token12345678901.example.com${path}`,
+    {
+      headers: {
+        'x-sandbox-preview-proxy': '1',
+        'x-sandbox-preview-port': '8080',
+        'x-sandbox-preview-token': 'token12345678901',
+        'x-sandbox-preview-sandbox-id': 'test-sandbox'
+      }
+    }
+  );
+}
+
+function createPreviewWebSocketRequest(): Request {
+  return new Request(
+    'https://8080-test-sandbox-token12345678901.example.com/ws',
+    {
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'Upgrade',
+        'Sec-WebSocket-Key': 'test-key-123',
+        'Sec-WebSocket-Version': '13',
+        'x-sandbox-preview-proxy': '1',
+        'x-sandbox-preview-port': '8080',
+        'x-sandbox-preview-token': 'token12345678901',
+        'x-sandbox-preview-sandbox-id': 'test-sandbox'
+      }
+    }
+  );
+}
+
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
   let mockCtx: MockCtx;
@@ -160,7 +196,7 @@ describe('Sandbox - Automatic Session Management', () => {
           <T>(callback: () => Promise<T>): Promise<T> => callback()
         ),
       waitUntil: vi.fn(),
-      container: { running: true },
+      container: { running: true, start: vi.fn() },
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -269,7 +305,7 @@ describe('Sandbox - Automatic Session Management', () => {
             <T>(callback: () => Promise<T>): Promise<T> => callback()
           ),
         waitUntil: vi.fn(),
-        container: { running: true },
+        container: { running: true, start: vi.fn() },
         id: {
           toString: () => 'null-enable-default-session-sandbox',
           equals: vi.fn(),
@@ -1361,65 +1397,51 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(passedRequest.headers.get('Sec-WebSocket-Version')).toBe('13');
     });
 
-    it('routes active preview proxy requests through fetchIfRunning', async () => {
-      (mockCtx as any).container = { running: true };
+    it('routes active preview proxy requests through the TCP port without starting', async () => {
+      const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+      mockCtx.container.running = true;
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
-      const fetchIfRunningSpy = vi
-        .spyOn(sandbox, 'fetchIfRunning')
-        .mockResolvedValue(new Response('preview ok'));
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
 
       const response = await sandbox.fetch(
-        new Request(
-          'https://8080-test-sandbox-token12345678901.example.com/api',
-          {
-            headers: {
-              'x-sandbox-preview-proxy': '1',
-              'x-sandbox-preview-port': '8080',
-              'x-sandbox-preview-token': 'token12345678901',
-              'x-sandbox-preview-sandbox-id': 'spoofed-sandbox'
-            }
-          }
-        )
+        createPreviewProxyRequest('/hello?x=1')
       );
 
       expect(await response.text()).toBe('preview ok');
-      expect(fetchIfRunningSpy).toHaveBeenCalledTimes(1);
-      const forwardedRequest = fetchIfRunningSpy.mock.calls[0][0] as Request;
+      expect(containerFetchSpy).not.toHaveBeenCalled();
+      expect(startAndWaitSpy).not.toHaveBeenCalled();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledWith(
+        'http://localhost:8080/hello?x=1',
+        expect.any(Request)
+      );
+      const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
       expect(forwardedRequest.headers.get('X-Sandbox-Name')).toBe(
         'test-sandbox'
       );
-      expect(fetchIfRunningSpy).toHaveBeenCalledWith(expect.any(Request), 8080);
-      expect(containerFetchSpy).not.toHaveBeenCalled();
     });
 
     it('preserves WebSocket preview proxy requests when forwarding', async () => {
-      (mockCtx as any).container = { running: true };
-      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
-      const fetchIfRunningSpy = vi
-        .spyOn(sandbox, 'fetchIfRunning')
+      const tcpFetch = vi
+        .fn()
         .mockResolvedValue(new Response('preview websocket ok'));
+      mockCtx.container.running = true;
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
 
-      const request = new Request(
-        'https://8080-test-sandbox-token12345678901.example.com/ws',
-        {
-          headers: {
-            Upgrade: 'websocket',
-            Connection: 'Upgrade',
-            'Sec-WebSocket-Key': 'test-key-123',
-            'Sec-WebSocket-Version': '13',
-            'x-sandbox-preview-proxy': '1',
-            'x-sandbox-preview-port': '8080',
-            'x-sandbox-preview-token': 'token12345678901',
-            'x-sandbox-preview-sandbox-id': 'test-sandbox'
-          }
-        }
-      );
+      const request = createPreviewWebSocketRequest();
 
       await sandbox.fetch(request);
 
-      expect(fetchIfRunningSpy).toHaveBeenCalledTimes(1);
-      const forwardedRequest = fetchIfRunningSpy.mock.calls[0][0] as Request;
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
       expect(forwardedRequest.url).toBe(request.url);
       expect(forwardedRequest.headers.get('Upgrade')).toBe('websocket');
       expect(forwardedRequest.headers.get('Connection')).toBe('Upgrade');
@@ -1433,32 +1455,44 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     it('returns user 503 responses when the runtime remains active', async () => {
-      (mockCtx as any).container = { running: true };
+      const tcpFetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response('service temporarily unavailable', { status: 503 })
+        );
+      mockCtx.container.running = true;
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
-      vi.spyOn(sandbox, 'fetchIfRunning').mockResolvedValue(
-        new Response('service temporarily unavailable', { status: 503 })
-      );
 
-      const response = await sandbox.fetch(
-        new Request(
-          'https://8080-test-sandbox-token12345678901.example.com/api',
-          {
-            headers: {
-              'x-sandbox-preview-proxy': '1',
-              'x-sandbox-preview-port': '8080',
-              'x-sandbox-preview-token': 'token12345678901',
-              'x-sandbox-preview-sandbox-id': 'test-sandbox'
-            }
-          }
-        )
-      );
+      const response = await sandbox.fetch(createPreviewProxyRequest());
 
       expect(response.status).toBe(503);
       expect(await response.text()).toBe('service temporarily unavailable');
     });
 
-    it('returns stale when the runtime goes inactive while forwarding', async () => {
-      (mockCtx as any).container = { running: true };
+    it('returns stale without forwarding when the container is stopped', async () => {
+      mockCtx.container.running = false;
+      mockCtx.container.getTcpPort = vi.fn();
+      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
+      const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      expect(mockCtx.container.getTcpPort).not.toHaveBeenCalled();
+      expect(containerFetchSpy).not.toHaveBeenCalled();
+      expect(startAndWaitSpy).not.toHaveBeenCalled();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
+    });
+
+    it('returns stale when the runtime goes inactive during network loss', async () => {
+      mockCtx.container.running = true;
       let runtimeActive = true;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         const state = activePreviewStorageState();
@@ -1467,26 +1501,15 @@ describe('Sandbox - Automatic Session Management', () => {
         }
         return state[key as keyof typeof state] ?? null;
       });
-      vi.spyOn(sandbox, 'fetchIfRunning').mockImplementation(async () => {
-        // Simulate the runtime going inactive after preview validation but
-        // before the post-forward liveness check.
+      const tcpFetch = vi.fn().mockImplementation(async () => {
         runtimeActive = false;
-        return new Response('Container is not running', { status: 503 });
+        throw new Error('Network connection lost.');
       });
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
 
-      const response = await sandbox.fetch(
-        new Request(
-          'https://8080-test-sandbox-token12345678901.example.com/api',
-          {
-            headers: {
-              'x-sandbox-preview-proxy': '1',
-              'x-sandbox-preview-port': '8080',
-              'x-sandbox-preview-token': 'token12345678901',
-              'x-sandbox-preview-sandbox-id': 'test-sandbox'
-            }
-          }
-        )
-      );
+      const response = await sandbox.fetch(createPreviewProxyRequest());
 
       expect(response.status).toBe(410);
       expect(await response.json()).toMatchObject({
@@ -1494,12 +1517,29 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
+    it('returns controlled disconnect response when network loss keeps the runtime active', async () => {
+      mockCtx.container.running = true;
+      mockPreviewStorageGet(mockCtx, activePreviewStorageState());
+      const tcpFetch = vi
+        .fn()
+        .mockRejectedValue(new Error('Network connection lost.'));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe(
+        'Container suddenly disconnected, try again'
+      );
+    });
+
     it('rejects preview proxy requests without durable authorization', async () => {
-      (mockCtx as any).container = { running: true };
+      mockCtx.container.running = true;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
         key === 'portTokens' ? {} : null
       );
-      const fetchIfRunningSpy = vi.spyOn(sandbox, 'fetchIfRunning');
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
 
       const response = await sandbox.fetch(
@@ -1517,12 +1557,11 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(await response.json()).toMatchObject({
         code: 'INVALID_TOKEN'
       });
-      expect(fetchIfRunningSpy).not.toHaveBeenCalled();
       expect(containerFetchSpy).not.toHaveBeenCalled();
     });
 
     it('rejects preview proxy requests without current-runtime activation', async () => {
-      (mockCtx as any).container = { running: true };
+      mockCtx.container.running = true;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         if (key === 'portTokens') {
           return { '8080': { token: 'token12345678901' } };
@@ -1535,33 +1574,19 @@ describe('Sandbox - Automatic Session Management', () => {
         }
         return null;
       });
-      const fetchIfRunningSpy = vi.spyOn(sandbox, 'fetchIfRunning');
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
 
-      const response = await sandbox.fetch(
-        new Request(
-          'https://8080-test-sandbox-token12345678901.example.com/api',
-          {
-            headers: {
-              'x-sandbox-preview-proxy': '1',
-              'x-sandbox-preview-port': '8080',
-              'x-sandbox-preview-token': 'token12345678901',
-              'x-sandbox-preview-sandbox-id': 'test-sandbox'
-            }
-          }
-        )
-      );
+      const response = await sandbox.fetch(createPreviewProxyRequest());
 
       expect(response.status).toBe(410);
       expect(await response.json()).toMatchObject({
         code: 'STALE_PREVIEW_URL'
       });
-      expect(fetchIfRunningSpy).not.toHaveBeenCalled();
       expect(containerFetchSpy).not.toHaveBeenCalled();
     });
 
     it('rejects persisted preview auth without runtime identity or activation', async () => {
-      (mockCtx as any).container = { running: true };
+      mockCtx.container.running = true;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         if (key === 'portTokens') {
           return { '8080': { token: 'token12345678901' } };
@@ -1574,28 +1599,14 @@ describe('Sandbox - Automatic Session Management', () => {
         }
         return null;
       });
-      const fetchIfRunningSpy = vi.spyOn(sandbox, 'fetchIfRunning');
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
 
-      const response = await sandbox.fetch(
-        new Request(
-          'https://8080-test-sandbox-token12345678901.example.com/api',
-          {
-            headers: {
-              'x-sandbox-preview-proxy': '1',
-              'x-sandbox-preview-port': '8080',
-              'x-sandbox-preview-token': 'token12345678901',
-              'x-sandbox-preview-sandbox-id': 'test-sandbox'
-            }
-          }
-        )
-      );
+      const response = await sandbox.fetch(createPreviewProxyRequest());
 
       expect(response.status).toBe(410);
       expect(await response.json()).toMatchObject({
         code: 'STALE_PREVIEW_URL'
       });
-      expect(fetchIfRunningSpy).not.toHaveBeenCalled();
       expect(containerFetchSpy).not.toHaveBeenCalled();
     });
   });
