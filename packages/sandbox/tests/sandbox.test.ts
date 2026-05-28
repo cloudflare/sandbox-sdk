@@ -1259,12 +1259,6 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('port exposure - workers.dev detection', () => {
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox');
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        name: 'test-service',
-        exposedAt: new Date().toISOString()
-      } as any);
     });
 
     it('should reject workers.dev domains with CustomDomainRequiredError', async () => {
@@ -1285,9 +1279,6 @@ describe('Sandbox - Automatic Session Management', () => {
           expect(error.message).toContain('custom domain');
         }
       }
-
-      // Verify client method was never called
-      expect(sandbox.client.ports.exposePort).not.toHaveBeenCalled();
     });
 
     it('should accept custom domains and subdomains', async () => {
@@ -1313,7 +1304,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toContain('localhost');
-      expect(sandbox.client.ports.exposePort).toHaveBeenCalled();
+      expect(sandbox.client.utils.createSession).toHaveBeenCalled();
     });
   });
 
@@ -1726,14 +1717,6 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('constructPreviewUrl validation', () => {
     it('should throw clear error for ID with uppercase letters without normalizeId', async () => {
       await sandbox.setSandboxName('MyProject-123', false);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        url: '',
-        timestamp: '2023-01-01T00:00:00Z'
-      });
-
       await expect(
         sandbox.exposePort(8080, { hostname: 'example.com' })
       ).rejects.toThrow(/Preview URLs require lowercase sandbox IDs/);
@@ -1741,14 +1724,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should construct valid URL for lowercase ID', async () => {
       await sandbox.setSandboxName('my-project', false);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        url: '',
-        timestamp: '2023-01-01T00:00:00Z'
-      });
-
       const result = await sandbox.exposePort(8080, {
         hostname: 'example.com'
       });
@@ -1761,14 +1736,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should construct valid URL with normalized ID', async () => {
       await sandbox.setSandboxName('myproject-123', true);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 4000,
-        url: '',
-        timestamp: '2023-01-01T00:00:00Z'
-      });
-
       const result = await sandbox.exposePort(4000, { hostname: 'my-app.dev' });
 
       expect(result.url).toMatch(
@@ -1779,14 +1746,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should construct valid localhost URL', async () => {
       await sandbox.setSandboxName('test-sandbox', false);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        url: '',
-        timestamp: '2023-01-01T00:00:00Z'
-      });
-
       const result = await sandbox.exposePort(8080, {
         hostname: 'localhost:3000'
       });
@@ -1798,14 +1757,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should include helpful guidance in error message', async () => {
       await sandbox.setSandboxName('MyProject-ABC', false);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        url: '',
-        timestamp: '2023-01-01T00:00:00Z'
-      });
-
       await expect(
         sandbox.exposePort(8080, { hostname: 'example.com' })
       ).rejects.toThrow(
@@ -1848,13 +1799,6 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('custom token validation', () => {
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox', false);
-
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        url: 'http://localhost:8080',
-        timestamp: new Date().toISOString()
-      });
 
       vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
       vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
@@ -1923,17 +1867,6 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('preview URL runtime activation', () => {
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox', false);
-      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
-        success: true,
-        port: 8080,
-        exposedAt: new Date().toISOString()
-      } as any);
-      vi.spyOn(sandbox.client.ports, 'getExposedPorts').mockResolvedValue({
-        success: true,
-        ports: [],
-        count: 0,
-        timestamp: new Date().toISOString()
-      } as any);
     });
 
     it('onStart() marks a new current runtime without restoring saved ports', async () => {
@@ -1953,8 +1886,7 @@ describe('Sandbox - Automatic Session Management', () => {
           id: expect.any(String)
         })
       );
-      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
-      expect(sandbox.client.ports.exposePort).not.toHaveBeenCalled();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('onStop() preserves durable auth and clears runtime-scoped preview state', async () => {
@@ -2184,19 +2116,7 @@ describe('Sandbox - Automatic Session Management', () => {
         expect(ensureDefaultSessionSpy).toHaveBeenCalled()
       );
 
-      await mockCtx.storage.transaction(
-        async (txn: {
-          get: (key: string) => Promise<unknown>;
-          put: (key: string, value: unknown) => Promise<void>;
-        }) => {
-          const tokens = ((await txn.get('portTokens')) ?? {}) as Record<
-            string,
-            unknown
-          >;
-          delete tokens['8080'];
-          await txn.put('portTokens', tokens);
-        }
-      );
+      await sandbox.unexposePort(8080);
       expect(storage.get('portTokens')).toEqual({});
 
       releaseStartup();
@@ -2298,17 +2218,29 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('desktop preview URL lifecycle', () => {
+    it('does not synthesize a desktop preview URL from durable auth when exposePort fails', async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+      vi.spyOn(sandbox.client.desktop, 'status').mockResolvedValue({
+        success: true,
+        status: 'active',
+        processes: {},
+        resolution: [1024, 768],
+        dpi: 96
+      });
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
+        key === 'portTokens' ? { '6080': { token: 'oldtoken' } } : null
+      );
+      vi.spyOn(sandbox, 'exposePort').mockRejectedValue(new Error('boom'));
+
+      await expect(sandbox.getDesktopStreamUrl('example.com')).rejects.toThrow(
+        'boom'
+      );
+    });
+  });
+
   describe('validatePortToken', () => {
     beforeEach(() => {
-      // Spy on getExposedPorts so a regression that reintroduces the
-      // container round-trip is catchable via not.toHaveBeenCalled().
-      vi.spyOn(sandbox.client.ports, 'getExposedPorts').mockResolvedValue({
-        success: true,
-        ports: [],
-        count: 0,
-        timestamp: new Date().toISOString()
-      } as any);
-
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
         key === 'portTokens' ? { '8080': { token: 'correcttoken' } } : null
       );
@@ -2318,7 +2250,6 @@ describe('Sandbox - Automatic Session Management', () => {
       const result = await sandbox.validatePortToken(8080, 'correcttoken');
 
       expect(result).toBe(true);
-      expect(sandbox.client.ports.getExposedPorts).not.toHaveBeenCalled();
     });
 
     it('returns false for a mismatched token', async () => {
@@ -2356,6 +2287,209 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.validatePortToken(8080, 'correcttoken');
 
       expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getExposedPorts Contract B', () => {
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox');
+    });
+
+    it('lists only ports activated for the current runtime without contacting the container', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return {
+            '8080': { token: 'tok8080', name: 'api' },
+            '9090': { token: 'tok9090' }
+          };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-1',
+              token: 'tok8080'
+            },
+            '9090': {
+              runtimeIdentityID: 'runtime-old',
+              token: 'tok9090'
+            }
+          };
+        }
+        return null;
+      });
+
+      const result = await sandbox.getExposedPorts('example.com');
+
+      expect(result).toEqual([
+        {
+          url: 'https://8080-test-sandbox-tok8080.example.com/',
+          port: 8080,
+          status: 'active'
+        }
+      ]);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty list when durable auth exists without a current runtime', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-1',
+              token: 'tok8080'
+            }
+          };
+        }
+        return null;
+      });
+
+      await expect(sandbox.getExposedPorts('example.com')).resolves.toEqual([]);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('omits durable auth without matching current-runtime activation', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {};
+        }
+        return null;
+      });
+
+      await expect(sandbox.getExposedPorts('example.com')).resolves.toEqual([]);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('isPortExposed Contract B', () => {
+    beforeEach(() => {});
+
+    it('returns true only for durable auth activated in the current runtime', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-1',
+              token: 'tok8080'
+            }
+          };
+        }
+        return null;
+      });
+
+      await expect(sandbox.isPortExposed(8080)).resolves.toBe(true);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('returns false for durable auth without activation', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {};
+        }
+        return null;
+      });
+
+      await expect(sandbox.isPortExposed(8080)).resolves.toBe(false);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('returns false for activation from an old runtime', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-old',
+              token: 'tok8080'
+            }
+          };
+        }
+        return null;
+      });
+
+      await expect(sandbox.isPortExposed(8080)).resolves.toBe(false);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unexposePort Contract B', () => {
+    beforeEach(() => {});
+
+    it('revokes auth and activation without waking when no current runtime is active', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-1',
+              token: 'tok8080'
+            }
+          };
+        }
+        return null;
+      });
+
+      await sandbox.unexposePort(8080);
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('portTokens', {});
+      expect(mockCtx.storage.delete).toHaveBeenCalledWith('activePreviewPorts');
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('revokes auth and activation without touching the container registry when runtime is active', async () => {
+      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') {
+          return { id: 'runtime-1' };
+        }
+        if (key === 'portTokens') {
+          return { '8080': { token: 'tok8080' } };
+        }
+        if (key === 'activePreviewPorts') {
+          return {
+            '8080': {
+              runtimeIdentityID: 'runtime-1',
+              token: 'tok8080'
+            }
+          };
+        }
+        return null;
+      });
+
+      await sandbox.unexposePort(8080);
+
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('portTokens', {});
+      expect(mockCtx.storage.delete).toHaveBeenCalledWith('activePreviewPorts');
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -3484,11 +3618,13 @@ describe('Sandbox.getProcess()', () => {
       (sb as any).client = {
         getTransportMode: () => 'rpc',
         utils: {
-          createSession: vi.fn().mockResolvedValue({
-            success: true,
-            id: 'default',
-            message: 'ok'
-          } as any)
+          createSession: vi
+            .fn()
+            .mockResolvedValue({
+              success: true,
+              id: 'default',
+              message: 'ok'
+            } as any)
         },
         processes: {}
       };
