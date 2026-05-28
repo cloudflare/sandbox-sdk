@@ -1,5 +1,6 @@
 import type { PortExposeResult, Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { stopContainerAndWait } from './helpers/container-lifecycle';
 import {
   cleanupTestSandbox,
   createTestSandbox,
@@ -13,16 +14,27 @@ const skipPortExposureTests =
 
 const RESTART_TEST_PORT = 9851;
 
+async function responseText(response: Response): Promise<string> {
+  return await response.text().catch(() => '<unreadable>');
+}
+
+async function assertOK(response: Response, action: string): Promise<void> {
+  if (!response.ok) {
+    throw new Error(
+      `${action} failed: ${response.status} ${await responseText(response)}`
+    );
+  }
+}
+
+function previewURL(previewUrl: string, path: string): string {
+  return new URL(path, previewUrl).toString();
+}
+
 /**
- * Preview URLs survive container restarts.
- *
- * Exposes a port with a custom token, stops the container, restarts the
- * user process inside a fresh container, and fetches the preview URL
- * again. The preview URL responds 200 without the caller re-issuing
- * exposePort() — the SDK re-registers the port with the container on
- * startup using tokens persisted in Durable Object storage.
+ * Preview URL authorization survives container restarts, but activation is
+ * scoped to the runtime where exposePort() was last called.
  */
-describe('Preview URL survives container restart', () => {
+describe('Preview URL runtime activation after container restart', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
@@ -43,9 +55,8 @@ describe('Preview URL survives container restart', () => {
   }, 120000);
 
   test.skipIf(skipPortExposureTests)(
-    'preview URL keeps working after the container is stopped and restarted',
+    'preview URL stays stale after restart until the port is exposed again',
     async () => {
-      // Bun server that responds with a stable marker on /hello.
       const serverCode = `
 const server = Bun.serve({
   hostname: "0.0.0.0",
@@ -58,12 +69,11 @@ const server = Bun.serve({
     return new Response("not found", { status: 404 });
   },
 });
-console.log("Server listening on port " + server.port);
 await Bun.sleep(300000);
       `.trim();
 
       const startServer = async () => {
-        await fetch(`${workerUrl}/api/file/write`, {
+        const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -71,6 +81,8 @@ await Bun.sleep(300000);
             content: serverCode
           })
         });
+        await assertOK(writeResponse, 'Writing restart preview server');
+
         const startResponse = await fetch(`${workerUrl}/api/process/start`, {
           method: 'POST',
           headers,
@@ -78,8 +90,9 @@ await Bun.sleep(300000);
             command: `bun run /workspace/restart-server.ts`
           })
         });
-        expect(startResponse.status).toBe(200);
+        await assertOK(startResponse, 'Starting restart preview server');
         const { id: processId } = (await startResponse.json()) as Process;
+
         const waitPortResponse = await fetch(
           `${workerUrl}/api/process/${processId}/waitForPort`,
           {
@@ -92,51 +105,65 @@ await Bun.sleep(300000);
             })
           }
         );
-        expect(waitPortResponse.status).toBe(200);
-        return processId;
+        await assertOK(waitPortResponse, 'Waiting for restart preview port');
       };
 
-      // Phase 1: expose the port with a stable custom token, confirm it works.
-      await startServer();
-      const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
-        method: 'POST',
-        headers: portHeaders,
-        body: JSON.stringify({
-          port: RESTART_TEST_PORT,
-          name: 'restart-test',
-          token: 'stableafterreboot'
-        })
-      });
-      expect(exposeResponse.status).toBe(200);
-      const { url: exposedUrl } =
-        (await exposeResponse.json()) as PortExposeResult;
+      try {
+        await startServer();
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers: portHeaders,
+          body: JSON.stringify({
+            port: RESTART_TEST_PORT,
+            name: 'restart-test',
+            token: 'stable_reboot'
+          })
+        });
+        await assertOK(exposeResponse, 'Exposing restart preview port');
+        const { url: exposedUrl } =
+          (await exposeResponse.json()) as PortExposeResult;
 
-      const before = await fetch(`${exposedUrl}/hello`);
-      expect(before.status).toBe(200);
-      expect(await before.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
+        const before = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(before.status).toBe(200);
+        expect(await before.text()).toBe(
+          `hello from port ${RESTART_TEST_PORT}`
+        );
 
-      // Phase 2: stop the container. DO storage survives.
-      const stopResponse = await fetch(`${workerUrl}/api/container/stop`, {
-        method: 'POST',
-        headers: portHeaders
-      });
-      expect(stopResponse.status).toBe(200);
+        await stopContainerAndWait(workerUrl, portHeaders);
 
-      // Phase 3: restart the process inside a fresh container, then hit the
-      // preview URL again. The SDK should re-expose the port automatically
-      // as part of onStart() and the preview URL should respond without the
-      // caller re-issuing exposePort().
-      await startServer();
+        await startServer();
 
-      const after = await fetch(`${exposedUrl}/hello`);
-      expect(after.status).toBe(200);
-      expect(await after.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
+        const stale = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(stale.status).toBe(410);
+        expect(await stale.json()).toMatchObject({
+          code: 'STALE_PREVIEW_URL'
+        });
 
-      // Cleanup
-      await fetch(`${workerUrl}/api/exposed-ports/${RESTART_TEST_PORT}`, {
-        method: 'DELETE',
-        headers: portHeaders
-      });
+        const reactivateResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers: portHeaders,
+          body: JSON.stringify({
+            port: RESTART_TEST_PORT,
+            name: 'restart-test'
+          })
+        });
+        await assertOK(reactivateResponse, 'Reactivating restart preview port');
+        const { url: reactivatedUrl } =
+          (await reactivateResponse.json()) as PortExposeResult;
+        expect(reactivatedUrl).toBe(exposedUrl);
+
+        const after = await fetch(previewURL(exposedUrl, '/hello'));
+        expect(after.status).toBe(200);
+        expect(await after.text()).toBe(`hello from port ${RESTART_TEST_PORT}`);
+      } finally {
+        await fetch(`${workerUrl}/api/exposed-ports/${RESTART_TEST_PORT}`, {
+          method: 'DELETE',
+          headers: portHeaders
+        }).catch(() => undefined);
+        await stopContainerAndWait(workerUrl, portHeaders).catch(
+          () => undefined
+        );
+      }
     },
     180000
   );

@@ -896,6 +896,56 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     expect(targets.some((t) => t.includes('/accounts/acct-B/'))).toBe(false);
   });
 
+  it('continues Cloudflare cleanup when container tunnel teardown fails', async () => {
+    const cf = makeFakeCloudflare({});
+    const { client } = makeClient();
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: 'tunnel-uuid-stored',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        url: 'https://api.example.com',
+        createdAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'dns-record-id',
+        accountId: 'ACCT',
+        zoneId: 'zone-id'
+      }
+    });
+    client.tunnels.destroyTunnel.mockRejectedValue(
+      new Error('container already stopped')
+    );
+    const built = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger(),
+      sandboxId: 'sb1',
+      getNamedTunnelConfig: async () => ({
+        token: 'TOK',
+        accountId: 'ACCT',
+        zoneId: 'zone-id'
+      }),
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+
+    await expect(built.tunnels.destroy(8080)).resolves.toBeUndefined();
+
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(targets.some((t) => t.includes('/dns_records/'))).toBe(true);
+    expect(targets.some((t) => t.includes('/cfd_tunnel/'))).toBe(true);
+  });
+
   it('quick-tunnel destroy() makes no Cloudflare API calls', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({

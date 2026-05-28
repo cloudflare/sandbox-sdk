@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { proxyToSandbox, type SandboxEnv } from '../src/request-handler';
 import type { Sandbox } from '../src/sandbox';
 
-// Mock getSandbox from sandbox.ts
 vi.mock('../src/sandbox', () => {
   const mockFn = vi.fn();
   return {
@@ -11,32 +10,35 @@ vi.mock('../src/sandbox', () => {
   };
 });
 
-// Import the mock after vi.mock is set up
 import { getSandbox } from '../src/sandbox';
 
-describe('proxyToSandbox - WebSocket Support', () => {
-  let mockSandbox: Partial<Sandbox>;
+describe('proxyToSandbox - preview URL routing', () => {
+  let mockSandbox: Pick<Sandbox, 'fetch' | 'containerFetch'>;
   let mockEnv: SandboxEnv;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Mock Sandbox with necessary methods
     mockSandbox = {
-      validatePortToken: vi.fn().mockResolvedValue(true),
-      fetch: vi.fn().mockResolvedValue(new Response('WebSocket response')),
+      fetch: vi.fn().mockResolvedValue(new Response('Preview response')),
       containerFetch: vi.fn().mockResolvedValue(new Response('HTTP response'))
     };
 
     mockEnv = {
-      Sandbox: {} as any
+      Sandbox: {} as DurableObjectNamespace<Sandbox>
     };
 
     vi.mocked(getSandbox).mockReturnValue(mockSandbox as Sandbox);
   });
 
-  describe('WebSocket detection and routing', () => {
-    it('should detect WebSocket upgrade header (case-insensitive)', async () => {
+  function getForwardedRequest(): Request {
+    const request = vi.mocked(mockSandbox.fetch).mock.calls[0]?.[0];
+    expect(request).toBeInstanceOf(Request);
+    return request as Request;
+  }
+
+  describe('routing to the Sandbox Durable Object', () => {
+    it('routes WebSocket preview requests through the Sandbox fetch boundary', async () => {
       const request = new Request(
         'https://8080-sandbox-token12345678901.example.com/ws',
         {
@@ -49,30 +51,20 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
       await proxyToSandbox(request, mockEnv);
 
-      // Should route through fetch() for WebSocket
       expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
       expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
-    });
 
-    it('should set cf-container-target-port header for WebSocket', async () => {
-      const request = new Request(
-        'https://8080-sandbox-token12345678901.example.com/ws',
-        {
-          headers: {
-            Upgrade: 'websocket'
-          }
-        }
+      const forwarded = getForwardedRequest();
+      expect(forwarded.headers.get('Upgrade')).toBe('websocket');
+      expect(forwarded.headers.get('Connection')).toBe('Upgrade');
+      expect(forwarded.headers.get('x-sandbox-preview-proxy')).toBe('1');
+      expect(forwarded.headers.get('x-sandbox-preview-port')).toBe('8080');
+      expect(forwarded.headers.get('x-sandbox-preview-token')).toBe(
+        'token12345678901'
       );
-
-      await proxyToSandbox(request, mockEnv);
-
-      expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
-      const fetchCall = vi.mocked(mockSandbox.fetch as any).mock
-        .calls[0][0] as Request;
-      expect(fetchCall.headers.get('cf-container-target-port')).toBe('8080');
     });
 
-    it('should preserve original headers for WebSocket', async () => {
+    it('preserves original WebSocket headers', async () => {
       const request = new Request(
         'https://8080-sandbox-token12345678901.example.com/ws',
         {
@@ -87,17 +79,14 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
       await proxyToSandbox(request, mockEnv);
 
-      const fetchCall = vi.mocked(mockSandbox.fetch as any).mock
-        .calls[0][0] as Request;
-      expect(fetchCall.headers.get('Upgrade')).toBe('websocket');
-      expect(fetchCall.headers.get('Sec-WebSocket-Key')).toBe('test-key-123');
-      expect(fetchCall.headers.get('Sec-WebSocket-Version')).toBe('13');
-      expect(fetchCall.headers.get('User-Agent')).toBe('test-client');
+      const forwarded = getForwardedRequest();
+      expect(forwarded.headers.get('Upgrade')).toBe('websocket');
+      expect(forwarded.headers.get('Sec-WebSocket-Key')).toBe('test-key-123');
+      expect(forwarded.headers.get('Sec-WebSocket-Version')).toBe('13');
+      expect(forwarded.headers.get('User-Agent')).toBe('test-client');
     });
-  });
 
-  describe('HTTP routing (existing behavior)', () => {
-    it('should route HTTP requests through containerFetch', async () => {
+    it('routes HTTP preview requests through the Sandbox fetch boundary', async () => {
       const request = new Request(
         'https://8080-sandbox-token12345678901.example.com/api/data',
         {
@@ -107,30 +96,43 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
       await proxyToSandbox(request, mockEnv);
 
-      // Should route through containerFetch() for HTTP
-      expect(mockSandbox.containerFetch).toHaveBeenCalledTimes(1);
-      expect(mockSandbox.fetch).not.toHaveBeenCalled();
+      expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+
+      const forwarded = getForwardedRequest();
+      expect(forwarded.headers.get('x-sandbox-preview-proxy')).toBe('1');
+      expect(forwarded.headers.get('x-sandbox-preview-port')).toBe('8080');
+      expect(forwarded.headers.get('x-sandbox-preview-token')).toBe(
+        'token12345678901'
+      );
+      expect(forwarded.headers.get('x-sandbox-preview-sandbox-id')).toBe(
+        'sandbox'
+      );
     });
 
-    it('should route POST requests through containerFetch', async () => {
+    it('preserves POST requests and request headers', async () => {
       const request = new Request(
         'https://8080-sandbox-token12345678901.example.com/api/data',
         {
           method: 'POST',
           body: JSON.stringify({ data: 'test' }),
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-Test-Header': 'test-value'
           }
         }
       );
 
       await proxyToSandbox(request, mockEnv);
 
-      expect(mockSandbox.containerFetch).toHaveBeenCalledTimes(1);
-      expect(mockSandbox.fetch).not.toHaveBeenCalled();
+      const forwarded = getForwardedRequest();
+      expect(forwarded.method).toBe('POST');
+      expect(forwarded.headers.get('Content-Type')).toBe('application/json');
+      expect(forwarded.headers.get('X-Test-Header')).toBe('test-value');
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
     });
 
-    it('should not detect SSE as WebSocket', async () => {
+    it('does not treat SSE requests as WebSocket requests', async () => {
       const request = new Request(
         'https://8080-sandbox-token12345678901.example.com/events',
         {
@@ -142,81 +144,14 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
       await proxyToSandbox(request, mockEnv);
 
-      // SSE should use HTTP path, not WebSocket path
-      expect(mockSandbox.containerFetch).toHaveBeenCalledTimes(1);
-      expect(mockSandbox.fetch).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Token validation', () => {
-    it('should validate token for both WebSocket and HTTP requests', async () => {
-      const wsRequest = new Request(
-        'https://8080-sandbox-token12345678901.example.com/ws',
-        {
-          headers: { Upgrade: 'websocket' }
-        }
-      );
-
-      await proxyToSandbox(wsRequest, mockEnv);
-      expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
-        8080,
-        'token12345678901'
-      );
-
-      vi.clearAllMocks();
-
-      const httpRequest = new Request(
-        'https://8080-sandbox-token12345678901.example.com/api'
-      );
-      await proxyToSandbox(httpRequest, mockEnv);
-      expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
-        8080,
-        'token12345678901'
-      );
-    });
-
-    it('should reject requests with invalid token', async () => {
-      vi.mocked(mockSandbox.validatePortToken as any).mockResolvedValue(false);
-
-      const request = new Request(
-        'https://8080-sandbox-invalidtoken1234.example.com/ws',
-        {
-          headers: { Upgrade: 'websocket' }
-        }
-      );
-
-      const response = await proxyToSandbox(request, mockEnv);
-
-      expect(response?.status).toBe(404);
-      expect(mockSandbox.fetch).not.toHaveBeenCalled();
-
-      const body = await response?.json();
-      expect(body).toMatchObject({
-        error: 'Access denied: Invalid token or port not exposed',
-        code: 'INVALID_TOKEN'
-      });
-    });
-
-    it('should reject reserved port 3000', async () => {
-      // Port 3000 is reserved as control plane port and rejected by validatePort()
-      const request = new Request(
-        'https://3000-sandbox-anytoken12345678.example.com/status',
-        {
-          method: 'GET'
-        }
-      );
-
-      const response = await proxyToSandbox(request, mockEnv);
-
-      // Port 3000 is reserved and should be rejected (extractSandboxRoute returns null)
-      expect(response).toBeNull();
-      expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
+      expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
       expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+      expect(getForwardedRequest().headers.get('Accept')).toBe(
+        'text/event-stream'
+      );
     });
-  });
 
-  describe('Port routing', () => {
-    it('should route to correct port from subdomain', async () => {
+    it('routes to the parsed preview port and sandbox ID', async () => {
       const request = new Request(
         'https://9000-sandbox-token12345678901.example.com/api',
         {
@@ -226,37 +161,158 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
       await proxyToSandbox(request, mockEnv);
 
-      expect(mockSandbox.validatePortToken).toHaveBeenCalledWith(
-        9000,
+      expect(getSandbox).toHaveBeenCalledWith(mockEnv.Sandbox, 'sandbox', {
+        normalizeId: true
+      });
+
+      const forwarded = getForwardedRequest();
+      expect(forwarded.headers.get('x-sandbox-preview-port')).toBe('9000');
+      expect(forwarded.headers.get('x-sandbox-preview-token')).toBe(
         'token12345678901'
+      );
+    });
+
+    it('overwrites spoofed internal preview headers with parsed route values', async () => {
+      const request = new Request(
+        'https://8080-test-sandbox-token12345678901.example.com/hello',
+        {
+          headers: {
+            'x-sandbox-preview-proxy': '0',
+            'x-sandbox-preview-port': '9999',
+            'x-sandbox-preview-token': 'wrongtoken',
+            'x-sandbox-preview-sandbox-id': 'wrong-sandbox'
+          }
+        }
+      );
+
+      await proxyToSandbox(request, mockEnv);
+
+      const forwarded = getForwardedRequest();
+      expect(forwarded.headers.get('x-sandbox-preview-proxy')).toBe('1');
+      expect(forwarded.headers.get('x-sandbox-preview-port')).toBe('8080');
+      expect(forwarded.headers.get('x-sandbox-preview-token')).toBe(
+        'token12345678901'
+      );
+      expect(forwarded.headers.get('x-sandbox-preview-sandbox-id')).toBe(
+        'test-sandbox'
       );
     });
   });
 
+  describe('Sandbox response forwarding', () => {
+    it('returns invalid-token responses from the Sandbox Durable Object', async () => {
+      vi.mocked(mockSandbox.fetch).mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: 'Access denied: Invalid token or port not exposed',
+            code: 'INVALID_TOKEN'
+          }),
+          {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      );
+
+      const request = new Request(
+        'https://8080-sandbox-invalidtoken1234.example.com/api'
+      );
+
+      const response = await proxyToSandbox(request, mockEnv);
+
+      expect(response?.status).toBe(404);
+      expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+      expect(await response?.json()).toMatchObject({
+        code: 'INVALID_TOKEN'
+      });
+    });
+
+    it('returns stale preview URL responses from the Sandbox Durable Object', async () => {
+      vi.mocked(mockSandbox.fetch).mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error:
+              'Preview URL is stale because the sandbox runtime is not active',
+            code: 'STALE_PREVIEW_URL'
+          }),
+          {
+            status: 410,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      );
+
+      const request = new Request(
+        'https://8080-sandbox-token12345678901.example.com/api'
+      );
+
+      const response = await proxyToSandbox(request, mockEnv);
+
+      expect(response?.status).toBe(410);
+      expect(mockSandbox.fetch).toHaveBeenCalledTimes(1);
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+      expect(await response?.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+    });
+  });
+
   describe('Non-sandbox requests', () => {
-    it('should return null for non-sandbox URLs', async () => {
+    it('returns null for non-sandbox URLs without creating a sandbox', async () => {
       const request = new Request('https://example.com/some-path');
 
       const response = await proxyToSandbox(request, mockEnv);
 
       expect(response).toBeNull();
+      expect(getSandbox).not.toHaveBeenCalled();
       expect(mockSandbox.fetch).not.toHaveBeenCalled();
       expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
     });
 
-    it('should return null for invalid subdomain patterns', async () => {
+    it('returns null for invalid subdomain patterns without creating a sandbox', async () => {
       const request = new Request('https://invalid-pattern.example.com');
 
       const response = await proxyToSandbox(request, mockEnv);
 
       expect(response).toBeNull();
+      expect(getSandbox).not.toHaveBeenCalled();
+      expect(mockSandbox.fetch).not.toHaveBeenCalled();
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+    });
+
+    it('returns null for missing preview URL tokens without creating a sandbox', async () => {
+      const request = new Request('https://8080-sandbox.example.com');
+
+      const response = await proxyToSandbox(request, mockEnv);
+
+      expect(response).toBeNull();
+      expect(getSandbox).not.toHaveBeenCalled();
+      expect(mockSandbox.fetch).not.toHaveBeenCalled();
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects reserved port 3000 before creating a sandbox', async () => {
+      const request = new Request(
+        'https://3000-sandbox-anytoken12345678.example.com/status',
+        {
+          method: 'GET'
+        }
+      );
+
+      const response = await proxyToSandbox(request, mockEnv);
+
+      expect(response).toBeNull();
+      expect(getSandbox).not.toHaveBeenCalled();
+      expect(mockSandbox.fetch).not.toHaveBeenCalled();
+      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
     });
   });
 
   describe('Error handling', () => {
-    it('should handle errors during WebSocket routing', async () => {
-      (mockSandbox.fetch as any).mockImplementation(() =>
-        Promise.reject(new Error('Connection failed'))
+    it('returns a proxy routing error when Sandbox fetch fails', async () => {
+      vi.mocked(mockSandbox.fetch).mockRejectedValue(
+        new Error('Connection failed')
       );
 
       const request = new Request(
@@ -271,22 +327,7 @@ describe('proxyToSandbox - WebSocket Support', () => {
       const response = await proxyToSandbox(request, mockEnv);
 
       expect(response?.status).toBe(500);
-      const text = await response?.text();
-      expect(text).toBe('Proxy routing error');
-    });
-
-    it('should handle errors during HTTP routing', async () => {
-      (mockSandbox.containerFetch as any).mockImplementation(() =>
-        Promise.reject(new Error('Service error'))
-      );
-
-      const request = new Request(
-        'https://8080-sandbox-token12345678901.example.com/api'
-      );
-
-      const response = await proxyToSandbox(request, mockEnv);
-
-      expect(response?.status).toBe(500);
+      expect(await response?.text()).toBe('Proxy routing error');
     });
   });
 });
