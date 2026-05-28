@@ -222,9 +222,7 @@ Object.defineProperty(R2EgressProxyTarget, 'name', {
   value: R2_EGRESS_PROXY_TARGET_CLASS_NAME
 });
 
-Object.defineProperty(R2EgressProxyTarget, 'outboundHandlers', {
-  value: { r2EgressMount: r2EgressHandler }
-});
+R2EgressProxyTarget.outboundHandlers = { r2EgressMount: r2EgressHandler };
 
 function isFetcher(value: unknown): value is Fetcher {
   return (

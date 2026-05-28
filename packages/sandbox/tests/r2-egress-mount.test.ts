@@ -9,38 +9,46 @@ type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
 };
 
+type TestOutboundHandlerContext = {
+  containerId: string;
+  className: string;
+  params?: unknown;
+};
+
+type TestOutboundHandler = (
+  request: Request,
+  env: Cloudflare.Env,
+  ctx: TestOutboundHandlerContext
+) => Response | Promise<Response>;
+
+type TestOutboundHostOverride = {
+  method: string;
+  params?: unknown;
+};
+
+type TestContainerProxyOptions = {
+  props: {
+    containerId: string;
+    className: string;
+    outboundByHostOverrides?: Record<string, TestOutboundHostOverride>;
+  };
+};
+
+const testOutboundHandlersRegistry = vi.hoisted(
+  () => new Map<string, Record<string, TestOutboundHandler>>()
+);
+
 vi.mock('./interpreter', () => ({
   CodeInterpreter: vi.fn().mockImplementation(() => ({}))
 }));
 
 vi.mock('@cloudflare/containers', () => {
-  const outboundHandlersRegistry = new Map<string, Record<string, unknown>>();
   const outboundByHostRegistry = new Map<string, Record<string, unknown>>();
 
   const MockContainer = class Container {
     ctx: unknown;
     env: unknown;
     sleepAfter: string | number = '10m';
-
-    static get outboundHandlers(): Record<string, unknown> | undefined {
-      return outboundHandlersRegistry.get(Container.name);
-    }
-
-    static set outboundHandlers(handlers: Record<string, unknown>) {
-      const existing = outboundHandlersRegistry.get(Container.name) ?? {};
-      outboundHandlersRegistry.set(Container.name, {
-        ...existing,
-        ...handlers
-      });
-    }
-
-    static get outboundByHost(): Record<string, unknown> | undefined {
-      return outboundByHostRegistry.get(Container.name);
-    }
-
-    static set outboundByHost(handlers: Record<string, unknown>) {
-      outboundByHostRegistry.set(Container.name, handlers);
-    }
 
     constructor(ctx: unknown, env: unknown) {
       this.ctx = ctx;
@@ -60,7 +68,7 @@ vi.mock('@cloudflare/containers', () => {
     renewActivityTimeout() {}
 
     async setOutboundByHost(_hostname: string, _method: string): Promise<void> {
-      const handlers = outboundHandlersRegistry.get(this.constructor.name);
+      const handlers = testOutboundHandlersRegistry.get(this.constructor.name);
       if (!handlers || !(_method in handlers)) {
         throw new Error(
           `Outbound handler method '${_method}' not found in outboundHandlers for ${this.constructor.name}`
@@ -70,6 +78,31 @@ vi.mock('@cloudflare/containers', () => {
 
     async removeOutboundByHost(_hostname: string): Promise<void> {}
   };
+
+  Object.defineProperty(MockContainer, 'outboundHandlers', {
+    get: function (this: { name: string }) {
+      return testOutboundHandlersRegistry.get(this.name);
+    },
+    set: function (
+      this: { name: string },
+      handlers: Record<string, TestOutboundHandler>
+    ) {
+      const existing = testOutboundHandlersRegistry.get(this.name) ?? {};
+      testOutboundHandlersRegistry.set(this.name, {
+        ...existing,
+        ...handlers
+      });
+    }
+  });
+
+  Object.defineProperty(MockContainer, 'outboundByHost', {
+    get: function (this: { name: string }) {
+      return outboundByHostRegistry.get(this.name);
+    },
+    set: function (this: { name: string }, handlers: Record<string, unknown>) {
+      outboundByHostRegistry.set(this.name, handlers);
+    }
+  });
 
   return {
     Container: MockContainer,
@@ -82,9 +115,41 @@ function createMockCtx(options?: {
   includeContainerProxy?: boolean;
   containerProxyResult?: unknown;
 }) {
-  const containerProxyFetcher =
-    options?.containerProxyResult ?? ({ fetch: vi.fn() } satisfies MockFetcher);
-  const ContainerProxy = vi.fn().mockReturnValue(containerProxyFetcher);
+  let latestProxyOptions: TestContainerProxyOptions | undefined;
+  const containerProxyFetcher = {
+    fetch: vi.fn(async (request: Request) => {
+      const proxyOptions = latestProxyOptions;
+      if (!proxyOptions) {
+        return new Response('Origin is disallowed', { status: 530 });
+      }
+
+      const hostname = new URL(request.url).hostname;
+      const override = proxyOptions.props.outboundByHostOverrides?.[hostname];
+      const handler = override
+        ? testOutboundHandlersRegistry.get(proxyOptions.props.className)?.[
+            override.method
+          ]
+        : undefined;
+
+      if (!override || !handler) {
+        return new Response('Origin is disallowed', { status: 530 });
+      }
+
+      return handler(
+        request,
+        { MY_BUCKET: createMockR2Bucket() } as unknown as Cloudflare.Env,
+        {
+          containerId: proxyOptions.props.containerId,
+          className: proxyOptions.props.className,
+          params: override.params
+        }
+      );
+    })
+  } satisfies MockFetcher;
+  const ContainerProxy = vi.fn((proxyOptions: TestContainerProxyOptions) => {
+    latestProxyOptions = proxyOptions;
+    return options?.containerProxyResult ?? containerProxyFetcher;
+  });
   return {
     storage: {
       get: vi.fn().mockResolvedValue(null),
@@ -370,6 +435,10 @@ describe('Sandbox R2 egress mounts', () => {
       'r2.internal',
       mockCtx.containerProxyFetcher
     );
+    const proxyResponse = await mockCtx.containerProxyFetcher.fetch(
+      new Request('http://r2.internal/MY_BUCKET?location', { method: 'GET' })
+    );
+    expect(proxyResponse.status).toBe(200);
     expect(
       mockCtx.container.interceptOutboundHttp.mock.invocationCallOrder[0]
     ).toBeLessThan(execInternal.mock.invocationCallOrder[0]);
