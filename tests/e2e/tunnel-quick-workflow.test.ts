@@ -129,12 +129,13 @@ console.log("Server listening on port " + server.port);
         expect(listed.map((t) => t.id)).toContain(tunnel.id);
 
         // 5. Fetch the marker through the public URL. The Cloudflare edge
-        //    can take a couple of seconds to propagate even after
-        //    cloudflared reports /ready, so retry briefly.
+        //    can take 10–20 seconds to register the *.trycloudflare.com
+        //    route after cloudflared reports /ready, so allow a generous
+        //    retry budget. CI has been observed to need >10s of polling.
         const fetchedBody = await fetchWithRetry(
           `${tunnel.url}/marker`,
           marker,
-          { tries: 10, delayMs: 1000 }
+          { tries: 30, delayMs: 1000 }
         );
         expect(fetchedBody).toBe(marker);
       } finally {
@@ -325,8 +326,8 @@ Bun.serve({
 
         // Each tunnel routes to its own backing port.
         const [bodyA, bodyB] = await Promise.all([
-          fetchWithRetry(tunnelA.url, markerA, { tries: 10, delayMs: 1000 }),
-          fetchWithRetry(tunnelB.url, markerB, { tries: 10, delayMs: 1000 })
+          fetchWithRetry(tunnelA.url, markerA, { tries: 30, delayMs: 1000 }),
+          fetchWithRetry(tunnelB.url, markerB, { tries: 30, delayMs: 1000 })
         ]);
         expect(bodyA).toBe(markerA);
         expect(bodyB).toBe(markerB);
@@ -373,3 +374,40 @@ Bun.serve({
     });
   }
 });
+
+async function fetchWithRetry(
+  url: string,
+  expectedBody: string,
+  opts: { tries: number; delayMs: number }
+): Promise<string> {
+  // Sleep once before the first attempt. The cloudflared /ready signal
+  // fires before the *.trycloudflare.com DNS route has propagated through
+  // Cloudflare's edge, so the very first fetch is essentially guaranteed
+  // to fail — burning one of the retries on a race we know we'll lose.
+  await new Promise((r) => setTimeout(r, opts.delayMs));
+  let lastError: unknown;
+  for (let i = 0; i < opts.tries; i++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (response.ok) {
+        const body = await response.text();
+        if (body === expectedBody) return body;
+        lastError = new Error(
+          `Unexpected body (status ${response.status}): ${body.slice(0, 80)}`
+        );
+      } else {
+        lastError = new Error(`HTTP ${response.status}`);
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    await new Promise((r) => setTimeout(r, opts.delayMs));
+  }
+  throw new Error(
+    `fetchWithRetry failed for ${url}: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`
+  );
+}

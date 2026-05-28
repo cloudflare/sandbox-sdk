@@ -57,7 +57,7 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
 1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.10.2`). Update the tag to match the SDK version.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.10.3`). Update the tag to match the SDK version.
 
 Both versions should match — the SDK and container image are released together. After updating:
 
@@ -303,7 +303,7 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/unmount \
 
 #### `POST /v1/sandbox/:id/session`
 
-Create an execution session. Sessions isolate working directory, environment variables, and command execution state within a sandbox.
+Create an execution session. Sessions provide separate working directories, environment variables, and command execution state within one sandbox. Use separate sandbox IDs for separate users or account workspaces.
 
 ```sh
 curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/session \
@@ -335,7 +335,7 @@ Returns 204 No Content on success.
 
 ## Session Support
 
-The bridge supports the Sandbox SDK's session mechanism via the `Session-Id` request header. Sessions isolate command execution contexts (working directory, environment variables) within a single sandbox.
+The bridge supports the Sandbox SDK session mechanism through the `Session-Id` request header. Sessions separate command execution contexts, such as working directory and environment variables, within one sandbox. For user-facing applications, use one sandbox ID per user or account workspace.
 
 - **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
 - **Use a session**: Pass `Session-Id: <session-id>` on `/exec`, `/pty`, and file operation requests.

@@ -71,8 +71,9 @@ export default {
       }
 
       try {
-        const sandbox = getSandbox(env.Sandbox, 'shared-terminal');
-        const session = await sandbox.getSession(sessionId);
+        // Each room session maps to its own sandbox workspace.
+        const sandbox = getSandbox(env.Sandbox, sessionId);
+        const session = await sandbox.getSession('default');
         return await session.terminal(request);
       } catch (err) {
         console.error('Terminal connection error:', err);

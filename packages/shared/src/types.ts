@@ -223,6 +223,13 @@ export interface PortWatchEvent {
 // Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**
+   * Optional session ID to run the background process in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
+
+  /**
    * Custom process ID for later reference
    * If not provided, a UUID will be generated
    */
@@ -394,6 +401,13 @@ export interface LogEvent {
 
 export interface StreamOptions extends BaseExecOptions {
   /**
+   * Optional session ID to run the streaming command in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
+
+  /**
    * Buffer size for streaming output
    */
   bufferSize?: number;
@@ -463,6 +477,17 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
+
+  /**
+   * When true (the default), implicit operations automatically create and reuse
+   * a persistent default shell session. Set to false to run implicit top-level
+   * operations sessionlessly, where each command spawns a fresh process with no
+   * shared shell state. Explicit per-call session IDs continue to work normally
+   * when this is false.
+   *
+   * Default: true
+   */
+  enableDefaultSession?: boolean;
 
   /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
@@ -678,6 +703,12 @@ export interface FileInfo {
 export interface ListFilesOptions {
   recursive?: boolean;
   includeHidden?: boolean;
+  /**
+   * Optional session ID used to resolve relative paths and execution context.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
 }
 
 export interface ListFilesResult {
@@ -919,6 +950,8 @@ export interface ProcessLogsResult {
 
 export interface ProcessCleanupResult {
   success: boolean;
+  message?: string;
+  killedCount?: number;
   cleanedCount: number;
   timestamp: string;
 }
@@ -1032,8 +1065,8 @@ export interface ExecutionSession {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(): Promise<Process[]>;
-  getProcess(id: string): Promise<Process | null>;
+  listProcesses(sessionId?: string): Promise<Process[]>;
+  getProcess(id: string, sessionId?: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
@@ -1265,7 +1298,7 @@ export interface RemoteMountBucketOptions {
    * When specified, only the contents under this prefix are visible at the
    * mount point, scoping the mount to a subdirectory of the bucket.
    *
-   * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
+   * Must start with '/' (e.g., '/workspaces/project123' or '/data/uploads/')
    */
   prefix?: string;
 }
@@ -1344,8 +1377,8 @@ export interface ISandbox {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(): Promise<Process[]>;
-  getProcess(id: string): Promise<Process | null>;
+  listProcesses(sessionId?: string): Promise<Process[]>;
+  getProcess(id: string, sessionId?: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 

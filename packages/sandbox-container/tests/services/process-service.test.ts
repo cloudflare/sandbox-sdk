@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger } from '@repo/shared';
+import type { ExecEvent, Logger } from '@repo/shared';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   ProcessRecord,
   ServiceResult
 } from '@sandbox-container/core/types';
+import type { ExecutionService } from '@sandbox-container/services/execution-service';
 import {
   type ProcessFilters,
   ProcessService,
   type ProcessStore
 } from '@sandbox-container/services/process-service.js';
-import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
@@ -32,18 +33,12 @@ const mockLogger = {
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
 
-// Mock SessionManager with proper typing
-const mockSessionManager = {
-  executeInSession: vi.fn(),
-  executeStreamInSession: vi.fn(),
-  killCommand: vi.fn(),
-  setEnvVars: vi.fn(),
-  getSession: vi.fn(),
-  createSession: vi.fn(),
-  deleteSession: vi.fn(),
-  listSessions: vi.fn(),
-  destroy: vi.fn()
-} as unknown as SessionManager;
+const mockExecutionService = {
+  execute: vi.fn(),
+  executeStream: vi.fn(),
+  withExecution: vi.fn(),
+  kill: vi.fn()
+} as unknown as ExecutionService;
 
 // Mock factory functions
 const createMockProcess = (
@@ -75,14 +70,14 @@ describe('ProcessService', () => {
     processService = new ProcessService(
       mockProcessStore,
       mockLogger,
-      mockSessionManager
+      mockExecutionService
     );
   });
 
   describe('executeCommand', () => {
     it('should execute command and return success', async () => {
       // Mock SessionManager to return successful execution
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+      mocked(mockExecutionService.execute).mockResolvedValue({
         success: true,
         data: {
           exitCode: 0,
@@ -104,10 +99,10 @@ describe('ProcessService', () => {
       }
 
       // Verify SessionManager was called correctly
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'default', // sessionId
+      expect(mockExecutionService.execute).toHaveBeenCalledWith(
         'echo "hello world"',
         {
+          sessionId: undefined,
           cwd: '/tmp',
           timeoutMs: undefined,
           env: undefined,
@@ -117,7 +112,7 @@ describe('ProcessService', () => {
     });
 
     it('should handle command with non-zero exit code', async () => {
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+      mocked(mockExecutionService.execute).mockResolvedValue({
         success: true,
         data: {
           exitCode: 1,
@@ -136,7 +131,7 @@ describe('ProcessService', () => {
     });
 
     it('should handle SessionManager errors', async () => {
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+      mocked(mockExecutionService.execute).mockResolvedValue({
         success: false,
         error: {
           message: 'Session execution failed',
@@ -155,13 +150,36 @@ describe('ProcessService', () => {
 
   describe('startProcess', () => {
     it('should start background process successfully', async () => {
-      // Mock SessionManager.executeStreamInSession to return ServiceResult with continueStreaming promise
-      mocked(mockSessionManager.executeStreamInSession).mockResolvedValue({
-        success: true,
-        data: {
-          continueStreaming: new Promise(() => {}) // Never resolves (background process)
+      let createdCommandAtCreate: ProcessRecord['command'] | undefined;
+      let createdStatusAtCreate: ProcessRecord['status'] | undefined;
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandAtCreate = process.command;
+          createdStatusAtCreate = process.status;
+          createdCommandHandleAtCreate = process.commandHandle;
         }
-      } as ServiceResult<{ continueStreaming: Promise<void> }>);
+      );
+
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) =>
+          ({
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: 'session-123',
+                commandId: options.commandId
+              }
+            }
+          }) as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: { sessionId: string; commandId: string };
+          }>
+      );
 
       const result = await processService.startProcess('sleep 10', {
         cwd: '/tmp',
@@ -180,25 +198,141 @@ describe('ProcessService', () => {
       }
 
       // Verify SessionManager.executeStreamInSession was called
-      expect(mockSessionManager.executeStreamInSession).toHaveBeenCalledWith(
-        'session-123',
+      expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
         'sleep 10',
-        expect.any(Function), // event handler callback
-        expect.objectContaining({ cwd: '/tmp' }),
-        expect.any(String), // commandId (generated dynamically)
-        { background: true } // Release lock after startup
-      );
-
-      // Verify process was stored
-      expect(mockProcessStore.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          command: 'sleep 10',
-          status: 'running',
-          commandHandle: expect.objectContaining({
-            sessionId: 'session-123'
-          })
+          sessionId: 'session-123',
+          cwd: '/tmp',
+          background: true,
+          commandId: expect.any(String),
+          onEvent: expect.any(Function)
         })
       );
+
+      expect(createdCommandAtCreate).toBe('sleep 10');
+      expect(createdStatusAtCreate).toBe('running');
+      expect(createdCommandHandleAtCreate).toEqual({
+        sessionId: 'session-123',
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
+
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        result.success ? result.data.id : expect.any(String),
+        expect.objectContaining({
+          commandHandle: {
+            sessionId: 'session-123',
+            commandId: result.success ? result.data.id : expect.any(String)
+          }
+        })
+      );
+    });
+
+    it('should preserve the sessionless command handle for background processes', async () => {
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandHandleAtCreate = process.commandHandle;
+        }
+      );
+
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) =>
+          ({
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: DISABLE_SESSION_TOKEN,
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          }) as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: {
+              sessionId: string;
+              commandId: string;
+              pid?: number;
+            };
+          }>
+      );
+
+      const result = await processService.startProcess('sleep 10', {
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.commandHandle).toEqual({
+          sessionId: DISABLE_SESSION_TOKEN,
+          commandId: result.data.id,
+          pid: 4321
+        });
+      }
+
+      expect(createdCommandHandleAtCreate).toEqual({
+        sessionId: DISABLE_SESSION_TOKEN,
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
+
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        result.success ? result.data.id : expect.any(String),
+        expect.objectContaining({
+          commandHandle: {
+            sessionId: DISABLE_SESSION_TOKEN,
+            commandId: result.success ? result.data.id : expect.any(String),
+            pid: 4321
+          }
+        })
+      );
+    });
+
+    it('should reflect a later non-zero complete event on the returned process record', async () => {
+      let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
+
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) => {
+          onEvent = options.onEvent;
+
+          return {
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: DISABLE_SESSION_TOKEN,
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          } as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: {
+              sessionId: string;
+              commandId: string;
+              pid?: number;
+            };
+          }>;
+        }
+      );
+
+      const result = await processService.startProcess('(exit 7)', {});
+
+      expect(result.success).toBe(true);
+      expect(onEvent).toBeDefined();
+
+      if (result.success && onEvent) {
+        await onEvent({
+          type: 'complete',
+          exitCode: 7,
+          timestamp: new Date().toISOString()
+        });
+
+        expect(result.data.exitCode).toBe(7);
+        expect(result.data.status).toBe('failed');
+      }
     });
 
     it('should reject empty command', async () => {
@@ -211,16 +345,13 @@ describe('ProcessService', () => {
       }
 
       // Verify SessionManager was not called
-      expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+      expect(mockExecutionService.executeStream).not.toHaveBeenCalled();
     });
 
     it('should handle stream execution errors', async () => {
-      // Mock SessionManager to throw error
-      mocked(mockSessionManager.executeStreamInSession).mockImplementation(
-        () => {
-          throw new Error('Failed to execute stream');
-        }
-      );
+      mocked(mockExecutionService.executeStream).mockImplementation(() => {
+        throw new Error('Failed to execute stream');
+      });
 
       const result = await processService.startProcess('echo test', {});
 
@@ -273,7 +404,7 @@ describe('ProcessService', () => {
       });
 
       mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
-      mocked(mockSessionManager.killCommand).mockResolvedValue({
+      mocked(mockExecutionService.kill).mockResolvedValue({
         success: true
       } as ServiceResult<void>);
 
@@ -281,10 +412,8 @@ describe('ProcessService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify SessionManager.killCommand was called
-      expect(mockSessionManager.killCommand).toHaveBeenCalledWith(
-        'default',
-        'proc-123'
+      expect(mockExecutionService.kill).toHaveBeenCalledWith(
+        mockProcess.commandHandle
       );
 
       // Verify store was updated
@@ -317,8 +446,7 @@ describe('ProcessService', () => {
 
       expect(result.success).toBe(true);
 
-      // Should not attempt to kill
-      expect(mockSessionManager.killCommand).not.toHaveBeenCalled();
+      expect(mockExecutionService.kill).not.toHaveBeenCalled();
     });
   });
 
@@ -363,7 +491,7 @@ describe('ProcessService', () => {
       mocked(mockProcessStore.get)
         .mockResolvedValueOnce(mockProcesses[0])
         .mockResolvedValueOnce(mockProcesses[1]);
-      mocked(mockSessionManager.killCommand).mockResolvedValue({
+      mocked(mockExecutionService.kill).mockResolvedValue({
         success: true
       } as ServiceResult<void>);
 
@@ -374,8 +502,7 @@ describe('ProcessService', () => {
         expect(result.data).toBe(2); // Killed 2 processes
       }
 
-      // Verify killCommand was called for each process
-      expect(mockSessionManager.killCommand).toHaveBeenCalledTimes(2);
+      expect(mockExecutionService.kill).toHaveBeenCalledTimes(2);
     });
   });
 });

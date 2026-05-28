@@ -10,11 +10,11 @@ import {
 import type { Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '@sandbox-container/core/types';
+import type { ExecutionService } from '@sandbox-container/services/execution-service';
 import {
   FileService,
   type SecurityService
 } from '@sandbox-container/services/file-service';
-import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
@@ -33,7 +33,6 @@ const mockLogger = {
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
 
-// Mock SessionManager with proper typing
 const mockSessionManager = {
   executeInSession: vi.fn(),
   executeStreamInSession: vi.fn(),
@@ -45,7 +44,15 @@ const mockSessionManager = {
   listSessions: vi.fn(),
   destroy: vi.fn(),
   withSession: vi.fn()
-} as unknown as SessionManager;
+};
+
+// Mock ExecutionService with proper typing
+const mockExecutionService = {
+  execute: vi.fn(),
+  executeStream: vi.fn(),
+  withExecution: vi.fn(),
+  kill: vi.fn()
+} as unknown as ExecutionService;
 
 interface MockFileOptions {
   exists?: boolean;
@@ -105,16 +112,53 @@ describe('FileService', () => {
       errors: []
     });
 
-    // Mock withSession to execute the callback immediately with a mock exec function
-    mocked(mockSessionManager.withSession).mockImplementation(
-      async (_sessionId, callback) => {
+    mocked(mockExecutionService.execute).mockImplementation(
+      async (command, options = {}) => {
+        const sessionId = options.sessionId ?? 'default';
+        const forwardedOptions =
+          options.cwd !== undefined ||
+          options.timeoutMs !== undefined ||
+          options.env !== undefined ||
+          options.origin !== undefined
+            ? {
+                ...(options.cwd !== undefined && { cwd: options.cwd }),
+                ...(options.timeoutMs !== undefined && {
+                  timeoutMs: options.timeoutMs
+                }),
+                ...(options.env !== undefined && { env: options.env }),
+                ...(options.origin !== undefined && { origin: options.origin })
+              }
+            : undefined;
+
+        return forwardedOptions !== undefined
+          ? await mockSessionManager.executeInSession(
+              sessionId,
+              command,
+              forwardedOptions
+            )
+          : await mockSessionManager.executeInSession(sessionId, command);
+      }
+    );
+
+    mocked(mockExecutionService.withExecution).mockImplementation(
+      async ({ sessionId }, callback) => {
         try {
-          const mockExec = async (cmd: string) => {
-            // Delegate to executeInSession mock for compatibility with existing tests
-            const result = await mockSessionManager.executeInSession(
-              _sessionId,
-              cmd
-            );
+          const mockExec = async (
+            cmd: string,
+            options?: {
+              cwd?: string;
+              env?: Record<string, string | undefined>;
+              timeoutMs?: number;
+              origin?: 'user' | 'internal';
+            }
+          ) => {
+            const result = await mockExecutionService.execute(cmd, {
+              sessionId,
+              cwd: options?.cwd,
+              env: options?.env,
+              timeoutMs: options?.timeoutMs,
+              origin: options?.origin
+            });
             if (result.success) {
               return result.data;
             }
@@ -144,7 +188,7 @@ describe('FileService', () => {
     fileService = new FileService(
       mockSecurityService,
       mockLogger,
-      mockSessionManager
+      mockExecutionService
     );
   });
 
@@ -310,7 +354,8 @@ describe('FileService', () => {
       // Verify the MIME fallback shell command was called
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'default',
-        "file --mime-type -b '/tmp/test.txt'"
+        "file --mime-type -b '/tmp/test.txt'",
+        { origin: 'internal' }
       );
     });
 
@@ -423,14 +468,25 @@ describe('FileService', () => {
         isValid: true,
         errors: []
       });
-      mocked(mockSessionManager.withSession).mockImplementation(
-        async (_sessionId, callback) => {
+      mocked(mockExecutionService.withExecution).mockImplementation(
+        async ({ sessionId }, callback) => {
           try {
-            const mockExec = async (cmd: string) => {
-              const result = await mockSessionManager.executeInSession(
-                _sessionId,
-                cmd
-              );
+            const mockExec = async (
+              cmd: string,
+              options?: {
+                cwd?: string;
+                env?: Record<string, string | undefined>;
+                timeoutMs?: number;
+                origin?: 'user' | 'internal';
+              }
+            ) => {
+              const result = await mockExecutionService.execute(cmd, {
+                sessionId,
+                cwd: options?.cwd,
+                env: options?.env,
+                timeoutMs: options?.timeoutMs,
+                origin: options?.origin
+              });
               if (result.success) return result.data;
               throw new Error('Command execution failed');
             };
@@ -547,7 +603,8 @@ describe('FileService', () => {
       expect(result.success).toBe(true);
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        'pwd'
+        'pwd',
+        { origin: 'internal' }
       );
       expect(writeSpy).toHaveBeenCalledWith(
         '/workspace/project/notes/todo.txt',
@@ -691,7 +748,8 @@ describe('FileService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         3,
         'session-123',
-        "rm '/tmp/test.txt'"
+        "rm '/tmp/test.txt'",
+        { origin: 'internal' }
       );
     });
 
@@ -773,6 +831,40 @@ describe('FileService', () => {
       );
     });
 
+    it('should resolve relative rename paths in the execution context', async () => {
+      mocked(mockSessionManager.executeInSession)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.rename(
+        'old.txt',
+        'new.txt',
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        4,
+        'session-123',
+        "mv '/workspace/project/old.txt' '/workspace/project/new.txt'",
+        { origin: 'internal' }
+      );
+    });
+
     it('should handle rename command failures', async () => {
       // Mock exists check
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
@@ -826,6 +918,40 @@ describe('FileService', () => {
         2,
         'session-123',
         "mv '/tmp/source.txt' '/tmp/dest.txt'",
+        { origin: 'internal' }
+      );
+    });
+
+    it('should resolve relative move paths in the execution context', async () => {
+      mocked(mockSessionManager.executeInSession)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+        } as ServiceResult<RawExecResult>)
+        .mockResolvedValueOnce({
+          success: true,
+          data: { exitCode: 0, stdout: '', stderr: '' }
+        } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.move(
+        'source.txt',
+        'dest.txt',
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        4,
+        'session-123',
+        "mv '/workspace/project/source.txt' '/workspace/project/dest.txt'",
         { origin: 'internal' }
       );
     });

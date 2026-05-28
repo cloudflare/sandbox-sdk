@@ -6,7 +6,8 @@
     "lib": ["ES2024"],
     "resolveJsonModule": true,
     "paths": {
-      "@repo/shared/backup": ["../shared/src/backup.ts"]
+      "@repo/shared/backup": ["../shared/src/backup.ts"],
+      "@repo/shared/internal": ["../shared/src/internal.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],

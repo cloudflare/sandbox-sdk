@@ -24,10 +24,6 @@ export default defineConfig({
   appType: 'custom',
   plugins: [cloudflare(), react(), incrementCounter()],
   server: {
-    port: 3000,
-    hmr: {
-      // Set to different port to avoid any conflicts with sandbox.
-      port: 3001
-    }
+    port: 3000
   }
 });

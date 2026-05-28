@@ -257,6 +257,88 @@ describe('translateRPCError', () => {
     expect((thrown as Error).message).toContain('no such file');
   });
 
+  it('translates errors with propagated `code` / `details` props into typed SandboxErrors', async () => {
+    // capnweb >= 0.8.0 preserves own enumerable properties on thrown objects.
+    // Containers throw a ServiceError-shaped object with `code` and `details`.
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError } = await loadErr();
+    const err = Object.assign(new Error('no such file'), {
+      code: 'FILE_NOT_FOUND',
+      details: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+    expect((thrown as Error).message).toContain('no such file');
+    expect(
+      (thrown as { errorResponse: { context: Record<string, unknown> } })
+        .errorResponse.context.path
+    ).toBe('/missing');
+  });
+
+  it('tolerates a propagated `code` with no `details` (defaults to empty context)', async () => {
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError } = await loadErr();
+    const err = Object.assign(new Error('no such file'), {
+      code: 'FILE_NOT_FOUND'
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+  });
+
+  it('prefers propagated `code` over a JSON-encoded message body', async () => {
+    // If a container ever sets both, the propagated property wins — it's the
+    // authoritative source for new containers.
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError } = await loadErr();
+    const payload = JSON.stringify({
+      code: 'COMMAND_NOT_FOUND',
+      message: 'wrong',
+      context: { command: 'nope' }
+    });
+    const err = Object.assign(new Error(payload), {
+      code: 'FILE_NOT_FOUND',
+      details: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+  });
+
+  it('ignores foreign `code` values that are not in the ErrorCode registry', async () => {
+    // Node syscalls and other libraries decorate Errors with codes like
+    // 'ENOENT'. Those must not be mistaken for a structured RPC error —
+    // they fall through to transport classification.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    const err = Object.assign(new Error('Peer closed WebSocket: 1006 '), {
+      code: 'ENOENT'
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(err);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'peer_closed'
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Transport-level errors — each `kind` of RPCTransportError
   // -------------------------------------------------------------------------

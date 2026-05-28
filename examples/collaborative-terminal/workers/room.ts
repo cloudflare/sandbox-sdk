@@ -120,6 +120,7 @@ export class Room extends DurableObject<Env> {
 
     if (!this.roomId) {
       this.roomId = roomId;
+      // The room session ID also identifies the room sandbox workspace.
       this.sessionId = `room-${roomId}`;
     }
 

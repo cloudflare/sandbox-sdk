@@ -15,6 +15,7 @@ import type {
   ExecutionSession,
   FileEncoding,
   ISandbox,
+  ListFilesOptions,
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
@@ -52,6 +53,7 @@ import {
   BACKUP_ALLOWED_PREFIXES,
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
@@ -200,6 +202,27 @@ type ConfigurableSandboxStub = {
   ) => Promise<void>;
   setTransport?: (transport: SandboxTransport) => Promise<void>;
 };
+
+type SandboxProxyStub = ConfigurableSandboxStub & {
+  fetch: (request: Request) => Promise<Response>;
+  createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
+  getSession: (sessionId: string) => Promise<ExecutionSession>;
+  callDesktop: (method: string, args: unknown[]) => Promise<unknown>;
+  execWithSessionToken: (
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ) => Promise<ExecResult>;
+  execStreamWithSessionToken: (
+    command: string,
+    sessionId: string,
+    options?: StreamOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
+};
+
+type SandboxExecutionContext =
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'sessionless' };
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -479,7 +502,7 @@ export function getSandbox<T extends Sandbox<any>>(
   const stub = getContainer(
     ns as unknown as DurableObjectNamespace<Container<Cloudflare.Env>>,
     effectiveId
-  ) as unknown as T & ConfigurableSandboxStub;
+  ) as unknown as T & SandboxProxyStub;
 
   const namespaceCache = getNamespaceConfigurationCache(ns);
   const cachedConfiguration = namespaceCache.get(effectiveId);
@@ -507,11 +530,127 @@ export function getSandbox<T extends Sandbox<any>>(
   }
 
   const defaultSessionId = `sandbox-${effectiveId}`;
+  const useDefaultSession = options?.enableDefaultSession !== false;
 
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
+    exec: (command: string, execOptions?: ExecOptions) =>
+      useDefaultSession
+        ? stub.exec(command, execOptions)
+        : stub.execWithSessionToken(
+            command,
+            DISABLE_SESSION_TOKEN,
+            execOptions
+          ),
+    startProcess: (command: string, processOptions?: ProcessOptions) =>
+      useDefaultSession || processOptions?.sessionId !== undefined
+        ? stub.startProcess(command, processOptions)
+        : stub.startProcess(command, {
+            ...processOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    listProcesses: (sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.listProcesses(sessionId)
+        : stub.listProcesses(DISABLE_SESSION_TOKEN),
+    getProcess: (id: string, sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.getProcess(id, sessionId)
+        : stub.getProcess(id, DISABLE_SESSION_TOKEN),
+    execStream: (command: string, streamOptions?: StreamOptions) => {
+      if (useDefaultSession || streamOptions?.sessionId !== undefined) {
+        return stub.execStream(command, streamOptions);
+      }
+
+      return stub.execStreamWithSessionToken(
+        command,
+        DISABLE_SESSION_TOKEN,
+        streamOptions
+      );
+    },
+    writeFile: (
+      path: string,
+      content: string | ReadableStream<Uint8Array>,
+      fileOptions: { encoding?: string; sessionId?: string } = {}
+    ) =>
+      useDefaultSession || fileOptions.sessionId !== undefined
+        ? stub.writeFile(path, content, fileOptions)
+        : stub.writeFile(path, content, {
+            ...fileOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    readFile: (
+      path: string,
+      fileOptions:
+        | { encoding: 'none'; sessionId?: string }
+        | { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string } = {}
+    ) => {
+      const options =
+        useDefaultSession || fileOptions.sessionId !== undefined
+          ? fileOptions
+          : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
+
+      if (options.encoding === 'none') {
+        return stub.readFile(path, options);
+      }
+
+      return stub.readFile(path, options);
+    },
+    readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
+      useDefaultSession || fileOptions.sessionId !== undefined
+        ? stub.readFileStream(path, fileOptions)
+        : stub.readFileStream(path, { sessionId: DISABLE_SESSION_TOKEN }),
+    mkdir: (
+      path: string,
+      mkdirOptions: { recursive?: boolean; sessionId?: string } = {}
+    ) =>
+      useDefaultSession || mkdirOptions.sessionId !== undefined
+        ? stub.mkdir(path, mkdirOptions)
+        : stub.mkdir(path, {
+            ...mkdirOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    deleteFile: (path: string) =>
+      useDefaultSession
+        ? stub.deleteFile(path)
+        : stub.deleteFile(path, DISABLE_SESSION_TOKEN),
+    renameFile: (oldPath: string, newPath: string) =>
+      useDefaultSession
+        ? stub.renameFile(oldPath, newPath)
+        : stub.renameFile(oldPath, newPath, DISABLE_SESSION_TOKEN),
+    moveFile: (sourcePath: string, destinationPath: string) =>
+      useDefaultSession
+        ? stub.moveFile(sourcePath, destinationPath)
+        : stub.moveFile(sourcePath, destinationPath, DISABLE_SESSION_TOKEN),
+    listFiles: (path: string, listOptions?: ListFilesOptions) =>
+      useDefaultSession || listOptions?.sessionId !== undefined
+        ? stub.listFiles(path, listOptions)
+        : stub.listFiles(path, {
+            ...listOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
+    exists: (path: string, sessionId?: string) =>
+      useDefaultSession || sessionId !== undefined
+        ? stub.exists(path, sessionId)
+        : stub.exists(path, DISABLE_SESSION_TOKEN),
+    gitCheckout: (
+      repoUrl: string,
+      gitOptions?: {
+        branch?: string;
+        targetDir?: string;
+        sessionId?: string;
+        depth?: number;
+        cloneTimeoutMs?: number;
+      }
+    ) =>
+      useDefaultSession || gitOptions?.sessionId !== undefined
+        ? stub.gitCheckout(repoUrl, gitOptions)
+        : stub.gitCheckout(repoUrl, {
+            ...gitOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return enhanceSession(stub, rpcSession as ExecutionSession);
@@ -520,6 +659,17 @@ export function getSandbox<T extends Sandbox<any>>(
       const rpcSession = await stub.getSession(sessionId);
       return enhanceSession(stub, rpcSession as ExecutionSession);
     },
+    watch: (path: string, options: WatchOptions = {}) =>
+      useDefaultSession || options.sessionId !== undefined
+        ? stub.watch(path, options)
+        : stub.watch(path, { ...options, sessionId: DISABLE_SESSION_TOKEN }),
+    checkChanges: (path: string, options: CheckChangesOptions = {}) =>
+      useDefaultSession || options.sessionId !== undefined
+        ? stub.checkChanges(path, options)
+        : stub.checkChanges(path, {
+            ...options,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub),
@@ -1117,19 +1267,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  /**
-   * RPC method to configure container startup timeouts. Idempotent once
-   * the values have been persisted: re-applying the same timeout set is a
-   * no-op. The transport retry budget is recomputed only when at least
-   * one timeout actually changes. Storage is written before the in-memory
-   * mirror and derived state are updated.
-   */
   async setContainerTimeouts(
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ): Promise<void> {
     const validated = { ...this.containerTimeouts };
 
-    // Validate each timeout if provided
     if (timeouts.instanceGetTimeoutMS !== undefined) {
       validated.instanceGetTimeoutMS = this.validateTimeout(
         timeouts.instanceGetTimeoutMS,
@@ -1157,10 +1299,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // No-op only once the values have been written to storage. A first
-    // explicit call persists even when the values match the env/default-
-    // derived in-memory state so user intent is recorded independently of
-    // how those defaults resolve later.
     if (
       this.hasStoredContainerTimeouts &&
       validated.instanceGetTimeoutMS ===
@@ -1175,18 +1313,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('containerTimeouts', validated);
     this.containerTimeouts = validated;
     this.hasStoredContainerTimeouts = true;
-
-    // Update the transport retry budget to reflect new timeouts
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
-
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }
 
-  /**
-   * RPC method to set the transport protocol. Idempotent once the value
-   * has been persisted: re-applying the same transport is a no-op.
-   * Storage is written before the in-memory state and client are updated.
-   */
   async setTransport(transport: SandboxTransport): Promise<void> {
     if (
       transport !== 'http' &&
@@ -1222,10 +1352,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Transport updated', { transport });
   }
 
-  /**
-   * Validate a timeout value is within acceptable range
-   * Throws error if invalid - used for user-provided values
-   */
   private validateTimeout(
     value: number,
     name: string,
@@ -1249,10 +1375,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return value;
   }
 
-  /**
-   * Get default timeouts with env var fallbacks and validation
-   * Precedence: SDK defaults < Env vars < User config
-   */
   private getDefaultTimeouts(
     env: Record<string, unknown>
   ): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
@@ -1291,20 +1413,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       instanceGetTimeoutMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_INSTANCE_TIMEOUT_MS'),
         'instanceGetTimeoutMS',
-        5_000, // Min 5s
-        300_000 // Max 5min
+        5_000,
+        300_000
       ),
       portReadyTimeoutMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_PORT_TIMEOUT_MS'),
         'portReadyTimeoutMS',
-        10_000, // Min 10s
-        600_000 // Max 10min
+        10_000,
+        600_000
       ),
       waitIntervalMS: parseAndValidate(
         getEnvString(env, 'SANDBOX_POLL_INTERVAL_MS'),
         'waitIntervalMS',
-        100, // Min 100ms
-        5_000 // Max 5s
+        100,
+        5_000
       )
     };
   }
@@ -1368,7 +1490,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const mountStartTime = Date.now();
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
-
+    const dirExisted = true; // assume pre-existing so we don't accidentally delete
     try {
       const envObj = this.env as Record<string, unknown>;
       const r2Binding = envObj[bucket];
@@ -1612,7 +1734,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
     let provider: BucketProvider | null = null;
-    let dirExisted = true; // assume pre-existing so we don't accidentally delete
+    let dirExisted = true;
     try {
       this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
@@ -1872,7 +1994,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
 
-    await this.writeFile(passwordFilePath, content);
+    await this.client.files.writeFile(
+      passwordFilePath,
+      content,
+      DISABLE_SESSION_TOKEN
+    );
 
     await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
@@ -2227,16 +2353,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let skipped = 0;
     let failed = 0;
 
-    // Resolving the session ensures the container HTTP API is reachable
-    // before we start firing exposePort requests at it.
-    const sessionId = await this.ensureDefaultSession();
-
     // Fetch the container's current exposed-port list once, then check
     // membership in the loop. On a fresh restart this is empty; on a
     // retry path (re-entering onStart) it may already contain entries
     // that should be skipped.
     const exposedSet = await this.client.ports
-      .getExposedPorts(sessionId)
+      .getExposedPorts(DISABLE_SESSION_TOKEN)
       .then((response) => new Set(response.ports.map((p) => p.port)))
       .catch((error) => {
         this.logger.warn(
@@ -2262,7 +2384,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       try {
-        await this.client.ports.exposePort(port, sessionId, entry.name);
+        await this.client.ports.exposePort(
+          port,
+          DISABLE_SESSION_TOKEN,
+          entry.name
+        );
         restored++;
       } catch (error) {
         failed++;
@@ -2882,11 +3008,128 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('containerPlacementId', containerPlacementId);
   }
 
-  // Enhanced exec method - always returns ExecResult with optional streaming
-  // This replaces the old exec method to match ISandbox interface
+  private async resolveExecution(
+    explicitSessionId?: string
+  ): Promise<SandboxExecutionContext> {
+    if (explicitSessionId !== undefined) {
+      this.validateExplicitSessionId(explicitSessionId);
+      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
+        return { kind: 'sessionless' };
+      }
+      return { kind: 'session', sessionId: explicitSessionId };
+    }
+
+    return {
+      kind: 'session',
+      sessionId: await this.ensureDefaultSession()
+    };
+  }
+
+  private validateExplicitSessionId(sessionId: string): void {
+    if (sessionId.trim().length === 0) {
+      throw new Error('sessionId must not be empty or whitespace');
+    }
+  }
+
+  private serializeExecutionContext(context: SandboxExecutionContext): string {
+    if (context.kind === 'sessionless') {
+      return DISABLE_SESSION_TOKEN;
+    }
+    return context.sessionId;
+  }
+
+  private getPublicExecutionSessionId(sessionId: string): string | undefined {
+    return sessionId === DISABLE_SESSION_TOKEN ? undefined : sessionId;
+  }
+
+  /**
+   * Resolves the session ID to annotate returned Process objects.
+   *
+   * Unlike `resolveExecution`, this is synchronous and never creates a
+   * session. When the default session hasn't been established yet, it returns
+   * `undefined` rather than triggering session creation. The resolved value is
+   * only used to populate `Process.sessionId` on the returned object — it is
+   * never sent to the container API.
+   */
+  private getProcessSessionBinding(
+    explicitSessionId?: string
+  ): string | undefined {
+    if (explicitSessionId !== undefined) {
+      this.validateExplicitSessionId(explicitSessionId);
+      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
+        return undefined;
+      }
+      return explicitSessionId;
+    }
+
+    return this.defaultSession ?? undefined;
+  }
+
+  private resolveExecutionEnv(
+    sessionId: string,
+    env?: Record<string, string | undefined>
+  ): Record<string, string | undefined> | undefined {
+    if (sessionId === DISABLE_SESSION_TOKEN) {
+      const mergedEnv = filterEnvVars({ ...this.envVars, ...(env ?? {}) });
+      return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+    }
+
+    if (env === undefined) {
+      return undefined;
+    }
+
+    const filteredEnv = filterEnvVars(env);
+    return Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
+  }
+
+  private buildExecutionRequestOptions(
+    sessionId: string,
+    options?: {
+      timeout?: number;
+      env?: Record<string, string | undefined>;
+      cwd?: string;
+      origin?: 'user' | 'internal';
+    }
+  ):
+    | {
+        timeoutMs?: number;
+        env?: Record<string, string | undefined>;
+        cwd?: string;
+        origin?: 'user' | 'internal';
+      }
+    | undefined {
+    const env = this.resolveExecutionEnv(sessionId, options?.env);
+
+    if (
+      options?.timeout === undefined &&
+      env === undefined &&
+      options?.cwd === undefined &&
+      options?.origin === undefined
+    ) {
+      return undefined;
+    }
+
+    return {
+      ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
+      ...(env !== undefined && { env }),
+      ...(options?.cwd !== undefined && { cwd: options.cwd }),
+      ...(options?.origin !== undefined && { origin: options.origin })
+    };
+  }
+
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
+    const context = await this.resolveExecution();
+    const session = this.serializeExecutionContext(context);
     return this.execWithSession(command, session, options);
+  }
+
+  async execWithSessionToken(
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    this.validateExplicitSessionId(sessionId);
+    return this.execWithSession(command, sessionId, options);
   }
 
   /**
@@ -2933,19 +3176,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } else {
         // Regular execution with session
-        const commandOptions =
-          options &&
-          (options.timeout !== undefined ||
-            options.env !== undefined ||
-            options.cwd !== undefined ||
-            options.origin !== undefined)
-            ? {
-                timeoutMs: options.timeout,
-                env: options.env,
-                cwd: options.cwd,
-                origin: options.origin
-              }
-            : undefined;
+        const commandOptions = this.buildExecutionRequestOptions(
+          sessionId,
+          options
+        );
 
         const response = await this.client.commands.execute(
           command,
@@ -2954,10 +3188,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
 
         const duration = Date.now() - startTime;
+        const publicSessionId = this.getPublicExecutionSessionId(sessionId);
         result = this.mapExecuteResponseToExecResult(
           response,
           duration,
-          sessionId
+          publicSessionId
         );
       }
 
@@ -2985,7 +3220,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
-        sessionId,
+        sessionId: this.getPublicExecutionSessionId(sessionId),
         origin: options?.origin ?? 'user',
         error: execError ?? undefined,
         errorMessage: execError?.message
@@ -3004,15 +3239,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
+      const commandOptions = this.buildExecutionRequestOptions(
+        sessionId,
+        options
+      );
       const stream = await this.client.commands.executeStream(
         command,
         sessionId,
-        {
-          timeoutMs: options.timeout,
-          env: options.env,
-          cwd: options.cwd,
-          origin: options.origin
-        }
+        commandOptions
       );
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
@@ -3047,7 +3281,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               command,
               duration,
               timestamp,
-              sessionId
+              sessionId: this.getPublicExecutionSessionId(sessionId)
             };
           }
 
@@ -3098,7 +3332,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       endTime?: string | Date;
       exitCode?: number;
     },
-    sessionId: string
+    sessionId?: string
   ): Process {
     return {
       id: data.id,
@@ -3546,14 +3780,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const session = sessionId ?? (await this.ensureDefaultSession());
+      const execution = await this.resolveExecution(sessionId);
+      const session = this.serializeExecutionContext(execution);
+      const processSession = this.getProcessSessionBinding(session);
+      const executionOptions = this.buildExecutionRequestOptions(session, {
+        timeout: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      });
       const requestOptions = {
+        ...executionOptions,
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
-        ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env !== undefined && { env: filterEnvVars(options.env) }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
         ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
           autoCleanup: options.autoCleanup
@@ -3576,7 +3815,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           endTime: undefined,
           exitCode: undefined
         },
-        session
+        processSession
       );
 
       // Call onStart callback if provided
@@ -3640,6 +3879,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             return; // Stream complete
         }
       }
+
+      // If we get here without a complete event, something went wrong
+      throw new Error('Stream ended without completion event');
     } catch (error) {
       // Call onError if streaming fails
       if (options.onError && error instanceof Error) {
@@ -3655,7 +3897,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const session = this.getProcessSessionBinding(sessionId);
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -3675,30 +3917,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes
-      .getProcess(id)
-      .catch((e: unknown) => {
-        if (e instanceof ProcessNotFoundError) return null;
-        throw e;
-      });
-    if (!response?.process) {
-      return null;
-    }
+    const session = this.getProcessSessionBinding(sessionId);
+    try {
+      const response = await this.client.processes.getProcess(id);
 
-    const processData = response.process;
-    return this.createProcessFromDTO(
-      {
-        id: processData.id,
-        pid: processData.pid,
-        command: processData.command,
-        status: processData.status,
-        startTime: processData.startTime,
-        endTime: processData.endTime,
-        exitCode: processData.exitCode
-      },
-      session
-    );
+      if (!response.process) {
+        return null;
+      }
+
+      const processData = response.process;
+      return this.createProcessFromDTO(
+        {
+          id: processData.id,
+          pid: processData.pid,
+          command: processData.command,
+          status: processData.status,
+          startTime: processData.startTime,
+          endTime: processData.endTime,
+          exitCode: processData.exitCode
+        },
+        session
+      );
+    } catch (error) {
+      if (error instanceof ProcessNotFoundError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async killProcess(
@@ -3706,16 +3951,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HTTP client
+    // Note: signal parameter is not currently supported by the HTTP client.
+    // sessionId is intentionally unused — kill targets a process by ID which
+    // is sandbox-scoped, not session-scoped.
     await this.client.processes.killProcess(id);
   }
 
   async killAllProcesses(sessionId?: string): Promise<number> {
+    // sessionId is intentionally unused — the kill-all operation is
+    // sandbox-scoped and affects all processes regardless of session.
     const response = await this.client.processes.killAllProcesses();
     return response.cleanedCount;
   }
 
   async cleanupCompletedProcesses(sessionId?: string): Promise<number> {
+    // sessionId is intentionally unused — cleanup is sandbox-scoped.
     // Not yet implemented - requires container endpoint
     return 0;
   }
@@ -3742,13 +3992,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session, {
-      timeoutMs: options?.timeout,
+    const context = await this.resolveExecution(options?.sessionId);
+    const session = this.serializeExecutionContext(context);
+    const executionOptions = this.buildExecutionRequestOptions(session, {
+      timeout: options?.timeout,
       env: options?.env,
       cwd: options?.cwd
     });
+    // Get the stream from CommandClient
+    return this.client.commands.executeStream(
+      command,
+      session,
+      executionOptions
+    );
+  }
+
+  async execStreamWithSessionToken(
+    command: string,
+    sessionId: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
+    this.validateExplicitSessionId(sessionId);
+    return this.execStreamWithSession(command, sessionId, options);
   }
 
   /**
@@ -3764,11 +4029,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId, {
-      timeoutMs: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd
-    });
+    return this.client.commands.executeStream(
+      command,
+      sessionId,
+      this.buildExecutionRequestOptions(sessionId, {
+        timeout: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      })
+    );
   }
 
   /**
@@ -3798,7 +4067,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cloneTimeoutMs?: number;
     }
   ) {
-    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options?.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
       targetDir: options?.targetDir,
@@ -3811,7 +4081,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.mkdir(path, session, {
       recursive: options.recursive
     });
@@ -3822,7 +4093,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
 
     if (content instanceof ReadableStream) {
       return this.client.files.writeFileStream(path, content, session);
@@ -3834,12 +4106,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async deleteFile(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.deleteFile(path, session);
   }
 
   async renameFile(oldPath: string, newPath: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.renameFile(oldPath, newPath, session);
   }
 
@@ -3848,7 +4122,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     sessionId?: string
   ) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.moveFile(sourcePath, destinationPath, session);
   }
 
@@ -3874,7 +4149,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { encoding?: FileEncoding; sessionId?: string } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     if (options.encoding === 'none') {
       return this.client.files.readFile(path, session, { encoding: 'none' });
     }
@@ -3893,20 +4169,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.readFileStream(path, session);
   }
 
-  async listFiles(
-    path: string,
-    options?: { recursive?: boolean; includeHidden?: boolean }
-  ) {
-    const session = await this.ensureDefaultSession();
+  async listFiles(path: string, options?: ListFilesOptions) {
+    const context = await this.resolveExecution(options?.sessionId);
+    const session = this.serializeExecutionContext(context);
     return this.client.files.listFiles(path, session, options);
   }
 
   async exists(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(sessionId);
+    const session = this.serializeExecutionContext(execution);
     return this.client.files.exists(path, session);
   }
 
@@ -3995,7 +4271,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const sessionId = this.serializeExecutionContext(execution);
     return this.client.watch.watch({
       path,
       recursive: options.recursive,
@@ -4019,7 +4296,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    const execution = await this.resolveExecution(options.sessionId);
+    const sessionId = this.serializeExecutionContext(execution);
     return this.client.watch.checkChanges({
       path,
       recursive: options.recursive,
@@ -4111,7 +4389,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
         );
       }
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       await this.client.ports.exposePort(port, sessionId, options?.name);
 
       tokens[port.toString()] = { token, name: options?.name };
@@ -4171,7 +4451,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('portTokens', tokens);
       }
 
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       try {
         await this.client.ports.unexposePort(port, sessionId);
       } catch (error) {
@@ -4201,7 +4483,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getExposedPorts(hostname: string) {
-    const sessionId = await this.ensureDefaultSession();
+    const sessionId = this.serializeExecutionContext(
+      await this.resolveExecution()
+    );
     const response = await this.client.ports.getExposedPorts(sessionId);
 
     // We need the sandbox name to construct preview URLs
@@ -4360,7 +4644,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async isPortExposed(port: number): Promise<boolean> {
     try {
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = this.serializeExecutionContext(
+        await this.resolveExecution()
+      );
       const response = await this.client.ports.getExposedPorts(sessionId);
       return response.ports.some((exposedPort) => exposedPort.port === port);
     } catch (error) {
@@ -4506,6 +4792,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
     const sessionId = options?.id || `session-${Date.now()}`;
+    if (sessionId === DISABLE_SESSION_TOKEN) {
+      throw new Error(
+        `Session ID '${DISABLE_SESSION_TOKEN}' is reserved for internal use`
+      );
+    }
 
     const mergedEnv = {
       ...this.envVars,

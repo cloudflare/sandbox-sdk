@@ -68,26 +68,14 @@ export interface SandboxAPIDeps {
 }
 
 // ---------------------------------------------------------------------------
-// RPC error wrapper
+// RPC error helpers
 // ---------------------------------------------------------------------------
-
-class RPCError extends Error {
-  constructor(message: string) {
-    super(message);
-  }
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any ServiceResult variant
 function throwIfError(result: ServiceResult<any, any>): void {
   if (!result.success) {
-    const err = result.error;
-    throw new RPCError(
-      JSON.stringify({
-        code: err.code,
-        message: err.message,
-        context: err.details ?? {}
-      })
-    );
+    const { code, message, details } = result.error;
+    throw Object.assign(new Error(message), { code, details });
   }
 }
 
@@ -178,6 +166,7 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<{
     success: boolean;
@@ -191,7 +180,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      origin: options?.origin
     });
     const data = extractData<CommandResult>(result);
     return {
@@ -211,6 +201,7 @@ class CommandsRPCAPI extends RpcTarget {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
@@ -218,7 +209,8 @@ class CommandsRPCAPI extends RpcTarget {
       sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
-      cwd: options?.cwd
+      cwd: options?.cwd,
+      origin: options?.origin
     });
 
     if (!result.success) {
@@ -1028,16 +1020,14 @@ class UtilsRPCAPI extends RpcTarget {
     ) {
       // Mirror the HTTP handler: surface placement ID on the duplicate-create
       // path so a restarted DO can capture it from the idempotent retry.
-      throw new RPCError(
-        JSON.stringify({
-          code: result.error.code,
-          message: result.error.message,
-          context: {
-            ...(result.error.details ?? {}),
-            containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
-          }
-        })
-      );
+      const { code, message, details } = result.error;
+      throw Object.assign(new Error(message), {
+        code,
+        details: {
+          ...details,
+          containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
+        }
+      });
     }
     throwIfError(result);
     return {

@@ -18,6 +18,7 @@ import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
 import { DesktopService } from '../services/desktop-service';
+import { ExecutionService } from '../services/execution-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
 import { InterpreterService } from '../services/interpreter-service';
@@ -44,6 +45,7 @@ export interface Dependencies {
   logger: Logger;
   security: SecurityService;
   sessionManager: SessionManager;
+  executionService: ExecutionService;
 
   // Handlers
   backupHandler: BackupHandler;
@@ -126,6 +128,7 @@ export class Container {
 
     // Initialize SessionManager
     const sessionManager = new SessionManager(logger);
+    const executionService = new ExecutionService(sessionManager, logger);
 
     // Create git-specific logger that automatically sanitizes credentials
     const gitLogger = new GitLogger(logger);
@@ -134,21 +137,21 @@ export class Container {
     const processService = new ProcessService(
       processStore,
       logger,
-      sessionManager
+      executionService
     );
     const fileService = new FileService(
       securityAdapter,
       logger,
-      sessionManager
+      executionService
     );
     const portService = new PortService(portStore, securityAdapter, logger);
     const gitService = new GitService(
       securityAdapter,
-      sessionManager,
+      executionService,
       gitLogger
     );
     const interpreterService = new InterpreterService(logger);
-    const backupService = new BackupService(logger, sessionManager);
+    const backupService = new BackupService(logger, executionService);
     const desktopService = new DesktopService(logger);
     const watchService = new WatchService(logger);
     const tunnelService = new TunnelService(logger, () =>
@@ -193,6 +196,7 @@ export class Container {
       logger,
       security,
       sessionManager,
+      executionService,
 
       // Handlers
       backupHandler,
