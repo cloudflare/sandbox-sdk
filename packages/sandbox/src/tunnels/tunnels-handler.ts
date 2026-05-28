@@ -610,13 +610,26 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
           await txn.put(META_STORAGE_KEY, currentMeta);
         });
 
-        // Stop cloudflared inside the container. TUNNEL_NOT_FOUND is
-        // swallowed so Cloudflare-side cleanup can still proceed.
+        // Stop cloudflared inside the container. This is best-effort for
+        // named tunnels: destroy() is also responsible for Cloudflare-side
+        // cleanup, which must still run if the container already stopped.
         try {
           await this.#host.client.tunnels.destroyTunnel(existing.id);
         } catch (error) {
-          if (!isTunnelNotFoundError(error)) throw error;
-          // Container already forgot — fall through to CF cleanup.
+          if (isTunnelNotFoundError(error)) {
+            // Container already forgot — fall through to CF cleanup.
+          } else if (metaBefore?.dnsRecordId) {
+            this.#host.logger.warn(
+              'tunnel.destroy: container tunnel cleanup failed',
+              {
+                port,
+                tunnelId,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            );
+          } else {
+            throw error;
+          }
         }
 
         // Named-tunnel cleanup on Cloudflare. Best-effort: log failures

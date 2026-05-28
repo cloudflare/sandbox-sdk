@@ -2492,6 +2492,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.currentRuntime.clear();
     await this.clearActivePreviewPorts();
 
+    try {
+      await pruneTunnelsForRestart(this.ctx.storage);
+    } catch (error) {
+      this.logger.error(
+        'Failed to reconcile tunnel storage after container stop',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
     // Disconnect the active client so open sockets do not hold the DO alive.
     this.client.disconnect();
 
