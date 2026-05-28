@@ -25,12 +25,6 @@ export const Operation = {
   PROCESS_GET: 'process.get',
   PROCESS_LOGS: 'process.logs',
 
-  // Port Operations
-  PORT_EXPOSE: 'port.expose',
-  PORT_UNEXPOSE: 'port.unexpose',
-  PORT_LIST: 'port.list',
-  PORT_PROXY: 'port.proxy',
-
   // Git Operations
   GIT_CLONE: 'git.clone',
   GIT_CHECKOUT: 'git.checkout',

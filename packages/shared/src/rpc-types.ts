@@ -44,9 +44,6 @@ import type {
   ListFilesResult,
   MkdirResult,
   MoveFileResult,
-  PortCloseResult,
-  PortExposeResult,
-  PortListResult,
   PortWatchRequest,
   ProcessCleanupResult,
   ProcessInfoResult,
@@ -175,13 +172,6 @@ export interface SandboxProcessesAPI {
 }
 
 export interface SandboxPortsAPI {
-  exposePort(
-    port: number,
-    sessionId: string,
-    name?: string
-  ): Promise<PortExposeResult>;
-  getExposedPorts(sessionId: string): Promise<PortListResult>;
-  unexposePort(port: number, sessionId: string): Promise<PortCloseResult>;
   watchPort(request: PortWatchRequest): Promise<ReadableStream<Uint8Array>>;
 }
 
