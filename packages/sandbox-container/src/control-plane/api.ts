@@ -1318,6 +1318,15 @@ class TunnelsRPCAPI extends RpcTarget {
     return extractData<TunnelInfo>(result);
   }
 
+  async runNamedTunnel(
+    id: string,
+    token: string,
+    port: number
+  ): Promise<TunnelInfo> {
+    const result = await this.#svc.runNamedTunnel(id, token, port);
+    return extractData<TunnelInfo>(result);
+  }
+
   async destroyTunnel(id: string): Promise<{ success: true; id: string }> {
     const result = await this.#svc.destroyTunnel(id);
     throwIfError(result);

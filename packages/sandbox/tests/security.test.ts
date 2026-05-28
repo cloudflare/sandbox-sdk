@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   SandboxSecurityError,
   sanitizeSandboxId,
-  validatePort
+  validatePort,
+  validateTunnelName
 } from '../src/security';
 
 describe('validatePort', () => {
@@ -58,5 +59,78 @@ describe('sanitizeSandboxId', () => {
   it('rejects reserved names case-insensitively', () => {
     expect(() => sanitizeSandboxId('www')).toThrow(SandboxSecurityError);
     expect(() => sanitizeSandboxId('API')).toThrow(SandboxSecurityError);
+  });
+});
+
+describe('validateTunnelName', () => {
+  it('accepts valid single DNS labels', () => {
+    expect(() => validateTunnelName('api')).not.toThrow();
+    expect(() => validateTunnelName('api-staging')).not.toThrow();
+    expect(() => validateTunnelName('a')).not.toThrow();
+    expect(() => validateTunnelName('123')).not.toThrow();
+    expect(() => validateTunnelName('a1b2-c3d4')).not.toThrow();
+    expect(() => validateTunnelName('a'.repeat(63))).not.toThrow();
+  });
+
+  it('rejects empty strings', () => {
+    expect(() => validateTunnelName('')).toThrow(SandboxSecurityError);
+  });
+
+  it('rejects names longer than 63 characters', () => {
+    expect(() => validateTunnelName('a'.repeat(64))).toThrow(
+      SandboxSecurityError
+    );
+  });
+
+  it('rejects uppercase letters', () => {
+    expect(() => validateTunnelName('Api')).toThrow(SandboxSecurityError);
+    expect(() => validateTunnelName('API')).toThrow(SandboxSecurityError);
+  });
+
+  it('rejects leading or trailing hyphens', () => {
+    expect(() => validateTunnelName('-api')).toThrow(SandboxSecurityError);
+    expect(() => validateTunnelName('api-')).toThrow(SandboxSecurityError);
+  });
+
+  it('rejects multi-label names (dots are not allowed)', () => {
+    expect(() => validateTunnelName('api.staging')).toThrow(
+      SandboxSecurityError
+    );
+    expect(() => validateTunnelName('a.b.c')).toThrow(SandboxSecurityError);
+  });
+
+  it('rejects underscores and other non-DNS characters', () => {
+    expect(() => validateTunnelName('api_staging')).toThrow(
+      SandboxSecurityError
+    );
+    expect(() => validateTunnelName('api staging')).toThrow(
+      SandboxSecurityError
+    );
+    expect(() => validateTunnelName('api/staging')).toThrow(
+      SandboxSecurityError
+    );
+  });
+
+  it('rejects non-string inputs', () => {
+    // Defensive against caller errors slipping past TypeScript.
+    expect(() => validateTunnelName(undefined as unknown as string)).toThrow(
+      SandboxSecurityError
+    );
+    expect(() => validateTunnelName(null as unknown as string)).toThrow(
+      SandboxSecurityError
+    );
+    expect(() => validateTunnelName(42 as unknown as string)).toThrow(
+      SandboxSecurityError
+    );
+  });
+
+  it('error message names the invalid input for debuggability', () => {
+    try {
+      validateTunnelName('Api.Staging');
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(SandboxSecurityError);
+      expect((err as Error).message).toContain('Api.Staging');
+    }
   });
 });

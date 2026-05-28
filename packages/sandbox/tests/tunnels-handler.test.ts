@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
+  pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
 } from '../src/tunnels/tunnels-handler';
@@ -52,19 +53,21 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
  * caller's perspective.
  */
 function makeStorage(initial?: Record<string, TunnelInfo>): TunnelsStorage {
-  let value: Record<string, TunnelInfo> | undefined = initial
-    ? { ...initial }
-    : undefined;
+  // Real DO storage is key/value; older tests only touched one key
+  // ('tunnels') so the shim used a single variable. Named tunnels add a
+  // sibling 'tunnels:meta' key, so the shim is now a true keyed map. The
+  // legacy `initial` argument continues to seed only the 'tunnels' key.
+  const data = new Map<string, unknown>();
+  if (initial) data.set('tunnels', { ...initial });
   let txQueue: Promise<unknown> = Promise.resolve();
   const storage = {
-    get: vi.fn(async () => value),
-    put: vi.fn(async (_key: string, next: Record<string, TunnelInfo>) => {
-      value = { ...next };
+    get: vi.fn(async (key: string) => data.get(key)),
+    put: vi.fn(async (key: string, next: unknown) => {
+      // Deep-clone-ish (JSON) so callers can't observe mutations across
+      // writes. Matches the structured-clone semantics of real DO storage.
+      data.set(key, JSON.parse(JSON.stringify(next)));
     }),
-    delete: vi.fn(async () => {
-      value = undefined;
-      return true;
-    }),
+    delete: vi.fn(async (key: string) => data.delete(key)),
     transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
       const next = txQueue.then(() => closure(storage));
       // Swallow rejection on the chain so a failed closure doesn't
@@ -133,10 +136,48 @@ describe('tunnels handler > get', () => {
     expect(info.id).toBe(id);
     expect(info.name).toBeUndefined();
 
-    // Storage is written under the port key.
-    expect(storage.put).toHaveBeenCalledTimes(1);
-    const [, stored] = (storage.put as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(stored).toEqual({ '8080': info });
+    // Storage is written: the tunnels map under the port key, and the
+    // sidecar meta map (carrying the options hash) keyed by port too.
+    expect(storage.put).toHaveBeenCalledTimes(2);
+    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
+    const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
+    expect(tunnelsPut?.[1]).toEqual({ '8080': info });
+    expect(metaPut?.[1]).toEqual({
+      '8080': { optionsHash: 'v1:quick' }
+    });
+  });
+
+  it('retries with a fresh id when the container reports TUNNEL_ALREADY_RUNNING', async () => {
+    // shortId() picks a 32-bit random id, so collisions are vanishingly
+    // rare — but when they do happen, the container rejects the second
+    // spawn with TUNNEL_ALREADY_RUNNING. Without a retry, the user-facing
+    // get() call rejects with a confusing error for a transient event the
+    // SDK can recover from on its own.
+    const { client, handler } = makeHandler();
+    let attempts = 0;
+    const collision = Object.assign(
+      new Error('Tunnel quick-xxxx is already running'),
+      {
+        code: 'TUNNEL_ALREADY_RUNNING',
+        errorResponse: { code: 'TUNNEL_ALREADY_RUNNING' }
+      }
+    );
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => {
+        attempts += 1;
+        if (attempts === 1) throw collision;
+        return makeRecord({ id, port });
+      }
+    );
+
+    const info = await handler.get(8080);
+    expect(attempts).toBe(2);
+    // Two distinct ids — the retry must mint a fresh one, not reuse.
+    const firstId = client.tunnels.runQuickTunnel.mock.calls[0][0];
+    const secondId = client.tunnels.runQuickTunnel.mock.calls[1][0];
+    expect(firstId).not.toBe(secondId);
+    expect(info.id).toBe(secondId);
   });
 
   it('cache hit: returns the stored record without any container RPC', async () => {
@@ -306,10 +347,14 @@ describe('tunnels handler > destroy', () => {
     await handler.destroy(8080);
 
     expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
-    // Storage entry is removed before the RPC.
+    // Storage entry is removed before the RPC. Both keys (info + meta)
+    // are cleared.
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
+    const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
+    expect(tunnelsPut?.[1]).toEqual({});
+    expect(metaPut?.[1]).toEqual({});
   });
 
   it('wraps the read-modify-write in storage.transaction()', async () => {
@@ -376,15 +421,48 @@ describe('tunnels handler > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockRejectedValue(
-      new Error('TUNNEL_NOT_FOUND: tunnel quick-gone is not running')
+    // Production shape: the container emits a SandboxError carrying
+    // `code: 'TUNNEL_NOT_FOUND'` in `errorResponse`. The handler must
+    // match on the code, not on substring.
+    const notFound = Object.assign(
+      new Error('Tunnel quick-gone is not running'),
+      {
+        errorResponse: { code: 'TUNNEL_NOT_FOUND' },
+        code: 'TUNNEL_NOT_FOUND'
+      }
     );
+    client.tunnels.destroyTunnel.mockRejectedValue(notFound);
 
     await expect(handler.destroy(8080)).resolves.toBeUndefined();
-    // Storage is still cleared.
+    // Storage is still cleared (both info + meta).
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
+    expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
+  });
+
+  it('does NOT swallow an unrelated error whose message merely contains the literal TUNNEL_NOT_FOUND', async () => {
+    // Regression for the previous substring-match heuristic. A wrapped
+    // error whose message happens to embed `TUNNEL_NOT_FOUND` (for
+    // example, an upstream report quoting the original error) must
+    // surface to the caller, not be silently swallowed as "already gone".
+    const record = makeRecord({ id: 'quick-real0000real00', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    const { tunnels: handler } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    client.tunnels.destroyTunnel.mockRejectedValue(
+      new Error('rpc transport failure: original was TUNNEL_NOT_FOUND')
+    );
+
+    await expect(handler.destroy(8080)).rejects.toThrow(
+      /rpc transport failure/
+    );
   });
 
   it('does not roll back storage when the container call fails with a non-NOT_FOUND error', async () => {
@@ -403,8 +481,9 @@ describe('tunnels handler > destroy', () => {
     await expect(handler.destroy(8080)).rejects.toThrow('boom');
     const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
     // Storage was cleared before the RPC and is not restored on failure.
-    expect(putCalls).toHaveLength(1);
-    expect(putCalls[0][1]).toEqual({});
+    expect(putCalls).toHaveLength(2);
+    expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
+    expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
   });
 });
 
@@ -557,6 +636,82 @@ describe('tunnels handler > handleTunnelExit', () => {
     await expect(tunnels.list()).resolves.toEqual([]);
   });
 
+  it('preserves named-tunnel meta and marks needsRespawn on unsolicited exit', async () => {
+    // Quick tunnels can be wiped outright: the *.trycloudflare.com URL
+    // dies with cloudflared. Named tunnels are different — the CF-side
+    // tunnel and DNS record are still live, and the SDK needs `dnsRecordId`
+    // (plus `accountId`/`zoneId` for the drift-aware destroy path) to
+    // clean them up later. So mirror `pruneTunnelsForRestart`: keep the
+    // record + meta, mark `needsRespawn: true`. The next get(port, { name })
+    // takes the existing reuse path and respawns cloudflared.
+    const record: TunnelInfo = {
+      id: 'tunnel-uuid-named',
+      port: 8080,
+      name: 'api',
+      hostname: 'api.example.com',
+      url: 'https://api.example.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    };
+    const { client } = makeClient();
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': record
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'kept-dns-id',
+        accountId: 'acct-A',
+        zoneId: 'zone-A'
+      }
+    });
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await handleTunnelExit('tunnel-uuid-named', 8080, 0);
+
+    // The tunnel record is left in place so list() still surfaces the
+    // (now-detached) hostname — the next get() will respawn cloudflared.
+    const tunnels = (await storage.get<Record<string, TunnelInfo>>(
+      'tunnels'
+    )) as Record<string, TunnelInfo>;
+    expect(tunnels['8080']).toBeDefined();
+    expect(tunnels['8080'].id).toBe('tunnel-uuid-named');
+
+    // Meta is preserved verbatim, with `needsRespawn` flipped on so the
+    // next get(port, { name }) cache hit falls through to provision.
+    const meta = (await storage.get<
+      Record<
+        string,
+        {
+          optionsHash: string;
+          dnsRecordId?: string;
+          accountId?: string;
+          zoneId?: string;
+          needsRespawn?: boolean;
+        }
+      >
+    >('tunnels:meta')) as Record<
+      string,
+      {
+        optionsHash: string;
+        dnsRecordId?: string;
+        accountId?: string;
+        zoneId?: string;
+        needsRespawn?: boolean;
+      }
+    >;
+    expect(meta['8080']?.dnsRecordId).toBe('kept-dns-id');
+    expect(meta['8080']?.accountId).toBe('acct-A');
+    expect(meta['8080']?.zoneId).toBe('zone-A');
+    expect(meta['8080']?.needsRespawn).toBe(true);
+  });
+
   it('is a no-op when the stored id has been replaced (id-mismatch safety net)', async () => {
     const newer = makeRecord({ id: 'quick-newer000newer00', port: 8080 });
     const { client } = makeClient();
@@ -639,6 +794,39 @@ describe('tunnels handler > handleTunnelExit', () => {
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(final).toEqual({ '8080': info });
   });
+
+  it('logs an error canonical event when the storage transaction throws', async () => {
+    // Inject a storage shim whose transaction() rejects. Without proper
+    // try/catch around the canonical-log emit, the failure would escape
+    // the port-lock chain unobserved and no event would be logged.
+    const logger = makeLogger();
+    const failingStorage = {
+      get: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+      transaction: vi.fn().mockRejectedValue(new Error('boom'))
+    } as unknown as TunnelsStorage;
+    const { client } = makeClient();
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage: failingStorage,
+      logger
+    });
+
+    // The handler must surface the rejection to the caller so the
+    // port-lock chain and any awaiter see it — silently swallowing
+    // would hide the bug.
+    await expect(handleTunnelExit('quick-x', 8080, 0)).rejects.toThrow(/boom/);
+
+    // And a canonical event with outcome: 'error' must have been logged.
+    const errorCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const eventCall = errorCalls.find(([msg]) =>
+      String(msg).includes('tunnel.exit')
+    );
+    expect(eventCall).toBeDefined();
+  });
 });
 
 describe('TunnelsHandler public surface', () => {
@@ -666,5 +854,55 @@ describe('route-based SandboxClient.tunnels placeholder', () => {
     expect(() =>
       (client.tunnels as unknown as { destroy: () => void }).destroy()
     ).toThrow(/RPC transport/);
+  });
+});
+
+describe('pruneTunnelsForRestart', () => {
+  it('drops quick-tunnel entries and marks named ones for respawn', async () => {
+    const storage = makeStorage();
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+      '8080': {
+        id: 'quick-abc',
+        port: 8080,
+        url: 'https://x.trycloudflare.com',
+        hostname: 'x.trycloudflare.com',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      },
+      '8081': {
+        id: 'uuid-1',
+        port: 8081,
+        name: 'app',
+        hostname: 'app.example.com',
+        url: 'https://app.example.com',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      }
+    });
+    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+      '8080': { optionsHash: 'quick' },
+      '8081': { optionsHash: 'named:app', dnsRecordId: 'rec-1' }
+    });
+
+    await pruneTunnelsForRestart(storage);
+
+    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels'
+    )) as Record<string, { name?: string }>;
+    const nextMeta = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels:meta'
+    )) as Record<string, { needsRespawn?: boolean; dnsRecordId?: string }>;
+    expect(Object.keys(nextTunnels)).toEqual(['8081']);
+    expect(nextMeta['8081']?.needsRespawn).toBe(true);
+    // dnsRecordId is preserved so destroy() can still clean up.
+    expect(nextMeta['8081']?.dnsRecordId).toBe('rec-1');
+    expect(nextMeta['8080']).toBeUndefined();
+  });
+
+  it('is a no-op on empty storage', async () => {
+    const storage = makeStorage();
+    await pruneTunnelsForRestart(storage);
+    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+      'tunnels'
+    )) as Record<string, unknown>;
+    expect(nextTunnels).toEqual({});
   });
 });

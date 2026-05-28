@@ -11,7 +11,9 @@ This example provides a simple demo that loads a web page with two buttons.
 
 The worker will establish a sandbox running a small web server with a WebSocket server.
 
-The worker will create a new tunnel using `sandbox.tunnels.get()`.
+By default the worker creates a **quick tunnel** via `sandbox.tunnels.get(port)`, which hands back a fresh `*.trycloudflare.com` URL on every container restart — zero configuration needed.
+
+If `TUNNEL_NAME` is set along with a `CLOUDFLARE_API_TOKEN` secret, the worker uses a **named tunnel** instead: `sandbox.tunnels.get(port, { name: TUNNEL_NAME })`. The tunnel binds the stable hostname `<TUNNEL_NAME>.<zone>` and survives container restarts (the SDK rediscovers the tagged Cloudflare resources on re-run). The account id and zone id are inferred from the token when only one of each is reachable; otherwise you must set `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID` explicitly.
 
 ## Setup
 
@@ -29,11 +31,72 @@ cd examples/websocket-tunnel # if you're not already here
 npm run dev
 ```
 
+### Optional: named tunnel under your zone
+
+To bind the demo to a stable hostname instead of `*.trycloudflare.com`:
+
+1. Pick a hostname label (e.g. `ws-demo`) and a zone you control. The resulting hostname will be `<label>.<your-zone>`. Universal SSL only covers `<label>.<zone>`, so the label must be a single DNS label (no dots).
+2. Create a Cloudflare API token with the scopes listed below.
+3. Copy `.dev.vars.example` to `.dev.vars` and fill in `CLOUDFLARE_API_TOKEN` + `TUNNEL_NAME`. Wrangler loads `.dev.vars` automatically on `npm run dev`. For production, run:
+
+    ```bash
+    npx wrangler secret put CLOUDFLARE_API_TOKEN
+    # then set TUNNEL_NAME (and optionally the account/zone ids — see below)
+    # under `vars` in wrangler.jsonc
+    ```
+
+Re-run `npm run dev` and the demo will use the named tunnel.
+
+#### Required token scopes
+
+Create the token from **My Profile → API Tokens → Create Token → Custom token**. The exact UI labels for each permission are:
+
+| UI dropdowns | Used for |
+| --- | --- |
+| **Account** · **Cloudflare Tunnel** · **Edit** | Create, look up, and delete tunnels |
+| **Zone** · **DNS** · **Edit** | Upsert and delete the proxied `CNAME` for `<label>.<zone>` |
+| **Zone** · **Zone** · **Read** | Look up the zone's name to derive `<label>.<zone>` |
+| **Account** · **Account Settings** · **Read** | Optional. Lets the SDK infer `CLOUDFLARE_ACCOUNT_ID` from the token. Skip this if you set the account id explicitly. |
+
+Under **Account Resources**, scope to the account that owns the tunnel. Under **Zone Resources**, scope to the specific zone you want to bind to.
+
+Both **User API Tokens** (created from *My Profile → API Tokens*) and **Account API Tokens** (created from *Manage Account → Account API Tokens*; the secret starts with `cfat_`) work. The SDK detects which kind you have and uses the appropriate introspection endpoint.
+
+#### When to set the env vars explicitly
+
+If the token has access to **more than one account** or **more than one zone**, inference is ambiguous and the SDK throws a clear error asking you to set the relevant env var. In that case uncomment the `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID` lines in `.dev.vars` (for local dev) or add them under `vars` in `wrangler.jsonc` (for production):
+
+```jsonc
+"vars": {
+  "SANDBOX_TRANSPORT": "rpc",
+  "TUNNEL_NAME": "ws-demo",
+  "CLOUDFLARE_ACCOUNT_ID": "<your account id>",
+  "CLOUDFLARE_ZONE_ID": "<your zone id>"
+}
+```
+
+Setting these also lets you drop the **Account Settings: Read** and **Zone: Read** scopes from the token, since inference no longer runs.
+
 The first run will build the Docker container (2–3 minutes). Subsequent runs are much faster.
 
 ## Testing
 
 Open `http://localhost:8787` in a browser. Click **Connect** to open the WebSocket connection, then **Send ping** to start the exchange. The log panel shows each message sent and received.
+
+## Cleaning up the tunnel
+
+Named tunnels persist on Cloudflare across container restarts so the next `sandbox.tunnels.get(port, { name })` rediscovers them and gives you the same hostname. That means the tunnel resource and DNS record will outlive a demo run unless you explicitly tear them down.
+
+The example exposes a `/destroy` route that calls `sandbox.destroy()`. Stopping the sandbox also stops every tunnel it created, deleting the Cloudflare tunnel + DNS record for named tunnels and shutting down `cloudflared` in the container. Quick tunnels (no `name`) are zero-config and have no Cloudflare-side resources to remove.
+
+```bash
+curl -X POST http://localhost:8787/destroy
+```
+
+After that, hitting the root URL again will provision a fresh tunnel (the named-tunnel variant gets the same hostname; the quick-tunnel variant gets a new `*.trycloudflare.com`).
+
+In your own apps, the same cleanup happens automatically when you call `sandbox.destroy()` for any reason — you do not need to call `sandbox.tunnels.destroy(port)` separately unless you want to remove a single tunnel while the sandbox keeps running.
+
 
 ## Deploy
 

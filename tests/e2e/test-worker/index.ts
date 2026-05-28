@@ -1007,7 +1007,7 @@ console.log('Terminal server on port ' + port);
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        const info = await sandbox.tunnels.get(body.port);
+        const info = await sandbox.tunnels.get(body.port, body.options);
         return new Response(JSON.stringify(info), {
           headers: { 'Content-Type': 'application/json' }
         });

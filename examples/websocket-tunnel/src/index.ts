@@ -1,12 +1,92 @@
-import { getSandbox } from '@cloudflare/sandbox';
+import { getSandbox, type TunnelInfo } from '@cloudflare/sandbox';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
 const WS_PORT = 8080;
 
+/**
+ * Spin up (or reuse) a Cloudflare Tunnel pointing at the WebSocket server
+ * inside the sandbox.
+ *
+ * Two modes:
+ *  - **Named tunnel** when `CLOUDFLARE_API_TOKEN` and `TUNNEL_NAME` are
+ *    set. The tunnel binds the user-controlled hostname
+ *    `<TUNNEL_NAME>.<zone>` and survives DO eviction (the SDK rediscovers
+ *    the tagged Cloudflare resources on re-run). `CLOUDFLARE_ACCOUNT_ID`
+ *    and `CLOUDFLARE_ZONE_ID` are inferred from the token when it is
+ *    scoped to a single account/zone; set them explicitly to
+ *    disambiguate.
+ *  - **Quick tunnel** otherwise. Zero-config, but the `*.trycloudflare.com`
+ *    URL changes on every container restart.
+ */
+interface TunnelResult {
+  tunnel: TunnelInfo | null;
+  /** Human-readable diagnostic surfaced to the user when `tunnel` is null. */
+  error?: string;
+}
+
+async function getTunnel(
+  sandbox: ReturnType<typeof getSandbox>,
+  env: Env
+): Promise<TunnelResult> {
+  // Treat `TUNNEL_NAME` (and the required Cloudflare credentials) as the
+  // opt-in switch. Any missing piece falls through to the zero-config quick
+  // tunnel so the example still runs without setup.
+  const tunnelName = readVar(env, 'TUNNEL_NAME');
+  const hasNamedCreds =
+    Boolean(tunnelName) && Boolean(readVar(env, 'CLOUDFLARE_API_TOKEN'));
+
+  try {
+    const tunnel = hasNamedCreds
+      ? await sandbox.tunnels.get(WS_PORT, { name: tunnelName })
+      : await sandbox.tunnels.get(WS_PORT);
+    return { tunnel };
+  } catch (err) {
+    console.error('Failed to provision tunnel:', err);
+    // The SDK exposes `err.code` on its typed errors. When the container
+    // can't find the cloudflared binary, surface that distinctly so the
+    // user knows what to fix.
+    const code = (err as { errorResponse?: { code?: string } })?.errorResponse
+      ?.code;
+    if (code === 'CLOUDFLARED_NOT_FOUND') {
+      return {
+        tunnel: null,
+        error: 'cloudflared could not be found on this system.'
+      };
+    }
+    return { tunnel: null };
+  }
+}
+
+function readVar(env: Env, key: string): string {
+  const value = (env as unknown as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : '';
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // Explicit teardown route. `sandbox.destroy()` stops the container,
+    // and the SDK cleans up every tunnel the sandbox provisioned (including
+    // the Cloudflare tunnel and DNS records for named tunnels). Useful for
+    // ending a demo run without leaving named-tunnel resources behind on
+    // your zone.
+    if (url.pathname === '/destroy' && request.method === 'POST') {
+      const sandbox = getSandbox(env.Sandbox, 'websocket-demo');
+      try {
+        await sandbox.destroy();
+        return new Response('sandbox destroyed; tunnel cleaned up', {
+          status: 200
+        });
+      } catch (err) {
+        return new Response(
+          `destroy failed: ${err instanceof Error ? err.message : String(err)}`,
+          { status: 500 }
+        );
+      }
+    }
+
     if (url.pathname !== '/') {
       return env.Assets.fetch(request);
     }
@@ -22,10 +102,11 @@ export default {
       await proc.waitForPort(WS_PORT);
     }
 
-    const tunnel = await sandbox.tunnels.get(WS_PORT);
+    const { tunnel, error } = await getTunnel(sandbox, env);
     if (!tunnel) {
       return new Response(
-        'Unable to create Cloudflare Tunnel. Note, if you are running Cloudflare WARP you will need to disable WARP to access the tunnel in local development.',
+        error ??
+          'Unable to create Cloudflare Tunnel. Note, if you are running Cloudflare WARP you will need to disable WARP to access the tunnel in local development.',
         { status: 500 }
       );
     }

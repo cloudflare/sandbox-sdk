@@ -348,27 +348,65 @@ export interface SandboxWatchAPI {
 }
 
 /**
- * Public-facing tunnel record.
- *
- * Today only quick tunnels (`*.trycloudflare.com`) are supported. Future
- * PRs will add named tunnels, which will carry a `name: string` field;
- * `TunnelInfo` will then become a discriminated union keyed on the
- * presence of `name`. The quick variant declares `name?: never` so the
- * narrowing works without a breaking change here.
+ * Public-facing tunnel record. Discriminated on the presence of `name`:
+ * quick tunnels (`*.trycloudflare.com`) omit it, named tunnels carry the
+ * label that was passed to `get(port, { name })`.
  */
-export interface TunnelInfo {
+export type TunnelInfo = QuickTunnelInfo | NamedTunnelInfo;
+
+export interface QuickTunnelInfo {
   id: string;
   port: number;
+  /** `https://<random>.trycloudflare.com`. */
   url: string;
+  /** Hostname portion of `url`. */
   hostname: string;
   createdAt: string;
-  /** Reserved for the named-tunnel variant in a future PR. */
+  /** Absent on quick tunnels; narrows the union. */
   name?: never;
+}
+
+export interface NamedTunnelInfo {
+  /** Cloudflare tunnel UUID (8-4-4-4-12). */
+  id: string;
+  port: number;
+  /** `https://<hostname>`. */
+  url: string;
+  /** Full hostname bound to the tunnel (without scheme). */
+  hostname: string;
+  createdAt: string;
+  /** Label originally passed via `TunnelOptions.name`. */
+  name: string;
+}
+
+/**
+ * Options accepted by `sandbox.tunnels.get(port, options)`. Omitting
+ * `name` (or omitting the options object) selects the zero-config quick
+ * tunnel; setting `name` selects the named-tunnel flow.
+ */
+export interface TunnelOptions {
+  /**
+   * Single DNS label under the configured zone. The full hostname is
+   * `<name>.<zone-name>`. See `validateTunnelName` for the format rules.
+   */
+  name?: string;
 }
 
 export interface SandboxTunnelsAPI {
   /** Spawn `cloudflared tunnel --url`. No credentials required. */
   runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
+  /**
+   * Spawn `cloudflared tunnel run --token <token> --url http://localhost:<port>`.
+   *
+   * The SDK is the source of truth for the hostname this tunnel binds to;
+   * the container only sees the opaque token and the local port. The
+   * returned `TunnelInfo` carries empty `url`/`hostname` fields — the SDK
+   * enriches them with the values from the Cloudflare API before handing
+   * the record to user code.
+   *
+   * The token must never be logged, persisted, or echoed back to callers.
+   */
+  runNamedTunnel(id: string, token: string, port: number): Promise<TunnelInfo>;
   /** Stop the cloudflared process for the given tunnel id. */
   destroyTunnel(id: string): Promise<{ success: true; id: string }>;
   /** List tunnels currently running inside the container. */
