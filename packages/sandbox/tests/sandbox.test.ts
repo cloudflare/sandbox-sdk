@@ -3088,7 +3088,7 @@ describe('Sandbox - Automatic Session Management', () => {
         .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
       vi.spyOn(
         backupSandbox as any,
-        'generatePresignedGetUrl'
+        'generatePresignedGetURL'
       ).mockResolvedValue('https://example.com/archive');
 
       await (backupSandbox as any).downloadBackupParallel(

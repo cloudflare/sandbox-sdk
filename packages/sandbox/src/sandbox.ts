@@ -1131,7 +1131,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Read R2 presigned URL credentials for direct container-to-R2 backup transfers
     // R2 account id precedence: CLOUDFLARE_R2_ACCOUNT_ID > CLOUDFLARE_ACCOUNT_ID.
     // Token-derived fallback is intentionally not wired here because the
-    // backup path (requirePresignedUrlSupport) is synchronous; see
+    // backup path (requirePresignedURLSupport) is synchronous; see
     // tunnels/credentials.ts for the full chain that named tunnels use.
     this.r2AccountId =
       getEnvString(envObj, 'CLOUDFLARE_R2_ACCOUNT_ID') ??
@@ -5584,7 +5584,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Returns validated presigned URL configuration or throws if not configured.
    * All credential fields plus the R2 binding are required for backup to work.
    */
-  private requirePresignedUrlSupport(): {
+  private requirePresignedURLSupport(): {
     client: AwsClient;
     accountId: string;
     bucketName: string;
@@ -5643,8 +5643,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Generate a presigned GET URL for downloading an object from R2.
    * The container can curl this URL directly without credentials.
    */
-  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+  private async generatePresignedGetURL(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
 
     const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
@@ -5663,8 +5663,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Generate a presigned PUT URL for uploading an object to R2.
    * The container can curl PUT to this URL directly without credentials.
    */
-  private async generatePresignedPutUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+  private async generatePresignedPutURL(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
 
     const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
@@ -5692,7 +5692,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     dir: string,
     backupSession: string
   ): Promise<void> {
-    const presignedUrl = await this.generatePresignedPutUrl(r2Key);
+    const presignedURL = await this.generatePresignedPutURL(r2Key);
 
     const curlCmd = [
       'curl -sSf',
@@ -5703,7 +5703,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '--retry 2',
       '--retry-max-time 60',
       `-T ${shellEscape(archivePath)}`,
-      shellEscape(presignedUrl)
+      shellEscape(presignedURL)
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
@@ -5748,12 +5748,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Generate a presigned PUT URL for a single part in a multipart upload.
    */
-  private async generatePresignedPartUrl(
+  private async generatePresignedPartURL(
     r2Key: string,
     uploadId: string,
     partNumber: number
   ): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
 
     const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
@@ -5804,14 +5804,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-    const objectUrl = this.getBackupObjectURL(
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
+    const objectURL = this.getBackupObjectURL(
       accountId,
       bucketName,
       r2Key
     ).toString();
 
-    const createResp = await client.fetch(`${objectUrl}?uploads`, {
+    const createResp = await client.fetch(`${objectURL}?uploads`, {
       method: 'POST'
     });
     if (!createResp.ok) {
@@ -5839,7 +5839,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const abortMultipart = async () => {
       await client
-        .fetch(`${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`, {
+        .fetch(`${objectURL}?uploadId=${encodeURIComponent(uploadId)}`, {
           method: 'DELETE'
         })
         .catch(() => {});
@@ -5855,7 +5855,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           size: i === numParts - 1 ? sizeBytes - i * partSize : partSize
         })).map(async (part) => ({
           ...part,
-          url: await this.generatePresignedPartUrl(
+          url: await this.generatePresignedPartURL(
             r2Key,
             uploadId,
             part.partNumber
@@ -5910,7 +5910,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ].join('');
 
       const completeResp = await client.fetch(
-        `${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`,
+        `${objectURL}?uploadId=${encodeURIComponent(uploadId)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/xml' },
@@ -5960,7 +5960,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     dir: string,
     backupSession: string
   ): Promise<void> {
-    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
+    const presignedURL = await this.generatePresignedGetURL(r2Key);
     await this.execWithSession(
       `mkdir -p ${BACKUP_CONTAINER_DIR}`,
       backupSession,
@@ -5977,7 +5977,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         '--retry 2',
         '--retry-max-time 60',
         `-o ${shellEscape(tmpPath)}`,
-        shellEscape(presignedUrl)
+        shellEscape(presignedURL)
       ].join(' ');
 
       const result = await this.execWithSession(curlCmd, backupSession, {
@@ -6018,7 +6018,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           '--connect-timeout 10',
           '--max-time 1800',
           `-H ${shellEscape(`Range: bytes=${range}`)}`,
-          shellEscape(presignedUrl),
+          shellEscape(presignedURL),
           '|',
           'dd',
           `of=${shellEscape(tmpPath)}`,
@@ -6155,7 +6155,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: BackupOptions
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
-    this.requirePresignedUrlSupport();
+    this.requirePresignedURLSupport();
     const {
       dir,
       name,
@@ -6607,7 +6607,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<RestoreBackupResult> {
     const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
-    this.requirePresignedUrlSupport();
+    this.requirePresignedURLSupport();
     const { id, dir } = backup;
 
     let outcome: 'success' | 'error' = 'error';
