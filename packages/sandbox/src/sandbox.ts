@@ -317,6 +317,16 @@ const R2_DEFAULT_S3FS_OPTIONS: Readonly<Record<string, string | boolean>> = {
   multipart_size: '5'
 };
 
+const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
+  R2_DEFAULT_S3FS_OPTIONS
+).map(([key, value]) => (value === true ? key : `${key}=${value}`));
+// s3fs ahbe_conf (Additional Header By Extension) format:
+// Each line is: [extension-pattern] [Header-Name]:[value]
+// A leading space as the pattern acts as a wildcard, matching all requests.
+// Setting Expect to an empty value causes s3fs to omit the Expect: 100-continue
+// header, preventing the outbound proxy from stalling waiting for a 100 response.
+const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
+
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -1716,6 +1726,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const prefix = options.prefix;
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
+    let passwordFilePath: string | undefined;
+    let additionalHeaderFilePath: string | undefined;
 
     try {
       validateBucketBindingName(bucket, mountPath);
@@ -1745,13 +1757,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      const passwordFilePath = this.generatePasswordFilePath();
+      passwordFilePath = this.generatePasswordFilePath();
+      additionalHeaderFilePath = this.generateS3FSAdditionalHeaderFilePath();
       // s3fs requires a passwd file before it will issue requests; the R2
       // egress handler resolves the Worker binding and ignores S3 signatures.
       await this.createPasswordFile(passwordFilePath, bucket, {
         accessKeyId: 'x',
         secretAccessKey: 'x'
       });
+      await this.createDisableExpectHeaderFile(additionalHeaderFilePath);
 
       const mountInfo: R2BindingMountInfo = {
         mountId: crypto.randomUUID(),
@@ -1759,6 +1773,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         bucket,
         mountPath,
         passwordFilePath,
+        additionalHeaderFilePath,
         mounted: false,
         prefix,
         readOnly: options.readOnly ?? false
@@ -1776,6 +1791,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ...parseS3fsOptions(resolveS3fsOptions('r2', options.s3fsOptions)),
         use_path_request_style: true,
         url: 'http://r2.internal',
+        ahbe_conf: additionalHeaderFilePath,
         ...(options.readOnly ? { ro: true } : {})
       };
 
@@ -1818,6 +1834,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.deletePasswordFile(failedMount.passwordFilePath).catch(
           () => {}
         );
+        if (failedMount.additionalHeaderFilePath) {
+          await this.deleteAdditionalHeaderFile(
+            failedMount.additionalHeaderFilePath
+          ).catch(() => {});
+        }
+      } else {
+        // Mount was not yet registered in activeMounts (error occurred before
+        // activeMounts.set()); clean up using the local file path variables.
+        if (passwordFilePath) {
+          await this.deletePasswordFile(passwordFilePath).catch(() => {});
+        }
+        if (additionalHeaderFilePath) {
+          await this.deleteAdditionalHeaderFile(additionalHeaderFilePath).catch(
+            () => {}
+          );
+        }
       }
       const remainingParams = this.getR2EgressParams();
       await this.configureR2EgressOutbound(remainingParams).catch(() => {});
@@ -1849,6 +1881,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
+    let additionalHeaderFilePath: string | undefined;
     let provider: BucketProvider | null = null;
     let dirExisted = true;
     try {
@@ -1888,6 +1921,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Generate unique password file path
       passwordFilePath = this.generatePasswordFilePath();
+      if (credentialProxyEnabled) {
+        additionalHeaderFilePath = this.generateS3FSAdditionalHeaderFilePath();
+      }
 
       // Reserve mount path before async operations so concurrent mounts see it
       const mountId = crypto.randomUUID();
@@ -1899,6 +1935,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         endpoint: options.endpoint,
         provider,
         passwordFilePath,
+        ...(additionalHeaderFilePath ? { additionalHeaderFilePath } : {}),
         mounted: false,
         ...(credentialProxyEnabled
           ? {
@@ -1923,8 +1960,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ? { accessKeyId: 'x', secretAccessKey: 'x' }
           : credentials
       );
-
       if (credentialProxyEnabled) {
+        if (additionalHeaderFilePath) {
+          await this.createDisableExpectHeaderFile(additionalHeaderFilePath);
+        }
         await this.configureS3CredentialProxyOutbound(
           this.getS3CredentialProxyParams()
         );
@@ -1943,9 +1982,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             ...options,
             endpoint: `http://${S3_CREDENTIAL_PROXY_HOST}/${mountId}`,
             s3fsOptions: [
+              ...(provider === 'r2' ? R2_DEFAULT_S3FS_OPTION_ENTRIES : []),
               ...(options.s3fsOptions ?? []).filter(
-                (o) => !o.startsWith('use_path_request_style')
+                (o) =>
+                  !o.startsWith('use_path_request_style') &&
+                  !o.startsWith('ahbe_conf=')
               ),
+              ...(additionalHeaderFilePath
+                ? [`ahbe_conf=${additionalHeaderFilePath}`]
+                : []),
               'use_path_request_style'
             ]
           }
@@ -1962,10 +2007,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountOutcome = 'success';
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
-      // Clean up password file on failure
-      if (passwordFilePath) {
-        await this.deletePasswordFile(passwordFilePath);
-      }
       // Tear down any mount that may have established between the script's
       // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
       // runs as a daemon, so the FUSE mount can flip live in that window;
@@ -1977,6 +2018,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } catch {
         // best-effort cleanup
+      }
+
+      // Clean up support files after best-effort unmount so we do not remove
+      // files while a late-established FUSE daemon may still be active.
+      if (passwordFilePath) {
+        await this.deletePasswordFile(passwordFilePath);
+      }
+      if (additionalHeaderFilePath) {
+        await this.deleteAdditionalHeaderFile(additionalHeaderFilePath);
       }
 
       // Remove the mount directory only if the SDK created it. Runs after
@@ -1995,6 +2045,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const failedMount = this.activeMounts.get(mountPath);
       this.activeMounts.delete(mountPath);
       if (failedMount?.mountType === 'fuse' && failedMount.credentialProxy) {
+        evictSigV4ClientCacheEntry(failedMount.mountId);
         await this.configureS3CredentialProxyOutbound(
           this.getS3CredentialProxyParams()
         ).catch(() => {});
@@ -2042,6 +2093,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.activeMounts.delete(mountPath);
       } else {
         // FUSE unmount
+        let unmounted = false;
         try {
           const result = await this.execInternal(
             `fusermount -u ${shellEscape(mountPath)}`
@@ -2052,6 +2104,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
             );
           }
+          unmounted = true;
           mountInfo.mounted = false;
 
           // Only remove from tracking if unmount succeeded
@@ -2088,8 +2141,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             });
           }
         } finally {
-          // Always cleanup password file, even if unmount fails
-          await this.deletePasswordFile(mountInfo.passwordFilePath);
+          // Only delete support files after a confirmed unmount. If
+          // fusermount -u failed the s3fs daemon may still be running and
+          // actively reading both the passwd and ahbe_conf files; deleting
+          // them underneath a live daemon would cause EIO on subsequent
+          // requests. Files left in /tmp are cleaned up when the container
+          // terminates.
+          if (unmounted) {
+            await this.deletePasswordFile(mountInfo.passwordFilePath);
+            if (mountInfo.additionalHeaderFilePath) {
+              await this.deleteAdditionalHeaderFile(
+                mountInfo.additionalHeaderFilePath
+              );
+            }
+          }
         }
       }
 
@@ -2160,6 +2225,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Generate unique ahbe_conf file path for s3fs additional header config
+   */
+  private generateS3FSAdditionalHeaderFilePath(): string {
+    const uuid = crypto.randomUUID();
+    return `/tmp/.s3fs-ahbe-${uuid}.conf`;
+  }
+
+  /**
+   * Create s3fs ahbe_conf file that suppresses the Expect: 100-continue header.
+   * Restricted to 0600 so s3fs will accept it (same requirement as passwd files).
+   */
+  private async createDisableExpectHeaderFile(
+    headerFilePath: string
+  ): Promise<void> {
+    await this.writeFile(headerFilePath, S3FS_DISABLE_EXPECT_HEADER_CONFIG);
+    await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
+  }
+
+  /**
    * Create password file with s3fs credentials
    * Format: bucket:accessKeyId:secretAccessKey
    */
@@ -2188,6 +2272,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       this.logger.warn('password file cleanup failed', {
         passwordFilePath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async deleteAdditionalHeaderFile(
+    headerFilePath: string
+  ): Promise<void> {
+    try {
+      await this.execInternal(`rm -f ${shellEscape(headerFilePath)}`);
+    } catch (error) {
+      this.logger.warn('s3fs additional header file cleanup failed', {
+        headerFilePath,
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -2410,8 +2507,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             );
           }
 
-          // Always cleanup password file for FUSE mounts
+          // Always cleanup support files for FUSE mounts
           await this.deletePasswordFile(mountInfo.passwordFilePath);
+          if (mountInfo.additionalHeaderFilePath) {
+            await this.deleteAdditionalHeaderFile(
+              mountInfo.additionalHeaderFilePath
+            );
+          }
         }
       }
 

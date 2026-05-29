@@ -33,6 +33,7 @@ export interface FuseMountInfo {
   endpoint: string;
   provider: BucketProvider | null;
   passwordFilePath: string;
+  additionalHeaderFilePath?: string;
   mounted: boolean;
   credentialProxy?: CredentialProxyConfig;
 }
@@ -52,6 +53,7 @@ export interface R2BindingMountInfo {
   bucket: string;
   mountPath: string;
   passwordFilePath: string;
+  additionalHeaderFilePath?: string;
   mounted: boolean;
   prefix?: string;
   readOnly: boolean;
