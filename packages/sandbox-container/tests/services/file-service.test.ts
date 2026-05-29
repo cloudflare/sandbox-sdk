@@ -273,6 +273,61 @@ describe('FileService', () => {
       }
     });
 
+    it('should detect Office Open XML files as binary', async () => {
+      const testPath = '/tmp/workbook.xlsx';
+      const binaryData = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+      const binaryBuffer = binaryData.buffer as ArrayBuffer;
+
+      mockBunFile({
+        exists: true,
+        size: 1024,
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        arrayBuffer: binaryBuffer
+      });
+
+      const result = await fileService.read(testPath, {}, 'session-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.metadata?.encoding).toBe('base64');
+        expect(result.metadata?.isBinary).toBe(true);
+        expect(result.metadata?.mimeType).toBe(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+      }
+    });
+
+    it('should detect representative textual MIME types as text', async () => {
+      const cases = [
+        { mimeType: 'application/atom+xml', content: '<feed />' },
+        { mimeType: 'application/vnd.api+json', content: '{"data": []}' },
+        { mimeType: 'inode/x-empty', content: '' }
+      ];
+
+      for (const { mimeType, content } of cases) {
+        mockBunFile({
+          exists: true,
+          size: content.length,
+          type: mimeType,
+          text: content
+        });
+
+        const result = await fileService.read(
+          '/tmp/test-file',
+          {},
+          'session-123'
+        );
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data).toBe(content);
+          expect(result.metadata?.encoding).toBe('utf-8');
+          expect(result.metadata?.isBinary).toBe(false);
+          expect(result.metadata?.mimeType).toBe(mimeType);
+        }
+      }
+    });
+
     it('should detect JavaScript files as text', async () => {
       const testPath = '/tmp/script.js';
       const testContent = 'console.log("test");';
@@ -1142,6 +1197,32 @@ describe('FileService', () => {
         expect(result.data.mimeType).toBe('application/json');
         expect(result.data.isBinary).toBe(false);
         expect(result.data.encoding).toBe('utf-8');
+      }
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('should classify Office Open XML metadata as binary', async () => {
+      const testPath = '/tmp/document.docx';
+
+      mockBunFile({
+        exists: true,
+        size: 2048,
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
+
+      const mockExec = vi.fn();
+
+      const result = await fileService.getFileMetadata(testPath, mockExec);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.size).toBe(2048);
+        expect(result.data.mimeType).toBe(
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        );
+        expect(result.data.isBinary).toBe(true);
+        expect(result.data.encoding).toBe('base64');
       }
 
       expect(mockExec).not.toHaveBeenCalled();

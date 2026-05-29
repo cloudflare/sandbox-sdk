@@ -24,8 +24,31 @@ export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
 
-// Maximum file size for RPC transfers is 32 MiB to prevent performance issues. For larger files, clients should use streaming APIs.
+// Maximum file size for RPC transfers is 32 MiB. Larger files should use streaming APIs.
 const MAX_RPC_FILE_SIZE = 32 * 1_048_576; // 32 MiB
+
+const TEXT_MIME_TYPES = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'application/json',
+  'application/json-seq',
+  'application/rtf',
+  'application/sql',
+  'application/toml',
+  'application/typescript',
+  'application/x-empty',
+  'application/x-httpd-php',
+  'application/x-javascript',
+  'application/x-sh',
+  'application/x-shellscript',
+  'application/x-typescript',
+  'application/x-yaml',
+  'application/xml',
+  'application/xml-dtd',
+  'application/xml-external-parsed-entity',
+  'application/yaml',
+  'inode/x-empty'
+]);
 
 // File system operations interface with session support
 export interface FileSystemOperations {
@@ -1533,15 +1556,18 @@ export class FileService implements FileSystemOperations {
 
   /**
    * Determine if a MIME type represents binary content.
-   * Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
+   * Text MIME types include text/*, exact textual application types, and
+   * structured syntax suffixes such as +json and +xml.
    */
   private isBinaryMimeType(mimeType: string): boolean {
-    return (
-      !mimeType.startsWith('text/') &&
-      !mimeType.includes('json') &&
-      !mimeType.includes('xml') &&
-      !mimeType.includes('javascript') &&
-      !mimeType.includes('x-empty')
+    const normalizedMimeType = mimeType.split(';')[0].trim().toLowerCase();
+    const subtype = normalizedMimeType.split('/')[1] ?? '';
+
+    return !(
+      normalizedMimeType.startsWith('text/') ||
+      TEXT_MIME_TYPES.has(normalizedMimeType) ||
+      subtype.endsWith('+json') ||
+      subtype.endsWith('+xml')
     );
   }
 
