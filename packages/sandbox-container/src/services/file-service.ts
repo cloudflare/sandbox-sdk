@@ -24,8 +24,31 @@ export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
 
-// Maximum file size for RPC transfers is 32 MiB to prevent performance issues. For larger files, clients should use streaming APIs.
-const MAX_RPC_FILE_SIZE = 32 * 1_048_576; // 32 MiB
+// Maximum size for encoded readFile responses is 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+const MAX_ENCODED_FILE_SIZE = 32 * 1_048_576; // 32 MiB
+
+const TEXT_MIME_TYPES = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'application/json',
+  'application/json-seq',
+  'application/rtf',
+  'application/sql',
+  'application/toml',
+  'application/typescript',
+  'application/x-empty',
+  'application/x-httpd-php',
+  'application/x-javascript',
+  'application/x-sh',
+  'application/x-shellscript',
+  'application/x-typescript',
+  'application/x-yaml',
+  'application/xml',
+  'application/xml-dtd',
+  'application/xml-external-parsed-entity',
+  'application/yaml',
+  'inode/x-empty'
+]);
 
 // File system operations interface with session support
 export interface FileSystemOperations {
@@ -130,16 +153,16 @@ export class FileService implements FileSystemOperations {
 
           // Size and MIME type come directly from the BunFile object.
           const fileSize = bunFile.size;
-          // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
-          if (fileSize > MAX_RPC_FILE_SIZE) {
+          // Encoded responses have a hard limit of 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+          if (fileSize > MAX_ENCODED_FILE_SIZE) {
             throw {
-              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
+              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Use readFile() with { encoding: 'none' } and the RPC transport for large files.`,
               code: ErrorCode.FILE_TOO_LARGE,
               details: {
                 path,
                 operation: Operation.FILE_READ,
                 actualSize: fileSize,
-                maxSize: MAX_RPC_FILE_SIZE
+                maxSize: MAX_ENCODED_FILE_SIZE
               } satisfies FileTooLargeContext
             };
           }
@@ -1533,15 +1556,18 @@ export class FileService implements FileSystemOperations {
 
   /**
    * Determine if a MIME type represents binary content.
-   * Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
+   * Text MIME types include text/*, exact textual application types, and
+   * structured syntax suffixes such as +json and +xml.
    */
   private isBinaryMimeType(mimeType: string): boolean {
-    return (
-      !mimeType.startsWith('text/') &&
-      !mimeType.includes('json') &&
-      !mimeType.includes('xml') &&
-      !mimeType.includes('javascript') &&
-      !mimeType.includes('x-empty')
+    const normalizedMimeType = mimeType.split(';')[0].trim().toLowerCase();
+    const subtype = normalizedMimeType.split('/')[1] ?? '';
+
+    return !(
+      normalizedMimeType.startsWith('text/') ||
+      TEXT_MIME_TYPES.has(normalizedMimeType) ||
+      subtype.endsWith('+json') ||
+      subtype.endsWith('+xml')
     );
   }
 
