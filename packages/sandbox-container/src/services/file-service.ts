@@ -24,8 +24,8 @@ export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
 
-// Maximum file size for RPC transfers is 32 MiB. Larger files should use streaming APIs.
-const MAX_RPC_FILE_SIZE = 32 * 1_048_576; // 32 MiB
+// Maximum size for encoded readFile responses is 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+const MAX_ENCODED_FILE_SIZE = 32 * 1_048_576; // 32 MiB
 
 const TEXT_MIME_TYPES = new Set([
   'application/ecmascript',
@@ -153,16 +153,16 @@ export class FileService implements FileSystemOperations {
 
           // Size and MIME type come directly from the BunFile object.
           const fileSize = bunFile.size;
-          // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
-          if (fileSize > MAX_RPC_FILE_SIZE) {
+          // Encoded responses have a hard limit of 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+          if (fileSize > MAX_ENCODED_FILE_SIZE) {
             throw {
-              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
+              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Use readFile() with { encoding: 'none' } and the RPC transport for large files.`,
               code: ErrorCode.FILE_TOO_LARGE,
               details: {
                 path,
                 operation: Operation.FILE_READ,
                 actualSize: fileSize,
-                maxSize: MAX_RPC_FILE_SIZE
+                maxSize: MAX_ENCODED_FILE_SIZE
               } satisfies FileTooLargeContext
             };
           }
