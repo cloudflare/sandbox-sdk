@@ -860,6 +860,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private r2SecretAccessKey: string | null = null;
   private r2AccountId: string | null = null;
   private backupBucketName: string | null = null;
+  private backupBucketEndpoint: string | null = null;
   private r2Client: AwsClient | null = null;
 
   /**
@@ -1140,6 +1141,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.r2SecretAccessKey =
       getEnvString(envObj, 'R2_SECRET_ACCESS_KEY') ?? null;
     this.backupBucketName = getEnvString(envObj, 'BACKUP_BUCKET_NAME') ?? null;
+    const rawEndpoint = getEnvString(envObj, 'BACKUP_BUCKET_ENDPOINT') ?? null;
+    if (rawEndpoint !== null) {
+      let parsed: URL;
+      try {
+        parsed = new URL(rawEndpoint);
+      } catch {
+        const msg = `BACKUP_BUCKET_ENDPOINT is not a valid URL: "${rawEndpoint}". Expected format: https://<account_id>.eu.r2.cloudflarestorage.com`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.protocol !== 'https:') {
+        const msg = `BACKUP_BUCKET_ENDPOINT must use https://, got "${parsed.protocol.replace(':', '')}://"`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.pathname !== '/') {
+        const msg = `BACKUP_BUCKET_ENDPOINT must not include a path (got "${parsed.pathname}"). Provide only the origin, e.g. https://<account_id>.eu.r2.cloudflarestorage.com`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.search !== '' || parsed.hash !== '') {
+        const msg =
+          'BACKUP_BUCKET_ENDPOINT must not include query parameters or fragments. Provide only the origin, e.g. https://<account_id>.eu.r2.cloudflarestorage.com';
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      this.backupBucketEndpoint = rawEndpoint.replace(/\/+$/, '');
+    } else {
+      this.backupBucketEndpoint = null;
+    }
 
     if (this.r2AccessKeyId && this.r2SecretAccessKey) {
       this.r2Client = new AwsClient({
@@ -2328,7 +2379,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // doesn't ghost-revive on the next sandbox under the same DO id.
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
-
 
       // Disconnect transport after all cleanup commands have completed
       this.client.disconnect();
@@ -5566,6 +5616,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
+  private getBackupBucketEndpoint(accountId: string): string {
+    return (
+      this.backupBucketEndpoint ??
+      `https://${accountId}.r2.cloudflarestorage.com`
+    );
+  }
+
+  private getBackupObjectURL(
+    accountId: string,
+    bucketName: string,
+    r2Key: string
+  ): URL {
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+
+    return new URL(
+      `${this.getBackupBucketEndpoint(accountId)}/${encodedBucket}/${encodedKey}`
+    );
+  }
+
   /**
    * Generate a presigned GET URL for downloading an object from R2.
    * The container can curl this URL directly without credentials.
@@ -5573,14 +5646,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async generatePresignedGetUrl(r2Key: string): Promise<string> {
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
 
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5600,14 +5666,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async generatePresignedPutUrl(r2Key: string): Promise<string> {
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
 
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5696,14 +5755,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<string> {
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
 
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5753,12 +5805,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const objectUrl = `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`;
+    const objectUrl = this.getBackupObjectURL(
+      accountId,
+      bucketName,
+      r2Key
+    ).toString();
 
     const createResp = await client.fetch(`${objectUrl}?uploads`, {
       method: 'POST'

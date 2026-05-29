@@ -2,7 +2,11 @@ import { Container } from '@cloudflare/containers';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
-import { PortNotExposedError, ProcessNotFoundError } from '../src/errors';
+import {
+  InvalidBackupConfigError,
+  PortNotExposedError,
+  ProcessNotFoundError
+} from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
@@ -2753,7 +2757,10 @@ describe('Sandbox - Automatic Session Management', () => {
       };
     }
 
-    async function createBackupSandbox(bucket = createBackupBucket()) {
+    async function createBackupSandbox(
+      bucket = createBackupBucket(),
+      env: Record<string, unknown> = {}
+    ) {
       const backupSandbox = new Sandbox(
         mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
         {
@@ -2761,7 +2768,8 @@ describe('Sandbox - Automatic Session Management', () => {
           CLOUDFLARE_ACCOUNT_ID: 'test-account',
           R2_ACCESS_KEY_ID: 'test-key',
           R2_SECRET_ACCESS_KEY: 'test-secret',
-          BACKUP_BUCKET_NAME: 'test-backups'
+          BACKUP_BUCKET_NAME: 'test-backups',
+          ...env
         }
       );
 
@@ -2771,6 +2779,100 @@ describe('Sandbox - Automatic Session Management', () => {
 
       return { backupSandbox, bucket };
     }
+
+    it('should build backup object URLs with the default R2 endpoint', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+
+      const url = (
+        backupSandbox as unknown as {
+          getBackupObjectURL: (
+            accountId: string,
+            bucketName: string,
+            r2Key: string
+          ) => URL;
+        }
+      ).getBackupObjectURL(
+        'test-account',
+        'test-backups',
+        'backups/id/data.sqsh'
+      );
+
+      expect(url.toString()).toBe(
+        'https://test-account.r2.cloudflarestorage.com/test-backups/backups/id/data.sqsh'
+      );
+    });
+
+    it('should build backup object URLs with a custom R2 endpoint', async () => {
+      const { backupSandbox } = await createBackupSandbox(
+        createBackupBucket(),
+        {
+          BACKUP_BUCKET_ENDPOINT:
+            'https://test-account.eu.r2.cloudflarestorage.com/'
+        }
+      );
+
+      const url = (
+        backupSandbox as unknown as {
+          getBackupObjectURL: (
+            accountId: string,
+            bucketName: string,
+            r2Key: string
+          ) => URL;
+        }
+      ).getBackupObjectURL(
+        'test-account',
+        'test-backups',
+        'backups/id/data.sqsh'
+      );
+
+      expect(url.toString()).toBe(
+        'https://test-account.eu.r2.cloudflarestorage.com/test-backups/backups/id/data.sqsh'
+      );
+    });
+
+    it('should throw InvalidBackupConfigError for a malformed BACKUP_BUCKET_ENDPOINT', async () => {
+      await expect(
+        createBackupSandbox(createBackupBucket(), {
+          BACKUP_BUCKET_ENDPOINT: 'not-a-url'
+        })
+      ).rejects.toThrow(InvalidBackupConfigError);
+    });
+
+    it('should throw InvalidBackupConfigError for an http BACKUP_BUCKET_ENDPOINT', async () => {
+      await expect(
+        createBackupSandbox(createBackupBucket(), {
+          BACKUP_BUCKET_ENDPOINT:
+            'http://test-account.eu.r2.cloudflarestorage.com'
+        })
+      ).rejects.toThrow(InvalidBackupConfigError);
+    });
+
+    it('should throw InvalidBackupConfigError for a BACKUP_BUCKET_ENDPOINT with a path', async () => {
+      await expect(
+        createBackupSandbox(createBackupBucket(), {
+          BACKUP_BUCKET_ENDPOINT:
+            'https://test-account.eu.r2.cloudflarestorage.com/some/prefix'
+        })
+      ).rejects.toThrow(InvalidBackupConfigError);
+    });
+
+    it('should throw InvalidBackupConfigError for a BACKUP_BUCKET_ENDPOINT with a query', async () => {
+      await expect(
+        createBackupSandbox(createBackupBucket(), {
+          BACKUP_BUCKET_ENDPOINT:
+            'https://test-account.eu.r2.cloudflarestorage.com?region=eu'
+        })
+      ).rejects.toThrow(InvalidBackupConfigError);
+    });
+
+    it('should throw InvalidBackupConfigError for a BACKUP_BUCKET_ENDPOINT with a fragment', async () => {
+      await expect(
+        createBackupSandbox(createBackupBucket(), {
+          BACKUP_BUCKET_ENDPOINT:
+            'https://test-account.eu.r2.cloudflarestorage.com#bucket'
+        })
+      ).rejects.toThrow(InvalidBackupConfigError);
+    });
 
     it('should allow creating a backup from /app', async () => {
       const { backupSandbox, bucket } = await createBackupSandbox();
@@ -3618,13 +3720,11 @@ describe('Sandbox.getProcess()', () => {
       (sb as any).client = {
         getTransportMode: () => 'rpc',
         utils: {
-          createSession: vi
-            .fn()
-            .mockResolvedValue({
-              success: true,
-              id: 'default',
-              message: 'ok'
-            } as any)
+          createSession: vi.fn().mockResolvedValue({
+            success: true,
+            id: 'default',
+            message: 'ok'
+          } as any)
         },
         processes: {}
       };
