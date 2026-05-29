@@ -11,7 +11,7 @@
  * Real upstream URL:    ${endpoint}/${bucket}/${objectKey}
  *
  * The handler also accepts the legacy per-mount-host shape
- * (${mountId}.s3-credential-proxy.internal) for forward compatibility.
+ * (${mountId}.s3-credential-proxy.internal) for backward compatibility.
  */
 
 import type {
@@ -53,7 +53,7 @@ type CredentialProxyRequestInfo = {
   mountId: string;
   payloadHashMode?: 'signed' | 'unsigned';
   query: string[];
-  signingMs?: number;
+  clientSetupMs?: number;
   upstreamMs?: number;
 };
 
@@ -146,11 +146,10 @@ function buildCleanHeaders(original: Headers): Headers {
   const clean = new Headers();
   for (const [k, v] of original as unknown as Iterable<[string, string]>) {
     const lower = k.toLowerCase();
-    if (
-      !DUMMY_AUTH_HEADERS.has(lower) &&
-      lower !== 'host' &&
-      lower !== 'x-amz-content-sha256'
-    ) {
+    // Strip dummy signing headers and the intercepted proxy host; x-amz-content-sha256
+    // is stripped here too (it's in DUMMY_AUTH_HEADERS) so it can be re-added below
+    // only when the original value is a genuine payload hash (not a dummy signing value).
+    if (!DUMMY_AUTH_HEADERS.has(lower) && lower !== 'host') {
       clean.set(k, v);
     }
   }
@@ -451,13 +450,18 @@ async function signAndForwardSigV4(
     region
   );
   requestInfo.payloadHashMode = payload.mode;
-  requestInfo.signingMs = Date.now() - signingStarted;
+  // clientSetupMs captures region detection + client cache lookup + payload hash;
+  // the actual SigV4 signing happens inside client.fetch() and is included in upstreamMs.
+  requestInfo.clientSetupMs = Date.now() - signingStarted;
 
   const upstreamStarted = Date.now();
+  const upperMethod = request.method.toUpperCase();
   if (
-    request.method.toUpperCase() === 'PUT' &&
-    getContentLength(request) !== 0
+    (upperMethod === 'PUT' && getContentLength(request) !== 0) ||
+    upperMethod === 'DELETE'
   ) {
+    // Clear any synthetic zero-length entry so a future HEAD forwards to upstream
+    // rather than returning a stale synthetic 200.
     clearSyntheticZeroLengthObject(mountId, new URL(request.url).pathname);
   }
   const forwardInit = getSigV4ForwardInit(request);

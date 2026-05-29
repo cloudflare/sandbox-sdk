@@ -1,9 +1,4 @@
-import {
-  Container,
-  ContainerProxy,
-  getContainer,
-  switchPort
-} from '@cloudflare/containers';
+import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
   BackupOptions,
   BucketCredentials,

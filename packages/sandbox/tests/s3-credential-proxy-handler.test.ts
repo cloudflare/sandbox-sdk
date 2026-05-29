@@ -720,6 +720,59 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
     vi.restoreAllMocks();
   });
 
+  it('clears short-circuited zero-length objects on DELETE', async () => {
+    const forwardedRequests: Request[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      forwardedRequests.push(
+        input instanceof Request ? input : new Request(input)
+      );
+      return new Response(null, { status: 204 });
+    });
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+
+    // Short-circuit a zero-length PUT
+    const zeroPut = makeRequest(`/${MOUNT_ID}/${BUCKET}/deleted.txt`, 'PUT', {
+      'content-length': '0',
+      'x-amz-content-sha256':
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    });
+    const zeroPutResponse = await s3CredentialProxyHandler(
+      zeroPut,
+      {} as Cloudflare.Env,
+      ctx
+    );
+    expect(zeroPutResponse.status).toBe(200);
+    expect(forwardedRequests).toHaveLength(0); // short-circuited, not forwarded
+
+    // DELETE the object — should evict the synthetic cache entry
+    const deleteReq = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/deleted.txt`,
+      'DELETE'
+    );
+    await s3CredentialProxyHandler(deleteReq, {} as Cloudflare.Env, ctx);
+    expect(forwardedRequests).toHaveLength(1); // DELETE forwarded to upstream
+
+    // HEAD after DELETE must be forwarded to upstream, not served from the stale cache
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      forwardedRequests.push(
+        input instanceof Request ? input : new Request(input)
+      );
+      return new Response(null, { status: 404 });
+    });
+    const headReq = makeRequest(`/${MOUNT_ID}/${BUCKET}/deleted.txt`, 'HEAD');
+    const headResponse = await s3CredentialProxyHandler(
+      headReq,
+      {} as Cloudflare.Env,
+      ctx
+    );
+    expect(headResponse.status).toBe(404);
+    expect(forwardedRequests).toHaveLength(2);
+
+    vi.restoreAllMocks();
+  });
+
   it('canonicalizes repeated and special query parameters for signing', async () => {
     let capturedRequest: Request | undefined;
     vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
