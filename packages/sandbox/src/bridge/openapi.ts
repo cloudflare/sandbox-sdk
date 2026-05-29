@@ -167,6 +167,47 @@ export const OPENAPI_SCHEMA = {
           }
         }
       },
+      ExposedPortRequest: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description:
+              'Subdomain prefix for a named endpoint, such as `app`. Do not pass a full hostname. Omit to create or reuse an ephemeral endpoint.',
+            example: 'app'
+          }
+        }
+      },
+      ResolvedExposedPort: {
+        type: 'object',
+        required: ['id', 'port', 'url', 'hostname', 'createdAt'],
+        properties: {
+          id: { type: 'string' },
+          port: {
+            type: 'integer',
+            description: 'Container port served by the endpoint.',
+            example: 8080
+          },
+          url: {
+            type: 'string',
+            format: 'uri',
+            example: 'https://app.example.com'
+          },
+          hostname: {
+            type: 'string',
+            example: 'app.example.com'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          },
+          name: {
+            type: 'string',
+            description: 'Present for named endpoints only.',
+            example: 'app'
+          }
+        }
+      },
       ErrorResponse: {
         type: 'object',
         required: ['error', 'code'],
@@ -190,7 +231,8 @@ export const OPENAPI_SCHEMA = {
               'pool_error',
               'mount_error',
               'unmount_error',
-              'session_error'
+              'session_error',
+              'exposed_port_error'
             ]
           }
         }
@@ -372,6 +414,82 @@ export const OPENAPI_SCHEMA = {
                 example: {
                   error: 'exec failed: connection reset',
                   code: 'exec_transport_error'
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/v1/sandbox/{id}/exposed-port/{port}': {
+      post: {
+        operationId: 'resolveExposedPort',
+        summary: 'Create or reuse a public endpoint for a sandbox port',
+        description:
+          'Returns an existing public endpoint for the port when one is already recorded, or provisions one when needed. ' +
+          'The service must already be listening inside the sandbox. ' +
+          'Omit `name` for an ephemeral `*.trycloudflare.com` endpoint, or pass `name` to choose the subdomain prefix for a named endpoint. Use a value such as `app`, not a full hostname.',
+        'x-codeSamples': [
+          {
+            lang: 'curl',
+            label: 'Ephemeral endpoint',
+            source:
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/exposed-port/8080 \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+          },
+          {
+            lang: 'curl',
+            label: 'Named endpoint',
+            source:
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/exposed-port/8080 \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
+              '  -H "Content-Type: application/json" \\\n' +
+              '  -d \'{"name":"app"}\''
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Sandbox instance name.'
+          },
+          {
+            name: 'port',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer', minimum: 1024, maximum: 65535 },
+            description: 'Container port to resolve. Port 3000 is reserved.'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ExposedPortRequest' }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Public endpoint resolved.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ResolvedExposedPort' }
+              }
+            }
+          },
+          '400': { $ref: '#/components/responses/InvalidRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '502': {
+            description: 'Exposed port resolution failed.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: {
+                  error: 'exposed port failed: cloudflared could not be found',
+                  code: 'exposed_port_error'
                 }
               }
             }

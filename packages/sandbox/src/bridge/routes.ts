@@ -12,11 +12,18 @@ import type {
   MountBucketOptions,
   PtyOptions,
   R2BindingMountBucketOptions,
-  RemoteMountBucketOptions
+  RemoteMountBucketOptions,
+  TunnelInfo,
+  TunnelOptions
 } from '@repo/shared';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Sandbox } from '../sandbox';
 import { getSandbox as _getSandbox } from '../sandbox';
+import {
+  SandboxSecurityError,
+  validatePort,
+  validateTunnelName
+} from '../security';
 import {
   base32Encode,
   errorJson,
@@ -32,6 +39,7 @@ import { primePool } from './pool';
 import type {
   BridgeEnv,
   ExecRequest,
+  ExposedPortRequest,
   MountBucketRequest,
   MountBucketRequestOptions,
   RunningResponse,
@@ -57,6 +65,9 @@ type BridgeSandbox = ISandbox & {
     }
   >;
   destroy(): Promise<void>;
+  tunnels: {
+    get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
+  };
 };
 
 /** Typed wrapper around the SDK's getSandbox() that returns a BridgeSandbox. */
@@ -340,7 +351,7 @@ export function createBridgeApp(
   });
 
   // Pool resolution for bare DELETE /sandbox/:id (no trailing path).
-  // Uses lookupContainer() to avoid allocating a container just to destroy it.
+  // Destruction targets an already-assigned container when one exists.
   app.use(`${apiPrefix}/sandbox/:id`, async (c, next) => {
     // Pool resolution — only for DELETE (the only bare-path handler)
     if (c.req.method !== 'DELETE') return next();
@@ -605,6 +616,66 @@ export function createBridgeApp(
       return errorJson(
         `write failed: ${msg}`,
         'workspace_archive_write_error',
+        502
+      );
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // POST /sandbox/:id/exposed-port/:port
+  // ------------------------------------------------------------------
+
+  app.post(`${apiPrefix}/sandbox/:id/exposed-port/:port`, async (c) => {
+    const port = Number(c.req.param('port'));
+    if (!validatePort(port)) {
+      return errorJson('Invalid port', 'invalid_request', 400);
+    }
+
+    let options: TunnelOptions | undefined;
+    const rawBody = await c.req.text();
+    if (rawBody.trim()) {
+      let body: ExposedPortRequest;
+      try {
+        body = JSON.parse(rawBody) as ExposedPortRequest;
+      } catch {
+        return errorJson('Invalid JSON body', 'invalid_request', 400);
+      }
+
+      if (
+        body &&
+        typeof body === 'object' &&
+        !Array.isArray(body) &&
+        body.name !== undefined
+      ) {
+        if (typeof body.name !== 'string') {
+          return errorJson(
+            'name must be a string when provided',
+            'invalid_request',
+            400
+          );
+        }
+        try {
+          validateTunnelName(body.name);
+        } catch (err) {
+          if (err instanceof SandboxSecurityError) {
+            return errorJson(err.message, 'invalid_request', 400);
+          }
+          throw err;
+        }
+        options = { name: body.name };
+      }
+    }
+
+    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+
+    try {
+      const tunnel = await sandbox.tunnels.get(port, options);
+      return c.json(tunnel);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorJson(
+        `exposed port failed: ${msg}`,
+        'exposed_port_error',
         502
       );
     }

@@ -105,6 +105,12 @@ export interface RunningResponse {
   running: boolean;
 }
 
+/** Sent by the client for /exposed-port requests. */
+export interface ExposedPortRequest {
+  /** Subdomain prefix for a named endpoint, such as "app". */
+  name?: string;
+}
+
 /** Returned by all error paths. */
 export interface ErrorResponse {
   error: string;

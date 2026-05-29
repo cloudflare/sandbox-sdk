@@ -85,21 +85,22 @@ wrangler secret put SANDBOX_API_KEY
 
 This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. Each abstract method maps to exactly one route:
 
-| `BaseSandboxSession` method | Route                                 | Description                                      |
-| --------------------------- | ------------------------------------- | ------------------------------------------------ |
-| _(create session)_          | `POST /v1/sandbox`                    | Generate a new sandbox ID                        |
-| `_exec_internal()`          | `POST /v1/sandbox/:id/exec`           | Run a command; returns stdout/stderr/exit_code   |
-| `read()`                    | `POST /v1/sandbox/:id/read`           | Read a file from the workspace                   |
-| `write()`                   | `POST /v1/sandbox/:id/write`          | Write a file into the workspace                  |
-| `running()`                 | `GET /v1/sandbox/:id/running`         | Check sandbox liveness                           |
-| `persist_workspace()`       | `POST /v1/sandbox/:id/persist`        | Serialize workspace to a tar archive             |
-| `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`        | Populate workspace from a tar archive            |
-| `shutdown()`                | `DELETE /v1/sandbox/:id`              | Destroy sandbox via `destroy()` (returns 204)    |
-| _(terminal)_                | `GET /v1/sandbox/:id/pty`             | WebSocket PTY proxy (bidirectional terminal I/O) |
-| `mountBucket()`             | `POST /v1/sandbox/:id/mount`          | Mount an S3-compatible bucket                    |
-| `unmountBucket()`           | `POST /v1/sandbox/:id/unmount`        | Unmount a mounted bucket                         |
-| _(create session)_          | `POST /v1/sandbox/:id/session`        | Create an execution session                      |
-| _(delete session)_          | `DELETE /v1/sandbox/:id/session/:sid` | Delete an execution session                      |
+| `BaseSandboxSession` method | Route                                     | Description                                      |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| _(create session)_          | `POST /v1/sandbox`                        | Generate a new sandbox ID                        |
+| `_exec_internal()`          | `POST /v1/sandbox/:id/exec`               | Run a command; returns stdout/stderr/exit_code   |
+| `read()`                    | `POST /v1/sandbox/:id/read`               | Read a file from the workspace                   |
+| `write()`                   | `POST /v1/sandbox/:id/write`              | Write a file into the workspace                  |
+| `running()`                 | `GET /v1/sandbox/:id/running`             | Check sandbox liveness                           |
+| `resolve_exposed_port()`    | `POST /v1/sandbox/:id/exposed-port/:port` | Create or reuse a public endpoint for a port     |
+| `persist_workspace()`       | `POST /v1/sandbox/:id/persist`            | Serialize workspace to a tar archive             |
+| `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`            | Populate workspace from a tar archive            |
+| `shutdown()`                | `DELETE /v1/sandbox/:id`                  | Destroy sandbox via `destroy()` (returns 204)    |
+| _(terminal)_                | `GET /v1/sandbox/:id/pty`                 | WebSocket PTY proxy (bidirectional terminal I/O) |
+| `mountBucket()`             | `POST /v1/sandbox/:id/mount`              | Mount an S3-compatible bucket                    |
+| `unmountBucket()`           | `POST /v1/sandbox/:id/unmount`            | Unmount a mounted bucket                         |
+| _(create session)_          | `POST /v1/sandbox/:id/session`            | Create an execution session                      |
+| _(delete session)_          | `DELETE /v1/sandbox/:id/session/:sid`     | Delete an execution session                      |
 
 ## API Reference
 
@@ -179,6 +180,49 @@ Check whether the sandbox container is alive.
 curl http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/running \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
+
+---
+
+#### `POST /v1/sandbox/:id/exposed-port/:port`
+
+Create or reuse a public endpoint for a service that is already running inside
+the sandbox. This may provision endpoint infrastructure, but it does not start
+the application listening on the port. Send no body for an ephemeral
+`*.trycloudflare.com` endpoint, or pass `name` to choose the subdomain prefix
+for a named endpoint, such as `"app"`. Do not pass a full hostname.
+
+Ephemeral endpoint:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exposed-port/8080 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Named endpoint:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exposed-port/8080 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "app"}'
+```
+
+Response:
+
+```json
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "port": 8080,
+  "url": "https://app.example.com",
+  "hostname": "app.example.com",
+  "name": "app",
+  "createdAt": "2026-05-29T00:00:00.000Z"
+}
+```
+
+Named tunnels require `CLOUDFLARE_API_TOKEN`. If the account or zone cannot be
+inferred from the token, set `CLOUDFLARE_TUNNEL_ACCOUNT_ID` or
+`CLOUDFLARE_ACCOUNT_ID`, and/or set `CLOUDFLARE_ZONE_ID`.
 
 ---
 
