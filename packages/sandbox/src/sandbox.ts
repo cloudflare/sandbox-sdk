@@ -860,6 +860,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private r2SecretAccessKey: string | null = null;
   private r2AccountId: string | null = null;
   private backupBucketName: string | null = null;
+  private backupBucketEndpoint: string | null = null;
   private r2Client: AwsClient | null = null;
 
   /**
@@ -1130,7 +1131,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Read R2 presigned URL credentials for direct container-to-R2 backup transfers
     // R2 account id precedence: CLOUDFLARE_R2_ACCOUNT_ID > CLOUDFLARE_ACCOUNT_ID.
     // Token-derived fallback is intentionally not wired here because the
-    // backup path (requirePresignedUrlSupport) is synchronous; see
+    // backup path (requirePresignedURLSupport) is synchronous; see
     // tunnels/credentials.ts for the full chain that named tunnels use.
     this.r2AccountId =
       getEnvString(envObj, 'CLOUDFLARE_R2_ACCOUNT_ID') ??
@@ -1140,6 +1141,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.r2SecretAccessKey =
       getEnvString(envObj, 'R2_SECRET_ACCESS_KEY') ?? null;
     this.backupBucketName = getEnvString(envObj, 'BACKUP_BUCKET_NAME') ?? null;
+    const rawEndpoint = getEnvString(envObj, 'BACKUP_BUCKET_ENDPOINT') ?? null;
+    if (rawEndpoint !== null) {
+      let parsed: URL;
+      try {
+        parsed = new URL(rawEndpoint);
+      } catch {
+        const msg = `BACKUP_BUCKET_ENDPOINT is not a valid URL: "${rawEndpoint}". Expected format: https://<account_id>.eu.r2.cloudflarestorage.com`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.protocol !== 'https:') {
+        const msg = `BACKUP_BUCKET_ENDPOINT must use https://, got "${parsed.protocol.slice(0, -1)}://"`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.pathname !== '/') {
+        const msg = `BACKUP_BUCKET_ENDPOINT must not include a path (got "${parsed.pathname}"). Provide only the origin, e.g. https://<account_id>.eu.r2.cloudflarestorage.com`;
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (parsed.search !== '' || parsed.hash !== '') {
+        const msg =
+          'BACKUP_BUCKET_ENDPOINT must not include query parameters or fragments. Provide only the origin, e.g. https://<account_id>.eu.r2.cloudflarestorage.com';
+        throw new InvalidBackupConfigError({
+          message: msg,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: msg },
+          timestamp: new Date().toISOString()
+        });
+      }
+      this.backupBucketEndpoint = parsed.origin;
+    } else {
+      this.backupBucketEndpoint = null;
+    }
 
     if (this.r2AccessKeyId && this.r2SecretAccessKey) {
       this.r2Client = new AwsClient({
@@ -2328,7 +2379,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // doesn't ghost-revive on the next sandbox under the same DO id.
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
-
 
       // Disconnect transport after all cleanup commands have completed
       this.client.disconnect();
@@ -5534,7 +5584,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Returns validated presigned URL configuration or throws if not configured.
    * All credential fields plus the R2 binding are required for backup to work.
    */
-  private requirePresignedUrlSupport(): {
+  private requirePresignedURLSupport(): {
     client: AwsClient;
     accountId: string;
     bucketName: string;
@@ -5566,21 +5616,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /**
-   * Generate a presigned GET URL for downloading an object from R2.
-   * The container can curl this URL directly without credentials.
-   */
-  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+  private getBackupBucketEndpoint(accountId: string): string {
+    return (
+      this.backupBucketEndpoint ??
+      `https://${accountId}.r2.cloudflarestorage.com`
+    );
+  }
 
+  private getBackupObjectURL(
+    accountId: string,
+    bucketName: string,
+    r2Key: string
+  ): URL {
     const encodedBucket = encodeURIComponent(bucketName);
     const encodedKey = r2Key
       .split('/')
       .map((seg) => encodeURIComponent(seg))
       .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
+
+    return new URL(
+      `${this.getBackupBucketEndpoint(accountId)}/${encodedBucket}/${encodedKey}`
     );
+  }
+
+  /**
+   * Generate a presigned GET URL for downloading an object from R2.
+   * The container can curl this URL directly without credentials.
+   */
+  private async generatePresignedGetURL(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
+
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5597,17 +5663,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Generate a presigned PUT URL for uploading an object to R2.
    * The container can curl PUT to this URL directly without credentials.
    */
-  private async generatePresignedPutUrl(r2Key: string): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+  private async generatePresignedPutURL(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
 
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5633,7 +5692,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     dir: string,
     backupSession: string
   ): Promise<void> {
-    const presignedUrl = await this.generatePresignedPutUrl(r2Key);
+    const presignedURL = await this.generatePresignedPutURL(r2Key);
 
     const curlCmd = [
       'curl -sSf',
@@ -5644,7 +5703,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '--retry 2',
       '--retry-max-time 60',
       `-T ${shellEscape(archivePath)}`,
-      shellEscape(presignedUrl)
+      shellEscape(presignedURL)
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
@@ -5689,21 +5748,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Generate a presigned PUT URL for a single part in a multipart upload.
    */
-  private async generatePresignedPartUrl(
+  private async generatePresignedPartURL(
     r2Key: string,
     uploadId: string,
     partNumber: number
   ): Promise<string> {
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
 
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
-    );
+    const url = this.getBackupObjectURL(accountId, bucketName, r2Key);
     url.searchParams.set(
       'X-Amz-Expires',
       String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
@@ -5752,15 +5804,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
-    const encodedBucket = encodeURIComponent(bucketName);
-    const encodedKey = r2Key
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const objectUrl = `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`;
+    const { client, accountId, bucketName } = this.requirePresignedURLSupport();
+    const objectURL = this.getBackupObjectURL(
+      accountId,
+      bucketName,
+      r2Key
+    ).toString();
 
-    const createResp = await client.fetch(`${objectUrl}?uploads`, {
+    const createResp = await client.fetch(`${objectURL}?uploads`, {
       method: 'POST'
     });
     if (!createResp.ok) {
@@ -5788,7 +5839,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const abortMultipart = async () => {
       await client
-        .fetch(`${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`, {
+        .fetch(`${objectURL}?uploadId=${encodeURIComponent(uploadId)}`, {
           method: 'DELETE'
         })
         .catch(() => {});
@@ -5804,7 +5855,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           size: i === numParts - 1 ? sizeBytes - i * partSize : partSize
         })).map(async (part) => ({
           ...part,
-          url: await this.generatePresignedPartUrl(
+          url: await this.generatePresignedPartURL(
             r2Key,
             uploadId,
             part.partNumber
@@ -5859,7 +5910,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ].join('');
 
       const completeResp = await client.fetch(
-        `${objectUrl}?uploadId=${encodeURIComponent(uploadId)}`,
+        `${objectURL}?uploadId=${encodeURIComponent(uploadId)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/xml' },
@@ -5909,7 +5960,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     dir: string,
     backupSession: string
   ): Promise<void> {
-    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
+    const presignedURL = await this.generatePresignedGetURL(r2Key);
     await this.execWithSession(
       `mkdir -p ${BACKUP_CONTAINER_DIR}`,
       backupSession,
@@ -5926,7 +5977,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         '--retry 2',
         '--retry-max-time 60',
         `-o ${shellEscape(tmpPath)}`,
-        shellEscape(presignedUrl)
+        shellEscape(presignedURL)
       ].join(' ');
 
       const result = await this.execWithSession(curlCmd, backupSession, {
@@ -5967,7 +6018,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           '--connect-timeout 10',
           '--max-time 1800',
           `-H ${shellEscape(`Range: bytes=${range}`)}`,
-          shellEscape(presignedUrl),
+          shellEscape(presignedURL),
           '|',
           'dd',
           `of=${shellEscape(tmpPath)}`,
@@ -6104,7 +6155,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: BackupOptions
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
-    this.requirePresignedUrlSupport();
+    this.requirePresignedURLSupport();
     const {
       dir,
       name,
@@ -6556,7 +6607,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<RestoreBackupResult> {
     const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
-    this.requirePresignedUrlSupport();
+    this.requirePresignedURLSupport();
     const { id, dir } = backup;
 
     let outcome: 'success' | 'error' = 'error';
