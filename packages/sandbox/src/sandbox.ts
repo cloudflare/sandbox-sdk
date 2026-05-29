@@ -1157,7 +1157,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
       if (parsed.protocol !== 'https:') {
-        const msg = `BACKUP_BUCKET_ENDPOINT must use https://, got "${parsed.protocol.replace(':', '')}://"`;
+        const msg = `BACKUP_BUCKET_ENDPOINT must use https://, got "${parsed.protocol.slice(0, -1)}://"`;
         throw new InvalidBackupConfigError({
           message: msg,
           code: ErrorCode.INVALID_BACKUP_CONFIG,
@@ -1187,7 +1187,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp: new Date().toISOString()
         });
       }
-      this.backupBucketEndpoint = rawEndpoint.replace(/\/+$/, '');
+      this.backupBucketEndpoint = parsed.origin;
     } else {
       this.backupBucketEndpoint = null;
     }
