@@ -1,5 +1,28 @@
 # @cloudflare/sandbox
 
+## 0.11.0
+
+### Minor Changes
+
+- [#708](https://github.com/cloudflare/sandbox-sdk/pull/708) [`287ec04`](https://github.com/cloudflare/sandbox-sdk/commit/287ec04b109645fbc7498efc6c27ddaf088fabed) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Prevent stale preview URLs from waking or reaching sandbox runtimes. Invalid, revoked, or destroyed preview URLs return `404 INVALID_TOKEN`; authorized URLs that are not activated for the current runtime return `410 STALE_PREVIEW_URL` until the port is exposed again. Existing preview URLs that previously survived container restart now return `410 STALE_PREVIEW_URL` after a restart until the port is exposed again in the new runtime.
+
+  `getExposedPorts()` and `isPortExposed()` now report only ports that are currently preview-forwardable in the active runtime. `unexposePort()` is now idempotent: revoking a port that is not currently exposed succeeds without contacting the container. Preview URL state no longer uses the container-local exposed-port registry or proxy routes.
+
+### Patch Changes
+
+- [#733](https://github.com/cloudflare/sandbox-sdk/pull/733) [`d4a739b`](https://github.com/cloudflare/sandbox-sdk/commit/d4a739b9a0d89dc25e0d6b35aaafaa53f02ba40b) Thanks [@scuffi](https://github.com/scuffi)! - Allow backup and restore presigned URLs to target non-default R2 endpoints. Set `BACKUP_BUCKET_ENDPOINT`, for example `https://<account_id>.eu.r2.cloudflarestorage.com`, when your backup bucket uses an R2 jurisdiction.
+
+- [#732](https://github.com/cloudflare/sandbox-sdk/pull/732) [`8b9ec84`](https://github.com/cloudflare/sandbox-sdk/commit/8b9ec84f077078fad6f2f8d5932fd482bd4a1ded) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add bridge endpoints for managing tunnels to sandbox services. HTTP clients can call `POST /v1/sandbox/:id/tunnel/:port` with an optional `name` body field for a predictable named URL, and `DELETE /v1/sandbox/:id/tunnel/:port` to remove the tunnel.
+
+- [#730](https://github.com/cloudflare/sandbox-sdk/pull/730) [`de68927`](https://github.com/cloudflare/sandbox-sdk/commit/de68927b87dc1ba4a213f1a176d2fbcd6f2d102a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Classify Office Open XML files such as `.xlsx` and `.docx` as binary when reading files so they are returned with base64 encoding instead of text decoding.
+
+- [#722](https://github.com/cloudflare/sandbox-sdk/pull/722) [`95bb7b9`](https://github.com/cloudflare/sandbox-sdk/commit/95bb7b97a69c7dcaa5ff0276361840616685ce9d) Thanks [@aron-cf](https://github.com/aron-cf)! - Add named-tunnel support to `sandbox.tunnels.get(port, { name })`. Named tunnels bind a user-controlled hostname (`<name>.<your-zone>`) backed by a Cloudflare Tunnel and a proxied CNAME on your zone, so the URL is stable across container restarts and across sandboxes that share the same name. Calling `sandbox.destroy()` tears down the Cloudflare tunnel and DNS record alongside the container.
+
+  ```ts
+  const tunnel = await sandbox.tunnels.get(8080, { name: 'app' });
+  console.log(tunnel.url); // → https://app.example.com
+  ```
+
 ## 0.10.3
 
 ### Patch Changes
