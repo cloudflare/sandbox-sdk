@@ -694,14 +694,105 @@ describe('s3CredentialProxyHandler GCS signing', () => {
 
     expect(capturedRequest).toBeDefined();
     expect(capturedRequest!.method).toBe('PUT');
-    expect(capturedRequest!.headers.get('content-length')).toBe('0');
+    expect(capturedRequest!.headers.get('content-length')).toBeNull();
     expect(capturedRequest!.headers.get('Authorization')).toMatch(
       /^GOOG4-HMAC-SHA256/
+    );
+    expect(capturedRequest!.headers.get('Authorization')).not.toContain(
+      'content-length'
     );
     expect(await capturedRequest!.arrayBuffer()).toHaveProperty(
       'byteLength',
       0
     );
+
+    vi.restoreAllMocks();
+  });
+
+  it('does not forward x-amz headers to gcs upstream requests', async () => {
+    let capturedRequest: Request | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      capturedRequest = input instanceof Request ? input : new Request(input);
+      return new Response('ok', { status: 200 });
+    });
+
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/small.txt`, 'PUT', {
+      'content-type': 'text/plain',
+      expect: ':',
+      'content-length': '1024',
+      'x-amz-content-sha256':
+        'a3c9b4d194aedb820ad8b22957a67476e6b737950db3777d8f25fb8d1419cf27',
+      'x-amz-meta-mode': '33188'
+    });
+    await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(
+        makeParams({
+          provider: 'gcs',
+          authStrategy: 'gcs',
+          endpoint: 'https://storage.googleapis.com'
+        })
+      ) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest!.headers.get('x-amz-content-sha256')).toBeNull();
+    expect(capturedRequest!.headers.get('x-amz-meta-mode')).toBeNull();
+    expect(capturedRequest!.headers.get('expect')).toBeNull();
+    expect(capturedRequest!.headers.get('content-length')).toBeNull();
+    expect(capturedRequest!.headers.get('x-goog-meta-mode')).toBe('33188');
+    expect(capturedRequest!.headers.get('x-goog-content-sha256')).toBe(
+      'UNSIGNED-PAYLOAD'
+    );
+    expect(capturedRequest!.headers.get('Authorization')).toMatch(
+      /^GOOG4-HMAC-SHA256/
+    );
+    expect(capturedRequest!.headers.get('Authorization')).not.toContain(
+      'x-amz'
+    );
+    expect(capturedRequest!.headers.get('Authorization')).not.toContain(
+      'content-length'
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('answers HEAD for gcs zero-length directory marker PUT requests', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const ctx = makeCtx(
+      makeParams({
+        provider: 'gcs',
+        authStrategy: 'gcs',
+        endpoint: 'https://storage.googleapis.com'
+      })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+    const putReq = makeRequest(`/${MOUNT_ID}/${BUCKET}/gcs-dir/`, 'PUT', {
+      'content-type': 'application/x-directory',
+      'content-length': '0',
+      'x-amz-meta-mode': '493'
+    });
+    const headReq = makeRequest(`/${MOUNT_ID}/${BUCKET}/gcs-dir`, 'HEAD');
+
+    const putResponse = await s3CredentialProxyHandler(
+      putReq,
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const headResponse = await s3CredentialProxyHandler(
+      headReq,
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(putResponse.status).toBe(200);
+    expect(headResponse.status).toBe(200);
+    expect(headResponse.headers.get('Content-Length')).toBe('0');
+    expect(headResponse.headers.get('Content-Type')).toBe(
+      'application/x-directory'
+    );
+    expect(headResponse.headers.get('x-amz-meta-mode')).toBe('493');
+    expect(fetchSpy).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });

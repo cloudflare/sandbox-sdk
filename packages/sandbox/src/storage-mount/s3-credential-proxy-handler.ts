@@ -444,6 +444,32 @@ function getSigV4ForwardInit(request: Request): RequestInit {
   return { body: readable };
 }
 
+function getGCSHeaders(request: Request): Headers {
+  const headers = new Headers();
+  for (const [k, v] of request.headers as unknown as Iterable<
+    [string, string]
+  >) {
+    const lower = k.toLowerCase();
+    if (
+      DUMMY_AUTH_HEADERS.has(lower) ||
+      lower === 'host' ||
+      lower === 'content-length' ||
+      (lower === 'expect' && v.trim() === ':')
+    ) {
+      continue;
+    }
+    if (lower.startsWith('x-amz-meta-')) {
+      headers.set(`x-goog-meta-${lower.slice('x-amz-meta-'.length)}`, v);
+      continue;
+    }
+    if (lower.startsWith('x-amz-')) {
+      continue;
+    }
+    headers.set(k, v);
+  }
+  return headers;
+}
+
 async function signAndForwardSigV4(
   request: Request,
   mountId: string,
@@ -478,9 +504,11 @@ async function signAndForwardSigV4(
 
 async function signAndForwardGCS(
   request: Request,
-  credentials: { accessKeyId: string; secretAccessKey: string }
+  credentials: { accessKeyId: string; secretAccessKey: string },
+  requestInfo: CredentialProxyRequestInfo
 ): Promise<Response> {
   const url = new URL(request.url);
+  const gcsHeaders = getGCSHeaders(request);
   const now = new Date();
   const dateStr = `${now
     .toISOString()
@@ -499,18 +527,8 @@ async function signAndForwardGCS(
     ['x-goog-date', dateStr]
   ];
 
-  for (const [k, v] of request.headers as unknown as Iterable<
-    [string, string]
-  >) {
-    const lower = k.toLowerCase();
-    if (
-      !DUMMY_AUTH_HEADERS.has(lower) &&
-      lower !== 'host' &&
-      lower !== 'x-goog-content-sha256' &&
-      lower !== 'x-goog-date'
-    ) {
-      headerEntries.push([lower, v.trim()]);
-    }
+  for (const [k, v] of gcsHeaders as unknown as Iterable<[string, string]>) {
+    headerEntries.push([k.toLowerCase(), v.trim()]);
   }
 
   headerEntries.sort((a, b) => a[0].localeCompare(b[0]));
@@ -550,23 +568,23 @@ async function signAndForwardGCS(
 
   const authorization = `GOOG4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-  const newHeaders = new Headers(request.headers);
-  for (const h of DUMMY_AUTH_HEADERS) {
-    newHeaders.delete(h);
-  }
+  const newHeaders = new Headers(gcsHeaders);
   newHeaders.set('x-goog-date', dateStr);
   newHeaders.set('x-goog-content-sha256', bodyHash);
   newHeaders.set('Authorization', authorization);
 
   const contentLength = getContentLength(request);
   const gcsBody = contentLength === 0 ? new Uint8Array(0) : request.body;
-  return fetch(
+  const upstreamStarted = Date.now();
+  const response = await fetch(
     new Request(request.url, {
       method: request.method,
       headers: newHeaders,
       body: gcsBody
     })
   );
+  requestInfo.upstreamMs = Date.now() - upstreamStarted;
+  return response;
 }
 
 export const s3CredentialProxyHandler: OutboundHandler<
@@ -644,19 +662,18 @@ export const s3CredentialProxyHandler: OutboundHandler<
     query: [...url.searchParams.keys()].sort()
   };
 
-  if (
-    mount.authStrategy === 's3-sigv4' &&
-    isZeroLengthDirectoryMarkerPUT(cleanRequest, realPath)
-  ) {
+  if (isZeroLengthDirectoryMarkerPUT(cleanRequest, realPath)) {
     const responseHeaders = getDirectoryMarkerResponseHeaders(cleanRequest);
     directoryMarkerCache.set(
       getDirectoryMarkerCacheKey(mountId, realPath),
       responseHeaders
     );
     requestInfo.bodyPresent = request.body !== null;
-    requestInfo.payloadHashMode = getSigV4PayloadHash(
-      cleanRequest.headers
-    ).mode;
+    if (mount.authStrategy === 's3-sigv4') {
+      requestInfo.payloadHashMode = getSigV4PayloadHash(
+        cleanRequest.headers
+      ).mode;
+    }
     return withCredentialProxyDiagnostics(
       requestInfo,
       debugConfig,
@@ -672,18 +689,17 @@ export const s3CredentialProxyHandler: OutboundHandler<
     );
   }
 
-  if (
-    mount.authStrategy === 's3-sigv4' &&
-    isDirectoryMarkerHEAD(cleanRequest)
-  ) {
+  if (isDirectoryMarkerHEAD(cleanRequest)) {
     const responseHeaders = directoryMarkerCache.get(
       getDirectoryMarkerCacheKey(mountId, realPath)
     );
     if (responseHeaders) {
       requestInfo.bodyPresent = false;
-      requestInfo.payloadHashMode = getSigV4PayloadHash(
-        cleanRequest.headers
-      ).mode;
+      if (mount.authStrategy === 's3-sigv4') {
+        requestInfo.payloadHashMode = getSigV4PayloadHash(
+          cleanRequest.headers
+        ).mode;
+      }
       return withCredentialProxyDiagnostics(
         requestInfo,
         debugConfig,
@@ -710,7 +726,7 @@ export const s3CredentialProxyHandler: OutboundHandler<
       debugConfig,
       ctx.containerId,
       realPath,
-      () => signAndForwardGCS(cleanRequest, mount.credentials)
+      () => signAndForwardGCS(cleanRequest, mount.credentials, requestInfo)
     );
   }
 
