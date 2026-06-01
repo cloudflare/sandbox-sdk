@@ -73,7 +73,8 @@ export function createMockSandbox() {
     mountBucket: vi.fn(async () => {}),
     unmountBucket: vi.fn(async () => {}),
     tunnels: {
-      get: vi.fn()
+      get: vi.fn(),
+      destroy: vi.fn(async () => {})
     },
     destroy: vi.fn(async () => {})
   };

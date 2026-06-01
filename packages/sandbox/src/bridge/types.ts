@@ -105,9 +105,9 @@ export interface RunningResponse {
   running: boolean;
 }
 
-/** Sent by the client for /exposed-port requests. */
-export interface ExposedPortRequest {
-  /** Subdomain prefix for a named endpoint, such as "app". */
+/** Sent by the client for tunnel creation requests. */
+export interface TunnelRequest {
+  /** Subdomain prefix for a named tunnel, such as "app". */
   name?: string;
 }
 

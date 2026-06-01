@@ -11,7 +11,11 @@ const { app } = await import('./bridge-app');
 
 const env = createMockEnv();
 
-function exposedPortRequest(port: string | number, body?: unknown) {
+function tunnelRequest(port: string | number, init: RequestInit & { headers?: Record<string, string> } = {}) {
+  return app.request(`${BASE}/v1/sandbox/test/tunnel/${port}`, init, env);
+}
+
+function createTunnelRequest(port: string | number, body?: unknown) {
   const init: RequestInit & { headers: Record<string, string> } = {
     method: 'POST',
     headers: {}
@@ -20,10 +24,10 @@ function exposedPortRequest(port: string | number, body?: unknown) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
-  return app.request(`${BASE}/v1/sandbox/test/exposed-port/${port}`, init, env);
+  return tunnelRequest(port, init);
 }
 
-describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
+describe('POST /v1/sandbox/:id/tunnel/:port', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.tunnels.get.mockResolvedValue({
@@ -35,8 +39,8 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     });
   });
 
-  it('creates or reuses an ephemeral public endpoint', async () => {
-    const res = await exposedPortRequest(8080);
+  it('creates or reuses an ephemeral tunnel', async () => {
+    const res = await createTunnelRequest(8080);
 
     expect(res.status).toBe(200);
     expect(mockSandbox.tunnels.get).toHaveBeenCalledWith(8080, undefined);
@@ -49,7 +53,7 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     });
   });
 
-  it('passes the requested name for a named public endpoint', async () => {
+  it('passes the requested name for a named tunnel', async () => {
     mockSandbox.tunnels.get.mockResolvedValue({
       id: '11111111-2222-3333-4444-555555555555',
       port: 8080,
@@ -59,7 +63,7 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
       createdAt: '2026-05-29T00:00:00.000Z'
     });
 
-    const res = await exposedPortRequest(8080, { name: 'app' });
+    const res = await createTunnelRequest(8080, { name: 'app' });
 
     expect(res.status).toBe(200);
     expect(mockSandbox.tunnels.get).toHaveBeenCalledWith(8080, { name: 'app' });
@@ -70,8 +74,8 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     });
   });
 
-  it('rejects a non-string endpoint name before calling the SDK', async () => {
-    const res = await exposedPortRequest(8080, { name: 123 });
+  it('rejects a non-string tunnel name before calling the SDK', async () => {
+    const res = await createTunnelRequest(8080, { name: 123 });
 
     expect(res.status).toBe(400);
     expect(mockSandbox.tunnels.get).not.toHaveBeenCalled();
@@ -81,8 +85,8 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     });
   });
 
-  it('rejects an invalid endpoint name before calling the SDK', async () => {
-    const res = await exposedPortRequest(8080, { name: 'Bad.Name' });
+  it('rejects an invalid tunnel name before calling the SDK', async () => {
+    const res = await createTunnelRequest(8080, { name: 'Bad.Name' });
 
     expect(res.status).toBe(400);
     expect(mockSandbox.tunnels.get).not.toHaveBeenCalled();
@@ -91,8 +95,8 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     expect(body.error).toContain('valid DNS label');
   });
 
-  it('rejects an invalid exposed port before calling the SDK', async () => {
-    const res = await exposedPortRequest(3000);
+  it('rejects an invalid tunnel port before calling the SDK', async () => {
+    const res = await createTunnelRequest(3000);
 
     expect(res.status).toBe(400);
     expect(mockSandbox.tunnels.get).not.toHaveBeenCalled();
@@ -101,16 +105,52 @@ describe('POST /v1/sandbox/:id/exposed-port/:port', () => {
     });
   });
 
-  it('maps endpoint provisioning failures to exposed port errors', async () => {
+  it('maps tunnel provisioning failures to tunnel errors', async () => {
     mockSandbox.tunnels.get.mockRejectedValue(new Error('cloudflared failed'));
 
-    const res = await exposedPortRequest(8080, { name: 'app' });
+    const res = await createTunnelRequest(8080, { name: 'app' });
 
     expect(res.status).toBe(502);
     expect(mockSandbox.tunnels.get).toHaveBeenCalledWith(8080, { name: 'app' });
     await expect(res.json()).resolves.toMatchObject({
-      code: 'exposed_port_error',
-      error: 'exposed port failed: cloudflared failed'
+      code: 'tunnel_error',
+      error: 'tunnel failed: cloudflared failed'
+    });
+  });
+});
+
+describe('DELETE /v1/sandbox/:id/tunnel/:port', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('destroys the tunnel for a sandbox port', async () => {
+    const res = await tunnelRequest(8080, { method: 'DELETE' });
+
+    expect(res.status).toBe(204);
+    expect(mockSandbox.tunnels.destroy).toHaveBeenCalledWith(8080);
+  });
+
+  it('rejects an invalid tunnel port before calling the SDK', async () => {
+    const res = await tunnelRequest(3000, { method: 'DELETE' });
+
+    expect(res.status).toBe(400);
+    expect(mockSandbox.tunnels.destroy).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toMatchObject({
+      code: 'invalid_request'
+    });
+  });
+
+  it('maps tunnel cleanup failures to tunnel errors', async () => {
+    mockSandbox.tunnels.destroy.mockRejectedValue(new Error('cleanup failed'));
+
+    const res = await tunnelRequest(8080, { method: 'DELETE' });
+
+    expect(res.status).toBe(502);
+    expect(mockSandbox.tunnels.destroy).toHaveBeenCalledWith(8080);
+    await expect(res.json()).resolves.toEqual({
+      code: 'tunnel_error',
+      error: 'tunnel failed: cleanup failed'
     });
   });
 });

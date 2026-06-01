@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Add a bridge endpoint for resolving public URLs for sandbox services. HTTP clients can call `POST /v1/sandbox/:id/exposed-port/:port` with an optional `name` body field to request a predictable named URL instead of an ephemeral one.
+Add bridge endpoints for managing tunnels to sandbox services. HTTP clients can call `POST /v1/sandbox/:id/tunnel/:port` with an optional `name` body field for a predictable named URL, and `DELETE /v1/sandbox/:id/tunnel/:port` to remove the tunnel.
