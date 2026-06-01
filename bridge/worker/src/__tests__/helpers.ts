@@ -34,8 +34,8 @@ export function createMockSession(id = 'mock-session') {
  * Each method is a vi.fn() so tests can inspect calls and configure returns.
  *
  * The `exec` mock supports streaming: when called with `stream: true`, it
- * invokes `onOutput` / `onComplete` / `onError` callbacks instead of just
- * returning a result.
+ * invokes `onOutput` / `onComplete` / `onError` callbacks and returns the
+ * final result.
  */
 export function createMockSandbox() {
   return {
@@ -72,6 +72,10 @@ export function createMockSandbox() {
     })),
     mountBucket: vi.fn(async () => {}),
     unmountBucket: vi.fn(async () => {}),
+    tunnels: {
+      get: vi.fn(),
+      destroy: vi.fn(async () => {})
+    },
     destroy: vi.fn(async () => {})
   };
 }

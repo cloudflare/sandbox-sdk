@@ -167,6 +167,47 @@ export const OPENAPI_SCHEMA = {
           }
         }
       },
+      TunnelRequest: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description:
+              'Subdomain prefix for a named tunnel, such as `app`. Do not pass a full hostname. Omit to create or reuse an ephemeral tunnel.',
+            example: 'app'
+          }
+        }
+      },
+      Tunnel: {
+        type: 'object',
+        required: ['id', 'port', 'url', 'hostname', 'createdAt'],
+        properties: {
+          id: { type: 'string' },
+          port: {
+            type: 'integer',
+            description: 'Container port served by the tunnel.',
+            example: 8080
+          },
+          url: {
+            type: 'string',
+            format: 'uri',
+            example: 'https://app.example.com'
+          },
+          hostname: {
+            type: 'string',
+            example: 'app.example.com'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          },
+          name: {
+            type: 'string',
+            description: 'Present for named tunnels only.',
+            example: 'app'
+          }
+        }
+      },
       ErrorResponse: {
         type: 'object',
         required: ['error', 'code'],
@@ -190,7 +231,8 @@ export const OPENAPI_SCHEMA = {
               'pool_error',
               'mount_error',
               'unmount_error',
-              'session_error'
+              'session_error',
+              'tunnel_error'
             ]
           }
         }
@@ -372,6 +414,131 @@ export const OPENAPI_SCHEMA = {
                 example: {
                   error: 'exec failed: connection reset',
                   code: 'exec_transport_error'
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/v1/sandbox/{id}/tunnel/{port}': {
+      post: {
+        operationId: 'createTunnel',
+        summary: 'Create or reuse a tunnel for a sandbox port',
+        description:
+          'Returns an existing tunnel for the port when one is already recorded, or provisions one when needed. ' +
+          'The service must already be listening inside the sandbox. ' +
+          'Omit `name` for an ephemeral `*.trycloudflare.com` tunnel, or pass `name` to choose the subdomain prefix for a named tunnel. Use a value such as `app`, not a full hostname.',
+        'x-codeSamples': [
+          {
+            lang: 'curl',
+            label: 'Ephemeral tunnel',
+            source:
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/tunnel/8080 \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+          },
+          {
+            lang: 'curl',
+            label: 'Named tunnel',
+            source:
+              'curl -X POST https://$HOST/v1/sandbox/my-sandbox/tunnel/8080 \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY" \\\n' +
+              '  -H "Content-Type: application/json" \\\n' +
+              '  -d \'{"name":"app"}\''
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Sandbox instance name.'
+          },
+          {
+            name: 'port',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer', minimum: 1024, maximum: 65535 },
+            description: 'Container port to tunnel. Port 3000 is reserved.'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TunnelRequest' }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Tunnel created or reused.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Tunnel' }
+              }
+            }
+          },
+          '400': { $ref: '#/components/responses/InvalidRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '502': {
+            description: 'Tunnel creation failed.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: {
+                  error: 'tunnel failed: cloudflared could not be found',
+                  code: 'tunnel_error'
+                }
+              }
+            }
+          }
+        }
+      },
+      delete: {
+        operationId: 'deleteTunnel',
+        summary: 'Delete the tunnel for a sandbox port',
+        description:
+          'Stops the tunnel process for the port and removes any named-tunnel Cloudflare resources tracked by the sandbox.',
+        'x-codeSamples': [
+          {
+            lang: 'curl',
+            label: 'Delete tunnel',
+            source:
+              'curl -X DELETE https://$HOST/v1/sandbox/my-sandbox/tunnel/8080 \\\n' +
+              '  -H "Authorization: Bearer $SANDBOX_API_KEY"'
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Sandbox instance name.'
+          },
+          {
+            name: 'port',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer', minimum: 1024, maximum: 65535 },
+            description:
+              'Container port whose tunnel should be deleted. Port 3000 is reserved.'
+          }
+        ],
+        responses: {
+          '204': { description: 'Tunnel deleted or already absent.' },
+          '400': { $ref: '#/components/responses/InvalidRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '502': {
+            description: 'Tunnel deletion failed.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+                example: {
+                  error: 'tunnel failed: cleanup failed',
+                  code: 'tunnel_error'
                 }
               }
             }

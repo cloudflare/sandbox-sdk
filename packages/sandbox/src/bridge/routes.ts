@@ -12,11 +12,18 @@ import type {
   MountBucketOptions,
   PtyOptions,
   R2BindingMountBucketOptions,
-  RemoteMountBucketOptions
+  RemoteMountBucketOptions,
+  TunnelInfo,
+  TunnelOptions
 } from '@repo/shared';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Sandbox } from '../sandbox';
 import { getSandbox as _getSandbox } from '../sandbox';
+import {
+  SandboxSecurityError,
+  validatePort,
+  validateTunnelName
+} from '../security';
 import {
   base32Encode,
   errorJson,
@@ -35,6 +42,7 @@ import type {
   MountBucketRequest,
   MountBucketRequestOptions,
   RunningResponse,
+  TunnelRequest,
   UnmountBucketRequest,
   WriteResponse
 } from './types';
@@ -57,6 +65,10 @@ type BridgeSandbox = ISandbox & {
     }
   >;
   destroy(): Promise<void>;
+  tunnels: {
+    get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
+    destroy(port: number): Promise<void>;
+  };
 };
 
 /** Typed wrapper around the SDK's getSandbox() that returns a BridgeSandbox. */
@@ -89,6 +101,47 @@ function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === 'string')
   );
+}
+
+function parseTunnelOptions(
+  rawBody: string
+): TunnelOptions | Response | undefined {
+  if (!rawBody.trim()) return undefined;
+
+  let body: TunnelRequest;
+  try {
+    body = JSON.parse(rawBody) as TunnelRequest;
+  } catch {
+    return errorJson('Invalid JSON body', 'invalid_request', 400);
+  }
+
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    body.name === undefined
+  ) {
+    return undefined;
+  }
+
+  if (typeof body.name !== 'string') {
+    return errorJson(
+      'name must be a string when provided',
+      'invalid_request',
+      400
+    );
+  }
+
+  try {
+    validateTunnelName(body.name);
+  } catch (err) {
+    if (err instanceof SandboxSecurityError) {
+      return errorJson(err.message, 'invalid_request', 400);
+    }
+    throw err;
+  }
+
+  return { name: body.name };
 }
 
 function validateMountOptions(
@@ -340,7 +393,7 @@ export function createBridgeApp(
   });
 
   // Pool resolution for bare DELETE /sandbox/:id (no trailing path).
-  // Uses lookupContainer() to avoid allocating a container just to destroy it.
+  // Destruction targets an already-assigned container when one exists.
   app.use(`${apiPrefix}/sandbox/:id`, async (c, next) => {
     // Pool resolution — only for DELETE (the only bare-path handler)
     if (c.req.method !== 'DELETE') return next();
@@ -607,6 +660,48 @@ export function createBridgeApp(
         'workspace_archive_write_error',
         502
       );
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // POST /sandbox/:id/tunnel/:port
+  // DELETE /sandbox/:id/tunnel/:port
+  // ------------------------------------------------------------------
+
+  app.post(`${apiPrefix}/sandbox/:id/tunnel/:port`, async (c) => {
+    const port = Number(c.req.param('port'));
+    if (!validatePort(port)) {
+      return errorJson('Invalid port', 'invalid_request', 400);
+    }
+
+    const options = parseTunnelOptions(await c.req.text());
+    if (options instanceof Response) return options;
+
+    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+
+    try {
+      const tunnel = await sandbox.tunnels.get(port, options);
+      return c.json(tunnel);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorJson(`tunnel failed: ${msg}`, 'tunnel_error', 502);
+    }
+  });
+
+  app.delete(`${apiPrefix}/sandbox/:id/tunnel/:port`, async (c) => {
+    const port = Number(c.req.param('port'));
+    if (!validatePort(port)) {
+      return errorJson('Invalid port', 'invalid_request', 400);
+    }
+
+    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+
+    try {
+      await sandbox.tunnels.destroy(port);
+      return c.body(null, 204);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorJson(`tunnel failed: ${msg}`, 'tunnel_error', 502);
     }
   });
 

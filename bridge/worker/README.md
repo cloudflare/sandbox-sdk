@@ -92,6 +92,8 @@ This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. E
 | `read()`                    | `POST /v1/sandbox/:id/read`           | Read a file from the workspace                   |
 | `write()`                   | `POST /v1/sandbox/:id/write`          | Write a file into the workspace                  |
 | `running()`                 | `GET /v1/sandbox/:id/running`         | Check sandbox liveness                           |
+| `resolve_exposed_port()`    | `POST /v1/sandbox/:id/tunnel/:port`   | Create or reuse a tunnel for a port              |
+| _(delete tunnel)_           | `DELETE /v1/sandbox/:id/tunnel/:port` | Delete the tunnel for a port                     |
 | `persist_workspace()`       | `POST /v1/sandbox/:id/persist`        | Serialize workspace to a tar archive             |
 | `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`        | Populate workspace from a tar archive            |
 | `shutdown()`                | `DELETE /v1/sandbox/:id`              | Destroy sandbox via `destroy()` (returns 204)    |
@@ -179,6 +181,63 @@ Check whether the sandbox container is alive.
 curl http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/running \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
+
+---
+
+#### `POST /v1/sandbox/:id/tunnel/:port`
+
+Create or reuse a tunnel for a service that is already running inside the
+sandbox. This may provision tunnel infrastructure, but it does not start the
+application listening on the port. Send no body for an ephemeral
+`*.trycloudflare.com` tunnel, or pass `name` to choose the subdomain prefix for
+a named tunnel, such as `"app"`. Do not pass a full hostname.
+
+Ephemeral tunnel:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/tunnel/8080 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Named tunnel:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/tunnel/8080 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "app"}'
+```
+
+Response:
+
+```json
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "port": 8080,
+  "url": "https://app.example.com",
+  "hostname": "app.example.com",
+  "name": "app",
+  "createdAt": "2026-05-29T00:00:00.000Z"
+}
+```
+
+Named tunnels require `CLOUDFLARE_API_TOKEN`. If the account or zone cannot be
+inferred from the token, set `CLOUDFLARE_TUNNEL_ACCOUNT_ID` or
+`CLOUDFLARE_ACCOUNT_ID`, and/or set `CLOUDFLARE_ZONE_ID`.
+
+---
+
+#### `DELETE /v1/sandbox/:id/tunnel/:port`
+
+Delete the tunnel for a sandbox port. This stops the tunnel process and removes
+any named-tunnel Cloudflare resources tracked by the sandbox.
+
+```sh
+curl -X DELETE http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/tunnel/8080 \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Returns `204 No Content` when the tunnel was deleted or already absent.
 
 ---
 

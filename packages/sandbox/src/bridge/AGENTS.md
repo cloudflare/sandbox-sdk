@@ -7,7 +7,7 @@ Consumer-facing documentation (API reference, deployment, security) lives in [`b
 ## Key files
 
 - `index.ts` — `bridge()` factory: resolves DO bindings at module evaluation time, wraps `fetch` and `scheduled` handlers.
-- `routes.ts` — `createBridgeApp()`: Hono app containing all `/v1/` API routes (sandbox CRUD, exec, file I/O, persist/hydrate, mount/unmount, session CRUD, pool management, WebSocket PTY proxy). Parameterised by binding names and route prefixes.
+- `routes.ts` — `createBridgeApp()`: Hono app containing all `/v1/` API routes (sandbox CRUD, exec, file I/O, tunnel management, persist/hydrate, mount/unmount, session CRUD, pool management, WebSocket PTY proxy). Parameterised by binding names and route prefixes.
 - `warm-pool.ts` — `WarmPool` Durable Object that maintains a pool of pre-started sandbox containers (adapted from [cf-container-warm-pool](https://github.com/mikenomitch/cf-container-warm-pool)).
 - `pool.ts` — Pool management helpers used by routes.
 - `helpers.ts` — Utility functions (path validation, shell quoting, SSE formatting).
