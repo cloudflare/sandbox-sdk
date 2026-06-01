@@ -559,7 +559,9 @@ describe('Sandbox credential proxy mounts', () => {
   it('rejects passwd_file and url overrides in s3fsOptions for credential proxy mounts', async () => {
     for (const option of [
       'passwd_file=/tmp/x',
-      'url=https://bad.example.com'
+      'url=https://bad.example.com',
+      'ahbe_conf=/tmp/custom-headers.conf',
+      'use_path_request_style'
     ]) {
       const sandbox = new Sandbox(
         createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],

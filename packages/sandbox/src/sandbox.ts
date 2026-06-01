@@ -120,6 +120,7 @@ import {
   r2EgressHandler
 } from './storage-mount/r2-egress-handler';
 import {
+  evictDirectoryMarkerCacheForMount,
   evictSigV4ClientCacheEntry,
   SELF_TEST_PATH as S3_CREDENTIAL_PROXY_SELF_TEST_PATH,
   s3CredentialProxyHandler
@@ -857,6 +858,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
   private transport: SandboxTransport = 'http';
 
@@ -1543,6 +1545,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
+    return this.runMountOperation(async () => {
+      await this.mountBucketUnlocked(bucket, mountPath, options);
+    });
+  }
+
+  private async runMountOperation(
+    operation: () => Promise<void>
+  ): Promise<void> {
+    const previous = this.mountOperationQueue;
+    let release!: () => void;
+    this.mountOperationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async mountBucketUnlocked(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void> {
     if (options.prefix !== undefined) {
       validatePrefix(options.prefix);
     }
@@ -1671,10 +1699,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private validateProtectedS3fsOptions(
     options: string[] | undefined,
-    mountLabel: string
+    mountLabel: string,
+    extraProtected: string[] = []
   ): void {
     if (!options) return;
-    const protectedOptions = new Set(['passwd_file', 'url']);
+    const protectedOptions = new Set(['passwd_file', 'url', ...extraProtected]);
     for (const option of options) {
       const [key] = option.split('=');
       if (protectedOptions.has(key)) {
@@ -1910,7 +1939,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (credentialProxyEnabled) {
         this.validateProtectedS3fsOptions(
           options.s3fsOptions,
-          'credential proxy'
+          'credential proxy',
+          ['ahbe_conf', 'use_path_request_style']
         );
       }
 
@@ -1978,11 +2008,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             endpoint: `http://${S3_CREDENTIAL_PROXY_HOST}/${mountId}`,
             s3fsOptions: [
               ...(provider === 'r2' ? R2_DEFAULT_S3FS_OPTION_ENTRIES : []),
-              ...(options.s3fsOptions ?? []).filter(
-                (o) =>
-                  !o.startsWith('use_path_request_style') &&
-                  !o.startsWith('ahbe_conf=')
-              ),
+              ...(options.s3fsOptions ?? []),
               ...(additionalHeaderFilePath
                 ? [`ahbe_conf=${additionalHeaderFilePath}`]
                 : []),
@@ -2041,6 +2067,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.activeMounts.delete(mountPath);
       if (failedMount?.mountType === 'fuse' && failedMount.credentialProxy) {
         evictSigV4ClientCacheEntry(failedMount.mountId);
+        evictDirectoryMarkerCacheForMount(failedMount.mountId);
         await this.configureS3CredentialProxyOutbound(
           this.getS3CredentialProxyParams()
         ).catch(() => {});
@@ -2067,6 +2094,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
    */
   async unmountBucket(mountPath: string): Promise<void> {
+    return this.runMountOperation(async () => {
+      await this.unmountBucketUnlocked(mountPath);
+    });
+  }
+
+  private async unmountBucketUnlocked(mountPath: string): Promise<void> {
     const unmountStartTime = Date.now();
     let unmountOutcome: 'success' | 'error' = 'error';
     let unmountError: Error | undefined;
@@ -2112,6 +2145,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             mountInfo.credentialProxy
           ) {
             evictSigV4ClientCacheEntry(mountInfo.mountId);
+            evictDirectoryMarkerCacheForMount(mountInfo.mountId);
             await this.configureS3CredentialProxyOutbound(
               this.getS3CredentialProxyParams()
             );
@@ -2738,6 +2772,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } else if (m.mountType === 'fuse' && m.credentialProxy) {
         hadCredentialProxyMount = true;
         evictSigV4ClientCacheEntry(m.mountId);
+        evictDirectoryMarkerCacheForMount(m.mountId);
       }
     }
     if (hadR2EgressMount) {

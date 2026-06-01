@@ -75,29 +75,22 @@ type SigV4ClientCacheEntry = {
   region: string;
 };
 
-type ShortCircuitedZeroLengthObject = {
-  headers: [string, string][];
-};
-
 const sigV4ClientCache = new Map<string, SigV4ClientCacheEntry>();
+const directoryMarkerCache = new Map<string, [string, string][]>();
 const credentialProxyDiagnosticEvents: CredentialProxyDiagnosticEvent[] = [];
-const shortCircuitedZeroLengthObjects = new Map<
-  string,
-  ShortCircuitedZeroLengthObject
->();
 let credentialProxyDiagnosticEventCount = 0;
 
 export function evictSigV4ClientCacheEntry(mountId: string): void {
   sigV4ClientCache.delete(mountId);
-  for (const key of shortCircuitedZeroLengthObjects.keys()) {
-    if (key.startsWith(`${mountId}:`)) {
-      shortCircuitedZeroLengthObjects.delete(key);
-    }
-  }
 }
 
-function getZeroLengthObjectKey(mountId: string, path: string) {
-  return `${mountId}:${path}`;
+export function evictDirectoryMarkerCacheForMount(mountId: string): void {
+  const prefix = `${mountId}:`;
+  for (const key of directoryMarkerCache.keys()) {
+    if (key.startsWith(prefix)) {
+      directoryMarkerCache.delete(key);
+    }
+  }
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -154,10 +147,14 @@ function buildCleanHeaders(original: Headers): Headers {
     }
   }
   const contentSHA256 = original.get('x-amz-content-sha256');
-  if (contentSHA256) {
+  if (contentSHA256 && isValidContentSHA256(contentSHA256)) {
     clean.set('x-amz-content-sha256', contentSHA256);
   }
   return clean;
+}
+
+function isValidContentSHA256(value: string): boolean {
+  return value === 'UNSIGNED-PAYLOAD' || /^[a-fA-F0-9]{64}$/.test(value);
 }
 
 function getCredentialProxyDebugConfig(
@@ -370,19 +367,27 @@ function getSigV4PayloadHash(headers: Headers): {
   return { hash: 'UNSIGNED-PAYLOAD', mode: 'unsigned' };
 }
 
-function isZeroLengthPUT(request: Request): boolean {
+function isZeroLengthDirectoryMarkerPUT(
+  request: Request,
+  realPath: string
+): boolean {
   return (
     request.method.toUpperCase() === 'PUT' &&
-    request.headers.get('content-length') === '0'
+    request.headers.get('content-length') === '0' &&
+    realPath.endsWith('/')
   );
 }
 
-function isHEAD(request: Request): boolean {
+function isDirectoryMarkerHEAD(request: Request): boolean {
   return request.method.toUpperCase() === 'HEAD';
 }
 
-function getZeroLengthObjectResponseHeaders(
-  requestHeaders: Headers
+function getDirectoryMarkerCacheKey(mountId: string, realPath: string): string {
+  return `${mountId}:${realPath.replace(/\/+$/, '')}`;
+}
+
+function getDirectoryMarkerResponseHeaders(
+  request: Request
 ): [string, string][] {
   const headers: [string, string][] = [
     ['Accept-Ranges', 'bytes'],
@@ -390,18 +395,25 @@ function getZeroLengthObjectResponseHeaders(
     ['ETag', '"d41d8cd98f00b204e9800998ecf8427e"'],
     ['Last-Modified', new Date().toUTCString()]
   ];
-  const contentType = requestHeaders.get('content-type');
+  const contentType = request.headers.get('content-type');
   if (contentType) {
     headers.push(['Content-Type', contentType]);
   }
-  for (const [key, value] of requestHeaders as unknown as Iterable<
+  for (const [name, value] of request.headers as unknown as Iterable<
     [string, string]
   >) {
-    if (key.toLowerCase().startsWith('x-amz-meta-')) {
-      headers.push([key, value]);
+    if (name.toLowerCase().startsWith('x-amz-meta-')) {
+      headers.push([name, value]);
     }
   }
   return headers;
+}
+
+function deleteDirectoryMarkerCacheEntry(
+  mountId: string,
+  realPath: string
+): void {
+  directoryMarkerCache.delete(getDirectoryMarkerCacheKey(mountId, realPath));
 }
 
 function getContentLength(request: Request): number | null {
@@ -416,19 +428,20 @@ function getContentLength(request: Request): number | null {
   return parsed;
 }
 
-function getSigV4ForwardInit(request: Request): RequestInit | undefined {
+function getSigV4ForwardInit(request: Request): RequestInit {
   const contentLength = getContentLength(request);
-  if (contentLength === null || contentLength === 0 || request.body === null) {
-    return undefined;
+  if (contentLength === 0) {
+    return { body: new Uint8Array(0) };
+  }
+  if (contentLength === null || request.body === null) {
+    return {};
   }
 
   const { readable, writable } = new FixedLengthStream(contentLength);
-  request.body.pipeTo(writable).catch(() => {});
+  request.body.pipeTo(writable).catch((error) => {
+    writable.abort(error).catch(() => {});
+  });
   return { body: readable };
-}
-
-function clearSyntheticZeroLengthObject(mountId: string, path: string): void {
-  shortCircuitedZeroLengthObjects.delete(getZeroLengthObjectKey(mountId, path));
 }
 
 async function signAndForwardSigV4(
@@ -455,15 +468,6 @@ async function signAndForwardSigV4(
   requestInfo.clientSetupMs = Date.now() - signingStarted;
 
   const upstreamStarted = Date.now();
-  const upperMethod = request.method.toUpperCase();
-  if (
-    (upperMethod === 'PUT' && getContentLength(request) !== 0) ||
-    upperMethod === 'DELETE'
-  ) {
-    // Clear any synthetic zero-length entry so a future HEAD forwards to upstream
-    // rather than returning a stale synthetic 200.
-    clearSyntheticZeroLengthObject(mountId, new URL(request.url).pathname);
-  }
   const forwardInit = getSigV4ForwardInit(request);
   requestInfo.bodyPresent =
     forwardInit?.body !== undefined || request.body !== null;
@@ -554,11 +558,13 @@ async function signAndForwardGCS(
   newHeaders.set('x-goog-content-sha256', bodyHash);
   newHeaders.set('Authorization', authorization);
 
+  const contentLength = getContentLength(request);
+  const gcsBody = contentLength === 0 ? new Uint8Array(0) : request.body;
   return fetch(
     new Request(request.url, {
       method: request.method,
       headers: newHeaders,
-      body: request.body
+      body: gcsBody
     })
   );
 }
@@ -638,13 +644,14 @@ export const s3CredentialProxyHandler: OutboundHandler<
     query: [...url.searchParams.keys()].sort()
   };
 
-  if (mount.authStrategy === 's3-sigv4' && isZeroLengthPUT(cleanRequest)) {
-    const responseHeaders = getZeroLengthObjectResponseHeaders(
-      cleanRequest.headers
-    );
-    shortCircuitedZeroLengthObjects.set(
-      getZeroLengthObjectKey(mountId, realPath),
-      { headers: responseHeaders }
+  if (
+    mount.authStrategy === 's3-sigv4' &&
+    isZeroLengthDirectoryMarkerPUT(cleanRequest, realPath)
+  ) {
+    const responseHeaders = getDirectoryMarkerResponseHeaders(cleanRequest);
+    directoryMarkerCache.set(
+      getDirectoryMarkerCacheKey(mountId, realPath),
+      responseHeaders
     );
     requestInfo.bodyPresent = request.body !== null;
     requestInfo.payloadHashMode = getSigV4PayloadHash(
@@ -665,44 +672,36 @@ export const s3CredentialProxyHandler: OutboundHandler<
     );
   }
 
-  if (mount.authStrategy === 's3-sigv4' && isHEAD(cleanRequest)) {
-    const marker = shortCircuitedZeroLengthObjects.get(
-      getZeroLengthObjectKey(mountId, realPath)
+  if (
+    mount.authStrategy === 's3-sigv4' &&
+    isDirectoryMarkerHEAD(cleanRequest)
+  ) {
+    const responseHeaders = directoryMarkerCache.get(
+      getDirectoryMarkerCacheKey(mountId, realPath)
     );
-    if (!marker) {
+    if (responseHeaders) {
+      requestInfo.bodyPresent = false;
+      requestInfo.payloadHashMode = getSigV4PayloadHash(
+        cleanRequest.headers
+      ).mode;
       return withCredentialProxyDiagnostics(
         requestInfo,
         debugConfig,
         ctx.containerId,
         realPath,
         () =>
-          signAndForwardSigV4(
-            cleanRequest,
-            mountId,
-            mount.endpoint,
-            mount.provider,
-            mount.credentials,
-            requestInfo
+          Promise.resolve(
+            new Response(null, {
+              status: 200,
+              headers: responseHeaders
+            })
           )
       );
     }
-    requestInfo.bodyPresent = request.body !== null;
-    requestInfo.payloadHashMode = getSigV4PayloadHash(
-      cleanRequest.headers
-    ).mode;
-    return withCredentialProxyDiagnostics(
-      requestInfo,
-      debugConfig,
-      ctx.containerId,
-      realPath,
-      () =>
-        Promise.resolve(
-          new Response(null, {
-            status: 200,
-            headers: marker.headers
-          })
-        )
-    );
+  }
+
+  if (cleanRequest.method.toUpperCase() !== 'HEAD') {
+    deleteDirectoryMarkerCacheEntry(mountId, realPath);
   }
 
   if (mount.authStrategy === 'gcs') {
