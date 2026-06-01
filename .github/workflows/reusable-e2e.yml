@@ -370,14 +370,30 @@ jobs:
         with:
           name: build-${{ github.sha }}
           path: packages
+
+      - name: Compute Playwright browser cache key
+        id: playwright-cache
+        run: |
+          REVISION=$(node -e '
+            const browsers = require("./node_modules/playwright-core/browsers.json").browsers;
+            const chromium = browsers.find((browser) => browser.name === "chromium");
+            if (!chromium) throw new Error("Playwright chromium browser entry not found");
+            process.stdout.write(chromium.revision);
+          ')
+          echo "key=playwright-${RUNNER_OS}-${RUNNER_ARCH}-chromium-${REVISION}" >> "$GITHUB_OUTPUT"
+
       - name: Restore Playwright browsers
         uses: actions/cache/restore@v5
         id: pw-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ hashFiles('package-lock.json') }}
+          key: ${{ steps.playwright-cache.outputs.key }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ runner.arch }}-
+            playwright-
 
       - name: Install Playwright browsers
+        timeout-minutes: 4
         run: npx playwright install chromium
 
       # Save cache only from trusted contexts (not fork PRs via pull_request_target)
@@ -385,7 +401,7 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit != 'true' && !inputs.cache_readonly
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ hashFiles('package-lock.json') }}
+          key: ${{ steps.playwright-cache.outputs.key }}
 
       - name: E2E tests (browser)
         run: npx playwright test --config tests/e2e/browser/playwright.config.ts
