@@ -2091,6 +2091,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 ? cleanupError.message
                 : String(cleanupError)
           });
+          this.activeMounts.delete(mountPath);
+          evictSigV4ClientCacheEntry(failedMount.mountId);
+          evictDirectoryMarkerCacheForMount(failedMount.mountId);
         }
       } else {
         this.activeMounts.delete(mountPath);
@@ -2142,6 +2145,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await mountInfo.syncManager.stop();
         mountInfo.mounted = false;
         this.activeMounts.delete(mountPath);
+      } else if (
+        mountInfo.mountType === 'fuse' &&
+        mountInfo.credentialProxy &&
+        !mountInfo.mounted
+      ) {
+        try {
+          await this.configureS3CredentialProxyOutbound(
+            this.getS3CredentialProxyParams({
+              excludeMountId: mountInfo.mountId
+            })
+          );
+        } catch (cleanupError) {
+          this.logger.warn(
+            'credential proxy outbound reconfiguration failed on unmount',
+            {
+              mountPath,
+              error:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError)
+            }
+          );
+        }
+        this.activeMounts.delete(mountPath);
+        evictSigV4ClientCacheEntry(mountInfo.mountId);
+        evictDirectoryMarkerCacheForMount(mountInfo.mountId);
       } else {
         // FUSE unmount
         let unmounted = false;
@@ -2171,19 +2200,45 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 };
               }
             }
-            await this.configureR2EgressOutbound({
-              buckets: remainingBuckets
-            });
+            try {
+              await this.configureR2EgressOutbound({
+                buckets: remainingBuckets
+              });
+            } catch (cleanupError) {
+              this.logger.warn(
+                'r2 egress outbound reconfiguration failed on unmount',
+                {
+                  mountPath,
+                  error:
+                    cleanupError instanceof Error
+                      ? cleanupError.message
+                      : String(cleanupError)
+                }
+              );
+            }
             this.activeMounts.delete(mountPath);
           } else if (
             mountInfo.mountType === 'fuse' &&
             mountInfo.credentialProxy
           ) {
-            await this.configureS3CredentialProxyOutbound(
-              this.getS3CredentialProxyParams({
-                excludeMountId: mountInfo.mountId
-              })
-            );
+            try {
+              await this.configureS3CredentialProxyOutbound(
+                this.getS3CredentialProxyParams({
+                  excludeMountId: mountInfo.mountId
+                })
+              );
+            } catch (cleanupError) {
+              this.logger.warn(
+                'credential proxy outbound reconfiguration failed on unmount',
+                {
+                  mountPath,
+                  error:
+                    cleanupError instanceof Error
+                      ? cleanupError.message
+                      : String(cleanupError)
+                }
+              );
+            }
             this.activeMounts.delete(mountPath);
             evictSigV4ClientCacheEntry(mountInfo.mountId);
             evictDirectoryMarkerCacheForMount(mountInfo.mountId);

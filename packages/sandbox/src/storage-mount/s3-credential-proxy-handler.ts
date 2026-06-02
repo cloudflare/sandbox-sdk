@@ -528,7 +528,7 @@ function getGCSHeaders(request: Request): Headers {
       DUMMY_AUTH_HEADERS.has(lower) ||
       lower === 'host' ||
       lower === 'content-length' ||
-      (lower === 'expect' && v.trim() === ':')
+      lower === 'expect'
     ) {
       continue;
     }

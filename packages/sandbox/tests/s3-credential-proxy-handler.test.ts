@@ -943,6 +943,33 @@ describe('s3CredentialProxyHandler GCS signing', () => {
     vi.restoreAllMocks();
   });
 
+  it('does not forward expect headers to gcs upstream requests', async () => {
+    let capturedRequest: Request | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      capturedRequest = input instanceof Request ? input : new Request(input);
+      return new Response('ok', { status: 200 });
+    });
+
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/key.txt`, 'PUT', {
+      expect: ''
+    });
+    await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(
+        makeParams({
+          provider: 'gcs',
+          authStrategy: 'gcs',
+          endpoint: 'https://storage.googleapis.com'
+        })
+      ) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(capturedRequest!.headers.has('expect')).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
   it('answers HEAD for gcs zero-length directory marker PUT requests', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(null, { status: 200 })

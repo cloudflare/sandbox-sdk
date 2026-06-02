@@ -502,7 +502,7 @@ describe('Sandbox credential proxy mounts', () => {
     });
   });
 
-  it('keeps mount state when credential proxy cleanup reconfiguration fails', async () => {
+  it('clears mount state when both mount and credential proxy cleanup reconfiguration fail', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
@@ -550,7 +550,45 @@ describe('Sandbox credential proxy mounts', () => {
         activeMounts: Map<string, unknown>;
       }
     ).activeMounts;
-    expect(activeMounts.has('/mnt/proxy')).toBe(true);
+    expect(activeMounts.has('/mnt/proxy')).toBe(false);
+  });
+
+  it('clears mount state when credential proxy unmount reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-unmount-reconfigure-fail')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('intercept failed on unmount')
+    );
+
+    await expect(sandbox.unmountBucket('/mnt/proxy')).resolves.toBeUndefined();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/proxy')).toBe(false);
   });
 
   it('attempts best-effort unmount before deleting credential proxy support files on mount failure', async () => {
@@ -1128,6 +1166,56 @@ describe('Sandbox R2 egress mounts', () => {
     expect(deleteAdditionalHeaderFile).toHaveBeenCalledWith(
       '/tmp/.s3fs-ahbe-unmount.conf'
     );
+  });
+
+  it('clears mount state when R2 egress unmount reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('mkdir -p ')) return createExecResult(command);
+        if (command.includes('s3fs ')) return createExecResult(command);
+        if (command.startsWith('mountpoint -q') && command.includes('echo')) {
+          return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+        }
+        if (command.startsWith('fusermount -u ')) {
+          return createExecResult(command);
+        }
+        if (command.startsWith('mountpoint -q') && command.includes('rmdir')) {
+          return createExecResult(command);
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      }),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail'),
+      generateS3FSAdditionalHeaderFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail.conf')
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {} as any);
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('r2 configure failed on unmount')
+    );
+
+    await expect(sandbox.unmountBucket('/mnt/data')).resolves.toBeUndefined();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/data')).toBe(false);
   });
 
   it('deletes the password file when R2 egress mount fails', async () => {
