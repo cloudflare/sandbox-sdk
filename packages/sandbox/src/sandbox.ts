@@ -1714,13 +1714,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  private getS3CredentialProxyParams(): S3CredentialProxyParams {
+  private getS3CredentialProxyParams(options?: {
+    excludeMountId?: string;
+  }): S3CredentialProxyParams {
     const mounts: S3CredentialProxyParams['mounts'] = {};
     for (const [, m] of this.activeMounts) {
       if (m.mountType === 'fuse' && m.credentialProxy) {
+        if (m.mountId === options?.excludeMountId) {
+          continue;
+        }
         mounts[m.mountId] = {
           endpoint: m.credentialProxy.endpoint,
           bucket: m.credentialProxy.bucket,
+          ...(m.credentialProxy.prefix !== undefined
+            ? { prefix: m.credentialProxy.prefix }
+            : {}),
           credentials: m.credentialProxy.credentials,
           readOnly: m.credentialProxy.readOnly,
           provider: m.credentialProxy.provider,
@@ -1967,6 +1975,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               credentialProxy: {
                 endpoint: options.endpoint,
                 bucket,
+                ...(prefix !== undefined ? { prefix } : {}),
                 credentials,
                 readOnly: options.readOnly ?? false,
                 provider,
@@ -2064,13 +2073,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Clean up reservation on failure; reconfigure proxy without this mount
       const failedMount = this.activeMounts.get(mountPath);
-      this.activeMounts.delete(mountPath);
       if (failedMount?.mountType === 'fuse' && failedMount.credentialProxy) {
-        evictSigV4ClientCacheEntry(failedMount.mountId);
-        evictDirectoryMarkerCacheForMount(failedMount.mountId);
-        await this.configureS3CredentialProxyOutbound(
-          this.getS3CredentialProxyParams()
-        ).catch(() => {});
+        try {
+          await this.configureS3CredentialProxyOutbound(
+            this.getS3CredentialProxyParams({
+              excludeMountId: failedMount.mountId
+            })
+          );
+          this.activeMounts.delete(mountPath);
+          evictSigV4ClientCacheEntry(failedMount.mountId);
+          evictDirectoryMarkerCacheForMount(failedMount.mountId);
+        } catch (cleanupError) {
+          this.logger.warn('credential proxy cleanup failed', {
+            mountPath,
+            error:
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : String(cleanupError)
+          });
+        }
+      } else {
+        this.activeMounts.delete(mountPath);
       }
       throw error;
     } finally {
@@ -2135,20 +2158,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           unmounted = true;
           mountInfo.mounted = false;
 
-          // Only remove from tracking if unmount succeeded
-          this.activeMounts.delete(mountPath);
-
           if (mountInfo.mountType === 'r2-egress') {
-            await this.configureR2EgressOutbound(this.getR2EgressParams());
+            const remainingBuckets: R2EgressParams['buckets'] = {};
+            for (const [, activeMount] of this.activeMounts) {
+              if (
+                activeMount.mountType === 'r2-egress' &&
+                activeMount.mountId !== mountInfo.mountId
+              ) {
+                remainingBuckets[activeMount.bucket] = {
+                  prefix: activeMount.prefix,
+                  readOnly: activeMount.readOnly
+                };
+              }
+            }
+            await this.configureR2EgressOutbound({
+              buckets: remainingBuckets
+            });
+            this.activeMounts.delete(mountPath);
           } else if (
             mountInfo.mountType === 'fuse' &&
             mountInfo.credentialProxy
           ) {
+            await this.configureS3CredentialProxyOutbound(
+              this.getS3CredentialProxyParams({
+                excludeMountId: mountInfo.mountId
+              })
+            );
+            this.activeMounts.delete(mountPath);
             evictSigV4ClientCacheEntry(mountInfo.mountId);
             evictDirectoryMarkerCacheForMount(mountInfo.mountId);
-            await this.configureS3CredentialProxyOutbound(
-              this.getS3CredentialProxyParams()
-            );
+          } else {
+            this.activeMounts.delete(mountPath);
           }
 
           // Remove the now-empty mount directory

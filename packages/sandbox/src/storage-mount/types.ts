@@ -15,6 +15,7 @@ export type CredentialProxyAuthStrategy = 's3-sigv4' | 'gcs';
 export interface CredentialProxyConfig {
   endpoint: string;
   bucket: string;
+  prefix?: string;
   credentials: BucketCredentials;
   readOnly: boolean;
   provider: BucketProvider | null;

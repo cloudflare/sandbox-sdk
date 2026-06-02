@@ -409,6 +409,80 @@ function getDirectoryMarkerResponseHeaders(
   return headers;
 }
 
+function normalizePrefix(prefix: string | undefined): string | undefined {
+  if (!prefix) return undefined;
+  return prefix.replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+function getObjectKeyForPath(realPath: string, bucket: string): string | null {
+  const pathSegments = realPath.split('/').filter(Boolean);
+  const requestBucket = pathSegments[0];
+  if (requestBucket !== bucket) {
+    return null;
+  }
+  return pathSegments.slice(1).join('/');
+}
+
+function isObjectKeyWithinPrefix(
+  objectKey: string,
+  prefix: string | undefined
+): boolean {
+  const normalizedPrefix = normalizePrefix(prefix);
+  if (!normalizedPrefix) {
+    return true;
+  }
+  return (
+    objectKey === normalizedPrefix ||
+    objectKey.startsWith(`${normalizedPrefix}/`)
+  );
+}
+
+function isRequestWithinMountScope(
+  realPath: string,
+  url: URL,
+  bucket: string,
+  prefix: string | undefined
+): boolean {
+  const objectKey = getObjectKeyForPath(realPath, bucket);
+  if (objectKey === null) {
+    return false;
+  }
+
+  const requestedPrefix = url.searchParams.get('prefix');
+  if (objectKey !== '' && !isObjectKeyWithinPrefix(objectKey, prefix)) {
+    return false;
+  }
+
+  if (
+    objectKey === '' &&
+    normalizePrefix(prefix) !== undefined &&
+    url.search !== '' &&
+    requestedPrefix === null
+  ) {
+    return false;
+  }
+
+  if (requestedPrefix !== null) {
+    return isObjectKeyWithinPrefix(requestedPrefix, prefix);
+  }
+
+  return true;
+}
+
+function isBucketRootProbe(
+  request: Request,
+  realPath: string,
+  url: URL,
+  bucket: string
+): boolean {
+  const method = request.method.toUpperCase();
+  return (
+    (method === 'GET' || method === 'HEAD') &&
+    url.search === '' &&
+    getObjectKeyForPath(realPath, bucket) === ''
+  );
+}
+
 function deleteDirectoryMarkerCacheEntry(
   mountId: string,
   realPath: string
@@ -647,6 +721,14 @@ export const s3CredentialProxyHandler: OutboundHandler<
   }
 
   const realUrl = new URL(realPath + (url.search || ''), mount.endpoint);
+  if (isBucketRootProbe(request, realPath, url, mount.bucket)) {
+    return new Response(null, { status: 200 });
+  }
+  if (!isRequestWithinMountScope(realPath, url, mount.bucket, mount.prefix)) {
+    return new Response('Forbidden: request is outside mounted bucket scope', {
+      status: 403
+    });
+  }
   const cleanHeaders = buildCleanHeaders(request.headers);
   const cleanRequest = new Request(realUrl.toString(), {
     method: request.method,
@@ -664,10 +746,6 @@ export const s3CredentialProxyHandler: OutboundHandler<
 
   if (isZeroLengthDirectoryMarkerPUT(cleanRequest, realPath)) {
     const responseHeaders = getDirectoryMarkerResponseHeaders(cleanRequest);
-    directoryMarkerCache.set(
-      getDirectoryMarkerCacheKey(mountId, realPath),
-      responseHeaders
-    );
     requestInfo.bodyPresent = request.body !== null;
     if (mount.authStrategy === 's3-sigv4') {
       requestInfo.payloadHashMode = getSigV4PayloadHash(
@@ -679,13 +757,32 @@ export const s3CredentialProxyHandler: OutboundHandler<
       debugConfig,
       ctx.containerId,
       realPath,
-      () =>
-        Promise.resolve(
-          new Response(null, {
-            status: 200,
-            headers: responseHeaders
-          })
-        )
+      async () => {
+        const response =
+          mount.authStrategy === 'gcs'
+            ? await signAndForwardGCS(
+                cleanRequest,
+                mount.credentials,
+                requestInfo
+              )
+            : await signAndForwardSigV4(
+                cleanRequest,
+                mountId,
+                mount.endpoint,
+                mount.provider,
+                mount.credentials,
+                requestInfo
+              );
+
+        if (response.ok) {
+          directoryMarkerCache.set(
+            getDirectoryMarkerCacheKey(mountId, realPath),
+            responseHeaders
+          );
+        }
+
+        return response;
+      }
     );
   }
 

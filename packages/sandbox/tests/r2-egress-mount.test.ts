@@ -4,6 +4,7 @@ import {
   type R2EgressParams,
   r2EgressHandler
 } from '../src/storage-mount/r2-egress-handler';
+import type { S3CredentialProxyParams } from '../src/storage-mount/types';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -282,6 +283,41 @@ describe('Sandbox credential proxy mounts', () => {
     );
   });
 
+  it('includes prefix in credential proxy mount params', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-prefix')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true,
+      prefix: '/project-a'
+    });
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const firstCall = ContainerProxy.mock.calls[0];
+    const params = firstCall[0].props.outboundByHostOverrides?.[
+      's3-credential-proxy.internal'
+    ]?.params as S3CredentialProxyParams;
+    const mount = Object.values(params.mounts)[0];
+    expect(mount).toMatchObject({
+      bucket: 'my-bucket',
+      prefix: '/project-a'
+    });
+  });
+
   it('writes dummy credentials into the container for credential proxy mounts', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
@@ -464,6 +500,57 @@ describe('Sandbox credential proxy mounts', () => {
         params: { mounts: {} }
       }
     });
+  });
+
+  it('keeps mount state when credential proxy cleanup reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('test -d ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) {
+        return createExecResult(command, {
+          exitCode: 1,
+          stderr: 'mount failed'
+        });
+      }
+      return createExecResult(command);
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-fail-proxy-cleanup')
+    });
+
+    mockCtx.container.interceptOutboundHttp.mockReset();
+    mockCtx.container.interceptOutboundHttp
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('intercept failed'));
+
+    await expect(
+      sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+        credentialProxy: true
+      })
+    ).rejects.toThrow();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/proxy')).toBe(true);
   });
 
   it('attempts best-effort unmount before deleting credential proxy support files on mount failure', async () => {

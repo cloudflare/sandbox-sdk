@@ -389,6 +389,183 @@ describe('s3CredentialProxyHandler URL reconstruction', () => {
   });
 });
 
+describe('s3CredentialProxyHandler mount scope enforcement', () => {
+  it('rejects requests for a different bucket', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(`/${MOUNT_ID}/other-bucket/key.txt`);
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams()) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain('outside mounted bucket scope');
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects object requests outside the configured prefix', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/other/file.txt`);
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows object requests inside the configured prefix', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/project-a/file.txt`);
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows bucket root probes for prefixed mounts without forwarding upstream', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/`);
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects list requests outside the configured prefix', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/?list-type=2&prefix=other%2F`
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects bucket root list requests without a scoped prefix query', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/?list-type=2`);
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows bucket root list requests inside the configured prefix', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/?delimiter=%2F&max-keys=1000&prefix=project-a%2Fvalidation%2F`
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects object requests outside the configured prefix with an allowed query prefix', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/other/file.txt?prefix=project-a%2F`
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows list requests inside the configured prefix', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/?list-type=2&prefix=project-a%2Fsub%2F`
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+  });
+});
+
 describe('s3CredentialProxyHandler SigV4 signing', () => {
   it('adds an AWS4-HMAC-SHA256 Authorization header for r2 provider', async () => {
     let capturedRequest: Request | undefined;
@@ -496,8 +673,14 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns success for zero-length directory marker PUT requests', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  it('forwards zero-length directory marker PUT requests upstream', async () => {
+    const forwardedRequests: Request[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      forwardedRequests.push(
+        input instanceof Request ? input : new Request(input)
+      );
+      return new Response(null, { status: 200 });
+    });
     const req = makeRequest(`/${MOUNT_ID}/${BUCKET}/dir/`, 'PUT', {
       'content-length': '0',
       'x-amz-content-sha256':
@@ -513,14 +696,17 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('Content-Length')).toBe('0');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(forwardedRequests).toHaveLength(1);
+    expect(forwardedRequests[0].method).toBe('PUT');
+    expect(forwardedRequests[0].url).toContain(`${ENDPOINT}/${BUCKET}/dir/`);
 
     vi.restoreAllMocks();
   });
 
   it('answers HEAD for zero-length directory marker PUT requests', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, { status: 200 })
+    );
     const ctx = makeCtx(
       makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
     ) as Parameters<typeof s3CredentialProxyHandler>[2];
@@ -546,7 +732,6 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
       'application/x-directory'
     );
     expect(response.headers.get('x-amz-meta-mode')).toBe('493');
-    expect(fetchSpy).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });
@@ -759,7 +944,9 @@ describe('s3CredentialProxyHandler GCS signing', () => {
   });
 
   it('answers HEAD for gcs zero-length directory marker PUT requests', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, { status: 200 })
+    );
     const ctx = makeCtx(
       makeParams({
         provider: 'gcs',
@@ -792,7 +979,6 @@ describe('s3CredentialProxyHandler GCS signing', () => {
       'application/x-directory'
     );
     expect(headResponse.headers.get('x-amz-meta-mode')).toBe('493');
-    expect(fetchSpy).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });
@@ -819,9 +1005,9 @@ describe('s3CredentialProxyHandler directory marker cache eviction', () => {
     const headReq = makeRequest(`/${MOUNT_ID}/${BUCKET}/evict-dir`, 'HEAD');
     await s3CredentialProxyHandler(headReq, {} as Cloudflare.Env, ctx);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toBeInstanceOf(Request);
-    expect((fetchSpy.mock.calls[0][0] as Request).method).toBe('HEAD');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[1][0]).toBeInstanceOf(Request);
+    expect((fetchSpy.mock.calls[1][0] as Request).method).toBe('HEAD');
 
     vi.restoreAllMocks();
   });
@@ -873,7 +1059,7 @@ describe('s3CredentialProxyHandler directory marker cache eviction', () => {
       ctxB
     );
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(headA.status).toBe(200);
     expect(headB.status).toBe(200);
 
