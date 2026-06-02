@@ -2308,7 +2308,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async createDisableExpectHeaderFile(
     headerFilePath: string
   ): Promise<void> {
-    await this.writeFile(headerFilePath, S3FS_DISABLE_EXPECT_HEADER_CONFIG);
+    await this.client.files.writeFile(
+      headerFilePath,
+      S3FS_DISABLE_EXPECT_HEADER_CONFIG,
+      DISABLE_SESSION_TOKEN
+    );
     await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
   }
 
