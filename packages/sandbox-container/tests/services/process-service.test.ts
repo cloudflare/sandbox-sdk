@@ -362,6 +362,40 @@ describe('ProcessService', () => {
           'Failed to start streaming command'
         );
       }
+
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        expect.stringMatching(/^proc_\d+_[a-z0-9]+$/),
+        expect.objectContaining({
+          status: 'error',
+          endTime: expect.any(Date),
+          stderr: 'Failed to execute stream'
+        })
+      );
+    });
+
+    it('should mark returned stream startup failures as terminal error', async () => {
+      mocked(mockExecutionService.executeStream).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Failed before stream was ready',
+          code: 'STREAM_START_ERROR'
+        }
+      } as ServiceResult<{
+        continueStreaming: Promise<void>;
+        commandHandle: { sessionId: string; commandId: string };
+      }>);
+
+      const result = await processService.startProcess('echo test', {});
+
+      expect(result.success).toBe(false);
+      expect(mockProcessStore.update).toHaveBeenCalledWith(
+        expect.stringMatching(/^proc_\d+_[a-z0-9]+$/),
+        expect.objectContaining({
+          status: 'error',
+          endTime: expect.any(Date),
+          stderr: 'Failed before stream was ready'
+        })
+      );
     });
   });
 

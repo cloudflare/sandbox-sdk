@@ -105,6 +105,9 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
     const startTime = Date.now();
+    let processRecord: ProcessRecord | undefined;
+    let storedProcessRecord = false;
+
     try {
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
@@ -129,14 +132,16 @@ export class ProcessService {
         commandId: processRecordData.id
       };
 
-      const processRecord: ProcessRecord = {
+      processRecord = {
         ...processRecordData,
         commandHandle
       };
+      const storedRecord = processRecord;
       let executionSessionId = commandHandle.sessionId;
 
       // 4. Store record (data layer)
-      await this.store.create(processRecord);
+      await this.store.create(storedRecord);
+      storedProcessRecord = true;
 
       // 5. Execute command with streaming and bind it to the process record
       // Pass process ID as commandId for tracking and killing
@@ -151,26 +156,26 @@ export class ProcessService {
         onEvent: async (event) => {
           // Route events to process record listeners
           if (event.type === 'start' && event.pid !== undefined) {
-            processRecord.pid = event.pid;
-            await this.store.update(processRecord.id, { pid: event.pid });
+            storedRecord.pid = event.pid;
+            await this.store.update(storedRecord.id, { pid: event.pid });
             logCanonicalEvent(this.logger, {
               event: 'process.start',
               outcome: 'success',
               command: command,
               pid: event.pid,
               durationMs: Date.now() - startTime,
-              processId: processRecord.id,
+              processId: storedRecord.id,
               sessionId: executionSessionId,
               origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
-            processRecord.stdout += event.data;
-            processRecord.outputListeners.forEach((listener) => {
+            storedRecord.stdout += event.data;
+            storedRecord.outputListeners.forEach((listener) => {
               listener('stdout', event.data!);
             });
           } else if (event.type === 'stderr' && event.data) {
-            processRecord.stderr += event.data;
-            processRecord.outputListeners.forEach((listener) => {
+            storedRecord.stderr += event.data;
+            storedRecord.outputListeners.forEach((listener) => {
               listener('stderr', event.data!);
             });
           } else if (event.type === 'complete') {
@@ -178,32 +183,32 @@ export class ProcessService {
             const status = this.manager.interpretExitCode(exitCode);
             const endTime = new Date();
 
-            processRecord.status = status;
-            processRecord.endTime = endTime;
-            processRecord.exitCode = exitCode;
+            storedRecord.status = status;
+            storedRecord.endTime = endTime;
+            storedRecord.exitCode = exitCode;
 
             logCanonicalEvent(this.logger, {
               event: 'process.exit',
               outcome: 'success',
               command: command,
-              pid: processRecord.pid,
+              pid: storedRecord.pid,
               exitCode: exitCode,
               durationMs:
-                processRecord.startTime instanceof Date
-                  ? endTime.getTime() - processRecord.startTime.getTime()
+                storedRecord.startTime instanceof Date
+                  ? endTime.getTime() - storedRecord.startTime.getTime()
                   : Date.now() - startTime,
-              processId: processRecord.id,
+              processId: storedRecord.id,
               sessionId: executionSessionId,
               origin: options.origin
             });
 
-            processRecord.statusListeners.forEach((listener) => {
+            storedRecord.statusListeners.forEach((listener) => {
               listener(status);
             });
 
             // Await store update to ensure consistency before next event
             try {
-              await this.store.update(processRecord.id, {
+              await this.store.update(storedRecord.id, {
                 status,
                 endTime,
                 exitCode
@@ -213,14 +218,14 @@ export class ProcessService {
                 'Failed to update process status',
                 error instanceof Error ? error : undefined,
                 {
-                  processId: processRecord.id
+                  processId: storedRecord.id
                 }
               );
             }
           } else if (event.type === 'error') {
-            processRecord.status = 'error';
-            processRecord.endTime = new Date();
-            processRecord.statusListeners.forEach((listener) => {
+            storedRecord.status = 'error';
+            storedRecord.endTime = new Date();
+            storedRecord.statusListeners.forEach((listener) => {
               listener('error');
             });
 
@@ -228,7 +233,7 @@ export class ProcessService {
               event: 'process.error',
               outcome: 'error',
               command,
-              processId: processRecord.id,
+              processId: storedRecord.id,
               sessionId: executionSessionId,
               durationMs: Date.now() - startTime,
               errorMessage: event.error,
@@ -240,10 +245,7 @@ export class ProcessService {
       });
 
       if (!streamResult.success) {
-        await this.store.update(processRecord.id, {
-          status: 'error',
-          endTime: new Date()
-        });
+        await this.markStartupFailed(processRecord, streamResult.error.message);
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
@@ -255,10 +257,11 @@ export class ProcessService {
 
       // Store streaming promise so getLogs() can await it for completed processes
       // This ensures all output is captured before returning logs
-      processRecord.streamingComplete =
+      const activeProcessRecord = processRecord;
+      activeProcessRecord.streamingComplete =
         streamResult.data.continueStreaming.catch((error) => {
           this.logger.debug('process.streamComplete', {
-            processId: processRecord.id,
+            processId: activeProcessRecord.id,
             outcome: 'error',
             errorMessage: error instanceof Error ? error.message : String(error)
           });
@@ -272,6 +275,10 @@ export class ProcessService {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
 
+      if (storedProcessRecord && processRecord) {
+        await this.markStartupFailed(processRecord, errorMessage);
+      }
+
       return {
         success: false,
         error: {
@@ -283,6 +290,41 @@ export class ProcessService {
           } satisfies CommandErrorContext
         }
       };
+    }
+  }
+
+  private async markStartupFailed(
+    processRecord: ProcessRecord,
+    errorMessage?: string
+  ): Promise<void> {
+    const stderr =
+      errorMessage === undefined
+        ? processRecord.stderr
+        : processRecord.stderr
+          ? `${processRecord.stderr}\n${errorMessage}`
+          : errorMessage;
+
+    processRecord.status = 'error';
+    processRecord.endTime = new Date();
+    processRecord.stderr = stderr;
+    processRecord.statusListeners.forEach((listener) => {
+      listener('error');
+    });
+
+    try {
+      await this.store.update(processRecord.id, {
+        status: 'error',
+        endTime: processRecord.endTime,
+        stderr
+      });
+    } catch (error) {
+      this.logger.error(
+        'Failed to mark process startup failure',
+        error instanceof Error ? error : undefined,
+        {
+          processId: processRecord.id
+        }
+      );
     }
   }
 
