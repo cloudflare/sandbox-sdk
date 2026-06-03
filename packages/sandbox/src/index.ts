@@ -16,8 +16,6 @@ export { getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
 
-// Required export for egress intercepting
-export { ContainerProxy } from '@cloudflare/containers';
 // Export core SDK types for consumers
 export type {
   BackupOptions,
@@ -155,6 +153,8 @@ export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
+// Required export for egress intercepting
+export { ContainerProxy } from './sandbox';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export {
   asyncIterableToSSEStream,
