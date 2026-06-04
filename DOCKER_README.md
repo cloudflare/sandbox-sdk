@@ -12,7 +12,6 @@ All images are published as tags on `cloudflare/sandbox`:
 | `<version>-python`   | Ubuntu 22.04 | Default + Python 3.11 with matplotlib, numpy, pandas, ipython  |
 | `<version>-opencode` | Ubuntu 22.04 | Default + [OpenCode](https://opencode.ai) CLI                  |
 | `<version>-musl`     | Alpine 3.21  | Minimal Alpine-based image with Git, curl, and bash            |
-| `<version>-desktop`  | Ubuntu 22.04 | Full Linux desktop (XFCE) with Xvfb, VNC, and noVNC            |
 
 ## Usage
 

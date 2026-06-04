@@ -102,7 +102,7 @@ Downstream jobs use `actions/cache/restore@v5` (restore-only, no redundant save 
 
 ## Docker Images
 
-Six image variants built via `docker-bake.hcl`:
+Five image variants built via `docker-bake.hcl`:
 
 | Bake target  | CF registry name     | Docker Hub tag suffix | Purpose                        |
 | ------------ | -------------------- | --------------------- | ------------------------------ |
@@ -110,7 +110,6 @@ Six image variants built via `docker-bake.hcl`:
 | `python`     | `sandbox-python`     | `-python`             | Extra Python packages          |
 | `opencode`   | `sandbox-opencode`   | `-opencode`           | OpenCode tooling               |
 | `musl`       | `sandbox-musl`       | `-musl`               | Alpine/musl variant            |
-| `desktop`    | `sandbox-desktop`    | `-desktop`            | Desktop environment            |
 | `standalone` | `sandbox-standalone` | _(CF only)_           | E2E test standalone image      |
 
 All images share a common base stage. The `standalone` image is built separately (requires the base image to be pushed first) and is only used for E2E testing — it's not published to Docker Hub.
