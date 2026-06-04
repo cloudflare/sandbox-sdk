@@ -14,12 +14,12 @@ variable "CACHE_REPO" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)
 group "main" {
-  targets = ["default", "python", "opencode", "musl", "desktop"]
+  targets = ["default", "python", "opencode", "musl"]
 }
 
 // publish: variants published to Docker Hub (standalone excluded — CF registry only)
 group "publish" {
-  targets = ["default", "python", "opencode", "musl", "desktop"]
+  targets = ["default", "python", "opencode", "musl"]
 }
 
 target "_common" {
@@ -61,10 +61,3 @@ target "musl" {
   cache-to   = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:musl,mode=max"] : []
 }
 
-target "desktop" {
-  inherits   = ["_common"]
-  target     = "desktop"
-  tags       = ["sandbox-desktop:${TAG}"]
-  cache-from = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:desktop"] : []
-  cache-to   = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:desktop,mode=max"] : []
-}

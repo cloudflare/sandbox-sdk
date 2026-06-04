@@ -277,20 +277,3 @@ export interface RPCTransportContext {
   /** WebSocket close reason, when available (kind === 'peer_closed'). */
   closeReason?: string;
 }
-
-/**
- * Desktop error contexts
- */
-export interface DesktopErrorContext {
-  process?: string;
-  stderr?: string;
-  crashedProcess?: string;
-  reason?: string;
-}
-
-export interface DesktopCoordinateErrorContext {
-  x: number;
-  y: number;
-  displayWidth: number;
-  displayHeight: number;
-}

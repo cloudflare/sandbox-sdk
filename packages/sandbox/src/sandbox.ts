@@ -55,7 +55,7 @@ import {
 } from '@repo/shared/backup';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
-import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import { type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
 import {
   CurrentRuntimeIdentity,
@@ -285,7 +285,6 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
   createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
   getSession: (sessionId: string) => Promise<ExecutionSession>;
-  callDesktop: (method: string, args: unknown[]) => Promise<unknown>;
   execWithSessionToken: (
     command: string,
     sessionId: string,
@@ -761,15 +760,6 @@ export function getSandbox<T extends Sandbox<any>>(
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub),
-    // Client-side proxy for desktop operations. Each method call is dispatched
-    // to the DO's callDesktop() method, avoiding RPC pipelining through getters
-    // which are broken when using the vite-plugin.
-    desktop: new Proxy({} as Desktop, {
-      get(_, method) {
-        if (typeof method !== 'string' || method === 'then') return undefined;
-        return (...args: unknown[]) => stub.callDesktop(method, args);
-      }
-    }),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
@@ -940,63 +930,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * env/SDK defaults".
    */
   private hasStoredContainerTimeouts = false;
-
-  /**
-   * Desktop environment operations.
-   * Within the DO, this getter provides direct access to DesktopClient.
-   * Over RPC, the getSandbox() proxy intercepts this property and routes
-   * calls through callDesktop() instead.
-   */
-  get desktop(): Desktop {
-    return this.client.desktop as unknown as Desktop;
-  }
-
-  /**
-   * Allowed desktop methods — derived from the Desktop interface.
-   * Restricts callDesktop() to a known set of operations.
-   */
-  private static readonly DESKTOP_METHODS = new Set([
-    'start',
-    'stop',
-    'status',
-    'screenshot',
-    'screenshotRegion',
-    'click',
-    'doubleClick',
-    'tripleClick',
-    'rightClick',
-    'middleClick',
-    'mouseDown',
-    'mouseUp',
-    'moveMouse',
-    'drag',
-    'scroll',
-    'getCursorPosition',
-    'type',
-    'press',
-    'keyDown',
-    'keyUp',
-    'getScreenSize',
-    'getProcessStatus'
-  ]);
-
-  /**
-   * Dispatch method for desktop operations.
-   * Called by the client-side proxy created in getSandbox() to provide
-   * the `sandbox.desktop.status()` API without relying on RPC pipelining
-   * through property getters which is broken when using vite-plugin.
-   */
-  async callDesktop(method: string, args: unknown[]): Promise<unknown> {
-    if (!Sandbox.DESKTOP_METHODS.has(method)) {
-      throw new Error(`Unknown desktop method: ${method}`);
-    }
-    const client = this.client.desktop;
-    const fn = client[method as keyof typeof client];
-    if (typeof fn !== 'function') {
-      throw new Error(`sandbox.desktop missing method: ${method}`);
-    }
-    return (fn as (...a: unknown[]) => unknown).apply(client, args);
-  }
 
   /**
    * Dispatch method for tunnel operations.
@@ -2648,15 +2581,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.delete(PORT_TOKENS_STORAGE_KEY);
       await this.clearActivePreviewPorts();
       await this.currentRuntime.clear();
-
-      // Best-effort desktop stop — only when container is already running
-      if (this.ctx.container?.running) {
-        try {
-          await this.client.desktop.stop();
-        } catch {
-          // Desktop may not be running or available — continue cleanup
-        }
-      }
 
       // Unmount all mounted buckets and cleanup (requires an active connection
       // for execInternal calls, so this runs before disconnecting the transport)
@@ -4796,53 +4720,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const execution = await this.resolveExecution(sessionId);
     const session = this.serializeExecutionContext(execution);
     return this.client.files.exists(path, session);
-  }
-
-  /**
-   * Get the noVNC preview URL for browser-based desktop viewing.
-   * Confirms desktop is active, then uses exposePort() to generate
-   * a token-authenticated preview URL for the noVNC port (6080).
-   *
-   * @param hostname - The custom domain hostname for preview URLs
-   *   (e.g., 'preview.example.com'). Required because preview URLs
-   *   use subdomain patterns that .workers.dev doesn't support.
-   * @param options - Optional settings
-   * @param options.token - Reuse an existing token instead of generating a new one
-   * @returns The authenticated noVNC preview URL
-   */
-  async getDesktopStreamUrl(
-    hostname: string,
-    options?: { token?: string }
-  ): Promise<{ url: string }> {
-    // Confirm desktop is running before generating a URL
-    const status = await this.client.desktop.status();
-    if (status.status === 'inactive') {
-      throw new Error(
-        'Desktop is not running. Call sandbox.desktop.start() first.'
-      );
-    }
-
-    const result = await this.exposePort(6080, {
-      hostname,
-      token: options?.token
-    });
-    const url = result.url;
-
-    // Wait for the platform to detect port 6080 using the Containers runtime's
-    // built-in port readiness mechanism (getTcpPort polling). This ensures the
-    // preview URL is routable before returning it to the caller.
-    try {
-      await this.waitForPort({
-        portToCheck: 6080,
-        retries: 30,
-        waitInterval: 500
-      });
-    } catch {
-      // Best-effort: if detection times out after ~15s, return the URL anyway.
-      // noVNC's WebSocket auto-connect will retry on the client side.
-    }
-
-    return { url };
   }
 
   /**

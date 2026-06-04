@@ -1,23 +1,6 @@
 import type {
   CheckChangesRequest,
   CheckChangesResult,
-  DesktopCursorPosition,
-  DesktopMouseButton,
-  DesktopMouseClickRequest,
-  DesktopMouseDownRequest,
-  DesktopMouseDragRequest,
-  DesktopMouseScrollRequest,
-  DesktopMouseUpRequest,
-  DesktopProcessHealth,
-  DesktopScreenSize,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
-  DesktopScreenshotResult,
-  DesktopScrollDirection,
-  DesktopStartRequest,
-  DesktopStartResult,
-  DesktopStatusResult,
-  DesktopStopResult,
   ExecutionError,
   FileEncoding,
   FileInfo,
@@ -26,7 +9,6 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
-  SandboxDesktopAPI,
   TunnelInfo,
   WatchRequest
 } from '@repo/shared';
@@ -39,7 +21,6 @@ import type {
   ServiceResult
 } from '../core/types';
 import type { BackupService } from '../services/backup-service';
-import type { DesktopService } from '../services/desktop-service';
 import type { FileService } from '../services/file-service';
 import type { GitService } from '../services/git-service';
 import type {
@@ -60,7 +41,6 @@ export interface SandboxAPIDeps {
   gitService: GitService;
   interpreterService: InterpreterService;
   backupService: BackupService;
-  desktopService: DesktopService;
   watchService: WatchService;
   tunnelService: TunnelService;
   sessionManager: SessionManager;
@@ -125,20 +105,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get backup() {
     return new BackupRPCAPI(this.#deps.backupService);
-  }
-  get desktop(): SandboxDesktopAPI {
-    // DesktopRPCAPI exposes the capnweb wire shape used by the container:
-    //   - `screenshot` / `screenshotRegion` always return base64
-    //   - `screenshotRegion` takes a single `{ region, ...options }` request
-    //
-    // SandboxDesktopAPI exposes the user-facing surface shared with the
-    // HTTP DesktopClient (overloaded `format: 'bytes'` returning a
-    // Uint8Array, positional `screenshotRegion(region, options?)`). The
-    // client-side RPC wrapper in container-control/client.ts translates
-    // user calls down to this wire shape.
-    return new DesktopRPCAPI(
-      this.#deps.desktopService
-    ) as unknown as SandboxDesktopAPI;
   }
   get watch() {
     return new WatchRPCAPI(this.#deps.watchService);
@@ -1088,149 +1054,6 @@ class BackupRPCAPI extends RpcTarget {
       parts: Array<{ partNumber: number; etag: string }>;
     }>(result);
     return { success: true, parts: data.parts };
-  }
-}
-
-// ===========================================================================
-// Desktop
-// ===========================================================================
-
-class DesktopRPCAPI extends RpcTarget {
-  #svc: DesktopService;
-  constructor(svc: DesktopService) {
-    super();
-    this.#svc = svc;
-  }
-
-  async start(options?: {
-    resolution?: [number, number];
-    dpi?: number;
-  }): Promise<DesktopStartResult> {
-    return extractData<DesktopStartResult>(
-      await this.#svc.start(options as DesktopStartRequest)
-    );
-  }
-  async stop(): Promise<DesktopStopResult> {
-    return extractData<DesktopStopResult>(await this.#svc.stop());
-  }
-  async status(): Promise<DesktopStatusResult> {
-    return extractData<DesktopStatusResult>(await this.#svc.status());
-  }
-  async screenshot(
-    options?: DesktopScreenshotRequest
-  ): Promise<DesktopScreenshotResult> {
-    return extractData<DesktopScreenshotResult>(
-      await this.#svc.screenshot(options)
-    );
-  }
-  async screenshotRegion(
-    request: DesktopScreenshotRegionRequest
-  ): Promise<DesktopScreenshotResult> {
-    return extractData<DesktopScreenshotResult>(
-      await this.#svc.screenshotRegion(request)
-    );
-  }
-
-  async click(
-    x: number,
-    y: number,
-    options?: { button?: DesktopMouseButton; clickCount?: number }
-  ): Promise<void> {
-    throwIfError(
-      await this.#svc.click({ x, y, ...options } as DesktopMouseClickRequest)
-    );
-  }
-  async doubleClick(x: number, y: number): Promise<void> {
-    await this.click(x, y, { clickCount: 2 });
-  }
-  async tripleClick(x: number, y: number): Promise<void> {
-    await this.click(x, y, { clickCount: 3 });
-  }
-  async rightClick(x: number, y: number): Promise<void> {
-    await this.click(x, y, { button: 'right' });
-  }
-  async middleClick(x: number, y: number): Promise<void> {
-    await this.click(x, y, { button: 'middle' });
-  }
-
-  async mouseDown(
-    x?: number,
-    y?: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void> {
-    throwIfError(
-      await this.#svc.mouseDown({ x, y, ...options } as DesktopMouseDownRequest)
-    );
-  }
-  async mouseUp(
-    x?: number,
-    y?: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void> {
-    throwIfError(
-      await this.#svc.mouseUp({ x, y, ...options } as DesktopMouseUpRequest)
-    );
-  }
-  async moveMouse(x: number, y: number): Promise<void> {
-    throwIfError(await this.#svc.moveMouse({ x, y }));
-  }
-  async drag(
-    startX: number,
-    startY: number,
-    endX: number,
-    endY: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void> {
-    throwIfError(
-      await this.#svc.drag({
-        startX,
-        startY,
-        endX,
-        endY,
-        ...options
-      } as DesktopMouseDragRequest)
-    );
-  }
-  async scroll(
-    x: number,
-    y: number,
-    direction: DesktopScrollDirection,
-    amount?: number
-  ): Promise<void> {
-    throwIfError(
-      await this.#svc.scroll({
-        x,
-        y,
-        direction,
-        amount
-      } as DesktopMouseScrollRequest)
-    );
-  }
-
-  async getCursorPosition(): Promise<DesktopCursorPosition> {
-    return extractData<DesktopCursorPosition>(
-      await this.#svc.getCursorPosition()
-    );
-  }
-  async type(text: string, options?: { delayMs?: number }): Promise<void> {
-    throwIfError(await this.#svc.typeText({ text, ...options }));
-  }
-  async press(key: string): Promise<void> {
-    throwIfError(await this.#svc.keyPress({ key }));
-  }
-  async keyDown(key: string): Promise<void> {
-    throwIfError(await this.#svc.keyDown({ key }));
-  }
-  async keyUp(key: string): Promise<void> {
-    throwIfError(await this.#svc.keyUp({ key }));
-  }
-  async getScreenSize(): Promise<DesktopScreenSize> {
-    return extractData<DesktopScreenSize>(await this.#svc.getScreenSize());
-  }
-  async getProcessStatus(name: string): Promise<DesktopProcessHealth> {
-    return extractData<DesktopProcessHealth>(
-      await this.#svc.getProcessStatus(name)
-    );
   }
 }
 

@@ -7,7 +7,6 @@
 # One image per line. Lines starting with # are comments.
 # Order: base image first, then alphabetical.
 sandbox
-sandbox-desktop
 sandbox-musl
 sandbox-opencode
 sandbox-python

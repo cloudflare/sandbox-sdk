@@ -82,7 +82,7 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           SAFE_BUDGET=84
-          EXPECTED_PR_APPS=6
+          EXPECTED_PR_APPS=5
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
           if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then

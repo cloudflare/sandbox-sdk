@@ -27,7 +27,6 @@ The first run builds the container image, so it's slow. Subsequent runs reuse th
 | `code-interpreter`           | `CodeInterpreter` API + Workers AI           |
 | `codex` / `codex-app-server` | OpenAI Codex integration patterns            |
 | `collaborative-terminal`     | Multi-user terminal sharing                  |
-| `desktop`                    | Desktop variant of the container image       |
 | `openai-agents`              | OpenAI Agents SDK + Sandbox                  |
 | `opencode`                   | OpenCode integration                         |
 | `time-machine`               | Snapshot/restore patterns                    |

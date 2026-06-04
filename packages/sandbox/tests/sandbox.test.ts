@@ -2222,27 +2222,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('desktop preview URL lifecycle', () => {
-    it('does not synthesize a desktop preview URL from durable auth when exposePort fails', async () => {
-      await sandbox.setSandboxName('test-sandbox', false);
-      vi.spyOn(sandbox.client.desktop, 'status').mockResolvedValue({
-        success: true,
-        status: 'active',
-        processes: {},
-        resolution: [1024, 768],
-        dpi: 96
-      });
-      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
-        key === 'portTokens' ? { '6080': { token: 'oldtoken' } } : null
-      );
-      vi.spyOn(sandbox, 'exposePort').mockRejectedValue(new Error('boom'));
-
-      await expect(sandbox.getDesktopStreamUrl('example.com')).rejects.toThrow(
-        'boom'
-      );
-    });
-  });
-
   describe('validatePortToken', () => {
     beforeEach(() => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>

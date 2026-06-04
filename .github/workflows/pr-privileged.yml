@@ -429,8 +429,7 @@ jobs:
                   .replace(/\{\{DEFAULT_TAG\}\}/g, defaultTag)
                   .replace(/\{\{PYTHON_TAG\}\}/g, `cloudflare/sandbox:${version}-python`)
                   .replace(/\{\{OPENCODE_TAG\}\}/g, `cloudflare/sandbox:${version}-opencode`)
-                  .replace(/\{\{MUSL_TAG\}\}/g, `cloudflare/sandbox:${version}-musl`)
-                  .replace(/\{\{DESKTOP_TAG\}\}/g, `cloudflare/sandbox:${version}-desktop`);
+                  .replace(/\{\{MUSL_TAG\}\}/g, `cloudflare/sandbox:${version}-musl`);
               }
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner, repo: context.repo.repo,

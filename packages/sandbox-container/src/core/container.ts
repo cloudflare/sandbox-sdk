@@ -1,7 +1,6 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
 import { BackupHandler } from '../handlers/backup-handler';
-import { DesktopHandler } from '../handlers/desktop-handler';
 import { ExecuteHandler } from '../handlers/execute-handler';
 import { FileHandler } from '../handlers/file-handler';
 import { GitHandler } from '../handlers/git-handler';
@@ -17,7 +16,6 @@ import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
-import { DesktopService } from '../services/desktop-service';
 import { ExecutionService } from '../services/execution-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
@@ -37,7 +35,6 @@ export interface Dependencies {
   gitService: GitService;
   interpreterService: InterpreterService;
   backupService: BackupService;
-  desktopService: DesktopService;
   watchService: WatchService;
   tunnelService: TunnelService;
 
@@ -57,7 +54,6 @@ export interface Dependencies {
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
   miscHandler: MiscHandler;
-  desktopHandler: DesktopHandler;
   ptyWsHandler: PtyWebSocketHandler;
   watchHandler: WatchHandler;
 
@@ -151,7 +147,6 @@ export class Container {
     );
     const interpreterService = new InterpreterService(logger);
     const backupService = new BackupService(logger, executionService);
-    const desktopService = new DesktopService(logger);
     const watchService = new WatchService(logger);
     const tunnelService = new TunnelService(logger, () =>
       this.getControlCallback()
@@ -170,7 +165,6 @@ export class Container {
       logger
     );
     const miscHandler = new MiscHandler(logger);
-    const desktopHandler = new DesktopHandler(desktopService, logger);
     const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
     const watchHandler = new WatchHandler(watchService, logger);
 
@@ -187,7 +181,6 @@ export class Container {
       gitService,
       interpreterService,
       backupService,
-      desktopService,
       watchService,
       tunnelService,
 
@@ -207,7 +200,6 @@ export class Container {
       interpreterHandler,
       sessionHandler,
       miscHandler,
-      desktopHandler,
       ptyWsHandler,
       watchHandler,
 
