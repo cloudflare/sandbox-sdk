@@ -3549,10 +3549,16 @@ describe('Sandbox - Automatic Session Management', () => {
       const second = sandbox.destroy();
 
       await vi.waitFor(() => expect(superDestroy.calls()).toBe(1));
+      const firstExpectation = expect(first).rejects.toThrow(
+        'container teardown failed'
+      );
+      const secondExpectation = expect(second).rejects.toThrow(
+        'container teardown failed'
+      );
       superDestroy.reject(new Error('container teardown failed'));
 
-      await expect(first).rejects.toThrow('container teardown failed');
-      await expect(second).rejects.toThrow('container teardown failed');
+      await firstExpectation;
+      await secondExpectation;
     });
 
     it('runs a fresh teardown for a later destroy() after the previous one settles', async () => {

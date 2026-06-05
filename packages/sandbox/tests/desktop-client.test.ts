@@ -1,3 +1,4 @@
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CursorPositionResponse,
@@ -10,18 +11,22 @@ import type {
 import { DesktopClient } from '../src/clients/desktop-client';
 import { SandboxError } from '../src/errors';
 
+type FetchMock = Mock<(url: string, options: RequestInit) => Promise<Response>>;
+type ErrorCallbackMock = Mock<(error: string, command?: string) => void>;
+
 describe('DesktopClient', () => {
   let client: DesktopClient;
-  let mockFetch: ReturnType<typeof vi.fn>;
-  let onError: ReturnType<typeof vi.fn>;
+  let mockFetch: FetchMock;
+  let onError: ErrorCallbackMock;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockFetch = vi.fn();
+    mockFetch =
+      vi.fn<(url: string, options: RequestInit) => Promise<Response>>();
     global.fetch = mockFetch as unknown as typeof fetch;
 
-    onError = vi.fn();
+    onError = vi.fn<(error: string, command?: string) => void>();
 
     client = new DesktopClient({
       baseUrl: 'http://test.com',

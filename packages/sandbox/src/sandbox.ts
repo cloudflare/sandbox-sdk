@@ -6116,10 +6116,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * create-archive → read → upload (or mount → extract) flow
    * is not interleaved with another backup operation on the same directory.
    */
-  private enqueueBackupOp<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.backupInProgress.then(fn, () => fn());
+  private async enqueueBackupOp<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      await this.backupInProgress;
+    } catch {
+      // Previous backup/restore failure should not poison later operations.
+    }
+
+    const next = fn();
     this.backupInProgress = next.catch(() => {});
-    return next;
+    return await next;
   }
 
   /**
@@ -6145,10 +6151,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
     if (options.localBucket) {
-      return this.enqueueBackupOp(() => this.doCreateBackupLocal(options));
+      return await this.enqueueBackupOp(() =>
+        this.doCreateBackupLocal(options)
+      );
     }
     this.requireBackupBucket();
-    return this.enqueueBackupOp(() => this.doCreateBackup(options));
+    return await this.enqueueBackupOp(() => this.doCreateBackup(options));
   }
 
   private async doCreateBackup(
@@ -6596,10 +6604,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
     if (backup.localBucket) {
-      return this.enqueueBackupOp(() => this.doRestoreBackupLocal(backup));
+      return await this.enqueueBackupOp(() =>
+        this.doRestoreBackupLocal(backup)
+      );
     }
     this.requireBackupBucket();
-    return this.enqueueBackupOp(() => this.doRestoreBackup(backup));
+    return await this.enqueueBackupOp(() => this.doRestoreBackup(backup));
   }
 
   private async doRestoreBackup(

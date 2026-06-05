@@ -98,7 +98,7 @@ export abstract class BaseHttpClient {
       ...requestOptions
     });
 
-    return this.handleResponse(response, responseHandler);
+    return await this.handleResponse(response, responseHandler);
   }
 
   /**
@@ -112,7 +112,7 @@ export abstract class BaseHttpClient {
       method: 'GET'
     });
 
-    return this.handleResponse(response, responseHandler);
+    return await this.handleResponse(response, responseHandler);
   }
 
   /**
@@ -126,7 +126,7 @@ export abstract class BaseHttpClient {
       method: 'DELETE'
     });
 
-    return this.handleResponse(response, responseHandler);
+    return await this.handleResponse(response, responseHandler);
   }
 
   /**
@@ -241,6 +241,6 @@ export abstract class BaseHttpClient {
       body: body && method === 'POST' ? JSON.stringify(body) : undefined
     });
 
-    return this.handleStreamResponse(response);
+    return await this.handleStreamResponse(response);
   }
 }

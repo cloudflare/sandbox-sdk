@@ -1,4 +1,5 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import { defineConfig } from 'vitest/config';
 
 /**
  * Workers runtime test configuration
@@ -8,22 +9,20 @@ import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
  *
  * Run with: npm test
  */
-export default defineWorkersConfig({
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: {
+        configPath: './tests/wrangler.jsonc'
+      }
+    })
+  ],
   test: {
     globals: true,
     include: ['tests/**/*.test.ts'],
     testTimeout: 10000,
     hookTimeout: 10000,
-    teardownTimeout: 10000,
-    poolOptions: {
-      workers: {
-        wrangler: {
-          configPath: './tests/wrangler.jsonc'
-        },
-        singleWorker: true,
-        isolatedStorage: false
-      }
-    }
+    teardownTimeout: 10000
   },
   esbuild: {
     target: 'esnext'
