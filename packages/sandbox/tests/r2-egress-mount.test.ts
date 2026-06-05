@@ -4,6 +4,7 @@ import {
   type R2EgressParams,
   r2EgressHandler
 } from '../src/storage-mount/r2-egress-handler';
+import type { S3CredentialProxyParams } from '../src/storage-mount/types';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -59,6 +60,10 @@ vi.mock('@cloudflare/containers', () => {
       return new Response('Mock Container fetch');
     }
 
+    async containerFetch(): Promise<Response> {
+      return new Response('Mock Container HTTP fetch');
+    }
+
     async destroy(): Promise<void> {}
 
     async getState() {
@@ -104,8 +109,11 @@ vi.mock('@cloudflare/containers', () => {
     }
   });
 
+  class MockContainerProxy extends MockContainer {}
+
   return {
     Container: MockContainer,
+    ContainerProxy: MockContainerProxy,
     getContainer: vi.fn(),
     switchPort: vi.fn()
   };
@@ -228,29 +236,495 @@ function createExecResult(
   };
 }
 
+describe('Sandbox credential proxy mounts', () => {
+  function createCredentialProxyExecMock() {
+    return vi.fn(async (command: string) => {
+      if (command.startsWith('test -d ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) return createExecResult(command);
+      if (command.startsWith('mountpoint -q') && command.includes('echo')) {
+        return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+      }
+      if (command.startsWith('fusermount -u ')) {
+        return createExecResult(command);
+      }
+      if (command.startsWith('mountpoint -q') && command.includes('rmdir')) {
+        return createExecResult(command);
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+  }
+
+  it('registers the stable proxy host for interception on credential proxy mount', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-proxy')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    expect(mockCtx.container.interceptOutboundHttp).toHaveBeenCalledWith(
+      's3-credential-proxy.internal',
+      mockCtx.containerProxyFetcher
+    );
+  });
+
+  it('includes prefix in credential proxy mount params', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-prefix')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true,
+      prefix: '/project-a'
+    });
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const firstCall = ContainerProxy.mock.calls[0];
+    const params = firstCall[0].props.outboundByHostOverrides?.[
+      's3-credential-proxy.internal'
+    ]?.params as S3CredentialProxyParams;
+    const mount = Object.values(params.mounts)[0];
+    expect(mount).toMatchObject({
+      bucket: 'my-bucket',
+      prefix: '/project-a'
+    });
+  });
+
+  it('writes dummy credentials into the container for credential proxy mounts', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    const createPasswordFile = vi.fn().mockResolvedValue(undefined);
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile,
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-dummy')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'REAL_KEY', secretAccessKey: 'REAL_SECRET' },
+      credentialProxy: true
+    });
+
+    expect(createPasswordFile).toHaveBeenCalledWith(
+      '/tmp/.s3fs-dummy',
+      'my-bucket',
+      { accessKeyId: 'x', secretAccessKey: 'x' }
+    );
+  });
+
+  it('appends required s3fs options for credential proxy mounts', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    const execInternal = createCredentialProxyExecMock();
+
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-path-style'),
+      generateS3FSAdditionalHeaderFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-ahbe-path-style.conf')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    const s3fsCall = execInternal.mock.calls.find((args) =>
+      String(args[0]).includes('s3fs ')
+    );
+    expect(s3fsCall).toBeDefined();
+    expect(String(s3fsCall![0])).toContain('use_path_request_style');
+    expect(String(s3fsCall![0])).toContain(
+      'ahbe_conf=/tmp/.s3fs-ahbe-path-style.conf'
+    );
+    expect(String(s3fsCall![0])).toContain('s3-credential-proxy.internal');
+  });
+
+  it('passes the mount ID as the s3fs url path segment', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    const execInternal = createCredentialProxyExecMock();
+
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-mountid')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    const s3fsCall = execInternal.mock.calls.find((args) =>
+      String(args[0]).includes('s3fs ')
+    );
+    const cmd = String(s3fsCall![0]);
+    // url should be http://s3-credential-proxy.internal/<uuid>
+    expect(cmd).toMatch(/s3-credential-proxy\.internal\/[0-9a-f-]{36}/);
+  });
+
+  it('reconfigures proxy to remove mount after unmount', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-unmount-proxy')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const callsBeforeUnmount = ContainerProxy.mock.calls.length;
+    await sandbox.unmountBucket('/mnt/proxy');
+
+    expect(ContainerProxy.mock.calls.length).toBeGreaterThan(
+      callsBeforeUnmount
+    );
+    const lastCall =
+      ContainerProxy.mock.calls[ContainerProxy.mock.calls.length - 1];
+    expect(lastCall[0].props.outboundByHostOverrides).toMatchObject({
+      's3-credential-proxy.internal': { method: 's3CredentialProxyMount' }
+    });
+  });
+
+  it('reconfigures proxy with empty mounts after s3fs mount failure', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('test -d ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) {
+        return createExecResult(command, {
+          exitCode: 1,
+          stderr: 'mount failed'
+        });
+      }
+      return createExecResult(command);
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-fail-proxy')
+    });
+
+    await expect(
+      sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+        credentialProxy: true
+      })
+    ).rejects.toThrow();
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const lastCall =
+      ContainerProxy.mock.calls[ContainerProxy.mock.calls.length - 1];
+    expect(lastCall[0].props.outboundByHostOverrides).toMatchObject({
+      's3-credential-proxy.internal': {
+        method: 's3CredentialProxyMount',
+        params: { mounts: {} }
+      }
+    });
+  });
+
+  it('clears mount state when both mount and credential proxy cleanup reconfiguration fail', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('test -d ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) {
+        return createExecResult(command, {
+          exitCode: 1,
+          stderr: 'mount failed'
+        });
+      }
+      return createExecResult(command);
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-fail-proxy-cleanup')
+    });
+
+    mockCtx.container.interceptOutboundHttp.mockReset();
+    mockCtx.container.interceptOutboundHttp
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('intercept failed'));
+
+    await expect(
+      sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+        credentialProxy: true
+      })
+    ).rejects.toThrow();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/proxy')).toBe(false);
+  });
+
+  it('clears mount state when credential proxy unmount reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-unmount-reconfigure-fail')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('intercept failed on unmount')
+    );
+
+    await expect(sandbox.unmountBucket('/mnt/proxy')).resolves.toBeUndefined();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/proxy')).toBe(false);
+  });
+
+  it('attempts best-effort unmount before deleting credential proxy support files on mount failure', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    const operationOrder: string[] = [];
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('test -d ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) {
+        return createExecResult(command, {
+          exitCode: 2,
+          stdout: 'mount failed'
+        });
+      }
+      if (
+        command.startsWith('mountpoint -q') &&
+        command.includes('fusermount')
+      ) {
+        operationOrder.push('unmount');
+        return createExecResult(command);
+      }
+      if (command.startsWith('rmdir ')) return createExecResult(command);
+      return createExecResult(command);
+    });
+    const deletePasswordFile = vi.fn().mockImplementation(async () => {
+      operationOrder.push('delete-password');
+    });
+    Object.assign(sandbox as object, {
+      execInternal,
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile,
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-fail-cleanup-order')
+    });
+
+    await expect(
+      sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+        credentialProxy: true
+      })
+    ).rejects.toThrow();
+
+    expect(operationOrder).toEqual(['unmount', 'delete-password']);
+  });
+
+  it('clears credential proxy interception on onStop', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-onstop')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+      credentialProxy: true
+    });
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const callsBeforeStop = ContainerProxy.mock.calls.length;
+
+    await (sandbox as unknown as { onStop(): Promise<void> }).onStop();
+
+    expect(ContainerProxy.mock.calls.length).toBeGreaterThan(callsBeforeStop);
+    const lastCall =
+      ContainerProxy.mock.calls[ContainerProxy.mock.calls.length - 1];
+    expect(lastCall[0].props.outboundByHostOverrides).toMatchObject({
+      's3-credential-proxy.internal': {
+        method: 's3CredentialProxyMount',
+        params: { mounts: {} }
+      }
+    });
+  });
+
+  it('rejects passwd_file and url overrides in s3fsOptions for credential proxy mounts', async () => {
+    for (const option of [
+      'passwd_file=/tmp/x',
+      'url=https://bad.example.com',
+      'ahbe_conf=/tmp/custom-headers.conf',
+      'use_path_request_style'
+    ]) {
+      const sandbox = new Sandbox(
+        createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+        {}
+      );
+      const createPasswordFile = vi.fn().mockResolvedValue(undefined);
+      Object.assign(sandbox as object, {
+        execInternal: vi.fn(),
+        createPasswordFile,
+        deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+        generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-reject')
+      });
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+          endpoint: 'https://abc123.r2.cloudflarestorage.com',
+          credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
+          credentialProxy: true,
+          s3fsOptions: [option]
+        })
+      ).rejects.toThrow('cannot be overridden for credential proxy mounts');
+
+      expect(createPasswordFile).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe('Sandbox R2 egress mounts', () => {
-  it('does not register static R2 outbound interception on the base Sandbox class', () => {
+  it('does not set up outbound interception at construction time for Sandbox subclasses', () => {
     class BaseSandbox extends Sandbox {}
+    const mockCtx = createMockCtx();
     new BaseSandbox(
-      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       { MY_BUCKET: createMockR2Bucket() }
     );
 
-    expect(
-      (
-        BaseSandbox as unknown as {
-          outboundByHost?: Record<string, unknown>;
-        }
-      ).outboundByHost
-    ).toBeUndefined();
-
-    expect(
-      (
-        BaseSandbox as unknown as {
-          outboundHandlers?: Record<string, unknown>;
-        }
-      ).outboundHandlers
-    ).toBeUndefined();
+    expect(mockCtx.container.interceptOutboundHttp).not.toHaveBeenCalled();
+    expect(mockCtx.exports.ContainerProxy).not.toHaveBeenCalled();
   });
 
   describe('handler prefix translation', () => {
@@ -380,6 +854,7 @@ describe('Sandbox R2 egress mounts', () => {
         expect(command).not.toContain(':/uploads');
         expect(command).toContain('url=http://r2.internal');
         expect(command).toContain(`passwd_file=${FAKE_PASSWD}`);
+        expect(command).toContain(`ahbe_conf=${FAKE_AHBE_CONF}`);
         expect(command).toContain('use_path_request_style');
         expect(command).toContain('nomixupload');
         expect(command).toContain('stat_cache_expire=1');
@@ -402,12 +877,19 @@ describe('Sandbox R2 egress mounts', () => {
     const createPasswordFile = vi.fn().mockResolvedValue(undefined);
     const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
     const generatePasswordFilePath = vi.fn().mockReturnValue(FAKE_PASSWD);
+    const FAKE_AHBE_CONF = '/tmp/.s3fs-ahbe-test.conf';
+    const generateS3FSAdditionalHeaderFilePath = vi
+      .fn()
+      .mockReturnValue(FAKE_AHBE_CONF);
 
     Object.assign(sandbox as object, {
       execInternal,
       createPasswordFile,
       deletePasswordFile,
-      generatePasswordFilePath
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath,
+      generateS3FSAdditionalHeaderFilePath
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {
@@ -420,7 +902,7 @@ describe('Sandbox R2 egress mounts', () => {
       props: {
         enableInternet: undefined,
         containerId: 'test-sandbox-id',
-        className: 'CloudflareSandboxR2EgressProxyTarget',
+        className: 'ContainerProxy',
         outboundByHostOverrides: {
           'r2.internal': {
             method: 'r2EgressMount',
@@ -457,6 +939,8 @@ describe('Sandbox R2 egress mounts', () => {
       execInternal: vi.fn(),
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-no-proxy')
     });
 
@@ -478,6 +962,8 @@ describe('Sandbox R2 egress mounts', () => {
       execInternal: vi.fn(),
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-bad-proxy')
     });
 
@@ -514,6 +1000,8 @@ describe('Sandbox R2 egress mounts', () => {
       }),
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-isolated')
     });
 
@@ -522,7 +1010,7 @@ describe('Sandbox R2 egress mounts', () => {
     expect(mockCtx.exports.ContainerProxy).toHaveBeenCalledWith(
       expect.objectContaining({
         props: expect.objectContaining({
-          className: 'CloudflareSandboxR2EgressProxyTarget',
+          className: 'ContainerProxy',
           outboundByHostOverrides: {
             'r2.internal': expect.objectContaining({
               method: 'r2EgressMount'
@@ -564,6 +1052,8 @@ describe('Sandbox R2 egress mounts', () => {
       execInternal,
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi
         .fn()
         .mockReturnValueOnce('/tmp/.s3fs-one')
@@ -599,6 +1089,8 @@ describe('Sandbox R2 egress mounts', () => {
       execInternal,
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi
         .fn()
         .mockReturnValueOnce('/tmp/.s3fs-one')
@@ -625,6 +1117,7 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    const deleteAdditionalHeaderFile = vi.fn().mockResolvedValue(undefined);
     Object.assign(sandbox as object, {
       execInternal: vi.fn(async (command: string) => {
         if (command.startsWith('mkdir -p ')) return createExecResult(command);
@@ -642,7 +1135,12 @@ describe('Sandbox R2 egress mounts', () => {
       }),
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-unmount')
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile,
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-unmount'),
+      generateS3FSAdditionalHeaderFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-ahbe-unmount.conf')
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {} as any);
@@ -652,7 +1150,7 @@ describe('Sandbox R2 egress mounts', () => {
       props: {
         enableInternet: undefined,
         containerId: 'test-sandbox-id',
-        className: 'CloudflareSandboxR2EgressProxyTarget',
+        className: 'ContainerProxy',
         outboundByHostOverrides: {
           'r2.internal': {
             method: 'r2EgressMount',
@@ -665,6 +1163,59 @@ describe('Sandbox R2 egress mounts', () => {
       'r2.internal',
       mockCtx.containerProxyFetcher
     );
+    expect(deleteAdditionalHeaderFile).toHaveBeenCalledWith(
+      '/tmp/.s3fs-ahbe-unmount.conf'
+    );
+  });
+
+  it('clears mount state when R2 egress unmount reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('mkdir -p ')) return createExecResult(command);
+        if (command.includes('s3fs ')) return createExecResult(command);
+        if (command.startsWith('mountpoint -q') && command.includes('echo')) {
+          return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+        }
+        if (command.startsWith('fusermount -u ')) {
+          return createExecResult(command);
+        }
+        if (command.startsWith('mountpoint -q') && command.includes('rmdir')) {
+          return createExecResult(command);
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      }),
+      createPasswordFile: vi.fn().mockResolvedValue(undefined),
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail'),
+      generateS3FSAdditionalHeaderFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail.conf')
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {} as any);
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('r2 configure failed on unmount')
+    );
+
+    await expect(sandbox.unmountBucket('/mnt/data')).resolves.toBeUndefined();
+
+    const activeMounts = (
+      sandbox as unknown as {
+        activeMounts: Map<string, unknown>;
+      }
+    ).activeMounts;
+    expect(activeMounts.has('/mnt/data')).toBe(false);
   });
 
   it('deletes the password file when R2 egress mount fails', async () => {
@@ -685,11 +1236,17 @@ describe('Sandbox R2 egress mounts', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
+    const deleteAdditionalHeaderFile = vi.fn().mockResolvedValue(undefined);
     Object.assign(sandbox as object, {
       execInternal,
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile,
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-failed')
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile,
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-failed'),
+      generateS3FSAdditionalHeaderFilePath: vi
+        .fn()
+        .mockReturnValue('/tmp/.s3fs-ahbe-failed.conf')
     });
 
     await expect(
@@ -697,11 +1254,14 @@ describe('Sandbox R2 egress mounts', () => {
     ).rejects.toThrow('S3FS mount failed');
 
     expect(deletePasswordFile).toHaveBeenCalledWith('/tmp/.s3fs-failed');
+    expect(deleteAdditionalHeaderFile).toHaveBeenCalledWith(
+      '/tmp/.s3fs-ahbe-failed.conf'
+    );
     expect(mockCtx.exports.ContainerProxy).toHaveBeenLastCalledWith({
       props: {
         enableInternet: undefined,
         containerId: 'test-sandbox-id',
-        className: 'CloudflareSandboxR2EgressProxyTarget',
+        className: 'ContainerProxy',
         outboundByHostOverrides: {
           'r2.internal': {
             method: 'r2EgressMount',
@@ -730,6 +1290,8 @@ describe('Sandbox R2 egress mounts', () => {
       }),
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
       deletePasswordFile,
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
       generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-check-fail')
     });
 

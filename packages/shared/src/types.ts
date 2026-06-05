@@ -1275,6 +1275,16 @@ export interface RemoteMountBucketOptions {
    * Must start with '/' (e.g., '/workspaces/project123' or '/data/uploads/')
    */
   prefix?: string;
+
+  /**
+   * Keep real credentials in the Durable Object; write dummy credentials into
+   * the container-side s3fs password file. Outbound s3fs requests are
+   * intercepted by the DO, signed with real credentials, and forwarded to the
+   * configured endpoint.
+   *
+   * Default: false (real credentials are written into the container)
+   */
+  credentialProxy?: boolean;
 }
 
 /**
