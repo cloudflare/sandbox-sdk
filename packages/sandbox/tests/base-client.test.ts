@@ -1,3 +1,4 @@
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaseApiResponse, HttpClientOptions } from '../src/clients';
 import { BaseHttpClient } from '../src/clients/base-client';
@@ -104,7 +105,7 @@ class TestHttpClient extends BaseHttpClient {
 
   public async testStreamRequest(endpoint: string): Promise<ReadableStream> {
     const response = await this.doFetch(endpoint);
-    return this.handleStreamResponse(response);
+    return await this.handleStreamResponse(response);
   }
 
   public async testDoStreamFetch(
@@ -112,7 +113,7 @@ class TestHttpClient extends BaseHttpClient {
     body?: unknown,
     method: 'GET' | 'POST' = 'POST'
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.doStreamFetch(endpoint, body, method);
+    return await this.doStreamFetch(endpoint, body, method);
   }
 
   public async testErrorHandling(errorResponse: ErrorResponse) {
@@ -123,17 +124,27 @@ class TestHttpClient extends BaseHttpClient {
   }
 }
 
+type ClientRequestInit = RequestInit & {
+  headers: Record<string, string>;
+  body: string;
+};
+type FetchMock = Mock<
+  (url: string, options: ClientRequestInit) => Promise<Response>
+>;
+type ErrorCallbackMock = Mock<(error: string, command?: string) => void>;
+
 describe('BaseHttpClient', () => {
   let client: TestHttpClient;
-  let mockFetch: ReturnType<typeof vi.fn>;
-  let onError: ReturnType<typeof vi.fn>;
+  let mockFetch: FetchMock;
+  let onError: ErrorCallbackMock;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockFetch = vi.fn();
+    mockFetch =
+      vi.fn<(url: string, options: ClientRequestInit) => Promise<Response>>();
     global.fetch = mockFetch as unknown as typeof fetch;
-    onError = vi.fn();
+    onError = vi.fn<(error: string, command?: string) => void>();
 
     client = new TestHttpClient({
       baseUrl: 'http://test.com',
@@ -343,9 +354,13 @@ describe('BaseHttpClient', () => {
         })
       );
 
-      await expect(
-        client.testStreamRequest('/api/empty-stream')
-      ).rejects.toThrow('No response body for streaming');
+      try {
+        await client.testStreamRequest('/api/empty-stream');
+        throw new Error('Expected stream request to fail');
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe('No response body for streaming');
+      }
     });
   });
 
@@ -642,13 +657,15 @@ describe('BaseHttpClient', () => {
         new Response('No container instance available', { status: 503 })
       );
 
-      const promise = client.testRequest('/api/test');
+      const expectation = expect(
+        client.testRequest('/api/test')
+      ).rejects.toThrow();
 
       // Fast-forward past retry budget (120s)
       await vi.advanceTimersByTimeAsync(125_000);
 
       // Should eventually give up and throw the 503 error
-      await expect(promise).rejects.toThrow();
+      await expectation;
 
       vi.useRealTimers();
     });

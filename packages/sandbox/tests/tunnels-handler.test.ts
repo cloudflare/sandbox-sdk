@@ -7,6 +7,7 @@
  */
 
 import type { Logger, TunnelInfo } from '@repo/shared';
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
 import {
@@ -27,19 +28,32 @@ function makeLogger(): Logger {
   return log;
 }
 
+type RunQuickTunnelMock = Mock<
+  (id: string, port: number) => Promise<TunnelInfo>
+>;
+type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
+type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
+type StorageGetMock = Mock<(key: string) => Promise<unknown>>;
+type StoragePutMock = Mock<(key: string, next: unknown) => Promise<unknown>>;
+type StorageTransactionMock = Mock<
+  (closure: (txn: unknown) => Promise<unknown>) => Promise<unknown>
+>;
+type LogMock = Mock<(message: string, ...context: unknown[]) => void>;
+
 interface MockTunnelsClient {
-  runQuickTunnel: ReturnType<typeof vi.fn>;
-  destroyTunnel: ReturnType<typeof vi.fn>;
-  listTunnels: ReturnType<typeof vi.fn>;
+  runQuickTunnel: RunQuickTunnelMock;
+  destroyTunnel: DestroyTunnelMock;
+  listTunnels: ListTunnelsMock;
 }
 
 function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   return {
     client: {
       tunnels: {
-        runQuickTunnel: vi.fn(),
-        destroyTunnel: vi.fn(),
-        listTunnels: vi.fn()
+        runQuickTunnel:
+          vi.fn<(id: string, port: number) => Promise<TunnelInfo>>(),
+        destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
+        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
       }
     }
   };
@@ -139,7 +153,7 @@ describe('tunnels handler > get', () => {
     // Storage is written: the tunnels map under the port key, and the
     // sidecar meta map (carrying the options hash) keyed by port too.
     expect(storage.put).toHaveBeenCalledTimes(2);
-    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const putCalls = (storage.put as StoragePutMock).mock.calls;
     const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
@@ -281,7 +295,7 @@ describe('tunnels handler > get', () => {
 
     // One transaction per miss-path write.
     expect(
-      (storage.transaction as ReturnType<typeof vi.fn>).mock.calls.length
+      (storage.transaction as StorageTransactionMock).mock.calls.length
     ).toBe(2);
     // Both entries land in storage — the second writer did not clobber
     // the first.
@@ -349,7 +363,7 @@ describe('tunnels handler > destroy', () => {
     expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
     // Storage entry is removed before the RPC. Both keys (info + meta)
     // are cleared.
-    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const putCalls = (storage.put as StoragePutMock).mock.calls;
     expect(putCalls).toHaveLength(2);
     const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
@@ -376,7 +390,7 @@ describe('tunnels handler > destroy', () => {
     await handler.destroy(8080);
 
     expect(
-      (storage.transaction as ReturnType<typeof vi.fn>).mock.calls.length
+      (storage.transaction as StorageTransactionMock).mock.calls.length
     ).toBe(1);
   });
 
@@ -435,7 +449,7 @@ describe('tunnels handler > destroy', () => {
 
     await expect(handler.destroy(8080)).resolves.toBeUndefined();
     // Storage is still cleared (both info + meta).
-    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const putCalls = (storage.put as StoragePutMock).mock.calls;
     expect(putCalls).toHaveLength(2);
     expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
     expect(putCalls.find(([k]) => k === 'tunnels:meta')?.[1]).toEqual({});
@@ -479,7 +493,7 @@ describe('tunnels handler > destroy', () => {
     client.tunnels.destroyTunnel.mockRejectedValue(new Error('boom'));
 
     await expect(handler.destroy(8080)).rejects.toThrow('boom');
-    const putCalls = (storage.put as ReturnType<typeof vi.fn>).mock.calls;
+    const putCalls = (storage.put as StoragePutMock).mock.calls;
     // Storage was cleared before the RPC and is not restored on failure.
     expect(putCalls).toHaveLength(2);
     expect(putCalls.find(([k]) => k === 'tunnels')?.[1]).toEqual({});
@@ -654,10 +668,10 @@ describe('tunnels handler > handleTunnelExit', () => {
     };
     const { client } = makeClient();
     const storage = makeStorage();
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': record
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': {
         optionsHash: 'v1:named:api',
         dnsRecordId: 'kept-dns-id',
@@ -747,7 +761,7 @@ describe('tunnels handler > handleTunnelExit', () => {
       handleTunnelExit('quick-anything00000ok', 8080, null)
     ).resolves.toBeUndefined();
     // No write happened.
-    expect((storage.put as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+    expect((storage.put as StoragePutMock).mock.calls.length).toBe(0);
   });
 
   it('runs under the port lock — waits for a concurrent get(port) to complete', async () => {
@@ -821,7 +835,7 @@ describe('tunnels handler > handleTunnelExit', () => {
     await expect(handleTunnelExit('quick-x', 8080, 0)).rejects.toThrow(/boom/);
 
     // And a canonical event with outcome: 'error' must have been logged.
-    const errorCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls;
+    const errorCalls = (logger.error as LogMock).mock.calls;
     const eventCall = errorCalls.find(([msg]) =>
       String(msg).includes('tunnel.exit')
     );
@@ -860,7 +874,7 @@ describe('route-based SandboxClient.tunnels placeholder', () => {
 describe('pruneTunnelsForRestart', () => {
   it('drops quick-tunnel entries and marks named ones for respawn', async () => {
     const storage = makeStorage();
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
         id: 'quick-abc',
         port: 8080,
@@ -877,17 +891,17 @@ describe('pruneTunnelsForRestart', () => {
         createdAt: '2024-01-01T00:00:00.000Z'
       }
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': { optionsHash: 'quick' },
       '8081': { optionsHash: 'named:app', dnsRecordId: 'rec-1' }
     });
 
     await pruneTunnelsForRestart(storage);
 
-    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+    const nextTunnels = (await (storage.get as StorageGetMock)(
       'tunnels'
     )) as Record<string, { name?: string }>;
-    const nextMeta = (await (storage.get as ReturnType<typeof vi.fn>)(
+    const nextMeta = (await (storage.get as StorageGetMock)(
       'tunnels:meta'
     )) as Record<string, { needsRespawn?: boolean; dnsRecordId?: string }>;
     expect(Object.keys(nextTunnels)).toEqual(['8081']);
@@ -900,7 +914,7 @@ describe('pruneTunnelsForRestart', () => {
   it('is a no-op on empty storage', async () => {
     const storage = makeStorage();
     await pruneTunnelsForRestart(storage);
-    const nextTunnels = (await (storage.get as ReturnType<typeof vi.fn>)(
+    const nextTunnels = (await (storage.get as StorageGetMock)(
       'tunnels'
     )) as Record<string, unknown>;
     expect(nextTunnels).toEqual({});

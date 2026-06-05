@@ -15,6 +15,7 @@
  */
 
 import type { Logger, TunnelInfo } from '@repo/shared';
+import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
 import { SandboxSecurityError } from '../src/security';
 import {
@@ -33,21 +34,40 @@ function makeLogger(): Logger {
   return log;
 }
 
+type RunQuickTunnelMock = Mock<
+  (id: string, port: number) => Promise<TunnelInfo>
+>;
+type RunNamedTunnelMock = Mock<
+  (id: string, token: string, port: number) => Promise<unknown>
+>;
+type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
+type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
+type FetcherMock = Mock<
+  (input: string | URL, init?: RequestInit) => Promise<Response>
+>;
+type StorageGetMock = Mock<(key: string) => Promise<unknown>>;
+type StoragePutMock = Mock<(key: string, next: unknown) => Promise<unknown>>;
+type LogMock = Mock<(message: string, ...context: unknown[]) => void>;
+
 interface MockTunnelsClient {
-  runQuickTunnel: ReturnType<typeof vi.fn>;
-  runNamedTunnel: ReturnType<typeof vi.fn>;
-  destroyTunnel: ReturnType<typeof vi.fn>;
-  listTunnels: ReturnType<typeof vi.fn>;
+  runQuickTunnel: RunQuickTunnelMock;
+  runNamedTunnel: RunNamedTunnelMock;
+  destroyTunnel: DestroyTunnelMock;
+  listTunnels: ListTunnelsMock;
 }
 
 function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   return {
     client: {
       tunnels: {
-        runQuickTunnel: vi.fn(),
-        runNamedTunnel: vi.fn(),
-        destroyTunnel: vi.fn(),
-        listTunnels: vi.fn()
+        runQuickTunnel:
+          vi.fn<(id: string, port: number) => Promise<TunnelInfo>>(),
+        runNamedTunnel:
+          vi.fn<
+            (id: string, token: string, port: number) => Promise<unknown>
+          >(),
+        destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
+        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
       }
     }
   };
@@ -72,7 +92,7 @@ function makeStorage(): TunnelsStorage {
 }
 
 interface FakeCloudflare {
-  fetcher: ReturnType<typeof vi.fn>;
+  fetcher: FetcherMock;
   /** Map of `<METHOD> <url>` → handler. */
   routes: Map<string, (init: RequestInit) => Promise<Response> | Response>;
 }
@@ -116,7 +136,9 @@ function makeFakeCloudflare(opts: {
     (init: RequestInit) => Promise<Response> | Response
   >();
 
-  const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+  const fetcher = vi.fn<
+    (input: string | URL, init?: RequestInit) => Promise<Response>
+  >(async (input: string | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     const method = (init?.method ?? 'GET').toUpperCase();
 
@@ -399,7 +421,9 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
     const storage = makeStorage();
     const logger = makeLogger();
     let zoneState = { zoneId: 'zone-old', zoneName: 'example-old.com' };
-    const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const fetcher = vi.fn<
+      (input: string | URL, init?: RequestInit) => Promise<Response>
+    >(async (input: string | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       const method = (init?.method ?? 'GET').toUpperCase();
       if (method === 'GET' && url.endsWith(`/zones/${zoneState.zoneId}`)) {
@@ -487,7 +511,7 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
       fetcher: cf.fetcher as unknown as typeof fetch
     });
     // Seed storage with a legacy (unversioned) named-tunnel record.
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
         id: '11111111-2222-3333-4444-555555555555',
         port: 8080,
@@ -497,7 +521,7 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
         createdAt: '2026-05-01T00:00:00.000Z'
       }
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': {
         optionsHash: 'named:api',
         dnsRecordId: 'kept-dns-id',
@@ -602,7 +626,7 @@ describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
     expect(deleteCalls).toEqual([]);
 
     // Storage was not written.
-    const tunnels1 = (await (storage.get as ReturnType<typeof vi.fn>)(
+    const tunnels1 = (await (storage.get as StorageGetMock)(
       'tunnels'
     )) as unknown;
     expect(tunnels1 ?? {}).toEqual({});
@@ -639,7 +663,7 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
       fetcher: cf.fetcher as unknown as typeof fetch
     });
     // Seed storage as pruneTunnelsForRestart would leave it.
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
         id: 'kept-tun-id',
         port: 8080,
@@ -649,7 +673,7 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
         createdAt: '2026-05-01T00:00:00.000Z'
       }
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': {
         optionsHash: 'named:api',
         dnsRecordId: 'kept-dns-id',
@@ -678,7 +702,7 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
     );
     expect(createTunnelCall).toBeUndefined();
     // The fresh meta write clears `needsRespawn`.
-    const meta = (await (storage.get as ReturnType<typeof vi.fn>)(
+    const meta = (await (storage.get as StorageGetMock)(
       'tunnels:meta'
     )) as Record<string, { needsRespawn?: boolean }>;
     expect(meta['8080']?.needsRespawn).toBeUndefined();
@@ -730,7 +754,9 @@ describe('tunnels handler > zone name caching', () => {
     // failure-clearing logic the rejection would be cached and every
     // subsequent named-tunnel get() would re-throw the same error.
     let zoneCallCount = 0;
-    const fetcher = vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const fetcher = vi.fn<
+      (input: string | URL, init?: RequestInit) => Promise<Response>
+    >(async (input: string | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       const method = (init?.method ?? 'GET').toUpperCase();
       if (method === 'GET' && url.endsWith('/zones/zone-id')) {
@@ -832,7 +858,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     // we'd 404 against zone-B while orphaning the live record in zone-A.
     const { client } = makeClient();
     const storage = makeStorage();
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
         id: 'tunnel-uuid-stored',
         port: 8080,
@@ -842,7 +868,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
         createdAt: '2026-05-13T00:00:00.000Z'
       }
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': {
         optionsHash: 'v1:named:api',
         dnsRecordId: 'dns-in-zone-A',
@@ -900,7 +926,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     const cf = makeFakeCloudflare({});
     const { client } = makeClient();
     const storage = makeStorage();
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels', {
+    await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
         id: 'tunnel-uuid-stored',
         port: 8080,
@@ -910,7 +936,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
         createdAt: '2026-05-13T00:00:00.000Z'
       }
     });
-    await (storage.put as ReturnType<typeof vi.fn>)('tunnels:meta', {
+    await (storage.put as StoragePutMock)('tunnels:meta', {
       '8080': {
         optionsHash: 'v1:named:api',
         dnsRecordId: 'dns-record-id',
@@ -1053,7 +1079,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
 
     // The warn line must include enough information to identify the
     // orphaned Cloudflare resources (tunnel + DNS record).
-    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const warnCalls = (logger.warn as LogMock).mock.calls;
     const skipWarn = warnCalls.find(([msg]) =>
       String(msg).includes('skipping CF cleanup')
     );

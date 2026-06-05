@@ -1,3 +1,4 @@
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecuteResponse } from '../src/clients';
 import { CommandClient } from '../src/clients/command-client';
@@ -7,20 +8,42 @@ import {
   SandboxError
 } from '../src/errors';
 
+type FetchMock = Mock<(url: string, options: RequestInit) => Promise<Response>>;
+type CommandCompleteMock = Mock<
+  (
+    success: boolean,
+    exitCode: number,
+    stdout: string,
+    stderr: string,
+    command: string
+  ) => void
+>;
+type ErrorCallbackMock = Mock<(error: string, command?: string) => void>;
+
 describe('CommandClient', () => {
   let client: CommandClient;
-  let mockFetch: ReturnType<typeof vi.fn>;
-  let onCommandComplete: ReturnType<typeof vi.fn>;
-  let onError: ReturnType<typeof vi.fn>;
+  let mockFetch: FetchMock;
+  let onCommandComplete: CommandCompleteMock;
+  let onError: ErrorCallbackMock;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockFetch = vi.fn();
+    mockFetch =
+      vi.fn<(url: string, options: RequestInit) => Promise<Response>>();
     global.fetch = mockFetch as unknown as typeof fetch;
 
-    onCommandComplete = vi.fn();
-    onError = vi.fn();
+    onCommandComplete =
+      vi.fn<
+        (
+          success: boolean,
+          exitCode: number,
+          stdout: string,
+          stderr: string,
+          command: string
+        ) => void
+      >();
+    onError = vi.fn<(error: string, command?: string) => void>();
 
     client = new CommandClient({
       baseUrl: 'http://test.com',
