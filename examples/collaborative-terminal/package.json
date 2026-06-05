@@ -19,12 +19,12 @@
     "isbot": "^5.1.31",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router": "^7.10.0"
+    "react-router": "^7.15.0"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
     "@cloudflare/vite-plugin": "^1.37.2",
-    "@react-router/dev": "^7.10.0",
+    "@react-router/dev": "^7.15.0",
     "@tailwindcss/vite": "^4.1.17",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
