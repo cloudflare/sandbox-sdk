@@ -201,6 +201,17 @@ function validateMountOptions(
     );
   }
   if (
+    'credentialProxy' in options &&
+    options.credentialProxy !== undefined &&
+    typeof options.credentialProxy !== 'boolean'
+  ) {
+    return errorJson(
+      'options.credentialProxy must be a boolean when provided',
+      'invalid_request',
+      400
+    );
+  }
+  if (
     'credentials' in options &&
     options.credentials !== undefined &&
     (typeof options.credentials !== 'object' ||
@@ -255,6 +266,12 @@ function toSDKMountOptions(
     }
     if (options.s3fsOptions !== undefined) {
       remoteOptions.s3fsOptions = options.s3fsOptions;
+    }
+    if (
+      'credentialProxy' in options &&
+      typeof options.credentialProxy === 'boolean'
+    ) {
+      remoteOptions.credentialProxy = options.credentialProxy;
     }
     return remoteOptions;
   }

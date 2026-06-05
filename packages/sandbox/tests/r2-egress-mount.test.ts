@@ -358,6 +358,49 @@ describe('Sandbox credential proxy mounts', () => {
     );
   });
 
+  it('uses Worker env credentials for credential proxy mounts without explicit credentials', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {
+        R2_ACCESS_KEY_ID: 'ENV_KEY',
+        R2_SECRET_ACCESS_KEY: 'ENV_SECRET'
+      }
+    );
+    const createPasswordFile = vi.fn().mockResolvedValue(undefined);
+
+    Object.assign(sandbox as object, {
+      execInternal: createCredentialProxyExecMock(),
+      createPasswordFile,
+      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
+      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
+      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
+      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-env')
+    });
+
+    await sandbox.mountBucket('my-bucket', '/mnt/proxy', {
+      endpoint: 'https://abc123.r2.cloudflarestorage.com',
+      credentialProxy: true
+    });
+
+    expect(createPasswordFile).toHaveBeenCalledWith(
+      '/tmp/.s3fs-env',
+      'my-bucket',
+      { accessKeyId: 'x', secretAccessKey: 'x' }
+    );
+
+    const ContainerProxy = mockCtx.exports.ContainerProxy!;
+    const firstCall = ContainerProxy.mock.calls[0];
+    const params = firstCall[0].props.outboundByHostOverrides?.[
+      's3-credential-proxy.internal'
+    ]?.params as S3CredentialProxyParams;
+    const mount = Object.values(params.mounts)[0];
+    expect(mount.credentials).toEqual({
+      accessKeyId: 'ENV_KEY',
+      secretAccessKey: 'ENV_SECRET'
+    });
+  });
+
   it('appends required s3fs options for credential proxy mounts', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(

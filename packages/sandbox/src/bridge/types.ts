@@ -122,7 +122,12 @@ export interface ErrorResponse {
 export type MountBucketRequestOptions =
   | Pick<
       RemoteMountBucketOptions,
-      'endpoint' | 'readOnly' | 'prefix' | 'credentials' | 's3fsOptions'
+      | 'endpoint'
+      | 'readOnly'
+      | 'prefix'
+      | 'credentials'
+      | 's3fsOptions'
+      | 'credentialProxy'
     >
   | Pick<R2BindingMountBucketOptions, 'readOnly' | 'prefix' | 's3fsOptions'>;
 
