@@ -342,6 +342,7 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
 | `options.prefix`                      | string  | no       | Subdirectory prefix within the bucket                                           |
 | `options.credentials.accessKeyId`     | string  | no       | Explicit access key (auto-detected if omitted)                                  |
 | `options.credentials.secretAccessKey` | string  | no       | Explicit secret key (auto-detected if omitted)                                  |
+| `options.credentialProxy`             | boolean | no       | Keep credentials in the Durable Object and sign intercepted s3fs requests       |
 
 Credentials are optional — the SDK auto-detects from Worker secrets (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`).
 
