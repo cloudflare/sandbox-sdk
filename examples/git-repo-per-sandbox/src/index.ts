@@ -52,17 +52,30 @@ interface SandboxRepoState {
   remote: string;
   repoExisted: boolean;
   sandbox: Sandbox;
+  tokenSecret: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
+const SANDBOX_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const REDACTED_SECRET = '***';
 
 app.post('/sandboxes/:id/setup', async (c) => {
-  const sandboxId = c.req.param('id');
-  const state = await ensureSandboxRepo(c.env, sandboxId);
+  const sandboxID = getSandboxID(c.req.param('id'));
+  if (!sandboxID) {
+    return c.json(
+      {
+        error:
+          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
+      },
+      400
+    );
+  }
+
+  const state = await ensureSandboxRepo(c.env, sandboxID);
 
   return c.json({
-    sandboxId,
-    repo: sandboxId,
+    sandboxId: sandboxID,
+    repo: sandboxID,
     repoExisted: state.repoExisted,
     remote: state.remote,
     defaultBranch: state.defaultBranch,
@@ -71,15 +84,25 @@ app.post('/sandboxes/:id/setup', async (c) => {
 });
 
 app.get('/sandboxes/:id/repo', async (c) => {
-  const sandboxId = c.req.param('id');
-  const repo = await getRepoOrNull(c.env, sandboxId);
+  const sandboxID = getSandboxID(c.req.param('id'));
+  if (!sandboxID) {
+    return c.json(
+      {
+        error:
+          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
+      },
+      400
+    );
+  }
+
+  const repo = await getRepoOrNull(c.env, sandboxID);
 
   if (!repo) {
     return c.json({ error: 'Repo not found for this sandbox ID.' }, 404);
   }
 
   return c.json({
-    sandboxId,
+    sandboxId: sandboxID,
     repo: repo.name,
     remote: repo.remote,
     defaultBranch: repo.defaultBranch,
@@ -88,7 +111,16 @@ app.get('/sandboxes/:id/repo', async (c) => {
 });
 
 app.post('/sandboxes/:id/commit', async (c) => {
-  const sandboxId = c.req.param('id');
+  const sandboxID = getSandboxID(c.req.param('id'));
+  if (!sandboxID) {
+    return c.json(
+      {
+        error:
+          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
+      },
+      400
+    );
+  }
 
   let body: CommitRequest = {};
 
@@ -100,27 +132,29 @@ app.post('/sandboxes/:id/commit', async (c) => {
 
   const filename = getFilename(body.filename);
 
-  const state = await ensureSandboxRepo(c.env, sandboxId);
+  const state = await ensureSandboxRepo(c.env, sandboxID);
 
   // Clone the repo into the sandbox if needed, then add one file and push it back.
   const result = await state.sandbox.exec(COMMIT_SCRIPT, {
     env: {
       DEFAULT_BRANCH: state.defaultBranch,
       FILE_NAME: filename,
-      REPO_DIR: `/workspace/repos/${sandboxId}`
+      REPO_DIR: `/workspace/repos/${sandboxID}`
     },
     timeout: 30_000
   });
+  const stdout = redactSecret(result.stdout, state.tokenSecret);
+  const stderr = redactSecret(result.stderr, state.tokenSecret);
 
   if (!result.success) {
     return c.json(
       {
-        sandboxId,
-        repo: sandboxId,
+        sandboxId: sandboxID,
+        repo: sandboxID,
         filename,
         remote: state.remote,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout,
+        stderr,
         exitCode: result.exitCode,
         success: false
       },
@@ -129,13 +163,13 @@ app.post('/sandboxes/:id/commit', async (c) => {
   }
 
   return c.json({
-    sandboxId,
-    repo: sandboxId,
+    sandboxId: sandboxID,
+    repo: sandboxID,
     filename,
     remote: state.remote,
     repoExisted: state.repoExisted,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout,
+    stderr,
     exitCode: result.exitCode,
     success: true
   });
@@ -144,8 +178,7 @@ app.post('/sandboxes/:id/commit', async (c) => {
 export default app;
 
 function toAuthenticatedRemote(remote: string, token: string) {
-  const tokenSecret = token.split('?expires=')[0];
-  return `https://x:${tokenSecret}@${remote.slice('https://'.length)}`;
+  return `https://x:${token}@${remote.slice('https://'.length)}`;
 }
 
 function getFilename(filename?: string) {
@@ -155,9 +188,26 @@ function getFilename(filename?: string) {
     : `note-${Date.now().toString()}.txt`;
 }
 
-async function ensureSandboxRepo(env: Env, sandboxId: string) {
-  const sandbox = getSandbox(env.Sandbox, sandboxId);
-  const existingRepo = await getRepoOrNull(env, sandboxId);
+function getSandboxID(sandboxID: string) {
+  const trimmed = sandboxID.trim();
+  if (trimmed === '.' || trimmed === '..') {
+    return null;
+  }
+
+  return SANDBOX_ID_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+function redactSecret(output: string, secret: string) {
+  return output.split(secret).join(REDACTED_SECRET);
+}
+
+function getTokenSecret(token: string) {
+  return token.split('?expires=')[0];
+}
+
+async function ensureSandboxRepo(env: Env, sandboxID: string) {
+  const sandbox = getSandbox(env.Sandbox, sandboxID);
+  const existingRepo = await getRepoOrNull(env, sandboxID);
 
   let defaultBranch: string;
   let remote: string;
@@ -171,29 +221,32 @@ async function ensureSandboxRepo(env: Env, sandboxId: string) {
     const createdToken = await existingRepo.createToken('write', 3600);
     token = createdToken.plaintext;
   } else {
-    const created = await env.ARTIFACTS.create(sandboxId);
+    const created = await env.ARTIFACTS.create(sandboxID);
 
     defaultBranch = created.defaultBranch;
     remote = created.remote;
     token = created.token;
   }
 
+  const tokenSecret = getTokenSecret(token);
+
   // The sandbox gets a normal authenticated Git remote it can reuse across commands.
   await sandbox.setEnvVars({
-    ARTIFACTS_GIT_REMOTE: toAuthenticatedRemote(remote, token)
+    ARTIFACTS_GIT_REMOTE: toAuthenticatedRemote(remote, tokenSecret)
   });
 
   return {
     sandbox,
     defaultBranch,
     remote,
-    repoExisted
+    repoExisted,
+    tokenSecret
   } satisfies SandboxRepoState;
 }
 
-async function getRepoOrNull(env: Env, sandboxId: string) {
+async function getRepoOrNull(env: Env, sandboxID: string) {
   try {
-    return await env.ARTIFACTS.get(sandboxId);
+    return await env.ARTIFACTS.get(sandboxID);
   } catch (error) {
     if (isMissingRepoError(error)) {
       return null;

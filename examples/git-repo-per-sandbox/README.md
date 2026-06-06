@@ -35,7 +35,7 @@ npm install
 
 ```bash
 cd examples/git-repo-per-sandbox
-npm run types
+npm run cf-typegen
 ```
 
 3. Run locally:

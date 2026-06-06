@@ -8,11 +8,11 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "types": "wrangler types --strict-vars=false",
+    "cf-typegen": "wrangler types --strict-vars=false",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.10.6"
+    "hono": "^4.12.18"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
