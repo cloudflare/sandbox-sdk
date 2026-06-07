@@ -71,8 +71,10 @@ export class Sandbox extends BaseSandbox<Env> {
 Each WebSocket connection targets `/ws/<session-name>`. The session name maps to a Sandbox Durable Object instance. On connect, the Worker:
 
 1. Destroys any existing sandbox for that session (clean slate)
-2. Starts the Codex app-server process inside the container
-3. Bridges WebSocket frames between the browser and container through the handler pipeline
+2. Generates a high-entropy Codex WebSocket capability token
+3. Writes the token to `/tmp/codex-ws-token` inside the sandbox
+4. Starts the Codex app-server process inside the container with `--ws-auth capability-token --ws-token-file /tmp/codex-ws-token`
+5. Bridges WebSocket frames between the browser and container through the handler pipeline, using `Authorization: Bearer <token>` only for the private Worker-to-container connection
 
 The client then runs the connection flow:
 
@@ -82,6 +84,12 @@ The client then runs the connection flow:
 4. `turn/start` — send prompts, receive streamed responses
 
 Each session operates a single thread. On disconnect, the sandbox sleeps after `SANDBOX_SLEEP_AFTER`. Reconnecting with the same session name destroys and recreates it.
+
+### Codex WebSocket authentication
+
+Codex app-server's WebSocket transport supports bearer-token authentication for non-loopback listeners. This example uses the documented `capability-token` mode with `--ws-token-file`, so the raw token never appears in the process command line.
+
+The token is internal to the Worker-to-container connection. Browser clients authenticate to the Worker with `AUTH_TOKEN` when configured, but they never receive the Codex app-server capability token.
 
 ### Handler pipeline
 
