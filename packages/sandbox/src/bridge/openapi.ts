@@ -121,6 +121,12 @@ export const OPENAPI_SCHEMA = {
             description:
               'Explicit credentials. When omitted, the SDK auto-detects from Worker secrets (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY or AWS equivalents).'
           },
+          credentialProxy: {
+            type: 'boolean',
+            description:
+              'Keep credentials in the Durable Object and sign intercepted s3fs requests from the Worker. Credentials may be explicit or auto-detected from Worker secrets.',
+            default: false
+          },
           s3fsOptions: {
             type: 'array',
             items: { type: 'string' },

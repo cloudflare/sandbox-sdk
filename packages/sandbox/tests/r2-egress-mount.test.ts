@@ -1,4 +1,6 @@
+import { getContainer } from '@cloudflare/containers';
 import { describe, expect, it, vi } from 'vitest';
+import { createBridgeApp } from '../src/bridge/routes';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
@@ -33,6 +35,11 @@ type TestContainerProxyOptions = {
     className: string;
     outboundByHostOverrides?: Record<string, TestOutboundHostOverride>;
   };
+};
+
+type TestDurableObjectNamespace = {
+  idFromName: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
 };
 
 const testOutboundHandlersRegistry = vi.hoisted(
@@ -510,6 +517,67 @@ describe('Sandbox credential proxy mounts', () => {
         params: { mounts: {} }
       }
     });
+  });
+
+  function createNamespace(stub: unknown): TestDurableObjectNamespace {
+    return {
+      idFromName: vi.fn((name: string) => ({ name })),
+      get: vi.fn(() => stub)
+    };
+  }
+
+  it('passes credentialProxy through bridge remote mount requests', async () => {
+    const sandboxStub = {
+      mountBucket: vi.fn().mockResolvedValue(undefined)
+    };
+    vi.mocked(getContainer).mockReturnValueOnce(
+      sandboxStub as unknown as ReturnType<typeof getContainer>
+    );
+
+    const app = createBridgeApp({
+      sandboxBinding: 'Sandbox',
+      warmPoolBinding: 'WarmPool',
+      apiPrefix: '/v1',
+      healthPath: '/health'
+    });
+    const warmPoolStub = {
+      configure: vi.fn().mockResolvedValue(undefined),
+      getContainer: vi.fn().mockResolvedValue('bridge-container-id')
+    };
+    const env = {
+      Sandbox: createNamespace(sandboxStub),
+      WarmPool: createNamespace(warmPoolStub)
+    } as unknown as Cloudflare.Env;
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn()
+    } as unknown as ExecutionContext;
+
+    const response = await app.fetch(
+      new Request('http://bridge.test/v1/sandbox/abc/mount', {
+        method: 'POST',
+        body: JSON.stringify({
+          bucket: 'my-bucket',
+          mountPath: '/mnt/proxy',
+          options: {
+            endpoint: 'https://abc123.r2.cloudflarestorage.com',
+            credentialProxy: true
+          }
+        })
+      }),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    expect(sandboxStub.mountBucket).toHaveBeenCalledWith(
+      'my-bucket',
+      '/mnt/proxy',
+      {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentialProxy: true
+      }
+    );
   });
 
   it('clears mount state when both mount and credential proxy cleanup reconfiguration fail', async () => {
