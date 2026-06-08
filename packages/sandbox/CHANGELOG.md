@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.12.0
+
+### Minor Changes
+
+- [#739](https://github.com/cloudflare/sandbox-sdk/pull/739) [`9b4b1da`](https://github.com/cloudflare/sandbox-sdk/commit/9b4b1dacad4307b444000f88572b4581927c9781) Thanks [@scuffi](https://github.com/scuffi)! - Remove the desktop client API and desktop Docker image variant. The `sandbox.desktop` APIs, `DesktopClient` exports, desktop-related types/errors, and `-desktop` container image are no longer available.
+
+### Patch Changes
+
+- [#727](https://github.com/cloudflare/sandbox-sdk/pull/727) [`2acbd24`](https://github.com/cloudflare/sandbox-sdk/commit/2acbd2436275d09e886c9c38b2afa66fb352d8c0) Thanks [@scuffi](https://github.com/scuffi)! - Add `credentialProxy` option to `mountBucket` to keep real S3 credentials out of the container. When enabled, the Durable Object intercepts and signs outbound S3 requests — the container only sees dummy credentials. Supports S3-compatible endpoints, R2, and GCS HMAC signing, with optimized R2 mount defaults for reliable read and write performance.
+
+- [#736](https://github.com/cloudflare/sandbox-sdk/pull/736) [`28b5dfa`](https://github.com/cloudflare/sandbox-sdk/commit/28b5dfab4cc422a1fe1ce4d9248ea0b16ac77e80) Thanks [@scuffi](https://github.com/scuffi)! - Fix bucket mounts when a Sandbox class defines a catch-all outbound handler by routing SDK-managed mount hosts through the SDK ContainerProxy.
+
+- [#737](https://github.com/cloudflare/sandbox-sdk/pull/737) [`93c74e3`](https://github.com/cloudflare/sandbox-sdk/commit/93c74e3dd3931d9033b81c47ebc2da6177304ae4) Thanks [@scuffi](https://github.com/scuffi)! - Fix phantom `running` processes after a failed `startProcess` call. When the underlying session was unavailable or threw during startup, the process record was left in memory with status `running` and would appear in `listProcesses()` indefinitely. Failed startups are now correctly marked as terminal `error` records.
+
 ## 0.11.0
 
 ### Minor Changes
