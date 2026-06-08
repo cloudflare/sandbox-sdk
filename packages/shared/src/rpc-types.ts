@@ -6,20 +6,6 @@
  */
 
 import type {
-  DesktopCursorPosition,
-  DesktopMouseButton,
-  DesktopProcessHealth,
-  DesktopScreenSize,
-  DesktopScreenshotBytesResult,
-  DesktopScreenshotOptions,
-  DesktopScreenshotRegion,
-  DesktopScreenshotResult,
-  DesktopScrollDirection,
-  DesktopStartResult,
-  DesktopStatusResult,
-  DesktopStopResult
-} from './desktop-types.js';
-import type {
   CodeContext,
   CreateContextOptions,
   ExecutionError,
@@ -67,7 +53,6 @@ export interface SandboxAPI {
   interpreter: SandboxInterpreterAPI;
   utils: SandboxUtilsAPI;
   backup: SandboxBackupAPI;
-  desktop: SandboxDesktopAPI;
   watch: SandboxWatchAPI;
   tunnels: SandboxTunnelsAPI;
 }
@@ -261,76 +246,6 @@ export interface SandboxBackupAPI {
 }
 
 export type { UploadedPart, UploadPartsResponse };
-
-export interface SandboxDesktopAPI {
-  start(options?: {
-    resolution?: [number, number];
-    dpi?: number;
-  }): Promise<DesktopStartResult>;
-  stop(): Promise<DesktopStopResult>;
-  status(): Promise<DesktopStatusResult>;
-  screenshot(
-    options?: DesktopScreenshotOptions & { format?: 'base64' }
-  ): Promise<DesktopScreenshotResult>;
-  screenshot(
-    options: DesktopScreenshotOptions & { format: 'bytes' }
-  ): Promise<DesktopScreenshotBytesResult>;
-  screenshot(
-    options?: DesktopScreenshotOptions
-  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
-  screenshotRegion(
-    region: DesktopScreenshotRegion,
-    options?: DesktopScreenshotOptions & { format?: 'base64' }
-  ): Promise<DesktopScreenshotResult>;
-  screenshotRegion(
-    region: DesktopScreenshotRegion,
-    options: DesktopScreenshotOptions & { format: 'bytes' }
-  ): Promise<DesktopScreenshotBytesResult>;
-  screenshotRegion(
-    region: DesktopScreenshotRegion,
-    options?: DesktopScreenshotOptions
-  ): Promise<DesktopScreenshotResult | DesktopScreenshotBytesResult>;
-  click(
-    x: number,
-    y: number,
-    options?: { button?: DesktopMouseButton; clickCount?: number }
-  ): Promise<void>;
-  doubleClick(x: number, y: number): Promise<void>;
-  tripleClick(x: number, y: number): Promise<void>;
-  rightClick(x: number, y: number): Promise<void>;
-  middleClick(x: number, y: number): Promise<void>;
-  mouseDown(
-    x?: number,
-    y?: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void>;
-  mouseUp(
-    x?: number,
-    y?: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void>;
-  moveMouse(x: number, y: number): Promise<void>;
-  drag(
-    startX: number,
-    startY: number,
-    endX: number,
-    endY: number,
-    options?: { button?: DesktopMouseButton }
-  ): Promise<void>;
-  scroll(
-    x: number,
-    y: number,
-    direction: DesktopScrollDirection,
-    amount?: number
-  ): Promise<void>;
-  getCursorPosition(): Promise<DesktopCursorPosition>;
-  type(text: string, options?: { delayMs?: number }): Promise<void>;
-  press(key: string): Promise<void>;
-  keyDown(key: string): Promise<void>;
-  keyUp(key: string): Promise<void>;
-  getScreenSize(): Promise<DesktopScreenSize>;
-  getProcessStatus(name: string): Promise<DesktopProcessHealth>;
-}
 
 export interface SandboxWatchAPI {
   watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>>;

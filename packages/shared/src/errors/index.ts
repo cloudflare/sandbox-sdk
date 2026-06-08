@@ -42,8 +42,6 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
-  DesktopCoordinateErrorContext,
-  DesktopErrorContext,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,

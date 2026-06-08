@@ -3,40 +3,6 @@
  * Used by both client SDK and container runtime
  */
 
-// Export desktop environment types
-export type {
-  DesktopCursorPosition,
-  DesktopImageFormat,
-  DesktopKeyInput,
-  DesktopKeyPressRequest,
-  DesktopMouseButton,
-  DesktopMouseClickRequest,
-  DesktopMouseDownRequest,
-  DesktopMouseDragRequest,
-  DesktopMouseMoveRequest,
-  DesktopMouseScrollRequest,
-  DesktopMouseUpRequest,
-  DesktopProcessHealth,
-  DesktopScreenSize,
-  DesktopScreenshotBytesResult,
-  DesktopScreenshotOptions,
-  DesktopScreenshotRegion,
-  DesktopScreenshotRegionRequest,
-  DesktopScreenshotRequest,
-  DesktopScreenshotResult,
-  DesktopScrollDirection,
-  DesktopStartRequest,
-  DesktopStartResult,
-  DesktopStatusResult,
-  DesktopStopResult,
-  DesktopTypeRequest
-} from './desktop-types.js';
-export type {
-  DesktopWorkerOp,
-  DesktopWorkerRequest,
-  DesktopWorkerResponse,
-  DesktopWorkerResultMap
-} from './desktop-worker-protocol.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities
@@ -120,7 +86,6 @@ export type {
   SandboxBackupAPI,
   SandboxCommandsAPI,
   SandboxControlCallback,
-  SandboxDesktopAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,

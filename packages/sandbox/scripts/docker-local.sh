@@ -33,15 +33,6 @@ docker build \
   --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .
 
-docker build \
-  -f packages/sandbox/Dockerfile \
-  --target desktop \
-  --platform linux/amd64 \
-  --build-arg SANDBOX_VERSION="$VERSION" \
-  -t "$IMAGE:$VERSION-desktop" \
-  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
-  .
-
 STANDALONE_DIR="tests/e2e/test-worker"
 sed -E "s|$IMAGE:[0-9]+\.[0-9]+\.[0-9]+|$IMAGE:$VERSION|g" \
   "$STANDALONE_DIR/Dockerfile.standalone" > "$STANDALONE_DIR/Dockerfile.standalone.tmp"

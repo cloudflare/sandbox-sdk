@@ -11,7 +11,6 @@ import type {
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
-  SandboxDesktopAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
