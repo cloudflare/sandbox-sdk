@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Sandbox } from '../src/sandbox';
+import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
   r2EgressHandler
@@ -220,6 +220,16 @@ function createMockR2Bucket(): R2Bucket {
     createMultipartUpload: vi.fn(),
     resumeMultipartUpload: vi.fn()
   } as unknown as R2Bucket;
+}
+
+function createContainerProxyCtx(
+  props: TestContainerProxyOptions['props']
+): ExecutionContext<unknown> {
+  return {
+    props,
+    waitUntil: vi.fn(),
+    passThroughOnException: vi.fn()
+  } as unknown as ExecutionContext<unknown>;
 }
 
 function createExecResult(
@@ -715,6 +725,82 @@ describe('Sandbox credential proxy mounts', () => {
 });
 
 describe('Sandbox R2 egress mounts', () => {
+  describe('SDK ContainerProxy dispatch', () => {
+    it('routes r2.internal through the SDK proxy path by default', async () => {
+      const bucket = createMockR2Bucket();
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-r2',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            'r2.internal': {
+              method: 'r2EgressMount',
+              params: { buckets: { MY_BUCKET: {} } }
+            }
+          }
+        }),
+        { MY_BUCKET: bucket }
+      );
+
+      const res = await proxy.fetch(
+        new Request('http://r2.internal/MY_BUCKET/sample.txt')
+      );
+
+      expect(bucket.get).toHaveBeenCalledWith('sample.txt');
+      expect(res.status).toBe(404);
+    });
+
+    it('routes s3-credential-proxy.internal through the SDK proxy path by default', async () => {
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-s3',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            's3-credential-proxy.internal': {
+              method: 's3CredentialProxyMount',
+              params: { mounts: {} }
+            }
+          }
+        }),
+        {}
+      );
+
+      const res = await proxy.fetch(
+        new Request(
+          'http://s3-credential-proxy.internal/__sandbox_credential_proxy_self_test__'
+        )
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('OK');
+    });
+
+    it('delegates unrelated outbound hosts to the base container proxy', async () => {
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-other',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            'r2.internal': {
+              method: 'r2EgressMount',
+              params: { buckets: { MY_BUCKET: {} } }
+            },
+            's3-credential-proxy.internal': {
+              method: 's3CredentialProxyMount',
+              params: { mounts: {} }
+            }
+          }
+        }),
+        { MY_BUCKET: createMockR2Bucket() }
+      );
+
+      const res = await proxy.fetch(new Request('https://example.com/'));
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('Mock Container fetch');
+    });
+  });
+
   it('does not set up outbound interception at construction time for Sandbox subclasses', () => {
     class BaseSandbox extends Sandbox {}
     const mockCtx = createMockCtx();

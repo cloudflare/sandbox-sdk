@@ -68,8 +68,21 @@ vi.mock('@cloudflare/containers', () => {
     }
   };
 
+  const MockContainerProxy = class ContainerProxy {
+    ctx: any;
+    env: any;
+    constructor(ctx: any, env: any) {
+      this.ctx = ctx;
+      this.env = env;
+    }
+    async fetch(request: Request): Promise<Response> {
+      return new Response('Mock ContainerProxy fetch');
+    }
+  };
+
   return {
     Container: MockContainer,
+    ContainerProxy: MockContainerProxy,
     getContainer: vi.fn(),
     switchPort: mockSwitchPort
   };

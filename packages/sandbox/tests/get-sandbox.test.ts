@@ -13,6 +13,17 @@ vi.mock('@cloudflare/containers', () => ({
       this.env = env;
     }
   },
+  ContainerProxy: class ContainerProxy {
+    ctx: any;
+    env: any;
+    constructor(ctx: any, env: any) {
+      this.ctx = ctx;
+      this.env = env;
+    }
+    async fetch(request: Request): Promise<Response> {
+      return new Response('Mock ContainerProxy fetch');
+    }
+  },
   getContainer: vi.fn()
 }));
 

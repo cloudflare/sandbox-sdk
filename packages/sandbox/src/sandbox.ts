@@ -1,4 +1,10 @@
-import { Container, getContainer, switchPort } from '@cloudflare/containers';
+import {
+  ContainerProxy as BaseContainerProxy,
+  Container,
+  getContainer,
+  type OutboundHandlerContext,
+  switchPort
+} from '@cloudflare/containers';
 import type {
   BackupOptions,
   BucketCredentials,
@@ -260,6 +266,53 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
   r2EgressMount: r2EgressHandler,
   s3CredentialProxyMount: s3CredentialProxyHandler
 };
+
+/**
+ * SDK-level ContainerProxy that directly dispatches SDK-internal mount hosts
+ * (r2.internal, s3-credential-proxy.internal) without relying on
+ * outboundHandlersRegistry lookups, which are NOT shared between the Durable
+ * Object's execution context and the ContainerProxy WorkerEntrypoint context.
+ *
+ * Users must export this class from their Worker entrypoint so the Sandbox DO
+ * can create outbound-interception fetchers that reference it.
+ */
+export class ContainerProxy extends BaseContainerProxy {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const hostname = url.hostname;
+    const props = this.ctx.props as {
+      outboundByHostOverrides?: Record<
+        string,
+        { method: string; params?: unknown }
+      >;
+      containerId?: string;
+      className?: string;
+    };
+    const override = props.outboundByHostOverrides?.[hostname];
+    if (override) {
+      const handlerCtx = {
+        containerId: props.containerId ?? '',
+        className: props.className ?? '',
+        params: override.params
+      };
+      if (override.method === 'r2EgressMount') {
+        return r2EgressHandler(
+          request,
+          this.env as Cloudflare.Env,
+          handlerCtx as OutboundHandlerContext<R2EgressParams>
+        );
+      }
+      if (override.method === 's3CredentialProxyMount') {
+        return s3CredentialProxyHandler(
+          request,
+          this.env as Cloudflare.Env,
+          handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
+        );
+      }
+    }
+    return super.fetch(request);
+  }
+}
 
 function isFetcher(value: unknown): value is Fetcher {
   return (
@@ -7406,6 +7459,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Register r2EgressMount on the concrete subclass's local registry so
+    // setOutboundByHost's validateOutboundHandlerMethodName check passes. The
+    // actual dispatch is handled by the SDK ContainerProxy.fetch() override,
+    // which directly calls r2EgressHandler by hostname without going through
+    // the registry (which is NOT shared across execution contexts).
+    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
+      { r2EgressMount: r2EgressHandler };
+    if (Object.keys(params.buckets).length > 0) {
+      await this.setOutboundByHost<R2EgressParams>(
+        'r2.internal',
+        'r2EgressMount',
+        params
+      );
+    } else {
+      await this.removeOutboundByHost('r2.internal');
+    }
+
     this.logger.debug('r2 egress: registering host interception', {
       host: 'r2.internal',
       method: 'r2EgressMount',
@@ -7453,6 +7523,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       S3_CREDENTIAL_PROXY_HOST,
       S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST
     ];
+
+    // Register s3CredentialProxyMount on the concrete subclass's local registry
+    // so setOutboundByHost's validateOutboundHandlerMethodName check passes.
+    // Actual dispatch is handled by the SDK ContainerProxy.fetch() override.
+    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
+      { s3CredentialProxyMount: s3CredentialProxyHandler };
+    if (Object.keys(params.mounts).length > 0) {
+      for (const host of hosts) {
+        await this.setOutboundByHost<S3CredentialProxyParams>(
+          host,
+          's3CredentialProxyMount',
+          params
+        );
+      }
+    } else {
+      for (const host of hosts) {
+        await this.removeOutboundByHost(host);
+      }
+    }
+
     const hostOverrides: Record<
       string,
       { method: string; params: S3CredentialProxyParams }
