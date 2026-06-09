@@ -4,7 +4,6 @@
 export {
   BackupClient,
   CommandClient,
-  DesktopClient,
   FileClient,
   GitClient,
   PortClient,
@@ -16,8 +15,6 @@ export { getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
 
-// Required export for egress intercepting
-export { ContainerProxy } from '@cloudflare/containers';
 // Export core SDK types for consumers
 export type {
   BackupOptions,
@@ -69,23 +66,14 @@ export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 // Export all client types from new architecture
 export type {
   BaseApiResponse,
-
-  // Desktop client types
-  ClickOptions,
   CommandsResponse,
   ContainerStub,
 
   // Utility client types
   CreateSessionRequest,
   CreateSessionResponse,
-  CursorPositionResponse,
   DeleteSessionRequest,
   DeleteSessionResponse,
-  Desktop,
-  DesktopStartOptions,
-  DesktopStartResponse,
-  DesktopStatusResponse,
-  DesktopStopResponse,
   ErrorResponse,
 
   // Command client types
@@ -97,7 +85,6 @@ export type {
   GitCheckoutRequest,
   // Base client types
   HttpClientOptions as SandboxClientOptions,
-  KeyInput,
 
   // File client types
   MkdirRequest,
@@ -111,17 +98,10 @@ export type {
   ReadFileRequest,
   RequestConfig,
   ResponseHandler,
-  ScreenSizeResponse,
-  ScreenshotBytesResponse,
-  ScreenshotOptions,
-  ScreenshotRegion,
-  ScreenshotResponse,
-  ScrollDirection,
   SessionRequest,
 
   // Process client types
   StartProcessRequest,
-  TypeOptions,
   WriteFileRequest
 } from './clients';
 export type {
@@ -135,12 +115,6 @@ export {
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
-  DesktopInvalidCoordinatesError,
-  DesktopInvalidOptionsError,
-  DesktopNotStartedError,
-  DesktopProcessCrashedError,
-  DesktopStartFailedError,
-  DesktopUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
@@ -155,6 +129,8 @@ export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
+// Required export for egress intercepting
+export { ContainerProxy } from './sandbox';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export {
   asyncIterableToSSEStream,

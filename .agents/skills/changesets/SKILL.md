@@ -75,7 +75,7 @@ Releases run via `.github/workflows/release.yml`. There is no manual publishing 
 
 - SDK version is tracked in `packages/sandbox/src/version.ts`
 - Images build for `linux/amd64` only, matching Cloudflare's production runtime (ARM Macs use Rosetta/QEMU locally, preserving dev/prod parity)
-- Images publish to both Docker Hub and `registry.cloudflare.com/library/sandbox:{version}` (with `-python`, `-opencode`, `-musl`, `-desktop` variants). Any authenticated Cloudflare customer can pull from the `library/` namespace without our account ID.
+- Images publish to both Docker Hub and `registry.cloudflare.com/library/sandbox:{version}` (with `-python`, `-opencode`, `-musl` variants). Any authenticated Cloudflare customer can pull from the `library/` namespace without our account ID.
 
 ## Checklist
 

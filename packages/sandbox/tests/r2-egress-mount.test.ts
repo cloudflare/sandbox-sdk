@@ -1,5 +1,7 @@
+import { getContainer } from '@cloudflare/containers';
 import { describe, expect, it, vi } from 'vitest';
-import { Sandbox } from '../src/sandbox';
+import { createBridgeApp } from '../src/bridge/routes';
+import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
   r2EgressHandler
@@ -33,6 +35,11 @@ type TestContainerProxyOptions = {
     className: string;
     outboundByHostOverrides?: Record<string, TestOutboundHostOverride>;
   };
+};
+
+type TestDurableObjectNamespace = {
+  idFromName: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
 };
 
 const testOutboundHandlersRegistry = vi.hoisted(
@@ -220,6 +227,16 @@ function createMockR2Bucket(): R2Bucket {
     createMultipartUpload: vi.fn(),
     resumeMultipartUpload: vi.fn()
   } as unknown as R2Bucket;
+}
+
+function createContainerProxyCtx(
+  props: TestContainerProxyOptions['props']
+): ExecutionContext<unknown> {
+  return {
+    props,
+    waitUntil: vi.fn(),
+    passThroughOnException: vi.fn()
+  } as unknown as ExecutionContext<unknown>;
 }
 
 function createExecResult(
@@ -502,6 +519,67 @@ describe('Sandbox credential proxy mounts', () => {
     });
   });
 
+  function createNamespace(stub: unknown): TestDurableObjectNamespace {
+    return {
+      idFromName: vi.fn((name: string) => ({ name })),
+      get: vi.fn(() => stub)
+    };
+  }
+
+  it('passes credentialProxy through bridge remote mount requests', async () => {
+    const sandboxStub = {
+      mountBucket: vi.fn().mockResolvedValue(undefined)
+    };
+    vi.mocked(getContainer).mockReturnValueOnce(
+      sandboxStub as unknown as ReturnType<typeof getContainer>
+    );
+
+    const app = createBridgeApp({
+      sandboxBinding: 'Sandbox',
+      warmPoolBinding: 'WarmPool',
+      apiPrefix: '/v1',
+      healthPath: '/health'
+    });
+    const warmPoolStub = {
+      configure: vi.fn().mockResolvedValue(undefined),
+      getContainer: vi.fn().mockResolvedValue('bridge-container-id')
+    };
+    const env = {
+      Sandbox: createNamespace(sandboxStub),
+      WarmPool: createNamespace(warmPoolStub)
+    } as unknown as Cloudflare.Env;
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn()
+    } as unknown as ExecutionContext;
+
+    const response = await app.fetch(
+      new Request('http://bridge.test/v1/sandbox/abc/mount', {
+        method: 'POST',
+        body: JSON.stringify({
+          bucket: 'my-bucket',
+          mountPath: '/mnt/proxy',
+          options: {
+            endpoint: 'https://abc123.r2.cloudflarestorage.com',
+            credentialProxy: true
+          }
+        })
+      }),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    expect(sandboxStub.mountBucket).toHaveBeenCalledWith(
+      'my-bucket',
+      '/mnt/proxy',
+      {
+        endpoint: 'https://abc123.r2.cloudflarestorage.com',
+        credentialProxy: true
+      }
+    );
+  });
+
   it('clears mount state when both mount and credential proxy cleanup reconfiguration fail', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
@@ -715,6 +793,82 @@ describe('Sandbox credential proxy mounts', () => {
 });
 
 describe('Sandbox R2 egress mounts', () => {
+  describe('SDK ContainerProxy dispatch', () => {
+    it('routes r2.internal through the SDK proxy path by default', async () => {
+      const bucket = createMockR2Bucket();
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-r2',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            'r2.internal': {
+              method: 'r2EgressMount',
+              params: { buckets: { MY_BUCKET: {} } }
+            }
+          }
+        }),
+        { MY_BUCKET: bucket }
+      );
+
+      const res = await proxy.fetch(
+        new Request('http://r2.internal/MY_BUCKET/sample.txt')
+      );
+
+      expect(bucket.get).toHaveBeenCalledWith('sample.txt');
+      expect(res.status).toBe(404);
+    });
+
+    it('routes s3-credential-proxy.internal through the SDK proxy path by default', async () => {
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-s3',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            's3-credential-proxy.internal': {
+              method: 's3CredentialProxyMount',
+              params: { mounts: {} }
+            }
+          }
+        }),
+        {}
+      );
+
+      const res = await proxy.fetch(
+        new Request(
+          'http://s3-credential-proxy.internal/__sandbox_credential_proxy_self_test__'
+        )
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('OK');
+    });
+
+    it('delegates unrelated outbound hosts to the base container proxy', async () => {
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-other',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            'r2.internal': {
+              method: 'r2EgressMount',
+              params: { buckets: { MY_BUCKET: {} } }
+            },
+            's3-credential-proxy.internal': {
+              method: 's3CredentialProxyMount',
+              params: { mounts: {} }
+            }
+          }
+        }),
+        { MY_BUCKET: createMockR2Bucket() }
+      );
+
+      const res = await proxy.fetch(new Request('https://example.com/'));
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('Mock Container fetch');
+    });
+  });
+
   it('does not set up outbound interception at construction time for Sandbox subclasses', () => {
     class BaseSandbox extends Sandbox {}
     const mockCtx = createMockCtx();

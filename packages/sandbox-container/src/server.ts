@@ -77,7 +77,6 @@ async function createApplication(): Promise<{
     gitService: container.get('gitService'),
     interpreterService: container.get('interpreterService'),
     backupService: container.get('backupService'),
-    desktopService: container.get('desktopService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
     sessionManager: container.get('sessionManager'),
@@ -288,7 +287,6 @@ export async function startServer(): Promise<ServerInstance> {
       if (!app.container.isInitialized()) return;
 
       try {
-        const desktopService = app.container.get('desktopService');
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
@@ -301,7 +299,6 @@ export async function startServer(): Promise<ServerInstance> {
           });
         }
 
-        await desktopService.destroy();
         await processService.destroy();
         portService.destroy();
         await tunnelService.destroyAll();

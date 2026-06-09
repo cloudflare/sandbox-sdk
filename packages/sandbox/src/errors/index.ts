@@ -48,8 +48,6 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
-  DesktopCoordinateErrorContext,
-  DesktopErrorContext,
   ErrorCodeType,
   ErrorResponse,
   FileExistsContext,
@@ -95,13 +93,6 @@ export {
   CommandNotFoundError,
   ContextNotFoundError,
   CustomDomainRequiredError,
-  // Desktop Errors
-  DesktopInvalidCoordinatesError,
-  DesktopInvalidOptionsError,
-  DesktopNotStartedError,
-  DesktopProcessCrashedError,
-  DesktopStartFailedError,
-  DesktopUnavailableError,
   FileExistsError,
   // File System Errors
   FileNotFoundError,

@@ -34,6 +34,7 @@ declare global {
 }
 
 const CODEX_WS_PORT = 4500;
+const CODEX_WS_TOKEN_FILE = '/tmp/codex-ws-token';
 
 // --- Egress control ---
 // The container uses OPENAI_BASE_URL=http://api.openai.com/v1 so requests
@@ -150,27 +151,39 @@ function sandboxExec(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
 // --- Sandbox lifecycle ---
 
+function generateCapabilityToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+}
+
 async function ensureCodexRunning(
   sandbox: ReturnType<typeof getSandbox>
-): Promise<void> {
+): Promise<string> {
   const procs = await sandbox.listProcesses();
   const existing = procs.find((p) => p.id === 'codex-app-server');
   if (
     existing &&
     (existing.status === 'running' || existing.status === 'starting')
   )
-    return;
+    return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
+
+  const codexWsToken = generateCapabilityToken();
 
   await sandbox.setEnvVars({
     OPENAI_BASE_URL: 'http://api.openai.com/v1',
     OPENAI_API_KEY: 'proxy-injected'
   });
+  await sandbox.writeFile(CODEX_WS_TOKEN_FILE, codexWsToken);
 
   const proc = await sandbox.startProcess(
-    'bash -lc "codex app-server --listen ws://0.0.0.0:4500"',
+    `bash -lc "codex app-server --listen ws://0.0.0.0:${CODEX_WS_PORT} --ws-auth capability-token --ws-token-file ${CODEX_WS_TOKEN_FILE}"`,
     { processId: 'codex-app-server' }
   );
   await proc.waitForPort(CODEX_WS_PORT, { mode: 'tcp' });
+  return codexWsToken;
 }
 
 // --- Auth ---
@@ -216,11 +229,16 @@ export default {
 // --- WebSocket bridge ---
 
 async function connectToContainer(
-  sandbox: ReturnType<typeof getSandbox>
+  sandbox: ReturnType<typeof getSandbox>,
+  codexWsToken: string
 ): Promise<WebSocket> {
   const wsRequest = switchPort(
     new Request('http://container/ws', {
-      headers: { Upgrade: 'websocket', Connection: 'Upgrade' }
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'Upgrade',
+        Authorization: `Bearer ${codexWsToken}`
+      }
     }),
     CODEX_WS_PORT
   );
@@ -245,9 +263,9 @@ async function handleWebSocket(
   const sleepAfter = env.SANDBOX_SLEEP_AFTER || '1m';
   const sandbox = getSandbox(env.Sandbox, `codex-${sandboxId}`, { sleepAfter });
   await sandbox.destroy();
-  await ensureCodexRunning(sandbox);
+  const codexWsToken = await ensureCodexRunning(sandbox);
 
-  const containerWs = await connectToContainer(sandbox);
+  const containerWs = await connectToContainer(sandbox, codexWsToken);
 
   const [clientWs, serverWs] = Object.values(new WebSocketPair());
   const sendJson = (ws: WebSocket) => (msg: JsonRpcMessage) =>

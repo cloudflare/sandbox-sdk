@@ -68,8 +68,21 @@ vi.mock('@cloudflare/containers', () => {
     }
   };
 
+  const MockContainerProxy = class ContainerProxy {
+    ctx: any;
+    env: any;
+    constructor(ctx: any, env: any) {
+      this.ctx = ctx;
+      this.env = env;
+    }
+    async fetch(request: Request): Promise<Response> {
+      return new Response('Mock ContainerProxy fetch');
+    }
+  };
+
   return {
     Container: MockContainer,
+    ContainerProxy: MockContainerProxy,
     getContainer: vi.fn(),
     switchPort: mockSwitchPort
   };
@@ -2219,27 +2232,6 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.destroy();
 
       expect(deletedKeys).toContain('tunnels');
-    });
-  });
-
-  describe('desktop preview URL lifecycle', () => {
-    it('does not synthesize a desktop preview URL from durable auth when exposePort fails', async () => {
-      await sandbox.setSandboxName('test-sandbox', false);
-      vi.spyOn(sandbox.client.desktop, 'status').mockResolvedValue({
-        success: true,
-        status: 'active',
-        processes: {},
-        resolution: [1024, 768],
-        dpi: 96
-      });
-      vi.mocked(mockCtx.storage.get).mockImplementation(async (key) =>
-        key === 'portTokens' ? { '6080': { token: 'oldtoken' } } : null
-      );
-      vi.spyOn(sandbox, 'exposePort').mockRejectedValue(new Error('boom'));
-
-      await expect(sandbox.getDesktopStreamUrl('example.com')).rejects.toThrow(
-        'boom'
-      );
     });
   });
 

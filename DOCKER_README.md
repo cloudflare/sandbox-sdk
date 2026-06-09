@@ -12,14 +12,13 @@ All images are published as tags on `cloudflare/sandbox`:
 | `<version>-python`   | Ubuntu 22.04 | Default + Python 3.11 with matplotlib, numpy, pandas, ipython  |
 | `<version>-opencode` | Ubuntu 22.04 | Default + [OpenCode](https://opencode.ai) CLI                  |
 | `<version>-musl`     | Alpine 3.21  | Minimal Alpine-based image with Git, curl, and bash            |
-| `<version>-desktop`  | Ubuntu 22.04 | Full Linux desktop (XFCE) with Xvfb, VNC, and noVNC            |
 
 ## Usage
 
 These images are designed to be used with the [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) SDK. Reference them in your project's `Dockerfile`:
 
 ```dockerfile
-FROM cloudflare/sandbox:0.11.0-python
+FROM cloudflare/sandbox:0.12.0-python
 ```
 
 Then configure your `wrangler.toml` to use the image:

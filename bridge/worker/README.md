@@ -57,7 +57,7 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
 1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.11.0`). Update the tag to match the SDK version.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.12.0`). Update the tag to match the SDK version.
 
 Both versions should match — the SDK and container image are released together. After updating:
 
@@ -342,6 +342,7 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/mount \
 | `options.prefix`                      | string  | no       | Subdirectory prefix within the bucket                                           |
 | `options.credentials.accessKeyId`     | string  | no       | Explicit access key (auto-detected if omitted)                                  |
 | `options.credentials.secretAccessKey` | string  | no       | Explicit secret key (auto-detected if omitted)                                  |
+| `options.credentialProxy`             | boolean | no       | Keep credentials in the Durable Object and sign intercepted s3fs requests       |
 
 Credentials are optional — the SDK auto-detects from Worker secrets (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`).
 

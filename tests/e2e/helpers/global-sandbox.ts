@@ -13,8 +13,7 @@ export type SandboxType =
   | 'python'
   | 'opencode'
   | 'standalone'
-  | 'musl'
-  | 'desktop';
+  | 'musl';
 
 export interface TestSandbox {
   workerUrl: string;

@@ -8,7 +8,6 @@
 | Python   | `{{PYTHON_TAG}}`   |
 | OpenCode | `{{OPENCODE_TAG}}` |
 | Musl     | `{{MUSL_TAG}}`     |
-| Desktop  | `{{DESKTOP_TAG}}`  |
 
 **Usage:**
 
