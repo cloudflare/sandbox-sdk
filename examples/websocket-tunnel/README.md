@@ -39,11 +39,11 @@ To bind the demo to a stable hostname instead of `*.trycloudflare.com`:
 2. Create a Cloudflare API token with the scopes listed below.
 3. Copy `.dev.vars.example` to `.dev.vars` and fill in `CLOUDFLARE_API_TOKEN` + `TUNNEL_NAME`. Wrangler loads `.dev.vars` automatically on `npm run dev`. For production, run:
 
-    ```bash
-    npx wrangler secret put CLOUDFLARE_API_TOKEN
-    # then set TUNNEL_NAME (and optionally the account/zone ids — see below)
-    # under `vars` in wrangler.jsonc
-    ```
+   ```bash
+   npx wrangler secret put CLOUDFLARE_API_TOKEN
+   # then set TUNNEL_NAME (and optionally the account/zone ids — see below)
+   # under `vars` in wrangler.jsonc
+   ```
 
 Re-run `npm run dev` and the demo will use the named tunnel.
 
@@ -51,16 +51,16 @@ Re-run `npm run dev` and the demo will use the named tunnel.
 
 Create the token from **My Profile → API Tokens → Create Token → Custom token**. The exact UI labels for each permission are:
 
-| UI dropdowns | Used for |
-| --- | --- |
-| **Account** · **Cloudflare Tunnel** · **Edit** | Create, look up, and delete tunnels |
-| **Zone** · **DNS** · **Edit** | Upsert and delete the proxied `CNAME` for `<label>.<zone>` |
-| **Zone** · **Zone** · **Read** | Look up the zone's name to derive `<label>.<zone>` |
-| **Account** · **Account Settings** · **Read** | Optional. Lets the SDK infer `CLOUDFLARE_ACCOUNT_ID` from the token. Skip this if you set the account id explicitly. |
+| UI dropdowns                                   | Used for                                                                                                             |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Account** · **Cloudflare Tunnel** · **Edit** | Create, look up, and delete tunnels                                                                                  |
+| **Zone** · **DNS** · **Edit**                  | Upsert and delete the proxied `CNAME` for `<label>.<zone>`                                                           |
+| **Zone** · **Zone** · **Read**                 | Look up the zone's name to derive `<label>.<zone>`                                                                   |
+| **Account** · **Account Settings** · **Read**  | Optional. Lets the SDK infer `CLOUDFLARE_ACCOUNT_ID` from the token. Skip this if you set the account id explicitly. |
 
 Under **Account Resources**, scope to the account that owns the tunnel. Under **Zone Resources**, scope to the specific zone you want to bind to.
 
-Both **User API Tokens** (created from *My Profile → API Tokens*) and **Account API Tokens** (created from *Manage Account → Account API Tokens*; the secret starts with `cfat_`) work. The SDK detects which kind you have and uses the appropriate introspection endpoint.
+Both **User API Tokens** (created from _My Profile → API Tokens_) and **Account API Tokens** (created from _Manage Account → Account API Tokens_; the secret starts with `cfat_`) work. The SDK detects which kind you have and uses the appropriate introspection endpoint.
 
 #### When to set the env vars explicitly
 
@@ -68,7 +68,6 @@ If the token has access to **more than one account** or **more than one zone**, 
 
 ```jsonc
 "vars": {
-  "SANDBOX_TRANSPORT": "rpc",
   "TUNNEL_NAME": "ws-demo",
   "CLOUDFLARE_ACCOUNT_ID": "<your account id>",
   "CLOUDFLARE_ZONE_ID": "<your zone id>"
@@ -96,7 +95,6 @@ curl -X POST http://localhost:8787/destroy
 After that, hitting the root URL again will provision a fresh tunnel (the named-tunnel variant gets the same hostname; the quick-tunnel variant gets a new `*.trycloudflare.com`).
 
 In your own apps, the same cleanup happens automatically when you call `sandbox.destroy()` for any reason — you do not need to call `sandbox.tunnels.destroy(port)` separately unless you want to remove a single tunnel while the sandbox keeps running.
-
 
 ## Deploy
 

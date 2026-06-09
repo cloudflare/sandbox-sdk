@@ -38,7 +38,6 @@
 
   // Configurable vars — override via wrangler.toml [vars] or environment
   "vars": {
-    "SANDBOX_TRANSPORT": "rpc",
     "AWS_REGION": "us-east-1",
     "S3_BUCKET_NAME": "my-bucket",
     "STS_DURATION_SECONDS": "3600"

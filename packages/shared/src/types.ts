@@ -453,8 +453,6 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
-export type SandboxTransport = 'http' | 'websocket' | 'rpc';
-
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -558,26 +556,6 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
-
-  /**
-   * Transport/control path for communication between the Sandbox DO and the
-   * container runtime.
-   *
-   * - `"http"` (default): Route-based HTTP compatibility path.
-   * - `"websocket"`: Route-based compatibility path multiplexed over a custom
-   *   WebSocket connection.
-   * - `"rpc"`: Primary container-control path over capnweb RPC.
-   *
-   * When set via `getSandbox()` options, this overrides the `SANDBOX_TRANSPORT` env var.
-   *
-   * **Important:** Set this once at creation time and pass the same value on every
-   * subsequent `getSandbox()` call for a given sandbox ID. Changing the transport after
-   * the sandbox is in use disconnects the active client, which drops any in-flight
-   * requests and resets WebSocket connections.
-   *
-   * @default "http"
-   */
-  transport?: SandboxTransport;
 }
 
 /**

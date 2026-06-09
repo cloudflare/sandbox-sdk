@@ -52,7 +52,6 @@ export type {
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
-  SandboxTransport,
   SessionOptions,
   StreamOptions,
   TunnelInfo,

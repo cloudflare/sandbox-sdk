@@ -78,7 +78,6 @@ import type {
   SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
-  SandboxTransport,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
@@ -92,7 +91,6 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
-import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import {
   ContainerControlConnection,
@@ -636,10 +634,6 @@ export class ContainerControlClient {
     this.conn?.setRetryTimeoutMs(ms);
   }
 
-  getTransportMode(): SandboxTransport {
-    return 'rpc';
-  }
-
   isWebSocketConnected(): boolean {
     return this.conn?.isConnected() ?? false;
   }
@@ -652,14 +646,3 @@ export class ContainerControlClient {
     this.destroyConnection();
   }
 }
-
-/**
- * Extracts the public key set of a type. Used to verify that
- * ContainerControlClient exposes the same top-level properties and methods
- * as SandboxClient with top-level key coverage. Sub-clients are capnweb stubs, not HTTP
- * client class instances.
- */
-type PublicKeys<T> = { [K in keyof T]: unknown };
-
-// Compile-time check: ContainerControlClient has every public key that SandboxClient has.
-void (0 as unknown as PublicKeys<ContainerControlClient> satisfies PublicKeys<SandboxClient>);
