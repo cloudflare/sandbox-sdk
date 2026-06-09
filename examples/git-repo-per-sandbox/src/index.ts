@@ -51,7 +51,7 @@ interface SandboxRepoState {
   defaultBranch: string;
   remote: string;
   repoExisted: boolean;
-  sandbox: Sandbox;
+  sandbox: ReturnType<typeof getSandbox>;
   tokenSecret: string;
 }
 
@@ -221,11 +221,27 @@ async function ensureSandboxRepo(env: Env, sandboxID: string) {
     const createdToken = await existingRepo.createToken('write', 3600);
     token = createdToken.plaintext;
   } else {
-    const created = await env.ARTIFACTS.create(sandboxID);
+    try {
+      const created = await env.ARTIFACTS.create(sandboxID);
 
-    defaultBranch = created.defaultBranch;
-    remote = created.remote;
-    token = created.token;
+      defaultBranch = created.defaultBranch;
+      remote = created.remote;
+      token = created.token;
+    } catch {
+      // A concurrent request may have created the repo first; retry lookup.
+      const repo = await getRepoOrNull(env, sandboxID);
+      if (!repo) {
+        throw new Error(
+          `Failed to create or find repo for sandbox ${sandboxID}`
+        );
+      }
+
+      repoExisted = true;
+      defaultBranch = repo.defaultBranch;
+      remote = repo.remote;
+      const createdToken = await repo.createToken('write', 3600);
+      token = createdToken.plaintext;
+    }
   }
 
   const tokenSecret = getTokenSecret(token);
