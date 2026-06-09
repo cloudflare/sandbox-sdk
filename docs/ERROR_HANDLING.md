@@ -16,32 +16,19 @@ The SDK uses proper HTTP status codes for container startup errors:
 - **Backoff**: 3s → 6s → 12s → 24s → 30s (capped at 30s).
 - **Only retries**: 503 Service Unavailable.
 
-### Retry surfaces
+### Retry surface
 
-Three independent code paths run the same retry algorithm. They all read the budget
-from the same source (`Sandbox.computeRetryTimeoutMs()`), so a single `setRetryTimeoutMs`
-call on the active client updates all of them.
+The SDK control channel has one startup retry surface:
 
-| Path                                     | Where                                                | What it retries                                    |
-| ---------------------------------------- | ---------------------------------------------------- | -------------------------------------------------- |
-| HTTP / route-based requests              | `BaseTransport.fetch()`                              | 503 from `containerFetch()` (port not ready, etc.) |
-| Route-based WebSocket upgrade            | `WebSocketTransport.fetchUpgradeWithRetry()`         | 503 on the WS upgrade fetch during cold start      |
-| RPC control-connection upgrade (capnweb) | `ContainerControlConnection.fetchUpgradeWithRetry()` | 503 on the WS upgrade fetch during cold start      |
+| Path                           | Where                                                | What it retries                               |
+| ------------------------------ | ---------------------------------------------------- | --------------------------------------------- |
+| `/rpc` control-channel upgrade | `ContainerControlConnection.fetchUpgradeWithRetry()` | 503 on the WS upgrade fetch during cold start |
 
-The two upgrade-retry paths exist because `containerFetch()` cannot be used for the
-WebSocket upgrade itself — calling it from the same DO during `onStart()` would re-enter
-`blockConcurrencyWhile` and deadlock. Instead, both paths call `stub.fetch()` directly and
-use 503 retries as the readiness signal:
+The retry budget comes from `Sandbox.computeRetryTimeoutMs()` and is pushed into the active `ContainerControlClient` when container timeouts change.
 
-- **Container booting** — `containerFetch()` (which `stub.fetch()` ultimately routes
-  through for non-WS calls) handles this via `startAndWaitForPorts()` polling. The WS
-  upgrade path inherits the same wait because `Sandbox.fetch()` delegates to
-  `super.fetch()` for upgrade requests.
-- **No instance available** — only happens in production. `workerd` returns
-  `NoInstanceError` when the DO has no allocated container yet (cold start, eviction,
-  capacity pressure). `containerFetch()` translates this to 503; the SDK retries
-  until an instance is allocated. `wrangler dev` does not reproduce this case — see
-  `tests/container-connection.test.ts` for unit coverage.
+`containerFetch()` cannot be used for the WebSocket upgrade itself. The control connection calls `stub.fetch()` directly and uses 503 responses as the readiness signal. `Sandbox.fetch()` delegates WebSocket upgrade requests to `super.fetch()`, while non-upgrade container startup and port readiness still flow through `containerFetch()` and `startAndWaitForPorts()`.
+
+Production-only instance allocation failures surface as 503 while workerd allocates a container VM. The `/rpc` upgrade retry loop continues until the retry budget is exhausted.
 
 ## Container Boot Lifecycle
 
@@ -123,7 +110,7 @@ its own `blockConcurrencyWhile`. The SDK avoids this by talking to the container
 
 **What happens:** `tcpPort.fetch(containerUrl, request)` forwards the original request
 to the container. For WebSocket upgrades, the response carries a `webSocket` property
-that gets `accept()`ed and handed to capnweb / the route-based WS transport.
+that gets `accept()`ed and handed to capnweb.
 
 | Failure                       | Surfaced as | SDK behavior                                                                                       |
 | ----------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
@@ -133,13 +120,13 @@ that gets `accept()`ed and handed to capnweb / the route-based WS transport.
 
 ### Where the retries live, by phase
 
-| Phase              | Retried by                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| 1 Instance alloc   | All three retry surfaces (HTTP, route-based WS upgrade, RPC upgrade)                          |
-| 2 Container start  | None — 500 is permanent                                                                       |
-| 3 Port readiness   | HTTP via `BaseTransport.fetch()`; WS upgrades via `fetchUpgradeWithRetry()`                   |
-| 4 onStart          | None — the exception bubbles                                                                  |
-| 5 Request proxying | HTTP only (per-request retry); WS sessions reconnect on the next call after a transport error |
+| Phase              | Retried by                                                     |
+| ------------------ | -------------------------------------------------------------- |
+| 1 Instance alloc   | `/rpc` upgrade retry loop when opening the control channel     |
+| 2 Container start  | None — 500 is permanent                                        |
+| 3 Port readiness   | `/rpc` upgrade retry loop when opening the control channel     |
+| 4 onStart          | None — the exception bubbles                                   |
+| 5 Request proxying | WS sessions reconnect on the next call after a transport error |
 
 ## Capacity Limit Errors (Production Only)
 

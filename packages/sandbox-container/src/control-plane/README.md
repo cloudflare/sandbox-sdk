@@ -8,7 +8,7 @@ route, but the architectural boundary is the container control plane, not the
 transport mechanism.
 
 Container control operations are implemented here and call the underlying
-services directly. Route handlers under `handlers/` and `routes/` are kept for
-route-based HTTP/WebSocket compatibility.
+services directly. The legacy route-based HTTP/WebSocket control API has been
+removed; do not route SDK control operations through handlers or routes.
 
 The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the current control API contract used by both sides.

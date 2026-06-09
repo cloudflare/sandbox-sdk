@@ -127,8 +127,6 @@ tunnel.
 
 Notes:
 
-- Requires the RPC transport. The route-based transport's `tunnels`
-  stub throws "RPC transport required".
 - URLs do **not** survive a container restart. Cloudflare assigns the
   hostname during cloudflared's startup handshake, so every restart
   yields a new URL. The SDK clears its cache on container start, so

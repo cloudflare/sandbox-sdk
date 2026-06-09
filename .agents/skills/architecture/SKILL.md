@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Use when navigating the codebase for the first time, adding a new client method, adding a new container handler/service, or understanding how a request flows from Worker through the Sandbox DO into the container. Covers the three-layer architecture, client pattern, container runtime structure, and monorepo layout. (project)
+description: Use when navigating the codebase for the first time, adding a new client method, adding a new container service/control-plane method, or understanding how a request flows from Worker through the Sandbox DO into the container. Covers the three-layer architecture, control channel, container runtime structure, and monorepo layout. (project)
 ---
 
 # Architecture
@@ -9,103 +9,87 @@ description: Use when navigating the codebase for the first time, adding a new c
 
 1. **`@cloudflare/sandbox` (`packages/sandbox/`)** — Public SDK published to npm
    - `Sandbox` class: Durable Object that manages the container lifecycle
-   - Modular HTTP clients per capability (`CommandClient`, `FileClient`, `ProcessClient`, …)
+   - `ContainerControlClient`: the single DO-to-container SDK control client
+   - `ContainerControlConnection`: capnweb over the `/rpc` WebSocket
    - `CodeInterpreter`: high-level API for Python/JS with structured outputs
    - `proxyToSandbox()`: request handler for preview URL routing
 
 2. **`@repo/shared` (`packages/shared/`)** — Internal shared utilities
+   - `rpc-types.ts`: shared `SandboxAPI` control contract
    - Type definitions used by both SDK and container runtime
    - Centralized error classes (`packages/shared/src/errors/`) and logging
    - **Not published to npm**
 
 3. **`@repo/sandbox-container` (`packages/sandbox-container/`)** — Container runtime
-   - Bun-based HTTP server running inside the Docker container
+   - Bun-based server running inside the Docker container
    - Dependency-injection container in `core/container.ts`
-   - Route handlers for command execution, file operations, process management
+   - Control plane in `control-plane/` exposed over `/rpc`
+   - Services for command execution, file operations, process management, etc.
    - **Not published to npm** (bundled into the Docker image)
 
 ## Request Flow
 
-Primary control path:
+Primary and only SDK control path:
 
-```
+```text
 Worker
   → Sandbox DO (packages/sandbox)
     → ContainerControlClient (packages/sandbox/src/container-control/)
       → capnweb over /rpc WebSocket
         → SandboxControlAPI (packages/sandbox-container/src/control-plane/)
           → container services
-            → Shell commands / filesystem
+            → sessions / shell commands / filesystem
 ```
 
-Route-based compatibility path:
+Errors flow back the same path: container service → control plane → capnweb → Sandbox DO → Worker, using custom error classes keyed by the `ErrorCode` enum.
 
-```
-Worker
-  → Sandbox DO (packages/sandbox)
-    → SandboxClient / clients/transport
-      → Container HTTP API on port 3000 (packages/sandbox-container)
-        → Router / handlers
-          → container services
-            → Shell commands / filesystem
-```
+## Control Path
 
-Errors flow back the same path: container → Sandbox DO → Worker, using the custom error classes in `packages/shared/src/errors/` keyed by the `ErrorCode` enum.
-
-## Primary Control Path
-
-The primary Sandbox Durable Object to container control path is the container-control/control-plane path:
+The Sandbox Durable Object to container control path is:
 
 - SDK side: `packages/sandbox/src/container-control/`
+- Shared contract: `packages/shared/src/rpc-types.ts`
 - Container side: `packages/sandbox-container/src/control-plane/`
 - Current wire implementation: capnweb RPC over the `/rpc` WebSocket route
 
-Control-channel/transport-layer capabilities belong in this path. Treat capnweb/RPC as the current implementation detail, not the architectural boundary.
+Control-channel capabilities belong in this path. Treat capnweb/RPC as the current wire implementation detail, not the architectural boundary. The boundary is the typed control channel between the Sandbox DO and the container control API.
 
-The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the current control API contract used by both sides.
+The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the control API contract used by both sides.
 
-## Route-Based Compatibility Path (`packages/sandbox/src/clients/`)
+## Removed Route-Based SDK Control API
 
-`packages/sandbox/src/clients/` and `packages/sandbox/src/clients/transport/` implement the HTTP and custom WebSocket route-based compatibility API. Maintain these for compatibility, debugging, local development, fallback behavior, and bug fixes, but do not add new control-plane capabilities there by default.
+The old route-based SDK clients, HTTP transport, custom WebSocket transport, `/ws` adapter, and `/api/*` container control handlers were removed. Do not add them back.
 
-The route-based client pattern is:
+Do not create new SDK control capabilities under `packages/sandbox/src/clients/`, `packages/sandbox/src/clients/transport/`, `packages/sandbox-container/src/handlers/`, or `packages/sandbox-container/src/routes/`. Those directories no longer own the SDK control plane.
 
-- **`BaseHttpClient`** — abstract route-based HTTP/WebSocket client with shared request/response handling
-- **`SandboxClient`** — compatibility aggregator that exposes all specialized route-based clients
-- **Specialized clients** — one per domain:
-  - `CommandClient` — exec / execStream
-  - `FileClient` — read, write, list, delete
-  - `ProcessClient` — start, stop, list, signal
-  - `PortClient` — port readiness streams
-  - `GitClient` — clone, checkout, status
-  - `UtilityClient` — ping, metadata
-  - `InterpreterClient` — code interpreter sessions
+Specialized non-control channels remain separate:
 
-When maintaining route-based compatibility, add or extend specialized clients under `packages/sandbox/src/clients/`. DO-to-container control capabilities belong in `packages/sandbox/src/container-control/` and `packages/sandbox-container/src/control-plane/`.
+- `/rpc` — SDK control channel
+- `/ws/pty` — PTY terminal channel
+- preview/proxy forwarding — user service traffic, not SDK control traffic
 
 ## Container Runtime (`packages/sandbox-container/src/`)
 
 - **DI container** (`core/container.ts`) — manages service lifecycle and wiring
-- **Router** — simple HTTP router with middleware
-- **Control plane** (`control-plane/`) — primary container-side API called by the Sandbox DO
-- **Handlers** (`handlers/`) — route-based compatibility handlers, thin layer that parses requests
-- **Services** (`services/`) — business logic (`CommandService`, `FileService`, `ProcessService`, …)
+- **Control plane** (`control-plane/`) — container-side API called by the Sandbox DO
+- **Services** (`services/`) — business logic (`ProcessService`, `FileService`, `PortService`, …)
 - **Managers** (`managers/`) — stateful coordinators such as `ProcessManager`
+- **Session** (`session.ts`) — persistent shell execution implementation
+- **PTY handler** (`handlers/pty-ws-handler.ts`) — terminal WebSocket handling
 
-Entry point: `packages/sandbox-container/src/index.ts` starts a Bun HTTP server on port 3000.
+Entry point: `packages/sandbox-container/src/index.ts` starts the Bun server on port 3000.
 
 When adding a new container control operation:
 
 1. Add/extend a service in `services/` for the business logic.
-2. Add the control-plane method in `packages/sandbox-container/src/control-plane/`.
-3. Mirror the call in `packages/sandbox/src/container-control/`.
-4. Add unit tests on both sides; add an E2E test if it touches real shell/filesystem behavior.
-
-Only add a route handler in `handlers/` and a route-based SDK client in `packages/sandbox/src/clients/` when maintaining HTTP/WebSocket compatibility.
+2. Add/extend shared types in `packages/shared/src/rpc-types.ts` if the API contract changes.
+3. Add the control-plane method in `packages/sandbox-container/src/control-plane/`.
+4. Mirror the call in `packages/sandbox/src/container-control/` if a new top-level domain or client behavior is needed.
+5. Add unit tests on both sides; add an E2E test if it touches real shell/filesystem behavior.
 
 ## Monorepo Structure
 
-Uses npm workspaces + [Turbo](https://turbo.build/):
+Uses npm workspaces + Turbo:
 
 - `packages/sandbox` — main SDK package (published)
 - `packages/shared` — shared types and utilities (internal)
@@ -127,7 +111,7 @@ The container runtime uses Ubuntu 22.04 with:
 
 - Python 3.11 (matplotlib, numpy, pandas, ipython)
 - Node.js 20 LTS
-- Bun 1.x (powers the container HTTP server)
+- Bun 1.x (powers the container server)
 - Git, curl, wget, jq, and other common utilities
 
 When modifying `packages/sandbox/Dockerfile`:

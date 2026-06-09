@@ -182,6 +182,76 @@ function createPreviewWebSocketRequest(): Request {
   );
 }
 
+function createMockControlClient(): Sandbox['client'] {
+  return {
+    commands: {
+      execute: vi.fn(),
+      executeStream: vi.fn()
+    },
+    files: {
+      readFile: vi.fn(),
+      readFileStream: vi.fn(),
+      writeFile: vi.fn(),
+      writeFileStream: vi.fn(),
+      deleteFile: vi.fn(),
+      renameFile: vi.fn(),
+      moveFile: vi.fn(),
+      mkdir: vi.fn(),
+      listFiles: vi.fn(),
+      exists: vi.fn()
+    },
+    processes: {
+      startProcess: vi.fn(),
+      listProcesses: vi.fn(),
+      getProcess: vi.fn(),
+      killProcess: vi.fn(),
+      killAllProcesses: vi.fn(),
+      getProcessLogs: vi.fn(),
+      streamProcessLogs: vi.fn()
+    },
+    ports: {
+      watchPort: vi.fn()
+    },
+    git: {
+      checkout: vi.fn()
+    },
+    utils: {
+      ping: vi.fn(),
+      getVersion: vi.fn(),
+      getCommands: vi.fn(),
+      createSession: vi.fn(),
+      deleteSession: vi.fn(),
+      listSessions: vi.fn()
+    },
+    backup: {
+      createArchive: vi.fn(),
+      restoreArchive: vi.fn(),
+      uploadParts: vi.fn()
+    },
+    watch: {
+      watch: vi.fn(),
+      checkChanges: vi.fn()
+    },
+    tunnels: {
+      runQuickTunnel: vi.fn(),
+      runNamedTunnel: vi.fn(),
+      destroyTunnel: vi.fn(),
+      listTunnels: vi.fn()
+    },
+    interpreter: {
+      createCodeContext: vi.fn(),
+      streamCode: vi.fn(),
+      runCodeStream: vi.fn(),
+      listCodeContexts: vi.fn(),
+      deleteCodeContext: vi.fn()
+    },
+    setRetryTimeoutMs: vi.fn(),
+    isWebSocketConnected: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  } as unknown as Sandbox['client'];
+}
+
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
   let mockCtx: MockCtx;
@@ -243,6 +313,7 @@ describe('Sandbox - Automatic Session Management', () => {
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
     });
+    sandbox.client = createMockControlClient();
 
     // Now spy on the client methods that we need for testing
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
@@ -347,6 +418,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const freshSandbox = Object.assign(freshStub, {
         wsConnect: connect(freshStub)
       });
+      freshSandbox.client = createMockControlClient();
 
       vi.spyOn(freshSandbox.client.utils, 'createSession').mockResolvedValue({
         success: true,
@@ -2693,6 +2765,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
       const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
+      setRetrySpy.mockClear();
       await sandbox.setContainerTimeouts(current);
       expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
       expect(setRetrySpy).not.toHaveBeenCalled();
@@ -2768,6 +2841,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await vi.waitFor(() => {
         expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
       });
+      backupSandbox.client = createMockControlClient();
 
       return { backupSandbox, bucket };
     }
@@ -3325,11 +3399,11 @@ describe('Sandbox - Automatic Session Management', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sandbox.getProcess() — behaviour across HTTP and RPC transports
+// Sandbox.getProcess()
 // ---------------------------------------------------------------------------
 
 describe('Sandbox.getProcess()', () => {
-  async function makeSandbox(transport: 'http' | 'rpc') {
+  async function makeSandbox() {
     const ctx = {
       storage: {
         get: vi.fn().mockResolvedValue(null),
@@ -3343,39 +3417,21 @@ describe('Sandbox.getProcess()', () => {
       waitUntil: vi.fn(),
       id: { toString: () => 'test-id', equals: vi.fn(), name: 'test' } as any
     };
-    const env = transport === 'rpc' ? { SANDBOX_TRANSPORT: 'rpc' } : {};
-    const sb = new Sandbox(ctx as any, env);
+    const sb = new Sandbox(ctx as any, {});
     await vi.waitFor(() =>
       expect(ctx.blockConcurrencyWhile).toHaveBeenCalled()
     );
-    // For RPC transport, sb.client is a ContainerControlClient whose sub-stubs
-    // are capnweb Proxies that reject vi.spyOn. Replace the whole client with a
-    // plain mock object after construction — the individual tests fill in the
-    // methods they need.
-    if (transport === 'rpc') {
-      (sb as any).client = {
-        getTransportMode: () => 'rpc',
-        utils: {
-          createSession: vi.fn().mockResolvedValue({
-            success: true,
-            id: 'default',
-            message: 'ok'
-          } as any)
-        },
-        processes: {}
-      };
-    } else {
-      vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
-        success: true,
-        id: 'default',
-        message: 'ok'
-      } as any);
-    }
+    sb.client = createMockControlClient();
+    vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
+      success: true,
+      id: 'default',
+      message: 'ok'
+    } as any);
     return sb;
   }
 
-  it('HTTP: response with no process field returns null', async () => {
-    const sb = await makeSandbox('http');
+  it('response with no process field returns null', async () => {
+    const sb = await makeSandbox();
     vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
       success: true,
       process: undefined,
@@ -3384,9 +3440,9 @@ describe('Sandbox.getProcess()', () => {
     expect(await sb.getProcess('x')).toBeNull();
   });
 
-  it('RPC: thrown ProcessNotFoundError returns null', async () => {
-    const sb = await makeSandbox('rpc');
-    (sb.client.processes as any).getProcess = vi.fn().mockRejectedValue(
+  it('thrown ProcessNotFoundError returns null', async () => {
+    const sb = await makeSandbox();
+    vi.spyOn(sb.client.processes, 'getProcess').mockRejectedValue(
       new ProcessNotFoundError({
         code: 'PROCESS_NOT_FOUND',
         message: 'Process x not found',

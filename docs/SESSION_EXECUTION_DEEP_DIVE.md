@@ -678,16 +678,16 @@ Here's what happens when you call `sandbox.exec('echo hello')`:
 │                    Sandbox Durable Object                            │
 │   packages/sandbox/src/sandbox.ts                                    │
 │                                                                      │
-│   Manages container lifecycle, holds session state, routes to HTTP   │
+│   Manages container lifecycle and calls the control client           │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
-                                │ HTTP POST /api/execute
+                                │ capnweb RPC over /rpc
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Container HTTP Server (Bun)                       │
-│   packages/sandbox-container/src/handlers/execute-handler.ts         │
+│                    Container Control Plane                           │
+│   packages/sandbox-container/src/control-plane/api.ts                │
 │                                                                      │
-│   Receives HTTP request, parses body, calls ProcessService           │
+│   Receives typed RPC call and calls ProcessService                   │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                                 ▼

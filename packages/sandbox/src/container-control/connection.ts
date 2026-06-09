@@ -2,8 +2,8 @@
  * Capnweb RPC connection to the container.
  *
  * Manages a single WebSocket session and exposes typed methods that map
- * 1:1 to the container's SandboxAPI. The Sandbox DO calls these directly,
- * bypassing the route-based HTTP client layer.
+ * 1:1 to the container's SandboxAPI. The Sandbox DO calls these directly
+ * over the control channel.
  */
 
 import type {
@@ -42,8 +42,8 @@ export interface ContainerControlConnectionOptions {
   logger?: Logger;
   /**
    * Total retry budget (ms) for 503 upgrade responses while the container
-   * is starting. Defaults to 120 000 (2 minutes), matching the route-based
-   * control WebSocket upgrade path. Set to 0 to disable retries.
+   * is starting. Defaults to 120 000 (2 minutes). Set to 0 to disable
+   * retries.
    */
   retryTimeoutMs?: number;
   /**

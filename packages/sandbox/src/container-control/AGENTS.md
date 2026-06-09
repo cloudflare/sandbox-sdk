@@ -8,6 +8,5 @@ Use role-based names such as `ContainerControlClient`,
 implementation detail unless the code directly interacts with capnweb types.
 
 Transport-layer/control-channel capabilities land here and in
-`packages/sandbox-container/src/control-plane/`. Do not add capabilities to the
-route-based HTTP/WebSocket compatibility transports unless the task is explicitly
-compatibility maintenance.
+`packages/sandbox-container/src/control-plane/`. The legacy route-based
+HTTP/WebSocket SDK transports were removed; do not reintroduce them.

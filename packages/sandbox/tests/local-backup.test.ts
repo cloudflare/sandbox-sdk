@@ -50,6 +50,76 @@ vi.mock('@cloudflare/containers', () => {
   };
 });
 
+function createMockControlClient(): Sandbox['client'] {
+  return {
+    commands: {
+      execute: vi.fn(),
+      executeStream: vi.fn()
+    },
+    files: {
+      readFile: vi.fn(),
+      readFileStream: vi.fn(),
+      writeFile: vi.fn(),
+      writeFileStream: vi.fn(),
+      deleteFile: vi.fn(),
+      renameFile: vi.fn(),
+      moveFile: vi.fn(),
+      mkdir: vi.fn(),
+      listFiles: vi.fn(),
+      exists: vi.fn()
+    },
+    processes: {
+      startProcess: vi.fn(),
+      listProcesses: vi.fn(),
+      getProcess: vi.fn(),
+      killProcess: vi.fn(),
+      killAllProcesses: vi.fn(),
+      getProcessLogs: vi.fn(),
+      streamProcessLogs: vi.fn()
+    },
+    ports: {
+      watchPort: vi.fn()
+    },
+    git: {
+      checkout: vi.fn()
+    },
+    utils: {
+      ping: vi.fn(),
+      getVersion: vi.fn(),
+      getCommands: vi.fn(),
+      createSession: vi.fn(),
+      deleteSession: vi.fn(),
+      listSessions: vi.fn()
+    },
+    backup: {
+      createArchive: vi.fn(),
+      restoreArchive: vi.fn(),
+      uploadParts: vi.fn()
+    },
+    watch: {
+      watch: vi.fn(),
+      checkChanges: vi.fn()
+    },
+    tunnels: {
+      runQuickTunnel: vi.fn(),
+      runNamedTunnel: vi.fn(),
+      destroyTunnel: vi.fn(),
+      listTunnels: vi.fn()
+    },
+    interpreter: {
+      createCodeContext: vi.fn(),
+      streamCode: vi.fn(),
+      runCodeStream: vi.fn(),
+      listCodeContexts: vi.fn(),
+      deleteCodeContext: vi.fn()
+    },
+    setRetryTimeoutMs: vi.fn(),
+    isWebSocketConnected: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  } as unknown as Sandbox['client'];
+}
+
 // Mock R2 bucket binding
 function createMockR2Bucket() {
   const store = new Map<string, { data: ArrayBuffer; size: number }>();
@@ -94,7 +164,13 @@ function createMockR2Bucket() {
         arrayBuffer: async () => entry.data,
         json: async <T>() =>
           JSON.parse(new TextDecoder().decode(entry.data)) as T,
-        text: async () => new TextDecoder().decode(entry.data)
+        text: async () => new TextDecoder().decode(entry.data),
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(entry.data));
+            controller.close();
+          }
+        })
       };
     }),
     head: vi.fn(async (key: string) => {
@@ -173,6 +249,7 @@ describe('Local Backup & Restore', () => {
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
     });
+    sandbox.client = createMockControlClient();
 
     // Mock session creation
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
@@ -430,10 +507,11 @@ describe('Local Backup & Restore', () => {
         archiveData
       );
 
-      // Mock writeFile for writing archive to container
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+      // Mock writeFileStream for writing archive to container
+      vi.spyOn(sandbox.client.files, 'writeFileStream').mockResolvedValue({
         success: true,
         path: '/var/backups/test.sqsh',
+        bytesWritten: archiveData.length,
         timestamp: new Date().toISOString()
       } as any);
 
@@ -452,12 +530,11 @@ describe('Local Backup & Restore', () => {
         'backups/12345678-1234-1234-1234-123456789012/data.sqsh'
       );
 
-      // Verify archive was written to container
-      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
+      // Verify archive was streamed to container
+      expect(sandbox.client.files.writeFileStream).toHaveBeenCalledWith(
         expect.stringContaining('/var/backups/'),
-        expect.any(String), // base64 content
-        expect.any(String), // session ID
-        { encoding: 'base64' }
+        expect.any(ReadableStream),
+        expect.any(String) // session ID
       );
 
       // Verify unsquashfs was called
@@ -648,12 +725,9 @@ describe('Local Backup & Restore', () => {
         archiveData
       );
 
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
-        success: false,
-        error: {
-          message: "Failed to write file '/var/backups/test.sqsh': disk full"
-        }
-      } as any);
+      vi.spyOn(sandbox.client.files, 'writeFileStream').mockRejectedValue(
+        new Error("Failed to write file '/var/backups/test.sqsh': disk full")
+      );
 
       await expect(
         sandbox.restoreBackup({
@@ -661,7 +735,7 @@ describe('Local Backup & Restore', () => {
           dir: '/workspace/myapp',
           localBucket: true
         })
-      ).rejects.toThrow('Failed to write backup archive');
+      ).rejects.toThrow('disk full');
 
       const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
       const unsquashfsCall = execCalls.find(
