@@ -855,22 +855,6 @@ describe('TunnelsHandler public surface', () => {
   });
 });
 
-describe('route-based SandboxClient.tunnels placeholder', () => {
-  it('throws "RPC transport required" from any method on the proxy', async () => {
-    const { SandboxClient } = await import('../src/clients/sandbox-client');
-    const client = new SandboxClient({ baseUrl: 'http://test.invalid' });
-    expect(() =>
-      (client.tunnels as unknown as { get: () => void }).get()
-    ).toThrow(/RPC transport/);
-    expect(() =>
-      (client.tunnels as unknown as { list: () => void }).list()
-    ).toThrow(/RPC transport/);
-    expect(() =>
-      (client.tunnels as unknown as { destroy: () => void }).destroy()
-    ).toThrow(/RPC transport/);
-  });
-});
-
 describe('pruneTunnelsForRestart', () => {
   it('drops quick-tunnel entries and marks named ones for respawn', async () => {
     const storage = makeStorage();

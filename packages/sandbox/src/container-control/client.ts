@@ -1,5 +1,5 @@
 /**
- * SandboxClient implementation backed by direct capnweb RPC calls.
+ * Sandbox control client implementation backed by direct capnweb RPC calls.
  *
  * The server exposes each domain (commands, files, processes, etc.) as a
  * nested RpcTarget. capnweb returns typed stubs for these so the client
@@ -232,7 +232,7 @@ export function translateRPCError(error: unknown): never {
 /**
  * Inspect a transport-level Error's message and produce the ErrorResponse
  * that becomes an RPCTransportError. Pattern strings are pinned to the exact
- * messages emitted by capnweb's WebSocketTransport (see capnweb's
+ * messages emitted by capnweb's WebSocket transport (see capnweb's
  * src/websocket.ts) and our DeferredTransport in container-control/connection.ts —
  * notably the trailing period in `WebSocket connection failed.` matches
  * capnweb verbatim. The DeferredTransport tests in
@@ -254,7 +254,7 @@ function buildTransportErrorResponse(
   // `instanceof` trap: a TypeError raised inside capnweb's serializer lives
   // in capnweb's realm, not the SDK's.
   if (errorName === 'TypeError') {
-    // Only DeferredTransport / capnweb's WebSocketTransport raise a
+    // Only DeferredTransport / capnweb's WebSocket transport raises a
     // TypeError on the receive path — always a non-string frame.
     kind = 'invalid_frame';
   } else if (errorName === 'SyntaxError') {
@@ -389,7 +389,7 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
 }
 
 /**
- * SandboxClient-compatible facade backed by direct capnweb RPC.
+ * Sandbox control facade backed by direct capnweb RPC.
  *
  * All operations call the container's SandboxAPI control interface directly
  * over capnweb, bypassing the HTTP handler/router layer entirely.

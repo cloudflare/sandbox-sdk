@@ -43,7 +43,7 @@ export interface ContainerControlConnectionOptions {
   /**
    * Total retry budget (ms) for 503 upgrade responses while the container
    * is starting. Defaults to 120 000 (2 minutes), matching the route-based
-   * `WebSocketTransport`. Set to 0 to disable retries.
+   * control WebSocket upgrade path. Set to 0 to disable retries.
    */
   retryTimeoutMs?: number;
   /**
@@ -172,7 +172,7 @@ export class ContainerControlConnection {
   /**
    * Update the 503 retry budget without recreating the connection. Takes
    * effect on the next `connect()`; an in-flight connect uses the value
-   * captured at start. Mirrors `WebSocketTransport.setRetryTimeoutMs`.
+   * captured at start.
    */
   setRetryTimeoutMs(ms: number): void {
     this.retryTimeoutMs = ms;
@@ -268,8 +268,7 @@ export class ContainerControlConnection {
    * Issue WebSocket upgrade fetches, retrying transient 503 responses with
    * exponential backoff (3s → 6s → 12s → … capped at 30s) until either
    * the upgrade succeeds, a non-503 status is returned, or the retry budget
-   * runs out. Mirrors `WebSocketTransport.fetchUpgradeWithRetry` so both
-   * transports behave the same way during container startup.
+   * runs out.
    */
   private async fetchUpgradeWithRetry(): Promise<Response> {
     const retryTimeoutMs = this.retryTimeoutMs;
@@ -369,8 +368,8 @@ export class DeferredTransport implements RpcTransport {
           this.#receiveQueue.push(event.data);
         }
       } else {
-        // Mirrors capnweb's WebSocketTransport. capnweb's wire format is
-        // strictly text (JSON), so a binary frame indicates a misbehaving
+        // Capnweb's wire format is strictly text (JSON), so a binary
+        // frame indicates a misbehaving
         // peer. Failing the transport here surfaces the problem to in-flight
         // RPC calls; without it `receive()` would hang forever waiting for
         // a string that is never going to arrive.

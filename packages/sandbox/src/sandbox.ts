@@ -4455,7 +4455,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       env: options?.env,
       cwd: options?.cwd
     });
-    // Get the stream from CommandClient
+    // Get the stream from the control client
     return this.client.commands.executeStream(
       command,
       session,

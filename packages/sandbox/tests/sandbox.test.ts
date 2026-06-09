@@ -223,7 +223,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
     mockEnv = {};
 
-    // Create Sandbox instance - SandboxClient is created internally
+    // Create Sandbox instance - control client is created internally
     const stub = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       mockEnv
