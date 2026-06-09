@@ -43,10 +43,6 @@ interface Env {
   ARTIFACTS: Artifacts;
 }
 
-interface CommitRequest {
-  filename?: string;
-}
-
 interface SandboxRepoState {
   defaultBranch: string;
   remote: string;
@@ -59,7 +55,7 @@ const app = new Hono<{ Bindings: Env }>();
 const SANDBOX_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const REDACTED_SECRET = '***';
 
-app.post('/sandboxes/:id/setup', async (c) => {
+app.post('/sandboxes/:id/commit/:filename', async (c) => {
   const sandboxID = getSandboxID(c.req.param('id'));
   if (!sandboxID) {
     return c.json(
@@ -70,75 +66,18 @@ app.post('/sandboxes/:id/setup', async (c) => {
       400
     );
   }
+
+  const filename = getFilename(c.req.param('filename'));
+  const content =
+    (await c.req.text()) || `created at ${new Date().toISOString()}\n`;
 
   const state = await ensureSandboxRepo(c.env, sandboxID);
 
-  return c.json({
-    sandboxId: sandboxID,
-    repo: sandboxID,
-    repoExisted: state.repoExisted,
-    remote: state.remote,
-    defaultBranch: state.defaultBranch,
-    message: 'Sandbox is ready to use ARTIFACTS_GIT_REMOTE.'
-  });
-});
-
-app.get('/sandboxes/:id/repo', async (c) => {
-  const sandboxID = getSandboxID(c.req.param('id'));
-  if (!sandboxID) {
-    return c.json(
-      {
-        error:
-          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
-      },
-      400
-    );
-  }
-
-  const repo = await getRepoOrNull(c.env, sandboxID);
-
-  if (!repo) {
-    return c.json({ error: 'Repo not found for this sandbox ID.' }, 404);
-  }
-
-  return c.json({
-    sandboxId: sandboxID,
-    repo: repo.name,
-    remote: repo.remote,
-    defaultBranch: repo.defaultBranch,
-    lastPushAt: repo.lastPushAt
-  });
-});
-
-app.post('/sandboxes/:id/commit', async (c) => {
-  const sandboxID = getSandboxID(c.req.param('id'));
-  if (!sandboxID) {
-    return c.json(
-      {
-        error:
-          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
-      },
-      400
-    );
-  }
-
-  let body: CommitRequest = {};
-
-  try {
-    body = await c.req.json<CommitRequest>();
-  } catch {
-    body = {};
-  }
-
-  const filename = getFilename(body.filename);
-
-  const state = await ensureSandboxRepo(c.env, sandboxID);
-
-  // Clone the repo into the sandbox if needed, then add one file and push it back.
   const result = await state.sandbox.exec(COMMIT_SCRIPT, {
     env: {
       DEFAULT_BRANCH: state.defaultBranch,
       FILE_NAME: filename,
+      FILE_CONTENT: content,
       REPO_DIR: `/workspace/repos/${sandboxID}`
     },
     timeout: 30_000
@@ -175,17 +114,42 @@ app.post('/sandboxes/:id/commit', async (c) => {
   });
 });
 
+app.get('/sandboxes/:id/repo', async (c) => {
+  const sandboxID = getSandboxID(c.req.param('id'));
+  if (!sandboxID) {
+    return c.json(
+      {
+        error:
+          'Sandbox ID must contain only letters, numbers, dots, underscores, and dashes.'
+      },
+      400
+    );
+  }
+
+  const repo = await getRepoOrNull(c.env, sandboxID);
+
+  if (!repo) {
+    return c.json({ error: 'Repo not found for this sandbox ID.' }, 404);
+  }
+
+  return c.json({
+    sandboxId: sandboxID,
+    repo: repo.name,
+    remote: repo.remote,
+    defaultBranch: repo.defaultBranch,
+    lastPushAt: repo.lastPushAt
+  });
+});
+
 export default app;
 
 function toAuthenticatedRemote(remote: string, token: string) {
   return `https://x:${token}@${remote.slice('https://'.length)}`;
 }
 
-function getFilename(filename?: string) {
-  const cleaned = filename?.trim().replace(/[^a-zA-Z0-9._-]/g, '-');
-  return cleaned && cleaned.length > 0
-    ? cleaned
-    : `note-${Date.now().toString()}.txt`;
+function getFilename(filename: string) {
+  const cleaned = filename.trim().replace(/[^a-zA-Z0-9._-]/g, '-');
+  return cleaned.length > 0 ? cleaned : `note-${Date.now().toString()}.txt`;
 }
 
 function getSandboxID(sandboxID: string) {
@@ -205,7 +169,10 @@ function getTokenSecret(token: string) {
   return token.split('?expires=')[0];
 }
 
-async function ensureSandboxRepo(env: Env, sandboxID: string) {
+async function ensureSandboxRepo(
+  env: Env,
+  sandboxID: string
+): Promise<SandboxRepoState> {
   const sandbox = getSandbox(env.Sandbox, sandboxID);
   const existingRepo = await getRepoOrNull(env, sandboxID);
 
@@ -246,18 +213,11 @@ async function ensureSandboxRepo(env: Env, sandboxID: string) {
 
   const tokenSecret = getTokenSecret(token);
 
-  // The sandbox gets a normal authenticated Git remote it can reuse across commands.
   await sandbox.setEnvVars({
     ARTIFACTS_GIT_REMOTE: toAuthenticatedRemote(remote, tokenSecret)
   });
 
-  return {
-    sandbox,
-    defaultBranch,
-    remote,
-    repoExisted,
-    tokenSecret
-  } satisfies SandboxRepoState;
+  return { sandbox, defaultBranch, remote, repoExisted, tokenSecret };
 }
 
 async function getRepoOrNull(env: Env, sandboxID: string) {
@@ -288,8 +248,7 @@ const COMMIT_SCRIPT = [
   'fi',
   'cd "$REPO_DIR"',
   'git checkout -B "$DEFAULT_BRANCH"',
-  'touch -- "$FILE_NAME"',
-  'printf "created by %s at %s\n" "$FILE_NAME" "$(date -u +%FT%TZ)" >> "$FILE_NAME"',
+  'printf "%s" "$FILE_CONTENT" > "$FILE_NAME"',
   'git config user.name "Sandbox SDK example"',
   'git config user.email "sandbox-sdk@example.com"',
   'git add -- "$FILE_NAME"',

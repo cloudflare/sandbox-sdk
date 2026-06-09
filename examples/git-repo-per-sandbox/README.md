@@ -2,26 +2,23 @@
 
 Create one Artifacts repo per sandbox and let the sandbox push to that repo with a normal Git remote.
 
-This example uses the same ID for the sandbox and the Artifacts repo. It creates both resources on demand, mints a short-lived write token, passes an authenticated Git remote into the sandbox, and then uses `git clone`, `touch`, `git add`, `git commit`, and `git push` inside the sandbox.
+This example uses the same ID for the sandbox and the Artifacts repo. A single `POST` endpoint creates both resources on demand, mints a short-lived write token, passes an authenticated Git remote into the sandbox, writes the request body to a file, and commits and pushes it.
 
 ## What It Shows
 
-- Create or reuse a sandbox by ID
-- Create or reuse an Artifacts repo with the same ID
-- Fetch an existing repo for a sandbox
+- Create or reuse a sandbox and Artifacts repo in one call
 - Clone the repo inside the sandbox and push a commit back to Artifacts
+- Fetch existing repo metadata for a sandbox
 
 ## Endpoints
 
-- `POST /sandboxes/:id/setup`
+- `POST /sandboxes/:id/commit/:filename`
   - Creates or reuses the sandbox and repo
-  - Stores `ARTIFACTS_GIT_REMOTE` inside the sandbox
+  - Clones the repo inside the sandbox if needed
+  - Writes the request body to `<filename>` (defaults to a timestamp if the body is empty)
+  - Commits and pushes it to the repo
 - `GET /sandboxes/:id/repo`
   - Returns the existing repo metadata for that sandbox ID
-- `POST /sandboxes/:id/commit`
-  - Clones the repo inside the sandbox if needed
-  - Creates a file with `touch <filename>`
-  - Commits and pushes it to the repo
 
 ## Setup
 
@@ -50,27 +47,20 @@ The Worker binds Artifacts through the `artifacts` block in `wrangler.jsonc`, an
 
 ## Try It
 
-Create or reuse the sandbox and repo:
+Create a file, commit it, and push it (creates the sandbox and repo on first call):
 
 ```bash
-curl -X POST http://localhost:8787/sandboxes/demo/setup
+curl -X POST http://localhost:8787/sandboxes/demo/commit/hello.txt \
+  -d 'Hello from the sandbox!'
 ```
+
+If you omit the body, the example writes a default timestamp string.
 
 Fetch the current repo metadata:
 
 ```bash
 curl http://localhost:8787/sandboxes/demo/repo
 ```
-
-Clone the repo in the sandbox, create a file, commit it, and push it:
-
-```bash
-curl -X POST http://localhost:8787/sandboxes/demo/commit \
-  -H "Content-Type: application/json" \
-  -d '{"filename":"hello.txt"}'
-```
-
-If you omit `filename`, the example creates a unique file name for you.
 
 ## Notes
 
