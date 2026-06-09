@@ -19,7 +19,6 @@ import type {
   OutboundHandlerContext
 } from '@cloudflare/containers';
 import type { BucketProvider } from '@repo/shared';
-import { AwsClient } from 'aws4fetch';
 import type { S3CredentialProxyParams } from './types';
 
 const PER_MOUNT_SUFFIX = '.s3-credential-proxy.internal';
@@ -28,6 +27,9 @@ export const DIAGNOSTICS_PATH = '/__sandbox_credential_proxy_diagnostics__';
 const DEFAULT_SLOW_REQUEST_MS = 1000;
 const ERROR_RESPONSE_BODY_LIMIT = 2048;
 const MAX_DIAGNOSTIC_EVENTS = 500;
+const HEAD_METADATA_CACHE_TTL_MS = 60_000;
+const NEGATIVE_HEAD_METADATA_CACHE_TTL_MS = 5_000;
+const HEAD_METADATA_CACHE_MAX_ENTRIES = 1_000;
 
 export const DUMMY_AUTH_HEADERS = new Set([
   'authorization',
@@ -67,16 +69,25 @@ type CredentialProxyDiagnosticEvent = CredentialProxyRequestInfo & {
 };
 
 type SigV4ClientCacheEntry = {
-  client: AwsClient;
   accessKeyId: string;
   secretAccessKey: string;
   endpoint: string;
   provider: BucketProvider | null;
   region: string;
+  date: string;
+  key: ArrayBuffer;
+};
+
+type HeadMetadataCacheEntry = {
+  expiresAt: number;
+  headers: [string, string][];
+  status: number;
+  statusText: string;
 };
 
 const sigV4ClientCache = new Map<string, SigV4ClientCacheEntry>();
 const directoryMarkerCache = new Map<string, [string, string][]>();
+const headMetadataCache = new Map<string, HeadMetadataCacheEntry>();
 const credentialProxyDiagnosticEvents: CredentialProxyDiagnosticEvent[] = [];
 let credentialProxyDiagnosticEventCount = 0;
 
@@ -91,6 +102,137 @@ export function evictDirectoryMarkerCacheForMount(mountId: string): void {
       directoryMarkerCache.delete(key);
     }
   }
+}
+
+export function evictHeadMetadataCacheForMount(mountId: string): void {
+  const prefix = `${mountId}:`;
+  for (const key of Array.from(headMetadataCache.keys())) {
+    if (key.startsWith(prefix)) {
+      headMetadataCache.delete(key);
+    }
+  }
+}
+
+function getHeadMetadataCacheKey(
+  mountId: string,
+  realPath: string,
+  url: URL
+): string {
+  return `${mountId}:${realPath}${url.search}`;
+}
+
+function getCachedHeadMetadataResponse(
+  cacheKey: string,
+  now: number
+): Response | null {
+  const cached = headMetadataCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= now) {
+    headMetadataCache.delete(cacheKey);
+    return null;
+  }
+  return new Response(null, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: cached.headers
+  });
+}
+
+function enforceHeadMetadataCacheLimit(): void {
+  if (headMetadataCache.size <= HEAD_METADATA_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const now = Date.now();
+  for (const [key, entry] of Array.from(headMetadataCache.entries())) {
+    if (entry.expiresAt <= now) {
+      headMetadataCache.delete(key);
+    }
+  }
+  if (headMetadataCache.size <= HEAD_METADATA_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const excess = headMetadataCache.size - HEAD_METADATA_CACHE_MAX_ENTRIES;
+  let removed = 0;
+  for (const key of Array.from(headMetadataCache.keys())) {
+    if (removed >= excess) break;
+    headMetadataCache.delete(key);
+    removed++;
+  }
+}
+
+function cacheHeadMetadataResponse(cacheKey: string, response: Response): void {
+  if (!response.ok && response.status !== 404) {
+    headMetadataCache.delete(cacheKey);
+    return;
+  }
+  enforceHeadMetadataCacheLimit();
+  headMetadataCache.set(cacheKey, {
+    expiresAt:
+      Date.now() +
+      (response.status === 404
+        ? NEGATIVE_HEAD_METADATA_CACHE_TTL_MS
+        : HEAD_METADATA_CACHE_TTL_MS),
+    headers: Array.from(
+      response.headers as unknown as Iterable<[string, string]>
+    ),
+    status: response.status,
+    statusText: response.statusText
+  });
+}
+
+function cacheHeadMetadataFromPUT(
+  cacheKey: string,
+  request: Request,
+  response: Response
+): void {
+  if (!response.ok) {
+    return;
+  }
+  const headers = new Headers();
+  const contentLength = request.headers.get('content-length');
+  const contentType = request.headers.get('content-type');
+  const etag = response.headers.get('etag');
+  const lastModified = response.headers.get('last-modified');
+  if (contentLength !== null) {
+    headers.set('content-length', contentLength);
+  }
+  if (contentType !== null) {
+    headers.set('content-type', contentType);
+  }
+  if (etag !== null) {
+    headers.set('etag', etag);
+  }
+  if (lastModified !== null) {
+    headers.set('last-modified', lastModified);
+  }
+  for (const [key, value] of Array.from(
+    request.headers as unknown as Iterable<[string, string]>
+  )) {
+    if (key.toLowerCase().startsWith('x-amz-meta-')) {
+      headers.set(key, value);
+    }
+  }
+  enforceHeadMetadataCacheLimit();
+  headMetadataCache.set(cacheKey, {
+    expiresAt: Date.now() + HEAD_METADATA_CACHE_TTL_MS,
+    headers: Array.from(headers as unknown as Iterable<[string, string]>),
+    status: 200,
+    statusText: 'OK'
+  });
+}
+
+function deleteHeadMetadataCacheEntry(
+  mountId: string,
+  realPath: string,
+  url: URL
+): void {
+  headMetadataCache.delete(getHeadMetadataCacheKey(mountId, realPath, url));
+}
+
+function isMutatingMethod(method: string): boolean {
+  return method === 'PUT' || method === 'POST' || method === 'DELETE';
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -263,13 +405,14 @@ async function withCredentialProxyDiagnostics(
   }
 }
 
-function getSigV4Client(
+async function getSigV4SigningKey(
   mountId: string,
   endpoint: string,
   provider: BucketProvider | null,
   credentials: { accessKeyId: string; secretAccessKey: string },
-  region: string
-): AwsClient {
+  region: string,
+  date: string
+): Promise<ArrayBuffer> {
   const cached = sigV4ClientCache.get(mountId);
   if (
     cached &&
@@ -277,27 +420,30 @@ function getSigV4Client(
     cached.secretAccessKey === credentials.secretAccessKey &&
     cached.endpoint === endpoint &&
     cached.provider === provider &&
-    cached.region === region
+    cached.region === region &&
+    cached.date === date
   ) {
-    return cached.client;
+    return cached.key;
   }
 
-  const client = new AwsClient({
-    accessKeyId: credentials.accessKeyId,
-    secretAccessKey: credentials.secretAccessKey,
-    service: 's3',
-    region,
-    retries: 0
-  });
+  const enc = new TextEncoder();
+  const kDate = await hmacSHA256(
+    enc.encode(`AWS4${credentials.secretAccessKey}`) as unknown as ArrayBuffer,
+    date
+  );
+  const kRegion = await hmacSHA256(kDate, region);
+  const kService = await hmacSHA256(kRegion, 's3');
+  const key = await hmacSHA256(kService, 'aws4_request');
   sigV4ClientCache.set(mountId, {
-    client,
     accessKeyId: credentials.accessKeyId,
     secretAccessKey: credentials.secretAccessKey,
     endpoint,
     provider,
-    region
+    region,
+    date,
+    key
   });
-  return client;
+  return key;
 }
 
 function encodeCanonicalQueryPart(value: string): string {
@@ -518,6 +664,46 @@ function getSigV4ForwardInit(request: Request): RequestInit {
   return { body: readable };
 }
 
+function getSigV4ForwardHeaders(
+  request: Request,
+  dateStr: string,
+  payloadHash: string
+): Headers {
+  const headers = new Headers();
+  for (const [k, v] of request.headers as unknown as Iterable<
+    [string, string]
+  >) {
+    const lower = k.toLowerCase();
+    if (
+      lower === 'host' ||
+      lower === 'expect' ||
+      DUMMY_AUTH_HEADERS.has(lower)
+    ) {
+      continue;
+    }
+    headers.set(k, v);
+  }
+  headers.set('x-amz-content-sha256', payloadHash);
+  headers.set('x-amz-date', dateStr);
+  return headers;
+}
+
+function getSigV4SignedHeaderEntries(
+  url: URL,
+  headers: Headers
+): [string, string][] {
+  const entries: [string, string][] = [['host', url.host]];
+  for (const [k, v] of headers as unknown as Iterable<[string, string]>) {
+    const lower = k.toLowerCase();
+    if (lower === 'authorization' || lower === 'content-length') {
+      continue;
+    }
+    entries.push([lower, v.trim().replace(/\s+/g, ' ')]);
+  }
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  return entries;
+}
+
 function getGCSHeaders(request: Request): Headers {
   const headers = new Headers();
   for (const [k, v] of request.headers as unknown as Iterable<
@@ -553,25 +739,64 @@ async function signAndForwardSigV4(
   requestInfo: CredentialProxyRequestInfo
 ): Promise<Response> {
   const signingStarted = Date.now();
+  const url = new URL(request.url);
   const region = detectS3Region(provider, endpoint);
   const payload = getSigV4PayloadHash(request.headers);
-  const client = getSigV4Client(
+  const now = new Date();
+  const dateStr = `${now
+    .toISOString()
+    .replace(/[:-]/g, '')
+    .replace(/\.\d+Z$/, '')}Z`;
+  const dateOnly = dateStr.slice(0, 8);
+  const credentialScope = `${dateOnly}/${region}/s3/aws4_request`;
+  const forwardHeaders = getSigV4ForwardHeaders(request, dateStr, payload.hash);
+  const signedHeaderEntries = getSigV4SignedHeaderEntries(url, forwardHeaders);
+  const signedHeaders = signedHeaderEntries.map(([k]) => k).join(';');
+  const canonicalHeaders = signedHeaderEntries
+    .map(([k, v]) => `${k}:${v}\n`)
+    .join('');
+  const canonicalRequest = [
+    request.method,
+    getCanonicalURI(url),
+    getCanonicalQueryString(url),
+    canonicalHeaders,
+    signedHeaders,
+    payload.hash
+  ].join('\n');
+  const canonicalRequestHash = await sha256Hex(canonicalRequest);
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    dateStr,
+    credentialScope,
+    canonicalRequestHash
+  ].join('\n');
+  const signingKey = await getSigV4SigningKey(
     mountId,
     endpoint,
     provider,
     credentials,
-    region
+    region,
+    dateOnly
+  );
+  const signature = toHex(await hmacSHA256(signingKey, stringToSign));
+  forwardHeaders.set(
+    'Authorization',
+    `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
   );
   requestInfo.payloadHashMode = payload.mode;
-  // clientSetupMs captures region detection + client cache lookup + payload hash;
-  // the actual SigV4 signing happens inside client.fetch() and is included in upstreamMs.
   requestInfo.clientSetupMs = Date.now() - signingStarted;
 
   const upstreamStarted = Date.now();
   const forwardInit = getSigV4ForwardInit(request);
   requestInfo.bodyPresent =
     forwardInit?.body !== undefined || request.body !== null;
-  const response = await client.fetch(request, forwardInit);
+  const response = await fetch(
+    new Request(request.url, {
+      method: request.method,
+      headers: forwardHeaders,
+      body: forwardInit.body
+    })
+  );
   requestInfo.upstreamMs = Date.now() - upstreamStarted;
   return response;
 }
@@ -813,8 +1038,31 @@ export const s3CredentialProxyHandler: OutboundHandler<
     }
   }
 
-  if (cleanRequest.method.toUpperCase() !== 'HEAD') {
+  const method = cleanRequest.method.toUpperCase();
+  const headMetadataCacheKey = getHeadMetadataCacheKey(mountId, realPath, url);
+  if (method === 'HEAD') {
+    const cachedHeadResponse = getCachedHeadMetadataResponse(
+      headMetadataCacheKey,
+      Date.now()
+    );
+    if (cachedHeadResponse) {
+      requestInfo.bodyPresent = false;
+      if (mount.authStrategy === 's3-sigv4') {
+        requestInfo.payloadHashMode = getSigV4PayloadHash(
+          cleanRequest.headers
+        ).mode;
+      }
+      return withCredentialProxyDiagnostics(
+        requestInfo,
+        debugConfig,
+        ctx.containerId,
+        realPath,
+        () => Promise.resolve(cachedHeadResponse)
+      );
+    }
+  } else if (isMutatingMethod(method)) {
     deleteDirectoryMarkerCacheEntry(mountId, realPath);
+    deleteHeadMetadataCacheEntry(mountId, realPath, url);
   }
 
   if (mount.authStrategy === 'gcs') {
@@ -823,7 +1071,23 @@ export const s3CredentialProxyHandler: OutboundHandler<
       debugConfig,
       ctx.containerId,
       realPath,
-      () => signAndForwardGCS(cleanRequest, mount.credentials, requestInfo)
+      async () => {
+        const response = await signAndForwardGCS(
+          cleanRequest,
+          mount.credentials,
+          requestInfo
+        );
+        if (method === 'HEAD') {
+          cacheHeadMetadataResponse(headMetadataCacheKey, response);
+        } else if (method === 'PUT') {
+          cacheHeadMetadataFromPUT(
+            headMetadataCacheKey,
+            cleanRequest,
+            response
+          );
+        }
+        return response;
+      }
     );
   }
 
@@ -832,14 +1096,21 @@ export const s3CredentialProxyHandler: OutboundHandler<
     debugConfig,
     ctx.containerId,
     realPath,
-    () =>
-      signAndForwardSigV4(
+    async () => {
+      const response = await signAndForwardSigV4(
         cleanRequest,
         mountId,
         mount.endpoint,
         mount.provider,
         mount.credentials,
         requestInfo
-      )
+      );
+      if (method === 'HEAD') {
+        cacheHeadMetadataResponse(headMetadataCacheKey, response);
+      } else if (method === 'PUT') {
+        cacheHeadMetadataFromPUT(headMetadataCacheKey, cleanRequest, response);
+      }
+      return response;
+    }
   );
 };

@@ -127,6 +127,7 @@ import {
 } from './storage-mount/r2-egress-handler';
 import {
   evictDirectoryMarkerCacheForMount,
+  evictHeadMetadataCacheForMount,
   evictSigV4ClientCacheEntry,
   SELF_TEST_PATH as S3_CREDENTIAL_PROXY_SELF_TEST_PATH,
   s3CredentialProxyHandler
@@ -2120,6 +2121,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.activeMounts.delete(mountPath);
           evictSigV4ClientCacheEntry(failedMount.mountId);
           evictDirectoryMarkerCacheForMount(failedMount.mountId);
+          evictHeadMetadataCacheForMount(failedMount.mountId);
         } catch (cleanupError) {
           this.logger.warn('credential proxy cleanup failed', {
             mountPath,
@@ -2131,6 +2133,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.activeMounts.delete(mountPath);
           evictSigV4ClientCacheEntry(failedMount.mountId);
           evictDirectoryMarkerCacheForMount(failedMount.mountId);
+          evictHeadMetadataCacheForMount(failedMount.mountId);
         }
       } else {
         this.activeMounts.delete(mountPath);
@@ -2208,6 +2211,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.activeMounts.delete(mountPath);
         evictSigV4ClientCacheEntry(mountInfo.mountId);
         evictDirectoryMarkerCacheForMount(mountInfo.mountId);
+        evictHeadMetadataCacheForMount(mountInfo.mountId);
       } else {
         // FUSE unmount
         let unmounted = false;
@@ -2279,6 +2283,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             this.activeMounts.delete(mountPath);
             evictSigV4ClientCacheEntry(mountInfo.mountId);
             evictDirectoryMarkerCacheForMount(mountInfo.mountId);
+            evictHeadMetadataCacheForMount(mountInfo.mountId);
           } else {
             this.activeMounts.delete(mountPath);
           }
@@ -2900,6 +2905,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         hadCredentialProxyMount = true;
         evictSigV4ClientCacheEntry(m.mountId);
         evictDirectoryMarkerCacheForMount(m.mountId);
+        evictHeadMetadataCacheForMount(m.mountId);
       }
     }
     if (hadR2EgressMount) {

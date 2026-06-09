@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DUMMY_AUTH_HEADERS,
   evictDirectoryMarkerCacheForMount,
+  evictHeadMetadataCacheForMount,
   s3CredentialProxyHandler
 } from '../src/storage-mount/s3-credential-proxy-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
@@ -736,7 +737,7 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
     vi.restoreAllMocks();
   });
 
-  it('forwards HEAD requests upstream after zero-length PUT requests', async () => {
+  it('serves HEAD metadata from the cache after zero-length PUT requests', async () => {
     const forwardedRequests: Request[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       forwardedRequests.push(
@@ -762,10 +763,215 @@ describe('s3CredentialProxyHandler SigV4 signing', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(forwardedRequests).toHaveLength(2);
-    expect(forwardedRequests[1].method).toBe('HEAD');
+    expect(response.headers.get('content-length')).toBe('0');
+    expect(forwardedRequests).toHaveLength(1);
+    expect(forwardedRequests[0].method).toBe('PUT');
 
     vi.restoreAllMocks();
+  });
+
+  it('serves repeated HEAD requests from the metadata cache', async () => {
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: {
+          'content-length': '1024',
+          etag: '"abc123"'
+        }
+      })
+    );
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+    const headReq = makeRequest(`/${MOUNT_ID}/${BUCKET}/cached.txt`, 'HEAD');
+
+    const firstResponse = await s3CredentialProxyHandler(
+      headReq,
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const secondResponse = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/cached.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(secondResponse.headers.get('content-length')).toBe('1024');
+    expect(secondResponse.headers.get('etag')).toBe('"abc123"');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+  });
+
+  it('updates cached HEAD metadata after object mutation', async () => {
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 200,
+          headers: { 'content-length': '1024' }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('ok', {
+          status: 200,
+          headers: { etag: '"updated"' }
+        })
+      );
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+
+    await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/cached.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    await s3CredentialProxyHandler(
+      makeRequest(
+        `/${MOUNT_ID}/${BUCKET}/cached.txt`,
+        'PUT',
+        {
+          'content-length': '2',
+          'x-amz-content-sha256':
+            '2689367b205c16ce32a8533d524173e31571169bba6d9101a7d1150be7fb8cc3'
+        },
+        'ok'
+      ),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const response = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/cached.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(response.headers.get('content-length')).toBe('2');
+    expect(response.headers.get('etag')).toBe('"updated"');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    vi.restoreAllMocks();
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+  });
+
+  it('keeps cached HEAD metadata after GET requests', async () => {
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 200,
+          headers: { 'content-length': '1024' }
+        })
+      )
+      .mockResolvedValueOnce(new Response('body', { status: 200 }));
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+
+    await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/get-preserved.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/get-preserved.txt`, 'GET'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const response = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/get-preserved.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(response.headers.get('content-length')).toBe('1024');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    vi.restoreAllMocks();
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+  });
+
+  it('serves repeated HEAD 404 responses from the metadata cache', async () => {
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+
+    const firstResponse = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/missing.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const secondResponse = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/missing.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(firstResponse.status).toBe(404);
+    expect(secondResponse.status).toBe(404);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+  });
+
+  it('primes HEAD metadata from successful PUT requests', async () => {
+    evictHeadMetadataCacheForMount(MOUNT_ID);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('ok', {
+        status: 200,
+        headers: {
+          etag: '"put-etag"',
+          'last-modified': 'Tue, 09 Jun 2026 13:00:00 GMT'
+        }
+      })
+    );
+    const ctx = makeCtx(
+      makeParams({ provider: 'r2', authStrategy: 's3-sigv4' })
+    ) as Parameters<typeof s3CredentialProxyHandler>[2];
+
+    await s3CredentialProxyHandler(
+      makeRequest(
+        `/${MOUNT_ID}/${BUCKET}/put-primed.txt`,
+        'PUT',
+        {
+          'content-type': 'text/plain',
+          'content-length': '2',
+          'x-amz-meta-mode': '33188',
+          'x-amz-content-sha256':
+            '2689367b205c16ce32a8533d524173e31571169bba6d9101a7d1150be7fb8cc3'
+        },
+        'ok'
+      ),
+      {} as Cloudflare.Env,
+      ctx
+    );
+    const headResponse = await s3CredentialProxyHandler(
+      makeRequest(`/${MOUNT_ID}/${BUCKET}/put-primed.txt`, 'HEAD'),
+      {} as Cloudflare.Env,
+      ctx
+    );
+
+    expect(headResponse.status).toBe(200);
+    expect(headResponse.headers.get('content-length')).toBe('2');
+    expect(headResponse.headers.get('content-type')).toBe('text/plain');
+    expect(headResponse.headers.get('etag')).toBe('"put-etag"');
+    expect(headResponse.headers.get('x-amz-meta-mode')).toBe('33188');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.restoreAllMocks();
+    evictHeadMetadataCacheForMount(MOUNT_ID);
   });
 
   it('canonicalizes repeated and special query parameters for signing', async () => {
