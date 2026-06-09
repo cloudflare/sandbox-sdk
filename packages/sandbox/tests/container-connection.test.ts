@@ -286,7 +286,7 @@ describe('ContainerControlConnection', () => {
     });
   });
 
-  describe('503 upgrade retry', () => {
+  describe('WebSocket upgrade retry', () => {
     /**
      * Build a fake successful upgrade Response. Mirrors what
      * Cloudflare's Container base class returns from `stub.fetch()`:
@@ -311,20 +311,20 @@ describe('ContainerControlConnection', () => {
       } as unknown as Response;
     }
 
-    function make503(): Response {
-      return new Response('Container is starting.', {
-        status: 503,
+    function makeUpgradeFailure(status: number): Response {
+      return new Response('Container upgrade unavailable.', {
+        status,
         statusText: 'Service Unavailable'
       });
     }
 
-    it('retries 503 upgrade responses until success', async () => {
+    it('retries retryable upgrade responses until success', async () => {
       vi.useFakeTimers();
       try {
         const fetchMock = vi
           .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(make503())
-          .mockResolvedValueOnce(make503())
+          .mockResolvedValueOnce(makeUpgradeFailure(500))
+          .mockResolvedValueOnce(makeUpgradeFailure(500))
           .mockResolvedValueOnce(makeUpgradeResponse());
 
         const conn = new ContainerControlConnection({
@@ -351,12 +351,12 @@ describe('ContainerControlConnection', () => {
       }
     });
 
-    it('gives up on 503 once the retry budget is exhausted', async () => {
+    it('gives up on a retryable upgrade response once the retry budget is exhausted', async () => {
       vi.useFakeTimers();
       try {
         const fetchMock = vi
           .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(make503());
+          .mockResolvedValue(makeUpgradeFailure(500));
 
         const conn = new ContainerControlConnection({
           stub: { fetch: fetchMock },
@@ -370,7 +370,7 @@ describe('ContainerControlConnection', () => {
 
         const connectPromise = conn.connect();
         const assertion = expect(connectPromise).rejects.toThrow(
-          'WebSocket upgrade failed: 503'
+          'WebSocket upgrade failed: 500'
         );
 
         // Run all timers — connect() must settle even with fake timers.
@@ -385,10 +385,10 @@ describe('ContainerControlConnection', () => {
       }
     });
 
-    it('does not retry non-503 upgrade failures', async () => {
+    it('does not retry terminal upgrade failures', async () => {
       const fetchMock = vi
         .fn<(req: Request) => Promise<Response>>()
-        .mockResolvedValue(new Response('Not Found', { status: 404 }));
+        .mockResolvedValue(new Response('Not retryable', { status: 404 }));
 
       const conn = new ContainerControlConnection({
         stub: { fetch: fetchMock },
@@ -404,12 +404,7 @@ describe('ContainerControlConnection', () => {
     it('disables retries when retryTimeoutMs is set to 0', async () => {
       const fetchMock = vi
         .fn<(req: Request) => Promise<Response>>()
-        .mockResolvedValue(
-          new Response('Container is starting.', {
-            status: 503,
-            statusText: 'Service Unavailable'
-          })
-        );
+        .mockResolvedValue(makeUpgradeFailure(500));
 
       const conn = new ContainerControlConnection({
         stub: { fetch: fetchMock },
@@ -417,7 +412,7 @@ describe('ContainerControlConnection', () => {
       });
 
       await expect(conn.connect()).rejects.toThrow(
-        'WebSocket upgrade failed: 503'
+        'WebSocket upgrade failed: 500'
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -427,7 +422,7 @@ describe('ContainerControlConnection', () => {
       try {
         const fetchMock = vi
           .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(make503())
+          .mockResolvedValueOnce(makeUpgradeFailure(503))
           .mockResolvedValueOnce(makeUpgradeResponse());
 
         const conn = new ContainerControlConnection({
@@ -451,7 +446,7 @@ describe('ContainerControlConnection', () => {
       try {
         const fetchMock = vi
           .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(make503());
+          .mockResolvedValue(makeUpgradeFailure(503));
 
         const conn = new ContainerControlConnection({
           stub: { fetch: fetchMock },
@@ -485,7 +480,7 @@ describe('ContainerControlConnection', () => {
           .fn<(req: Request) => Promise<Response>>()
           .mockImplementationOnce(async (req) => {
             seenRequests.push(req);
-            return make503();
+            return makeUpgradeFailure(503);
           })
           .mockImplementationOnce(async (req) => {
             seenRequests.push(req);

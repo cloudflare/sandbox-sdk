@@ -54,7 +54,8 @@ export interface HttpClientOptions {
   transport?: ITransport;
 
   /**
-   * Total retry budget in milliseconds for 503 retries during container startup.
+   * Total retry budget in milliseconds for retryable transport responses.
+   * Used for WebSocket upgrade retries and HTTP 503 startup retries.
    * Passed through to the transport layer. Defaults to 120_000 (2 minutes).
    */
   retryTimeoutMs?: number;

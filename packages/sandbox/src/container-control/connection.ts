@@ -21,15 +21,18 @@ import type {
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
+import {
+  fetchWithResponseRetry,
+  isRetryableWebSocketUpgradeResponse
+} from '../response-retry';
 
 // ---------------------------------------------------------------------------
 // Connection manager
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
-const DEFAULT_RETRY_TIMEOUT_MS = 120_000; // 2 minute total budget for 503 retries
+const DEFAULT_RETRY_TIMEOUT_MS = 120_000; // 2 minute total budget for upgrade retries
 const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to attempt a retry
-const MAX_RETRY_BACKOFF_MS = 30_000; // Cap exponential backoff at 30s
 
 /** Stub that can issue a WebSocket-upgrade fetch through the DO's Container base class. */
 export interface ContainerFetchStub {
@@ -41,9 +44,9 @@ export interface ContainerControlConnectionOptions {
   port?: number;
   logger?: Logger;
   /**
-   * Total retry budget (ms) for 503 upgrade responses while the container
-   * is starting. Defaults to 120 000 (2 minutes), matching the route-based
-   * `WebSocketTransport`. Set to 0 to disable retries.
+   * Total retry budget (ms) for retryable upgrade responses while the
+   * container is unavailable. Defaults to 120 000 (2 minutes), matching the
+   * route-based `WebSocketTransport`. Set to 0 to disable retries.
    */
   retryTimeoutMs?: number;
   /**
@@ -170,7 +173,7 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Update the 503 retry budget without recreating the connection. Takes
+   * Update the upgrade retry budget without recreating the connection. Takes
    * effect on the next `connect()`; an in-flight connect uses the value
    * captured at start. Mirrors `WebSocketTransport.setRetryTimeoutMs`.
    */
@@ -265,45 +268,19 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Issue WebSocket upgrade fetches, retrying transient 503 responses with
-   * exponential backoff (3s → 6s → 12s → … capped at 30s) until either
-   * the upgrade succeeds, a non-503 status is returned, or the retry budget
-   * runs out. Mirrors `WebSocketTransport.fetchUpgradeWithRetry` so both
-   * transports behave the same way during container startup.
+   * Issue WebSocket upgrade fetches, retrying transient control-plane
+   * unavailability responses until either the upgrade succeeds, a
+   * non-retryable status is returned, or the retry budget runs out.
    */
   private async fetchUpgradeWithRetry(): Promise<Response> {
-    const retryTimeoutMs = this.retryTimeoutMs;
-    const startTime = Date.now();
-    let attempt = 0;
-
-    while (true) {
-      const response = await this.fetchUpgradeAttempt();
-
-      if (response.status !== 503) {
-        return response;
-      }
-
-      const elapsed = Date.now() - startTime;
-      const remaining = retryTimeoutMs - elapsed;
-
-      if (remaining <= MIN_TIME_FOR_RETRY_MS) {
-        return response;
-      }
-
-      const delay = Math.min(3000 * 2 ** attempt, MAX_RETRY_BACKOFF_MS);
-
-      this.logger.info(
-        'ContainerControlConnection upgrade returned 503, retrying',
-        {
-          attempt: attempt + 1,
-          delayMs: delay,
-          remainingSec: Math.floor(remaining / 1000)
-        }
-      );
-
-      await this.sleep(delay);
-      attempt++;
-    }
+    return fetchWithResponseRetry(() => this.fetchUpgradeAttempt(), {
+      retryTimeoutMs: this.retryTimeoutMs,
+      minTimeForRetryMs: MIN_TIME_FOR_RETRY_MS,
+      logger: this.logger,
+      retryLogMessage:
+        'ContainerControlConnection upgrade returned retryable status, retrying',
+      shouldRetry: isRetryableWebSocketUpgradeResponse
+    });
   }
 
   /**
@@ -331,10 +308,6 @@ export class ContainerControlConnection {
     } finally {
       clearTimeout(timeout);
     }
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

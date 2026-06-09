@@ -627,7 +627,7 @@ export class ContainerControlClient {
   }
 
   /**
-   * Update the 503 upgrade-retry budget. Applies to the current connection
+   * Update the upgrade retry budget. Applies to the current connection
    * (if any) and is remembered for any future connections created after the
    * client is torn down and reconnected.
    */
