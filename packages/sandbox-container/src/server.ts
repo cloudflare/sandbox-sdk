@@ -29,6 +29,10 @@ export type WSData =
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
 
+export function webSocketUpgradeFailedResponse(): Response {
+  return new Response('WebSocket upgrade failed', { status: 503 });
+}
+
 // Global error handlers to prevent fragmented stack traces in logs
 // Bun's default handler writes stack traces line-by-line to stderr,
 // which Cloudflare captures as separate log entries
@@ -122,7 +126,7 @@ async function createApplication(): Promise<{
             // cast through `unknown`. See: https://bun.sh/docs/api/websockets#upgrade
             return undefined as unknown as Response;
           }
-          return new Response('WebSocket upgrade failed', { status: 500 });
+          return webSocketUpgradeFailedResponse();
         }
 
         if (url.pathname === '/ws' || url.pathname === '/api/ws') {
@@ -135,7 +139,7 @@ async function createApplication(): Promise<{
           if (upgraded) {
             return undefined as unknown as Response;
           }
-          return new Response('WebSocket upgrade failed', { status: 500 });
+          return webSocketUpgradeFailedResponse();
         }
 
         if (url.pathname === '/rpc') {
@@ -149,7 +153,7 @@ async function createApplication(): Promise<{
           if (upgraded) {
             return undefined as unknown as Response;
           }
-          return new Response('WebSocket upgrade failed', { status: 500 });
+          return webSocketUpgradeFailedResponse();
         }
       }
 

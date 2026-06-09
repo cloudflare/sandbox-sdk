@@ -729,51 +729,12 @@ describe('WebSocketTransport', () => {
   });
 
   describe('fetch without connection', () => {
-    it('retries 503 upgrade responses with updated retry budget', async () => {
-      vi.useFakeTimers();
-
-      try {
-        const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:8671/ws',
-          retryTimeoutMs: 1_000
-        });
-        transport.setRetryTimeoutMs(20_000);
-
-        const attemptUpgrade = vi
-          .fn<() => Promise<Response>>()
-          .mockResolvedValueOnce(
-            new Response('Container is starting.', {
-              status: 503,
-              statusText: 'Service Unavailable'
-            })
-          )
-          .mockResolvedValueOnce(
-            new Response(null, {
-              status: 200,
-              statusText: 'OK'
-            })
-          );
-
-        const connectPromise = (
-          transport as unknown as {
-            fetchUpgradeWithRetry: (
-              attemptUpgrade: () => Promise<Response>
-            ) => Promise<Response>;
-          }
-        ).fetchUpgradeWithRetry(attemptUpgrade);
-        await vi.advanceTimersByTimeAsync(0);
-
-        expect(attemptUpgrade).toHaveBeenCalledTimes(1);
-
-        await vi.advanceTimersByTimeAsync(3_000);
-        const response = await connectPromise;
-
-        expect(attemptUpgrade).toHaveBeenCalledTimes(2);
-        expect(response.status).toBe(200);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
+    function makeUpgradeFailure(status: number): Response {
+      return new Response('Container upgrade unavailable.', {
+        status,
+        statusText: 'Service Unavailable'
+      });
+    }
 
     it('creates a fresh request for each connectViaFetch retry', async () => {
       vi.useFakeTimers();
@@ -794,10 +755,7 @@ describe('WebSocketTransport', () => {
             .fn<(request: Request) => Promise<Response>>()
             .mockImplementationOnce(async (request) => {
               requests.push(request);
-              return new Response('Container is starting.', {
-                status: 503,
-                statusText: 'Service Unavailable'
-              });
+              return makeUpgradeFailure(503);
             })
             .mockImplementationOnce(async (request) => {
               requests.push(request);
@@ -818,12 +776,11 @@ describe('WebSocketTransport', () => {
           wsUrl: 'ws://localhost:8671/ws',
           stub,
           connectTimeoutMs: 1,
-          retryTimeoutMs: 20_000
+          retryTimeoutMs: 1_000
         });
+        transport.setRetryTimeoutMs(20_000);
 
-        const connectPromise = (
-          transport as unknown as { connectViaFetch: () => Promise<void> }
-        ).connectViaFetch();
+        const connectPromise = transport.connect();
 
         await vi.advanceTimersByTimeAsync(0);
         expect(stub.fetch).toHaveBeenCalledTimes(1);

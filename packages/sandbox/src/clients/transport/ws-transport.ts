@@ -9,6 +9,10 @@ import {
   type WSServerMessage,
   type WSStreamChunk
 } from '@repo/shared';
+import {
+  fetchWithResponseRetry,
+  isRetryableWebSocketUpgradeResponse
+} from '../../response-retry';
 import { BaseTransport } from './base-transport';
 import type {
   RouteTransportMode,
@@ -246,36 +250,13 @@ export class WebSocketTransport extends BaseTransport {
   private async fetchUpgradeWithRetry(
     attemptUpgrade: () => Promise<Response>
   ): Promise<Response> {
-    const retryTimeoutMs = this.getRetryTimeoutMs();
-    const startTime = Date.now();
-    let attempt = 0;
-
-    while (true) {
-      const response = await attemptUpgrade();
-
-      if (response.status !== 503) {
-        return response;
-      }
-
-      const elapsed = Date.now() - startTime;
-      const remaining = retryTimeoutMs - elapsed;
-
-      if (remaining <= MIN_TIME_FOR_CONNECT_RETRY_MS) {
-        return response;
-      }
-
-      const delay = Math.min(3000 * 2 ** attempt, 30000);
-
-      this.logger.info('WebSocket container not ready, retrying', {
-        status: response.status,
-        attempt: attempt + 1,
-        delayMs: delay,
-        remainingSec: Math.floor(remaining / 1000)
-      });
-
-      await this.sleep(delay);
-      attempt++;
-    }
+    return fetchWithResponseRetry(attemptUpgrade, {
+      retryTimeoutMs: this.getRetryTimeoutMs(),
+      minTimeForRetryMs: MIN_TIME_FOR_CONNECT_RETRY_MS,
+      logger: this.logger,
+      retryLogMessage: 'WebSocket upgrade returned retryable status, retrying',
+      shouldRetry: isRetryableWebSocketUpgradeResponse
+    });
   }
 
   /**

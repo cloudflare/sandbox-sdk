@@ -83,7 +83,7 @@ export class SandboxClient {
   }
 
   /**
-   * Update the 503 retry budget on all transports without recreating the client.
+   * Update the transport retry budget without recreating the client.
    *
    * In WebSocket mode a single shared transport is used, so one update covers
    * every sub-client. In HTTP mode each sub-client owns its own transport, so

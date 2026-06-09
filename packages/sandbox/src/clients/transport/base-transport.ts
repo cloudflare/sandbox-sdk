@@ -1,5 +1,6 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
+import { fetchWithResponseRetry } from '../../response-retry';
 import type {
   ITransport,
   RouteTransportMode,
@@ -50,43 +51,22 @@ export abstract class BaseTransport implements ITransport {
    * transport-specific doFetch() with retry logic for container startup.
    */
   async fetch(path: string, options?: TransportRequestInit): Promise<Response> {
-    const startTime = Date.now();
-    let attempt = 0;
-
-    while (true) {
-      const response = await this.doFetch(path, options);
-
-      // Check for retryable 503 (container starting)
-      if (response.status === 503) {
-        const elapsed = Date.now() - startTime;
-        const remaining = this.retryTimeoutMs - elapsed;
-
-        if (remaining > MIN_TIME_FOR_RETRY_MS) {
-          const delay = Math.min(3000 * 2 ** attempt, 30000);
-
-          this.logger.info('Container not ready, retrying', {
-            status: response.status,
-            attempt: attempt + 1,
-            delayMs: delay,
-            remainingSec: Math.floor(remaining / 1000),
-            mode: this.getMode()
-          });
-
-          await this.sleep(delay);
-          attempt++;
-          continue;
-        }
-
+    return fetchWithResponseRetry(() => this.doFetch(path, options), {
+      retryTimeoutMs: this.retryTimeoutMs,
+      minTimeForRetryMs: MIN_TIME_FOR_RETRY_MS,
+      logger: this.logger,
+      retryLogMessage: 'Container not ready, retrying',
+      shouldRetry: (response) => response.status === 503,
+      getRetryLogContext: () => ({ mode: this.getMode() }),
+      onRetryExhausted: ({ attempts, elapsedMs }) => {
         this.logger.error(
           'Container failed to become ready',
           new Error(
-            `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
+            `Failed after ${attempts} attempts over ${Math.floor(elapsedMs / 1000)}s`
           )
         );
       }
-
-      return response;
-    }
+    });
   }
 
   /**
@@ -179,12 +159,5 @@ export abstract class BaseTransport implements ITransport {
       throw new Error('No response body for streaming');
     }
     return response.body;
-  }
-
-  /**
-   * Sleep utility for retry delays
-   */
-  protected sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
