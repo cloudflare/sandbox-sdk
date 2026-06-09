@@ -4407,7 +4407,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HTTP client.
+    // Note: signal parameter is not currently supported by process control.
     // sessionId is intentionally unused — kill targets a process by ID which
     // is sandbox-scoped, not session-scoped.
     await this.client.processes.killProcess(id);

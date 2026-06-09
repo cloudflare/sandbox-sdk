@@ -1,18 +1,6 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
-import { BackupHandler } from '../handlers/backup-handler';
-import { ExecuteHandler } from '../handlers/execute-handler';
-import { FileHandler } from '../handlers/file-handler';
-import { GitHandler } from '../handlers/git-handler';
-import { InterpreterHandler } from '../handlers/interpreter-handler';
-import { MiscHandler } from '../handlers/misc-handler';
-import { PortHandler } from '../handlers/port-handler';
-import { ProcessHandler } from '../handlers/process-handler';
 import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
-import { SessionHandler } from '../handlers/session-handler';
-import { WatchHandler } from '../handlers/watch-handler';
-import { CorsMiddleware } from '../middleware/cors';
-import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
@@ -45,21 +33,7 @@ export interface Dependencies {
   executionService: ExecutionService;
 
   // Handlers
-  backupHandler: BackupHandler;
-  executeHandler: ExecuteHandler;
-  fileHandler: FileHandler;
-  processHandler: ProcessHandler;
-  portHandler: PortHandler;
-  gitHandler: GitHandler;
-  interpreterHandler: InterpreterHandler;
-  sessionHandler: SessionHandler;
-  miscHandler: MiscHandler;
   ptyWsHandler: PtyWebSocketHandler;
-  watchHandler: WatchHandler;
-
-  // Middleware
-  corsMiddleware: CorsMiddleware;
-  loggingMiddleware: LoggingMiddleware;
 }
 
 export class Container {
@@ -153,24 +127,7 @@ export class Container {
     );
 
     // Initialize handlers
-    const backupHandler = new BackupHandler(backupService, logger);
-    const sessionHandler = new SessionHandler(sessionManager, logger);
-    const executeHandler = new ExecuteHandler(processService, logger);
-    const fileHandler = new FileHandler(fileService, logger);
-    const processHandler = new ProcessHandler(processService, logger);
-    const portHandler = new PortHandler(portService, processService, logger);
-    const gitHandler = new GitHandler(gitService, gitLogger);
-    const interpreterHandler = new InterpreterHandler(
-      interpreterService,
-      logger
-    );
-    const miscHandler = new MiscHandler(logger);
     const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
-    const watchHandler = new WatchHandler(watchService, logger);
-
-    // Initialize middleware
-    const corsMiddleware = new CorsMiddleware();
-    const loggingMiddleware = new LoggingMiddleware(logger);
 
     // Store all dependencies
     this.dependencies = {
@@ -191,21 +148,7 @@ export class Container {
       executionService,
 
       // Handlers
-      backupHandler,
-      executeHandler,
-      fileHandler,
-      processHandler,
-      portHandler,
-      gitHandler,
-      interpreterHandler,
-      sessionHandler,
-      miscHandler,
-      ptyWsHandler,
-      watchHandler,
-
-      // Middleware
-      corsMiddleware,
-      loggingMiddleware
+      ptyWsHandler
     };
 
     this.initialized = true;

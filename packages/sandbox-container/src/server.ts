@@ -6,14 +6,7 @@ import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
 import { SandboxControlAPI } from './control-plane';
 import { Container } from './core/container';
-import { Router } from './core/router';
 import type { PtyWSData } from './handlers/pty-ws-handler';
-import {
-  type WSData as ControlWSData,
-  generateConnectionId,
-  WebSocketAdapter
-} from './handlers/ws-adapter';
-import { setupRoutes } from './routes/setup';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -21,13 +14,14 @@ export type CapnwebWSData = {
   transport?: BunWebSocketTransport<WSData>;
 };
 
-export type WSData =
-  | (ControlWSData & { type: 'control' })
-  | PtyWSData
-  | CapnwebWSData;
+export type WSData = PtyWSData | CapnwebWSData;
 
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
+
+function generateConnectionId(): string {
+  return `ws_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 // Global error handlers to prevent fragmented stack traces in logs
 // Bun's default handler writes stack traces line-by-line to stderr,
@@ -56,18 +50,10 @@ async function createApplication(): Promise<{
     server: ReturnType<typeof serve<WSData>>
   ) => Promise<Response>;
   container: Container;
-  wsAdapter: WebSocketAdapter;
   controlPlaneAPI: SandboxControlAPI;
 }> {
   const container = new Container();
   await container.initialize();
-
-  const router = new Router(logger);
-  router.use(container.get('corsMiddleware'));
-  setupRoutes(router, container);
-
-  // Create WebSocket adapter with the router for control plane multiplexing
-  const wsAdapter = new WebSocketAdapter(router, logger);
 
   // Create the control-plane API that calls services directly.
   const controlPlaneAPI = new SandboxControlAPI({
@@ -124,19 +110,6 @@ async function createApplication(): Promise<{
           return new Response('WebSocket upgrade failed', { status: 500 });
         }
 
-        if (url.pathname === '/ws' || url.pathname === '/api/ws') {
-          const upgraded = server.upgrade(req, {
-            data: {
-              type: 'control' as const,
-              connectionId: generateConnectionId()
-            }
-          });
-          if (upgraded) {
-            return undefined as unknown as Response;
-          }
-          return new Response('WebSocket upgrade failed', { status: 500 });
-        }
-
         if (url.pathname === '/rpc') {
           logger.info('Establishing RPC connection');
           const upgraded = server.upgrade(req, {
@@ -152,11 +125,9 @@ async function createApplication(): Promise<{
         }
       }
 
-      // Regular HTTP request
-      return router.route(req);
+      return new Response('Not Found', { status: 404 });
     },
     container,
-    wsAdapter,
     controlPlaneAPI
   };
 }
@@ -211,8 +182,6 @@ export async function startServer(): Promise<ServerInstance> {
             logger.debug('RPC session initialized', {
               connectionId: ws.data.connectionId
             });
-          } else {
-            app.wsAdapter.onOpen(ws);
           }
         } catch (error) {
           logger.error(
@@ -233,8 +202,6 @@ export async function startServer(): Promise<ServerInstance> {
             // exits resolve `null` from the accessor and become no-ops
             // until a new session opens.
             app.container.setControlCallback(null);
-          } else {
-            app.wsAdapter.onClose(ws, code, reason);
           }
         } catch (error) {
           logger.error(
@@ -251,8 +218,6 @@ export async function startServer(): Promise<ServerInstance> {
               .onMessage(ws as ServerWebSocket<PtyWSData>, message);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchMessage(message);
-          } else {
-            await app.wsAdapter.onMessage(ws, message);
           }
         } catch (error) {
           logger.error(
