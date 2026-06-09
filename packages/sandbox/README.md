@@ -200,6 +200,7 @@ See the [examples directory](./examples) for complete working examples:
 - [Claude Code](./examples/claude-code) - Run [Claude Code](https://claude.ai/code) headless on any repo
 - [OpenAI Agents](./examples/openai-agents) - `Shell` and `Editor` tools for [OpenAI Agents SDK](https://openai.github.io/openai-agents-js/)
 - [OpenCode](./examples/opencode) - [OpenCode](https://github.com/sst/opencode) web UI or [SDK](https://opencode.ai/docs/sdk/) in a sandbox
+- [Git Repo Per Sandbox](./examples/git-repo-per-sandbox) - One Artifacts Git repo per sandbox
 - [TypeScript Validator](./examples/typescript-validator) - Build with npm in sandbox, execute in [isolates](https://developers.cloudflare.com/workers/runtime-apis/bindings/worker-loader/)
 
 ## Status
