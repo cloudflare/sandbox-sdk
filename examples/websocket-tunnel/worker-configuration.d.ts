@@ -3,7 +3,6 @@
 // Runtime types generated with workerd@1.20260515.1 2026-04-22 nodejs_compat
 interface __BaseEnv_Env {
 	Assets: Fetcher;
-	SANDBOX_TRANSPORT: "rpc";
 	Sandbox: DurableObjectNamespace<import("./src/index").Sandbox>;
 }
 declare namespace Cloudflare {
@@ -18,7 +17,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "SANDBOX_TRANSPORT">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, never>> {}
 }
 
 // Begin runtime types

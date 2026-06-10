@@ -690,7 +690,7 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      // File read-binary: readFile({ encoding: 'none' }) — rpc transport only.
+      // File read-binary: readFile({ encoding: 'none' }).
       // Returns raw binary response so the test can sha256 the collected bytes.
       if (
         url.pathname === '/api/file/read-binary' &&
@@ -1028,14 +1028,8 @@ console.log('Terminal server on port ' + port);
         }
       }
 
-      // Tunnels (RPC-only)
+      // Tunnels
       if (url.pathname === '/api/tunnel/get' && request.method === 'POST') {
-        if (transport !== 'rpc') {
-          return new Response(
-            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
         const info = await sandbox.tunnels.get(body.port, body.options);
         return new Response(JSON.stringify(info), {
           headers: { 'Content-Type': 'application/json' }
@@ -1043,12 +1037,6 @@ console.log('Terminal server on port ' + port);
       }
 
       if (url.pathname === '/api/tunnel/list' && request.method === 'GET') {
-        if (transport !== 'rpc') {
-          return new Response(
-            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
         const tunnels = await sandbox.tunnels.list();
         return new Response(JSON.stringify({ tunnels }), {
           headers: { 'Content-Type': 'application/json' }
@@ -1059,12 +1047,6 @@ console.log('Terminal server on port ' + port);
         url.pathname.startsWith('/api/tunnel/') &&
         request.method === 'DELETE'
       ) {
-        if (transport !== 'rpc') {
-          return new Response(
-            JSON.stringify({ error: 'Tunnels require transport=rpc' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
         const portStr = url.pathname.slice('/api/tunnel/'.length);
         const port = Number.parseInt(portStr, 10);
         if (!Number.isFinite(port)) {

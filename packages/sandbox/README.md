@@ -106,7 +106,7 @@ setup required — cloudflared opens a persistent QUIC connection to
 Cloudflare's edge and Cloudflare hands back a hostname.
 
 ```ts
-// Inside a Worker with an RPC-transport sandbox:
+// Inside a Worker with a sandbox:
 const tunnel = await sandbox.tunnels.get(8080);
 console.log(tunnel.url);
 // → https://random-words-here.trycloudflare.com

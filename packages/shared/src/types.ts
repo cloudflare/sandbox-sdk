@@ -618,11 +618,10 @@ export interface ReadFileResult {
 }
 
 /**
- * Result of `readFile()` with `encoding: 'none'` on the RPC transport.
+ * Result of `readFile()` with `encoding: 'none'`.
  *
  * `content` is a raw binary `ReadableStream<Uint8Array>` delivered directly
  * over the capnp channel — no base64 encoding, no SSE framing, no buffering.
- * Only supported on the `rpc` transport; HTTP/WebSocket transports throw.
  */
 export interface ReadFileStreamResult {
   success: true;
