@@ -49,8 +49,8 @@ describe('createExecProcess', () => {
       );
       const result = await proc.output();
 
-      expect(result.stdout).toBe('hello\n');
-      expect(result.stderr).toBe('warn\n');
+      expect(result.stdout).toBe('hello');
+      expect(result.stderr).toBe('warn');
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
       expect(result.command).toBe('echo hello');
@@ -88,7 +88,7 @@ describe('createExecProcess', () => {
       );
       const result: ExecResult = await proc;
 
-      expect(result.stdout).toBe('hi\n');
+      expect(result.stdout).toBe('hi');
       expect(result.exitCode).toBe(0);
     });
 
@@ -99,7 +99,7 @@ describe('createExecProcess', () => {
       );
       const stdout = await proc.then((r) => r.stdout);
 
-      expect(stdout).toBe('chain\n');
+      expect(stdout).toBe('chain');
     });
 
     it('supports .then(null, onRejected) for errors', async () => {
@@ -195,7 +195,7 @@ describe('createExecProcess', () => {
       const proc = createExecProcess('echo lazy', streamPromise);
       const result = await proc;
 
-      expect(result.stdout).toBe('lazy\n');
+      expect(result.stdout).toBe('lazy');
     });
 
     it('propagates setup rejection through exitCode', async () => {

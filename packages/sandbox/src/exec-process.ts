@@ -182,8 +182,11 @@ class SandboxExecProcess implements ExecProcess {
     ]).then(([stdoutText, stderrText, code]) => ({
       success: code === 0,
       exitCode: code,
-      stdout: stdoutText,
-      stderr: stderrText,
+      // The SSE streaming path appends '\n' per line, while the legacy
+      // buffered path used lines.join('\n') which omits the trailing
+      // newline. Strip it here so output() matches the old ExecResult shape.
+      stdout: stdoutText.replace(/\n$/, ''),
+      stderr: stderrText.replace(/\n$/, ''),
       command: this._command,
       duration: Date.now() - this._startTime,
       timestamp:
