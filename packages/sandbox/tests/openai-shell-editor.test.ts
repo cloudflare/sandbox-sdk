@@ -1,7 +1,20 @@
 import type { ApplyPatchOperation } from '@openai/agents';
+import type { ExecProcess, ExecResult } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor, Shell } from '../src/openai/index';
 import type { Sandbox } from '../src/sandbox';
+
+function mockExecProcess(result: ExecResult): ExecProcess {
+  return {
+    stdout: new ReadableStream(),
+    stderr: new ReadableStream(),
+    exitCode: Promise.resolve(result.exitCode),
+    output: () => Promise.resolve(result),
+    // biome-ignore lint/suspicious/noThenProperty: intentional PromiseLike mock
+    then: (onFulfilled, onRejected) =>
+      Promise.resolve(result).then(onFulfilled, onRejected)
+  };
+}
 
 interface MockSandbox {
   exec?: ReturnType<typeof vi.fn>;
@@ -41,11 +54,17 @@ describe('Shell', () => {
   });
 
   it('runs commands and collects results', async () => {
-    const execMock = vi.fn().mockResolvedValue({
-      stdout: 'hello\n',
-      stderr: '',
-      exitCode: 0
-    });
+    const execMock = vi.fn().mockImplementation(() =>
+      mockExecProcess({
+        stdout: 'hello\n',
+        stderr: '',
+        exitCode: 0,
+        success: true,
+        command: 'echo hello',
+        duration: 0,
+        timestamp: new Date().toISOString()
+      })
+    );
 
     const mockSandbox: MockSandbox = { exec: execMock };
     const shell = new Shell(mockSandbox as unknown as Sandbox);

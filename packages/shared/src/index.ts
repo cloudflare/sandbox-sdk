@@ -123,6 +123,7 @@ export type {
   EnvSetResult,
   ExecEvent,
   ExecOptions,
+  ExecProcess,
   ExecResult,
   ExecutionSession,
   // File streaming types

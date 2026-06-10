@@ -118,6 +118,51 @@ export interface ExecResult {
 }
 
 /**
+ * Handle for a running command, providing both streaming and buffered access.
+ *
+ * Modeled after the Containers SDK `ExecProcess` pattern. `exec()` returns
+ * this object **synchronously** — async setup happens lazily inside.
+ *
+ * Because `ExecProcess` implements `PromiseLike<ExecResult>`, you can
+ * `await` it directly for backward-compatible buffered output, or access
+ * the streams for real-time data.
+ *
+ * @example
+ * ```ts
+ * // Buffered — backward compatible, just await it
+ * const result = await sandbox.exec('ls -la');
+ * console.log(result.stdout);
+ *
+ * // Explicit buffered
+ * const result = await sandbox.exec('ls -la').output();
+ *
+ * // Streaming — don't await, use the streams
+ * const proc = sandbox.exec('tail -f /var/log/app.log');
+ * for await (const chunk of proc.stdout) { ... }
+ *
+ * // Exit code only
+ * const exitCode = await sandbox.exec('test -f /etc/config').exitCode;
+ * ```
+ */
+export interface ExecProcess extends PromiseLike<ExecResult> {
+  /** Readable stream of stdout bytes */
+  readonly stdout: ReadableStream<Uint8Array>;
+  /** Readable stream of stderr bytes */
+  readonly stderr: ReadableStream<Uint8Array>;
+  /** Resolves with the exit code when the process completes */
+  readonly exitCode: Promise<number>;
+  /** Collect all output and return a buffered {@link ExecResult} */
+  output(): Promise<ExecResult>;
+  /** Override to return a full Promise so .then().catch() chains work */
+  then<TResult1 = ExecResult, TResult2 = never>(
+    onfulfilled?:
+      | ((value: ExecResult) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2>;
+}
+
+/**
  * Result from waiting for a log pattern
  */
 export interface WaitForLogResult {
@@ -1031,7 +1076,10 @@ export interface ExecutionSession {
   readonly id: string;
 
   // Command execution
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): ExecProcess;
+  /**
+   * @deprecated Use `exec(command).stdout` for streaming output.
+   */
   execStream(
     command: string,
     options?: StreamOptions
@@ -1357,7 +1405,7 @@ export type MountBucketOptions =
 // Main Sandbox interface
 export interface ISandbox {
   // Command execution
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): ExecProcess;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
@@ -1367,6 +1415,9 @@ export interface ISandbox {
   killAllProcesses(): Promise<number>;
 
   // Streaming operations
+  /**
+   * @deprecated Use `exec(command).stdout` for streaming output.
+   */
   execStream(
     command: string,
     options?: StreamOptions

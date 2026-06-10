@@ -16,6 +16,7 @@ import type {
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
+  ExecProcess,
   ExecResult,
   ExecutionResult,
   ExecutionSession,
@@ -83,6 +84,7 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
+import { createExecProcess } from './exec-process';
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
@@ -676,14 +678,16 @@ export function getSandbox<T extends Sandbox<any>>(
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
-    exec: (command: string, execOptions?: ExecOptions) =>
-      useDefaultSession
-        ? stub.exec(command, execOptions)
-        : stub.execWithSessionToken(
+    exec: (command: string, execOptions?: ExecOptions) => {
+      const streamPromise = useDefaultSession
+        ? stub.execStream(command, execOptions)
+        : stub.execStreamWithSessionToken(
             command,
             DISABLE_SESSION_TOKEN,
             execOptions
-          ),
+          );
+      return createExecProcess(command, streamPromise, execOptions?.signal);
+    },
     startProcess: (command: string, processOptions?: ProcessOptions) =>
       useDefaultSession || processOptions?.sessionId !== undefined
         ? stub.startProcess(command, processOptions)
@@ -3706,10 +3710,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const context = await this.resolveExecution();
-    const session = this.serializeExecutionContext(context);
-    return this.execWithSession(command, session, options);
+  exec(command: string, options?: ExecOptions): ExecProcess {
+    const streamPromise = this.resolveExecution().then((context) => {
+      const session = this.serializeExecutionContext(context);
+      return this.execStreamWithSession(command, session, options);
+    });
+    return createExecProcess(command, streamPromise, options?.signal);
   }
 
   async execWithSessionToken(
@@ -5534,8 +5540,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: sessionId,
       terminal: null as unknown as ExecutionSession['terminal'],
 
-      exec: (command, options) =>
-        this.execWithSession(command, sessionId, options),
+      exec: (command, options) => {
+        const streamPromise = this.execStreamWithSession(
+          command,
+          sessionId,
+          options
+        );
+        return createExecProcess(command, streamPromise, options?.signal);
+      },
       execStream: (command, options) =>
         this.execStreamWithSession(command, sessionId, options),
 

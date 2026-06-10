@@ -11,6 +11,7 @@ export {
   SandboxClient,
   UtilityClient
 } from './clients';
+export { createExecProcess } from './exec-process';
 export { getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
@@ -28,6 +29,7 @@ export type {
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
+  ExecProcess,
   ExecResult,
   ExecutionResult,
   ExecutionSession,

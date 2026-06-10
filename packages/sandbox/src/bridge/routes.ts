@@ -533,7 +533,7 @@ export function createBridgeApp(
           closeStream();
         }
       })
-      .catch((err: unknown) => {
+      .then(null, (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         writeSSE(
           'error',
@@ -837,7 +837,10 @@ export function createBridgeApp(
       const stream = await sandbox.readFileStream(tmpPath);
 
       // Best-effort cleanup; don't await so we don't delay the response.
-      sandbox.exec(`rm -f ${shellQuote(tmpPath)}`).catch(() => {});
+      sandbox.exec(`rm -f ${shellQuote(tmpPath)}`).then(
+        () => {},
+        () => {}
+      );
 
       return new Response(sseToByteStream(stream), {
         status: 200,
