@@ -10,7 +10,7 @@
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "test": "./scripts/test"
+    "test:smoke": "./scripts/test"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
