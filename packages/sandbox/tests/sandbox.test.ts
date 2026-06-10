@@ -337,7 +337,7 @@ describe('Sandbox - Automatic Session Management', () => {
         })
       );
 
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         expect.stringMatching(/^sandbox-/),
         undefined
@@ -392,10 +392,14 @@ describe('Sandbox - Automatic Session Management', () => {
         message: 'Created'
       } as any);
 
-      vi.spyOn(
-        freshSandbox.client.commands,
-        'executeStream'
-      ).mockImplementation(() => Promise.resolve(createMockSSEStream()));
+      vi.spyOn(freshSandbox.client.commands, 'execute').mockResolvedValue({
+        success: true,
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo test',
+        timestamp: new Date().toISOString()
+      } as any);
 
       await freshSandbox.exec('echo test');
 
@@ -403,7 +407,7 @@ describe('Sandbox - Automatic Session Management', () => {
         'enableDefaultSession'
       );
       expect(freshSandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
-      expect(freshSandbox.client.commands.executeStream).toHaveBeenCalledWith(
+      expect(freshSandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         expect.stringMatching(/^sandbox-/),
         undefined
@@ -417,7 +421,7 @@ describe('Sandbox - Automatic Session Management', () => {
         timeout: 5000
       });
 
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo $OPTION',
         expect.stringMatching(/^sandbox-/),
         {
@@ -606,12 +610,12 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
 
-      const firstSessionId = vi.mocked(sandbox.client.commands.executeStream)
-        .mock.calls[0][1];
+      const firstSessionId = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[0][1];
       const fileSessionId = vi.mocked(sandbox.client.files.writeFile).mock
         .calls[0][2];
-      const secondSessionId = vi.mocked(sandbox.client.commands.executeStream)
-        .mock.calls[1][1];
+      const secondSessionId = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[1][1];
 
       expect(firstSessionId).toBe(fileSessionId);
       expect(firstSessionId).toBe(secondSessionId);
@@ -885,7 +889,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await Promise.all([first, second, third]);
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-      const calls = vi.mocked(sandbox.client.commands.executeStream).mock.calls;
+      const calls = vi.mocked(sandbox.client.commands.execute).mock.calls;
       expect(calls[0][1]).toBe('sandbox-default');
       expect(calls[1][1]).toBe('sandbox-renamed');
       expect(calls[2][1]).toBe('sandbox-renamed');
@@ -946,12 +950,14 @@ describe('Sandbox - Automatic Session Management', () => {
       (sandbox as unknown as { defaultSession: string }).defaultSession =
         'sandbox-default';
 
-      vi.mocked(sandbox.client.commands.executeStream).mockResolvedValueOnce(
-        createMockSSEStream({
-          stdout: 'sessionless',
-          command: 'printf sessionless'
-        })
-      );
+      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
+        success: true,
+        stdout: 'sessionless',
+        stderr: '',
+        exitCode: 0,
+        command: 'printf sessionless',
+        timestamp: new Date().toISOString()
+      } as any);
 
       const result = await sandbox.exec('printf sessionless');
 
@@ -1027,7 +1033,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await session.exec('echo test');
 
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         'isolated-session',
         undefined
@@ -1053,9 +1059,9 @@ describe('Sandbox - Automatic Session Management', () => {
       await session1.exec('echo build');
       await session2.exec('echo test');
 
-      const session1Id = vi.mocked(sandbox.client.commands.executeStream).mock
+      const session1Id = vi.mocked(sandbox.client.commands.execute).mock
         .calls[0][1];
-      const session2Id = vi.mocked(sandbox.client.commands.executeStream).mock
+      const session2Id = vi.mocked(sandbox.client.commands.execute).mock
         .calls[1][1];
 
       expect(session1Id).toBe('session-1');
@@ -1085,12 +1091,12 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.exec('echo default-again');
 
-      const defaultSessionId1 = vi.mocked(sandbox.client.commands.executeStream)
-        .mock.calls[0][1];
-      const explicitSessionId = vi.mocked(sandbox.client.commands.executeStream)
-        .mock.calls[1][1];
-      const defaultSessionId2 = vi.mocked(sandbox.client.commands.executeStream)
-        .mock.calls[2][1];
+      const defaultSessionId1 = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[0][1];
+      const explicitSessionId = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[1][1];
+      const defaultSessionId2 = vi.mocked(sandbox.client.commands.execute).mock
+        .calls[2][1];
 
       expect(defaultSessionId1).toBe('sandbox-default');
       expect(explicitSessionId).toBe('explicit-session');
@@ -1197,7 +1203,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should execute command with session context', async () => {
       await session.exec('pwd');
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'pwd',
         'test-session',
         undefined

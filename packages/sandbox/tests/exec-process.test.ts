@@ -1,6 +1,33 @@
-import type { ExecEvent, ExecResult } from '@repo/shared';
+import type { ExecEvent, ExecProcess, ExecResult } from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 import { createExecProcess } from '../src/exec-process';
+
+function mockProcess(events: ExecEvent[]): ExecProcess {
+  return createExecProcess({
+    buffered: async () => {
+      let stdout = '';
+      let stderr = '';
+      let exitCode = 0;
+      for (const e of events) {
+        if (e.type === 'stdout' && e.data) stdout += e.data;
+        if (e.type === 'stderr' && e.data) stderr += e.data;
+        if (e.type === 'complete') exitCode = e.exitCode ?? 0;
+        if (e.type === 'error')
+          throw new Error(e.data || 'Command execution failed');
+      }
+      return {
+        success: exitCode === 0,
+        exitCode,
+        stdout,
+        stderr,
+        command: '',
+        duration: 0,
+        timestamp: ''
+      };
+    },
+    stream: () => Promise.resolve(createSSEStream(events))
+  });
+}
 
 function createSSEStream(events: ExecEvent[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -41,29 +68,21 @@ function stdEvents(opts: {
 }
 
 describe('createExecProcess', () => {
-  describe('output()', () => {
-    it('buffers stdout and stderr into ExecResult', async () => {
-      const proc = createExecProcess(
-        'echo hello',
-        createSSEStream(stdEvents({ stdout: 'hello\n', stderr: 'warn\n' }))
+  describe('output() — buffered path', () => {
+    it('returns the buffered ExecResult', async () => {
+      const proc = mockProcess(
+        stdEvents({ stdout: 'hello\n', stderr: 'warn\n' })
       );
       const result = await proc.output();
 
-      expect(result.stdout).toBe('hello');
-      expect(result.stderr).toBe('warn');
+      expect(result.stdout).toBe('hello\n');
+      expect(result.stderr).toBe('warn\n');
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
-      expect(result.command).toBe('echo hello');
-      expect(result.sessionId).toBe('sess-1');
-      expect(result.duration).toBeGreaterThanOrEqual(0);
-      expect(result.timestamp).toBeTruthy();
     });
 
     it('reports failure for non-zero exit code', async () => {
-      const proc = createExecProcess(
-        'false',
-        createSSEStream(stdEvents({ exitCode: 1 }))
-      );
+      const proc = mockProcess(stdEvents({ exitCode: 1 }));
       const result = await proc.output();
 
       expect(result.success).toBe(false);
@@ -71,7 +90,7 @@ describe('createExecProcess', () => {
     });
 
     it('handles empty stdout and stderr', async () => {
-      const proc = createExecProcess('true', createSSEStream(stdEvents({})));
+      const proc = mockProcess(stdEvents({}));
       const result = await proc.output();
 
       expect(result.stdout).toBe('');
@@ -80,37 +99,28 @@ describe('createExecProcess', () => {
     });
   });
 
-  describe('PromiseLike (then)', () => {
+  describe('PromiseLike (then) — uses buffered path', () => {
     it('resolves to ExecResult when awaited', async () => {
-      const proc = createExecProcess(
-        'echo hi',
-        createSSEStream(stdEvents({ stdout: 'hi\n' }))
-      );
+      const proc = mockProcess(stdEvents({ stdout: 'hi\n' }));
       const result: ExecResult = await proc;
 
-      expect(result.stdout).toBe('hi');
+      expect(result.stdout).toBe('hi\n');
       expect(result.exitCode).toBe(0);
     });
 
     it('supports .then() chaining', async () => {
-      const proc = createExecProcess(
-        'echo chain',
-        createSSEStream(stdEvents({ stdout: 'chain\n' }))
-      );
+      const proc = mockProcess(stdEvents({ stdout: 'chain\n' }));
       const stdout = await proc.then((r) => r.stdout);
 
-      expect(stdout).toBe('chain');
+      expect(stdout).toBe('chain\n');
     });
 
     it('supports .then(null, onRejected) for errors', async () => {
       const ts = new Date().toISOString();
-      const proc = createExecProcess(
-        'bad',
-        createSSEStream([
-          { type: 'start', timestamp: ts },
-          { type: 'error', data: 'kaboom', timestamp: ts }
-        ])
-      );
+      const proc = mockProcess([
+        { type: 'start', timestamp: ts },
+        { type: 'error', data: 'kaboom', timestamp: ts }
+      ]);
       const err = await proc.then(
         () => null,
         (e) => e
@@ -121,45 +131,35 @@ describe('createExecProcess', () => {
     });
   });
 
-  describe('exitCode', () => {
+  describe('exitCode — streaming path', () => {
     it('resolves with exit code from complete event', async () => {
-      const proc = createExecProcess(
-        'exit 42',
-        createSSEStream(stdEvents({ exitCode: 42 }))
-      );
+      const proc = mockProcess(stdEvents({ exitCode: 42 }));
       await expect(proc.exitCode).resolves.toBe(42);
     });
 
     it('rejects on error event', async () => {
       const ts = new Date().toISOString();
-      const proc = createExecProcess(
-        'fail',
-        createSSEStream([
-          { type: 'start', timestamp: ts },
-          { type: 'error', data: 'oops', timestamp: ts }
-        ])
-      );
+      const proc = mockProcess([
+        { type: 'start', timestamp: ts },
+        { type: 'error', data: 'oops', timestamp: ts }
+      ]);
       await expect(proc.exitCode).rejects.toThrow('oops');
     });
 
     it('rejects when stream ends without completion', async () => {
-      const proc = createExecProcess(
-        'hang',
-        createSSEStream([
-          { type: 'start', timestamp: new Date().toISOString() }
-        ])
-      );
+      const proc = mockProcess([
+        { type: 'start', timestamp: new Date().toISOString() }
+      ]);
       await expect(proc.exitCode).rejects.toThrow(
         'Stream ended without completion event'
       );
     });
   });
 
-  describe('stdout / stderr streams', () => {
+  describe('stdout / stderr — streaming path', () => {
     it('demuxes stdout and stderr into separate streams', async () => {
-      const proc = createExecProcess(
-        'mixed',
-        createSSEStream(stdEvents({ stdout: 'out-data', stderr: 'err-data' }))
+      const proc = mockProcess(
+        stdEvents({ stdout: 'out-data', stderr: 'err-data' })
       );
 
       const decoder = new TextDecoder();
@@ -187,29 +187,21 @@ describe('createExecProcess', () => {
     });
   });
 
-  describe('lazy promise input', () => {
-    it('accepts a Promise<ReadableStream> for deferred setup', async () => {
-      const streamPromise = Promise.resolve(
-        createSSEStream(stdEvents({ stdout: 'lazy\n' }))
-      );
-      const proc = createExecProcess('echo lazy', streamPromise);
-      const result = await proc;
-
-      expect(result.stdout).toBe('lazy');
-    });
-
-    it('propagates setup rejection through exitCode', async () => {
-      const streamPromise = Promise.reject(new Error('setup failed'));
-      const proc = createExecProcess('fail', streamPromise);
-
-      await expect(proc.exitCode).rejects.toThrow('setup failed');
-    });
-
-    it('propagates setup rejection through then()', async () => {
-      const streamPromise = Promise.reject(new Error('rpc down'));
-      const proc = createExecProcess('fail', streamPromise);
-
+  describe('error propagation', () => {
+    it('propagates buffered rejection through then()', async () => {
+      const proc = createExecProcess({
+        buffered: () => Promise.reject(new Error('rpc down')),
+        stream: () => Promise.resolve(createSSEStream([]))
+      });
       await expect(proc.then((r) => r)).rejects.toThrow('rpc down');
+    });
+
+    it('propagates stream rejection through exitCode', async () => {
+      const proc = createExecProcess({
+        buffered: () => Promise.resolve({} as ExecResult),
+        stream: () => Promise.reject(new Error('stream failed'))
+      });
+      await expect(proc.exitCode).rejects.toThrow('stream failed');
     });
   });
 });
