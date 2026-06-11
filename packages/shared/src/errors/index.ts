@@ -41,6 +41,8 @@ export type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
+  ContainerUnavailableReason,
   ContextNotFoundContext,
   FileExistsContext,
   FileNotFoundContext,

@@ -4,17 +4,33 @@
 
 The SDK uses proper HTTP status codes for container startup errors:
 
-| Status  | Meaning                                        | SDK Behavior                   |
-| ------- | ---------------------------------------------- | ------------------------------ |
-| **503** | Transient (container starting, port not ready) | Retry with exponential backoff |
-| **500** | Permanent (config error, missing image)        | Fail immediately               |
-| **400** | Client error (capacity limits, validation)     | Fail immediately               |
+| Status  | Meaning                                          | SDK Behavior                   |
+| ------- | ------------------------------------------------ | ------------------------------ |
+| **503** | Container unavailable before operation admission | Retry with exponential backoff |
+| **500** | Permanent (config error, missing image)          | Fail immediately               |
+| **400** | Client error (capacity limits, validation)       | Fail immediately               |
 
 ## Retry Logic
 
 - **Total budget**: 2 minutes (configurable per Sandbox via `containerTimeouts`).
 - **Backoff**: 3s → 6s → 12s → 24s → 30s (capped at 30s).
 - **Only retries**: 503 Service Unavailable.
+
+## Container Unavailable
+
+`CONTAINER_UNAVAILABLE` means the SDK could not make the container available
+before the requested user operation was admitted to the container control
+plane. The operation did not start in the container.
+
+Applications may handle this like a service-level 503: retry later, enqueue the
+work, show retry UI, or return a 503 response to their caller. This can happen
+during cold start, after sleep, during deployment or platform churn, or while
+the SDK is preparing a default session for a new container generation.
+
+Do not apply the same retry rule to execution or transport errors raised after
+an operation was admitted. For example, if a command starts and the WebSocket
+later closes, the SDK surfaces an execution error or `RPCTransportError`
+because the operation may have already produced side effects.
 
 ### Retry surface
 

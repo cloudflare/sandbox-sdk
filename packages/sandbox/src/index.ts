@@ -54,6 +54,7 @@ export {
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  ContainerUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,

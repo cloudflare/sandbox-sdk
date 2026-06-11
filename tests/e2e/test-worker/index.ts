@@ -148,6 +148,7 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   GitCheckoutError: { status: 500, code: 'GIT_CHECKOUT_FAILED' },
   // Code interpreter errors
   InterpreterNotReadyError: { status: 503, code: 'INTERPRETER_NOT_READY' },
+  ContainerUnavailableError: { status: 503, code: 'CONTAINER_UNAVAILABLE' },
   ContextNotFoundError: { status: 404, code: 'CONTEXT_NOT_FOUND' },
   CodeExecutionError: { status: 500, code: 'CODE_EXECUTION_ERROR' },
   // Session errors

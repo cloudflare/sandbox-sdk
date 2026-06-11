@@ -13,6 +13,7 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -821,6 +822,17 @@ export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
   }
   get backupId() {
     return this.context.backupId;
+  }
+}
+
+// ============================================================================
+// Container Availability Errors
+// ============================================================================
+
+export class ContainerUnavailableError extends SandboxError<ContainerUnavailableContext> {
+  constructor(errorResponse: ErrorResponse<ContainerUnavailableContext>) {
+    super(errorResponse);
+    this.name = 'ContainerUnavailableError';
   }
 }
 

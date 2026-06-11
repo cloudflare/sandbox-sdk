@@ -21,12 +21,14 @@ import type {
   SandboxWatchAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
+import { ErrorCode, type ErrorResponse } from '@repo/shared/errors';
 import {
   RpcSession,
   type RpcStub,
   type RpcTarget,
   type RpcTransport
 } from 'capnweb';
+import { createErrorFromResponse } from '../errors/adapter';
 import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
@@ -43,6 +45,20 @@ const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to attempt 
 /** Stub that can issue a WebSocket-upgrade fetch through the DO's Container base class. */
 export interface ContainerFetchStub {
   fetch(request: Request): Promise<Response>;
+}
+
+function isErrorResponse(value: unknown): value is ErrorResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<ErrorResponse>;
+  return (
+    typeof candidate.code === 'string' &&
+    Object.values(ErrorCode).includes(candidate.code as ErrorCode) &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.httpStatus === 'number' &&
+    typeof candidate.timestamp === 'string' &&
+    typeof candidate.context === 'object' &&
+    candidate.context !== null
+  );
 }
 
 export interface ContainerControlConnectionOptions {
@@ -239,6 +255,11 @@ export class ContainerControlConnection {
       const response = await this.fetchUpgradeWithRetry();
 
       if (response.status !== 101) {
+        const structuredError =
+          await this.parseStructuredUpgradeError(response);
+        if (structuredError) {
+          throw createErrorFromResponse(structuredError);
+        }
         throw new Error(
           `WebSocket upgrade failed: ${response.status} ${response.statusText}`
         );
@@ -274,6 +295,23 @@ export class ContainerControlConnection {
       this.fireOnClose();
       throw error;
     }
+  }
+
+  private async parseStructuredUpgradeError(
+    response: Response
+  ): Promise<ErrorResponse | null> {
+    const contentType = response.headers.get('Content-Type') ?? '';
+    if (!contentType.includes('application/json')) return null;
+
+    let body: unknown;
+    try {
+      body = await response.clone().json();
+    } catch {
+      return null;
+    }
+
+    if (!isErrorResponse(body)) return null;
+    return body;
   }
 
   /**

@@ -193,13 +193,13 @@ describe('Sandbox.containerFetch() error classification', () => {
       const body = (await response.json()) as {
         code: string;
         message: string;
-        context: { phase: string };
+        context: { reason: string };
       };
-      expect(body.code).toBe('INTERNAL_ERROR');
+      expect(body.code).toBe('CONTAINER_UNAVAILABLE');
       expect(body.message).toBe(
         'Container is starting. Please retry in a moment.'
       );
-      expect(body.context.phase).toBe('startup');
+      expect(body.context.reason).toBe('startup');
     });
 
     it('returns 503 for "the container is not listening" (@cloudflare/containers)', async () => {
@@ -259,8 +259,8 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('10');
       expect(
-        ((await response.json()) as { context: { phase: string } }).context
-          .phase
+        ((await response.json()) as { context: { reason: string } }).context
+          .reason
       ).toBe('provisioning');
     });
 

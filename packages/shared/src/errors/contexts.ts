@@ -240,6 +240,16 @@ export interface InternalErrorContext {
   [key: string]: unknown; // Allow extension
 }
 
+export type ContainerUnavailableReason =
+  | 'provisioning'
+  | 'startup'
+  | 'container_restarted';
+
+export interface ContainerUnavailableContext {
+  reason?: ContainerUnavailableReason;
+  sessionId?: string;
+}
+
 /**
  * RPC transport error contexts. Surfaced when the capnweb WebSocket session
  * fails on the SDK side rather than the container reporting a structured

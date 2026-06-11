@@ -3,6 +3,7 @@ import {
   ContainerControlConnection,
   DeferredTransport
 } from '../src/container-control/connection';
+import { ContainerUnavailableError, ErrorCode } from '../src/errors';
 
 /**
  * Tests for ContainerControlConnection — the capnweb RPC connection manager.
@@ -400,6 +401,69 @@ describe('ContainerControlConnection', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    function makeContainerUnavailableResponse(): Response {
+      return new Response(
+        JSON.stringify({
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          message: 'Container is starting. Please retry in a moment.',
+          context: { reason: 'startup' },
+          httpStatus: 503,
+          timestamp: new Date().toISOString(),
+          suggestion: 'Retry the operation in a moment.'
+        }),
+        {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    it('preserves structured container unavailability upgrade failures', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockResolvedValue(makeContainerUnavailableResponse());
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 0
+      });
+
+      let thrown: unknown;
+      try {
+        await conn.connect();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+      expect(thrown).toMatchObject({
+        name: 'ContainerUnavailableError',
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        context: { reason: 'startup' }
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves structured container unavailability for queued RPC calls', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockResolvedValue(makeContainerUnavailableResponse());
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 0
+      });
+
+      const rpcCall = conn.rpc().utils.ping();
+
+      await expect(rpcCall).rejects.toMatchObject({
+        name: 'ContainerUnavailableError',
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        context: { reason: 'startup' }
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('does not retry terminal upgrade failures', async () => {

@@ -21,6 +21,7 @@ export default defineConfig({
 
     // Global setup resolves worker URL, passes it through a tmp file
     globalSetup: ['tests/e2e/global-setup.ts'],
+    setupFiles: ['tests/e2e/setup-container-unavailable-retry.ts'],
 
     // Threads run in parallel - each file creates its own sandbox
     pool: 'threads',

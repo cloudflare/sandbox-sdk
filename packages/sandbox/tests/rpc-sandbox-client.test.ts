@@ -318,6 +318,31 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(FileNotFoundError);
   });
 
+  it('preserves SandboxErrors raised by the local connection layer', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError, ErrorCode } = await loadErr();
+    const original = new ContainerUnavailableError({
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: 'Container is starting. Please retry in a moment.',
+      context: { reason: 'startup' },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+
+    let thrown: unknown;
+    try {
+      translateRPCError(original);
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    expect(thrown).toMatchObject({
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      context: { reason: 'startup' }
+    });
+  });
+
   it('ignores foreign `code` values that are not in the ErrorCode registry', async () => {
     // Node syscalls and other libraries decorate Errors with codes like
     // 'ENOENT'. Those must not be mistaken for a structured RPC error —
