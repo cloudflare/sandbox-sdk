@@ -26,7 +26,7 @@ The Sandbox SDK enables secure, isolated code execution in containers on Cloudfl
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The SDK has one DO-to-container control path: the typed control channel over `/rpc`. Preview/proxy traffic and PTY terminal WebSockets are specialized channels, not alternate SDK control transports.
+The DO-to-container control path is a typed control channel over `/rpc`. Preview/proxy traffic and PTY terminal WebSockets are separate channels with their own purposes.
 
 ## Three-Layer Architecture
 

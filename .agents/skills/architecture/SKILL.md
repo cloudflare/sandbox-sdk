@@ -9,7 +9,7 @@ description: Use when navigating the codebase for the first time, adding a new c
 
 1. **`@cloudflare/sandbox` (`packages/sandbox/`)** — Public SDK published to npm
    - `Sandbox` class: Durable Object that manages the container lifecycle
-   - `ContainerControlClient`: the single DO-to-container SDK control client
+   - `ContainerControlClient`: the DO-to-container SDK control client
    - `ContainerControlConnection`: capnweb over the `/rpc` WebSocket
    - `CodeInterpreter`: high-level API for Python/JS with structured outputs
    - `proxyToSandbox()`: request handler for preview URL routing
@@ -29,7 +29,7 @@ description: Use when navigating the codebase for the first time, adding a new c
 
 ## Request Flow
 
-Primary and only SDK control path:
+SDK control path:
 
 ```text
 Worker
@@ -52,9 +52,9 @@ The Sandbox Durable Object to container control path is:
 - Container side: `packages/sandbox-container/src/control-plane/`
 - Current wire implementation: capnweb RPC over the `/rpc` WebSocket route
 
-Control-channel capabilities belong in this path. Treat capnweb/RPC as the current wire implementation detail, not the architectural boundary. The boundary is the typed control channel between the Sandbox DO and the container control API. Do not add SDK control capabilities under `packages/sandbox/src/clients/` or under `packages/sandbox-container/src/handlers/` or `routes/` — those layers are gone.
+Control-channel capabilities belong in this path. Treat capnweb/RPC as a wire implementation detail, not the architectural boundary. The boundary is the typed control channel between the Sandbox DO and the container control API. SDK control capabilities live in `packages/sandbox/src/container-control/` on the SDK side and `packages/sandbox-container/src/control-plane/` on the container side.
 
-The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the control API contract used by both sides.
+The shared `@repo/shared` `SandboxAPI` interface defines the control API contract used by both sides.
 
 Specialized non-control channels remain separate:
 
