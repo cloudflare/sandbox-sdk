@@ -44,7 +44,7 @@ jobs:
           CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
 
           WORKER="sandbox-e2e-test-worker-pr-${PR}"
-          IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+          IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name == \"$WORKER\" or (.name | startswith(\"$WORKER-\"))) | .id" 2>/dev/null)
           wrangler delete --name "$WORKER" 2>/dev/null || true
           for id in $IDS; do
             wrangler containers delete "$id" 2>/dev/null || true
@@ -120,7 +120,7 @@ jobs:
             if [ "${SHOULD_CLEAN[$PR]}" = "true" ]; then
               echo "PR #$PR is stale — cleaning up"
               WORKER="sandbox-e2e-test-worker-pr-${PR}"
-              IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+              IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name == \"$WORKER\" or (.name | startswith(\"$WORKER-\"))) | .id" 2>/dev/null)
               wrangler delete --name "$WORKER" 2>/dev/null || true
               for id in $IDS; do
                 wrangler containers delete "$id" 2>/dev/null || true

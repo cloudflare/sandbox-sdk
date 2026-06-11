@@ -314,6 +314,7 @@ jobs:
         env:
           TEST_WORKER_URL: ${{ needs.deploy.outputs.worker-url }}
           TEST_SANDBOX_ID: e2e-test-${{ github.run_id }}
+          TEST_TRANSPORT: rpc
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
