@@ -18,13 +18,7 @@ The SDK uses proper HTTP status codes for container startup errors:
 
 ### Retry surface
 
-The SDK control channel has one startup retry surface:
-
-| Path                           | Where                                                | What it retries                               |
-| ------------------------------ | ---------------------------------------------------- | --------------------------------------------- |
-| `/rpc` control-channel upgrade | `ContainerControlConnection.fetchUpgradeWithRetry()` | 503 on the WS upgrade fetch during cold start |
-
-The retry budget comes from `Sandbox.computeRetryTimeoutMs()` and is pushed into the active `ContainerControlClient` when container timeouts change.
+The SDK has one startup retry surface: `ContainerControlConnection.fetchUpgradeWithRetry()` retries 503 responses on the `/rpc` WebSocket upgrade fetch during cold start. The retry budget comes from `Sandbox.computeRetryTimeoutMs()` and is pushed into the active `ContainerControlClient` when container timeouts change.
 
 `containerFetch()` cannot be used for the WebSocket upgrade itself. The control connection calls `stub.fetch()` directly and uses 503 responses as the readiness signal. `Sandbox.fetch()` delegates WebSocket upgrade requests to `super.fetch()`, while non-upgrade container startup and port readiness still flow through `containerFetch()` and `startAndWaitForPorts()`.
 

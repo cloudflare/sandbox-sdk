@@ -7,13 +7,23 @@ This document provides an architectural overview for contributors and AI assista
 The Sandbox SDK enables secure, isolated code execution in containers on Cloudflare's edge. Workers can execute commands, manage files, run background processes, and expose services.
 
 ```text
-Worker code
-  -> Sandbox Durable Object (packages/sandbox)
-  -> ContainerControlClient
-  -> capnweb RPC over /rpc WebSocket
-  -> SandboxControlAPI (packages/sandbox-container)
-  -> container services
-  -> sessions/bash/files/processes/etc.
+┌──────────────────────────────────────────────────────────────────┐
+│                        Your Worker Code                          │
+│   const sandbox = getSandbox(env.Sandbox, 'my-sandbox');         │
+│   const result = await sandbox.exec('python script.py');         │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────────────────┐
+│        Sandbox Durable Object (packages/sandbox/)                │
+│   • Manages container lifecycle and session state                │
+│   • Delegates container operations to ContainerControlClient     │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ capnweb RPC over /rpc WebSocket
+┌──────────────────────────▼───────────────────────────────────────┐
+│        Container Runtime (packages/sandbox-container/)           │
+│   • Bun server inside Docker/VM, SandboxControlAPI on /rpc       │
+│   • Executes commands, manages files/processes/sessions          │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 The SDK has one DO-to-container control path: the typed control channel over `/rpc`. Preview/proxy traffic and PTY terminal WebSockets are specialized channels, not alternate SDK control transports.
@@ -86,7 +96,7 @@ commands, files, processes, ports, git, interpreter, utils, backup, watch, tunne
 - the deferred transport that queues sends until the WebSocket is active;
 - close/error detection and reconnection handoff.
 
-The container-side control plane is implemented in `packages/sandbox-container/src/control-plane/`. `SandboxControlAPI` exposes nested capnweb `RpcTarget` domains and calls services directly. There is no HTTP route handler layer for SDK control operations.
+The container-side control plane is implemented in `packages/sandbox-container/src/control-plane/`. `SandboxControlAPI` exposes nested capnweb `RpcTarget` domains and calls services directly.
 
 ## Request Flow
 
@@ -106,7 +116,7 @@ Worker code
   -> persistent bash shell
 ```
 
-Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. The stream contents are often SSE-framed bytes for SDK compatibility, but the transport is the `/rpc` control channel.
+Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. The bytes are SSE-framed so existing SDK consumers can parse them with the same code, but the transport is the `/rpc` control channel.
 
 ## Container Runtime Flow
 

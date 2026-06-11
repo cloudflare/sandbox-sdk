@@ -52,15 +52,9 @@ The Sandbox Durable Object to container control path is:
 - Container side: `packages/sandbox-container/src/control-plane/`
 - Current wire implementation: capnweb RPC over the `/rpc` WebSocket route
 
-Control-channel capabilities belong in this path. Treat capnweb/RPC as the current wire implementation detail, not the architectural boundary. The boundary is the typed control channel between the Sandbox DO and the container control API.
+Control-channel capabilities belong in this path. Treat capnweb/RPC as the current wire implementation detail, not the architectural boundary. The boundary is the typed control channel between the Sandbox DO and the container control API. Do not add SDK control capabilities under `packages/sandbox/src/clients/` or under `packages/sandbox-container/src/handlers/` or `routes/` — those layers are gone.
 
 The shared `@repo/shared` `SandboxAPI` interface remains named `SandboxAPI` because it defines the control API contract used by both sides.
-
-## Removed Route-Based SDK Control API
-
-The old route-based SDK clients, HTTP transport, custom WebSocket transport, `/ws` adapter, and `/api/*` container control handlers were removed. Do not add them back.
-
-Do not create new SDK control capabilities under `packages/sandbox/src/clients/`, `packages/sandbox/src/clients/transport/`, `packages/sandbox-container/src/handlers/`, or `packages/sandbox-container/src/routes/`. Those directories no longer own the SDK control plane.
 
 Specialized non-control channels remain separate:
 

@@ -678,7 +678,7 @@ Here's what happens when you call `sandbox.exec('echo hello')`:
 │                    Sandbox Durable Object                            │
 │   packages/sandbox/src/sandbox.ts                                    │
 │                                                                      │
-│   Manages container lifecycle and calls the control client           │
+│   Manages container lifecycle and delegates to the control client           │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                                 │ capnweb RPC over /rpc
