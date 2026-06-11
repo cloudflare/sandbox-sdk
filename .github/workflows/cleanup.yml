@@ -43,11 +43,13 @@ jobs:
           PR=${{ github.event.pull_request.number }}
           CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
 
-          WORKER="sandbox-e2e-test-worker-pr-${PR}"
-          IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
-          wrangler delete --name "$WORKER" 2>/dev/null || true
-          for id in $IDS; do
-            wrangler containers delete "$id" 2>/dev/null || true
+          for suffix in "-http" "-websocket"; do
+            WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
+            IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+            wrangler delete --name "$WORKER" 2>/dev/null || true
+            for id in $IDS; do
+              wrangler containers delete "$id" 2>/dev/null || true
+            done
           done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -119,11 +121,13 @@ jobs:
           for PR in $PR_NUMBERS; do
             if [ "${SHOULD_CLEAN[$PR]}" = "true" ]; then
               echo "PR #$PR is stale — cleaning up"
-              WORKER="sandbox-e2e-test-worker-pr-${PR}"
-              IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
-              wrangler delete --name "$WORKER" 2>/dev/null || true
-              for id in $IDS; do
-                wrangler containers delete "$id" 2>/dev/null || true
+              for suffix in "-http" "-websocket"; do
+                WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
+                IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+                wrangler delete --name "$WORKER" 2>/dev/null || true
+                for id in $IDS; do
+                  wrangler containers delete "$id" 2>/dev/null || true
+                done
               done
               # Delete pr-* images for closed/stale PRs. These tags are no
               # longer referenced by any active CI run. Note: if the CF
