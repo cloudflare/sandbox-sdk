@@ -4911,7 +4911,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Namespaced tunnel API. Quick tunnels are zero-config preview URLs
-   * backed by Cloudflare's trycloudflare service.
+   * backed by Cloudflare's trycloudflare service. Named tunnels bind a
+   * stable hostname under the configured Cloudflare zone.
    *
    * - `tunnels.get(port)` — idempotent. Returns the cached tunnel for
    *   `port` if one exists in DO storage, otherwise spawns a fresh
@@ -4921,9 +4922,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * - `tunnels.destroy(portOrInfo)` — tear down by port number or by
    *   the record returned from `get()`.
    *
-   * Storage is cleared on container restart (`onStart`), so URLs do
-   * not survive a container restart — the next `get(port)` call will
-   * spawn a fresh tunnel with a new URL.
+   * Container restarts drop quick-tunnel records because their
+   * `*.trycloudflare.com` URLs are tied to the dead cloudflared process.
+   * Named-tunnel records stay in storage and are marked for respawn so the
+   * next `get(port, { name })` call reuses the Cloudflare tunnel and DNS
+   * record while starting a fresh cloudflared process.
    */
   get tunnels(): TunnelsHandler {
     this.ensureTunnelsBuilt();
