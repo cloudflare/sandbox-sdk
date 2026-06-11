@@ -10,7 +10,7 @@ export type ValidationResult<T = unknown> =
       errors: ValidationError[];
     };
 
-export interface ValidationError {
+interface ValidationError {
   field: string;
   message: string;
   code: string;
@@ -55,17 +55,6 @@ export function serviceError<T>(error: ServiceError): ServiceResult<T> {
   return { success: false, error } as ServiceResult<T>;
 }
 
-// Session types
-export interface SessionData {
-  id: string;
-  sessionId: string; // Keep for backwards compatibility
-  activeProcess: string | null;
-  createdAt: Date;
-  expiresAt?: Date;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-}
-
 // Process types (enhanced from existing)
 export type ProcessStatus =
   | 'starting'
@@ -102,9 +91,6 @@ export interface ProcessRecord {
   stderrFile?: string;
   monitoringInterval?: Timer;
 }
-
-// Export ProcessRecord as ProcessInfo for consistency with test usage
-export type ProcessInfo = ProcessRecord;
 
 // Process options for container-internal execution (includes session routing)
 export interface ProcessOptions {
@@ -156,13 +142,6 @@ export interface MkdirOptions {
 }
 
 // Git operation types
-export interface GitResult {
-  success: boolean;
-  message: string;
-  targetDirectory?: string;
-  error?: string;
-}
-
 export interface CloneOptions {
   branch?: string;
   targetDir?: string;
@@ -172,74 +151,3 @@ export interface CloneOptions {
   /** Maximum wall-clock time for the git clone subprocess in milliseconds */
   timeoutMs?: number;
 }
-
-export interface ExecuteResponse {
-  success: boolean;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  processId?: string;
-}
-
-export interface ReadFileResponse {
-  success: boolean;
-  content: string;
-  path: string;
-  exitCode: number;
-  encoding: string;
-  timestamp: string;
-}
-
-export interface WriteFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  timestamp: string;
-}
-
-export interface DeleteFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  timestamp: string;
-}
-
-export interface RenameFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  newPath: string;
-  timestamp: string;
-}
-
-export interface MoveFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  newPath: string;
-  timestamp: string;
-}
-
-export interface GitCheckoutResponse {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  repoUrl: string;
-  branch: string;
-  targetDir: string;
-  timestamp: string;
-}
-
-export interface MkdirResponse {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  path: string;
-  recursive: boolean;
-  timestamp: string;
-}
-
-// Import StartProcessRequest from @repo/shared for type safety across client/container boundary
-export type { StartProcessRequest } from '@repo/shared';
