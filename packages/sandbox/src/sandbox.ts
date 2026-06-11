@@ -61,11 +61,6 @@ import {
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { ContainerControlClient } from './container-control';
-
-type ExecuteResponse = Awaited<
-  ReturnType<ContainerControlClient['commands']['execute']>
->;
-
 import {
   CurrentRuntimeIdentity,
   type RuntimeIdentity,
@@ -151,6 +146,10 @@ import {
   type TunnelsHandler
 } from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
+
+type ExecuteResponse = Awaited<
+  ReturnType<ContainerControlClient['commands']['execute']>
+>;
 
 /**
  * Persisted record for a single exposed port. `token` authorizes preview
@@ -976,12 +975,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Compute the transport retry budget from current container timeouts.
+   * Compute the control-channel upgrade retry budget from current container
+   * timeouts.
    *
    * The budget covers the full container startup window (instance provisioning
-   * + port readiness) plus a 30s margin for the maximum single backoff delay
-   * (capped at 30s in BaseTransport). The 120s floor preserves the previous
-   * default for short timeout configurations.
+   * + port readiness) plus a 30s margin for the maximum single backoff delay.
+   * The 120s floor preserves the default for short timeout configurations.
    */
   private computeRetryTimeoutMs(): number {
     const startupBudgetMs =
@@ -1025,13 +1024,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Idle → busy: a new RPC call started or a stream return is now
         // in flight. Mark the DO busy so isActivityExpired() returns false
         // until the session goes idle again.
-        self.inflightRequests++;
+        self.inflightRequests = (self.inflightRequests ?? 0) + 1;
       },
       onSessionIdle: () => {
         // Busy → idle: all RPC promises have settled and all stream exports
         // have been released. Equivalent to containerFetch's finally block —
         // decrement and restart the inactivity window from now.
-        self.inflightRequests = Math.max(0, self.inflightRequests - 1);
+        self.inflightRequests = Math.max(0, (self.inflightRequests ?? 0) - 1);
         if (self.inflightRequests === 0) {
           this.renewActivityTimeout();
         }
@@ -2502,8 +2501,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.clearActivePreviewPorts();
       await this.currentRuntime.clear();
 
-      // Unmount all mounted buckets and cleanup (requires an active connection
-      // for execInternal calls, so this runs before disconnecting the transport)
+      // Unmount all mounted buckets and cleanup. This runs before disconnecting
+      // the control client because FUSE teardown uses execInternal.
       for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
         mountsProcessed++;
         if (mountInfo.mountType === 'local-sync') {
@@ -2563,7 +2562,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
 
-      // Disconnect transport after all cleanup commands have completed
+      // Disconnect the control client after all cleanup commands complete.
       this.client.disconnect();
 
       outcome = 'success';
@@ -3354,8 +3353,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return parseInt(proxyMatch[1], 10);
     }
 
-    // All other requests go to control plane on port 3000
-    // This includes /api/* endpoints and any other control requests
+    // Direct fetch compatibility defaults to the container server port.
+    // SDK control operations use ContainerControlClient over /rpc instead.
     return 3000;
   }
 
@@ -4925,7 +4924,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Storage is cleared on container restart (`onStart`), so URLs do
    * not survive a container restart — the next `get(port)` call will
    * spawn a fresh tunnel with a new URL.
-   *
    */
   get tunnels(): TunnelsHandler {
     this.ensureTunnelsBuilt();

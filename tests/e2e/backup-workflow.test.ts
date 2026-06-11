@@ -1211,7 +1211,7 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
     expect(mutatedSha).toMatch(/^[0-9a-f]{64}$/);
     expect(mutatedSha).not.toBe(originalSha);
 
-    // Restore — this blows up with 1011 on rpc transport before the fix
+    // Restore large archives over the RPC control channel.
     const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
       method: 'POST',
       headers,

@@ -63,6 +63,23 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(false);
     });
 
+    it('should notify the owner when WebSocket upgrade fails', async () => {
+      const onClose = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi
+            .fn()
+            .mockResolvedValue(new Response('Not Found', { status: 404 }))
+        },
+        onClose
+      });
+
+      await expect(conn.connect()).rejects.toThrow(
+        'WebSocket upgrade failed: 404'
+      );
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it('should reject pending RPC calls when connection fails', async () => {
       const conn = new ContainerControlConnection({
         stub: {

@@ -374,8 +374,9 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
   /**
    * Fires once when the capnweb session transitions from idle to busy
    * (an RPC call was started or a stream return is now in flight). The
-   * Sandbox DO wires this to `inflightRequests++`, which makes
-   * `isActivityExpired()` skip the sleepAfter comparison.
+   * Sandbox DO wires this to increment the Container base class's
+   * in-flight request counter, which makes `isActivityExpired()` skip the
+   * sleepAfter comparison.
    */
   onSessionBusy?: () => void;
   /**

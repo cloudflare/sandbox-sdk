@@ -226,7 +226,7 @@ describe('getSandbox', () => {
     });
   });
 
-  it('should not include transport when option is not provided', () => {
+  it('should only configure the sandbox name by default', () => {
     const mockNamespace = {} as any;
     getSandbox(mockNamespace, 'test-sandbox');
 

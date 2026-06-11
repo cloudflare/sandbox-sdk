@@ -168,17 +168,15 @@ export async function startServer(): Promise<ServerInstance> {
                 } catch {}
               });
           } else if (ws.data.type === 'capnweb') {
-            const { stub, transport } = newBunWebSocketRpcSession(
-              ws,
-              app.controlPlaneAPI
-            );
+            const { stub, transport } = newBunWebSocketRpcSession<
+              SandboxControlCallback,
+              WSData
+            >(ws, app.controlPlaneAPI);
             ws.data.transport = transport;
             // Capture the peer's remote main (the DO's
             // SandboxControlCallback) so the container can push
             // events back — e.g. tunnel-exit notifications.
-            app.container.setControlCallback(
-              stub as unknown as SandboxControlCallback
-            );
+            app.container.setControlCallback(stub);
             logger.debug('RPC session initialized', {
               connectionId: ws.data.connectionId
             });

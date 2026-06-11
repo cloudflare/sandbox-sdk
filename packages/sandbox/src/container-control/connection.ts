@@ -11,6 +11,7 @@ import type {
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
+  SandboxControlCallback,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
@@ -20,7 +21,12 @@ import type {
   SandboxWatchAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
+import {
+  RpcSession,
+  type RpcStub,
+  type RpcTarget,
+  type RpcTransport
+} from 'capnweb';
 
 // ---------------------------------------------------------------------------
 // Connection manager
@@ -53,7 +59,7 @@ export interface ContainerControlConnectionOptions {
    * (e.g. notifying the DO when a tunnel's cloudflared process has
    * exited). When omitted, the container sees an empty remote main.
    */
-  localMain?: any;
+  localMain?: SandboxControlCallback & RpcTarget;
   /**
    * Invoked when an active WebSocket transitions to closed/errored.
    * Fired at most once per successful connection from the WS event
@@ -61,8 +67,10 @@ export interface ContainerControlConnectionOptions {
    * signal so recovery doesn't depend on a periodic poller running
    * inside what may be an idle isolate.
    *
-   * Not fired for `doConnect` failures (the rejected `connect()`
-   * promise is the signal in that case) nor for `disconnect()`.
+   * Also fired for `doConnect` failures after the deferred transport is
+   * aborted. A failed upgrade poisons the transport, so owners must discard
+   * the connection and create a fresh one for subsequent calls. Not fired for
+   * `disconnect()`.
    */
   onClose?: () => void;
 }
@@ -260,6 +268,7 @@ export class ContainerControlConnection {
         'ContainerControlConnection failed',
         error instanceof Error ? error : new Error(String(error))
       );
+      this.fireOnClose();
       throw error;
     }
   }
