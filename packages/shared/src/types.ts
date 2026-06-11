@@ -584,7 +584,7 @@ export interface WriteFileResult {
  *
  * - `'utf-8'` / `'utf8'` — treat content as text.
  * - `'base64'` — treat content as base64-encoded binary.
- * - `'none'` — RPC-only streaming variant of `readFile`, returns a
+ * - `'none'` — streaming variant of `readFile`, returns a
  *   `ReadableStream<Uint8Array>` of raw bytes (see `ReadFileStreamResult`).
  */
 export type FileEncoding = 'utf-8' | 'utf8' | 'base64' | 'none';

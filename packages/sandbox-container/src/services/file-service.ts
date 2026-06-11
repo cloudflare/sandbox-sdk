@@ -24,7 +24,7 @@ export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
 
-// Maximum size for encoded readFile responses is 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+// Maximum size for encoded readFile responses is 32 MiB. Larger files should use readFile() with { encoding: 'none' }.
 const MAX_ENCODED_FILE_SIZE = 32 * 1_048_576; // 32 MiB
 
 const TEXT_MIME_TYPES = new Set([
@@ -153,10 +153,10 @@ export class FileService implements FileSystemOperations {
 
           // Size and MIME type come directly from the BunFile object.
           const fileSize = bunFile.size;
-          // Encoded responses have a hard limit of 32 MiB. Larger files should use readFile() with { encoding: 'none' } and the RPC transport.
+          // Encoded responses have a hard limit of 32 MiB. Larger files should use readFile() with { encoding: 'none' }.
           if (fileSize > MAX_ENCODED_FILE_SIZE) {
             throw {
-              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Use readFile() with { encoding: 'none' } and the RPC transport for large files.`,
+              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Use readFile() with { encoding: 'none' } for large files.`,
               code: ErrorCode.FILE_TOO_LARGE,
               details: {
                 path,
@@ -1720,8 +1720,7 @@ export class FileService implements FileSystemOperations {
    */
   /**
    * Stream raw binary file contents without SSE framing or base64 encoding.
-   * Intended for the RPC transport where the stream passes directly to the
-   * caller over the capnp binary channel — no encoding overhead.
+   * The stream passes directly to the caller over the capnp binary channel.
    *
    * Validates the path, resolves relative paths via the session's cwd, then
    * returns Bun's native file stream alongside the file size and MIME type.
