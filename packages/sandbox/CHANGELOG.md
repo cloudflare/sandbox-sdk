@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.1
+
+### Patch Changes
+
+- [#748](https://github.com/cloudflare/sandbox-sdk/pull/748) [`ab6206a`](https://github.com/cloudflare/sandbox-sdk/commit/ab6206a9f86de2a367b5e04bee0922592f294e21) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Recover automatically from transient infrastructure failures when the SDK opens its WebSocket control connection to a sandbox. Previously, any 5xx response other than 503 on the upgrade would fail the SDK call even when the container was healthy.
+
 ## 0.12.0
 
 ### Minor Changes
