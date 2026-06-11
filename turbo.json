@@ -84,7 +84,7 @@
         "vitest.e2e.config.ts",
         "packages/sandbox/Dockerfile"
       ],
-      "passThroughEnv": ["TEST_TRANSPORT", "TEST_WORKER_URL"]
+      "passThroughEnv": ["TEST_WORKER_URL"]
     },
     "test:perf": {
       "dependsOn": ["^build", "docker:local"],
