@@ -369,7 +369,7 @@ describe('ContainerControlConnection', () => {
       }
     });
 
-    it('gives up on a retryable upgrade response once the retry budget is exhausted', async () => {
+    it('surfaces container unavailability once upgrade retry budget is exhausted', async () => {
       vi.useFakeTimers();
       try {
         const fetchMock = vi
@@ -387,9 +387,11 @@ describe('ContainerControlConnection', () => {
         });
 
         const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toThrow(
-          'WebSocket upgrade failed: 500'
-        );
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          name: 'ContainerUnavailableError',
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          context: { reason: 'startup' }
+        });
 
         // Run all timers — connect() must settle even with fake timers.
         await vi.advanceTimersByTimeAsync(60_000);
@@ -492,9 +494,11 @@ describe('ContainerControlConnection', () => {
         retryTimeoutMs: 0
       });
 
-      await expect(conn.connect()).rejects.toThrow(
-        'WebSocket upgrade failed: 500'
-      );
+      await expect(conn.connect()).rejects.toMatchObject({
+        name: 'ContainerUnavailableError',
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        context: { reason: 'startup' }
+      });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -539,9 +543,11 @@ describe('ContainerControlConnection', () => {
         conn.setRetryTimeoutMs(1_000);
 
         const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toThrow(
-          'WebSocket upgrade failed: 503'
-        );
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          name: 'ContainerUnavailableError',
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          context: { reason: 'startup' }
+        });
 
         await vi.advanceTimersByTimeAsync(60_000);
         await assertion;

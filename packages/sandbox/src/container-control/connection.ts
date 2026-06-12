@@ -260,6 +260,17 @@ export class ContainerControlConnection {
         if (structuredError) {
           throw createErrorFromResponse(structuredError);
         }
+        if (isRetryableWebSocketUpgradeResponse(response)) {
+          throw createErrorFromResponse({
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
+            message: 'Container is starting. Please retry in a moment.',
+            context: { reason: 'startup' },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'The container is not ready yet. Retry the operation in a moment.'
+          });
+        }
         throw new Error(
           `WebSocket upgrade failed: ${response.status} ${response.statusText}`
         );
