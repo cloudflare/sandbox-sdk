@@ -64,6 +64,7 @@ describe('container unavailable fetch retry', () => {
       restore();
       globalThis.fetch = realFetch;
       vi.useRealTimers();
+      installContainerUnavailableFetchRetry();
     }
   });
 });
