@@ -1,89 +1,16 @@
-// biome-ignore-all lint/style/useTemplate: Bash parameter expansion strings are assembled from pieces because this file generates bash source.
 import { Buffer } from 'node:buffer';
-import { rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  createRcFileContent,
+  type ProtocolFrame,
+  parseTerminalChunk
+} from './protocol';
 
-const CONTROL_FD = 3;
 const COMMAND_FD = 4;
-const RECORD_SEPARATOR = '\x1e';
-const FRAME_PREFIX = 'TERMINAL_SESSION';
-const BASH_EXPANSION_START = '$' + '{';
 
-const RC_FILE_CONTENT = [
-  'set +H',
-  'unset HISTFILE',
-  'export HISTFILE=/dev/null',
-  "export PS1='terminal-session$ '",
-  '',
-  "__terminal_session_rs=$'\\x1e'",
-  '__terminal_session_nonce="' +
-    BASH_EXPANSION_START +
-    'TERMINAL_SESSION_NONCE}"',
-  '__terminal_session_ctrl_fd=' +
-    BASH_EXPANSION_START +
-    'TERMINAL_SESSION_CTRL_FD:-3}',
-  '__terminal_session_cmd_fd=' +
-    BASH_EXPANSION_START +
-    'TERMINAL_SESSION_CMD_FD:-4}',
-  'if [[ -n "' +
-    BASH_EXPANSION_START +
-    'TERMINAL_SESSION_CMD_FIFO:-}" ]]; then',
-  '  exec 4<>"$TERMINAL_SESSION_CMD_FIFO"',
-  'fi',
-  '',
-  '__terminal_session_frame() {',
-  '  printf \'%sTERMINAL_SESSION|%s|%s|%s|%s%s\\n\' "$__terminal_session_rs" "$__terminal_session_nonce" "$1" "$2" "$3" "$__terminal_session_rs" >&$__terminal_session_ctrl_fd',
-  '}',
-  '',
-  '__terminal_session_ready() { __terminal_session_frame READY "" ""; }',
-  '__terminal_session_exec_start() { __terminal_session_frame EXEC_START "$1" ""; }',
-  '__terminal_session_exec_done() { __terminal_session_frame EXEC_DONE "$1" "$2"; }',
-  '',
-  '__terminal_session_poll_exec() {',
-  '  local line exec_id cmd_b64 cmd exit_code',
-  '  local did_exec=0',
-  '  while IFS= read -r -t 0.05 -u $__terminal_session_cmd_fd line 2>/dev/null; do',
-  '    exec_id="' + BASH_EXPANSION_START + 'line%%|*}"',
-  '    cmd_b64="' + BASH_EXPANSION_START + 'line#*|}"',
-  '    cmd=$(echo "$cmd_b64" | base64 -d 2>/dev/null) || continue',
-  '',
-  '    printf \'%s\\n\' "$cmd"',
-  '    __terminal_session_exec_start "$exec_id"',
-  '    eval "$cmd"',
-  '    exit_code=$?',
-  '    __terminal_session_exec_done "$exec_id" "$exit_code"',
-  '    did_exec=1',
-  '  done',
-  '  [[ "$did_exec" == "1" ]]',
-  '}',
-  '',
-  '__terminal_session_polling=0',
-  '__terminal_session_poll_prompt() {',
-  '  local saved_status=$?',
-  '  if [[ "$__terminal_session_polling" == "1" ]]; then return $saved_status; fi',
-  '  __terminal_session_polling=1',
-  '  __terminal_session_poll_exec',
-  '  __terminal_session_polling=0',
-  '  return $saved_status',
-  '}',
-  '',
-  '__terminal_session_poll_signal() {',
-  '  local saved_status=$?',
-  '  if [[ "$__terminal_session_polling" == "1" ]]; then return $saved_status; fi',
-  '  __terminal_session_polling=1',
-  '  if __terminal_session_poll_exec; then',
-  "    printf '%s' \"" + BASH_EXPANSION_START + 'PS1@P}"',
-  '  fi',
-  '  __terminal_session_polling=0',
-  '  return $saved_status',
-  '}',
-  '',
-  "trap '__terminal_session_poll_signal' WINCH",
-  'PROMPT_COMMAND="__terminal_session_poll_prompt"',
-  '',
-  '__terminal_session_ready',
-  ''
-].join('\n');
+type SessionState = 'starting' | 'ready' | 'closing' | 'closed' | 'failed';
 
 export type ExecResult = {
   exitCode: number;
@@ -98,71 +25,45 @@ type PendingExec = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
-type ParsedFrame = {
-  type: string;
-  id: string;
-  payload: string;
-};
-
-class Deferred<T> {
-  promise: Promise<T>;
-  private resolveFn?: (value: T) => void;
-  private rejectFn?: (error: Error) => void;
-
-  constructor() {
-    this.promise = new Promise<T>((resolve, reject) => {
-      this.resolveFn = resolve;
-      this.rejectFn = reject;
-    });
-  }
-
-  resolve(value: T): void {
-    this.resolveFn?.(value);
-  }
-
-  reject(error: Error): void {
-    this.rejectFn?.(error);
-  }
-}
-
 export class TerminalSession implements AsyncDisposable {
   private readonly terminal: Bun.Terminal;
   private readonly shell: Bun.Subprocess;
-  private readonly rcPath: string;
+  private readonly tempDir: string;
   private readonly commandFifoPath: string;
   private readonly nonce: string;
-  private readonly controlFd: number;
   private commandWriter?: ReturnType<typeof Bun.file.prototype.writer>;
   private readonly decoder = new TextDecoder();
-  private readonly ready = new Deferred<void>();
+  private readonly ready = Promise.withResolvers<void>();
+  private state: SessionState = 'starting';
   private transcript = '';
-  private controlBuffer = '';
+  private protocolBuffer = '';
   private pendingExec?: PendingExec;
   private failure?: Error;
+  private cleanupPromise?: Promise<void>;
   private operationQueue: Promise<ExecResult> = Promise.resolve({
     exitCode: 0,
     transcript: ''
   });
-  private closed = false;
 
   private constructor(options: {
     terminal: Bun.Terminal;
     shell: Bun.Subprocess;
-    rcPath: string;
+    tempDir: string;
     commandFifoPath: string;
     nonce: string;
-    controlFd: number;
   }) {
     this.terminal = options.terminal;
     this.shell = options.shell;
-    this.rcPath = options.rcPath;
+    this.tempDir = options.tempDir;
     this.commandFifoPath = options.commandFifoPath;
     this.nonce = options.nonce;
-    this.controlFd = options.controlFd;
     this.ready.promise.catch(() => {});
-    void this.readControlFrames();
     this.shell.exited.then((exitCode) => {
-      if (!this.closed) {
+      if (
+        this.state !== 'closing' &&
+        this.state !== 'closed' &&
+        this.state !== 'failed'
+      ) {
         this.fail(
           new Error(
             `Terminal session shell exited with code ${exitCode}. Transcript: ${JSON.stringify(this.transcript)}`
@@ -176,11 +77,13 @@ export class TerminalSession implements AsyncDisposable {
     options: { cwd?: string; env?: Record<string, string> } = {}
   ): Promise<TerminalSession> {
     const nonce = crypto.randomUUID().replaceAll('-', '');
-    const rcPath = join('/tmp', `terminal-session-${nonce}.bashrc`);
-    const commandFifoPath = join('/tmp', `terminal-session-${nonce}.commands`);
+    const tempDir = await mkdtemp(join(tmpdir(), 'terminal-session-'));
+    const rcPath = join(tempDir, 'bashrc');
+    const commandFifoPath = join(tempDir, 'commands');
     let session: TerminalSession | undefined;
+
     try {
-      await writeFile(rcPath, RC_FILE_CONTENT);
+      await writeFile(rcPath, createRcFileContent());
       const mkfifo = Bun.spawn(['mkfifo', commandFifoPath]);
       const mkfifoExitCode = await mkfifo.exited;
       if (mkfifoExitCode !== 0) {
@@ -200,6 +103,7 @@ export class TerminalSession implements AsyncDisposable {
           }
         }
       });
+      terminal.unref();
 
       const shell = Bun.spawn(
         ['bash', '--noprofile', '--rcfile', rcPath, '-i'],
@@ -212,22 +116,18 @@ export class TerminalSession implements AsyncDisposable {
             TERM: 'xterm-256color',
             HISTFILE: '',
             TERMINAL_SESSION_NONCE: nonce,
-            TERMINAL_SESSION_CTRL_FD: String(CONTROL_FD),
             TERMINAL_SESSION_CMD_FD: String(COMMAND_FD),
             TERMINAL_SESSION_CMD_FIFO: commandFifoPath
-          },
-          stdio: [undefined, undefined, undefined, 'pipe']
+          }
         }
       );
 
-      const controlFd = shell.stdio[CONTROL_FD] as number;
       session = new TerminalSession({
         terminal,
         shell,
-        rcPath,
+        tempDir,
         commandFifoPath,
-        nonce,
-        controlFd
+        nonce
       });
 
       for (const chunk of earlyData) {
@@ -240,8 +140,7 @@ export class TerminalSession implements AsyncDisposable {
       if (session) {
         await session.close();
       } else {
-        await rm(rcPath, { force: true });
-        await rm(commandFifoPath, { force: true });
+        await rm(tempDir, { force: true, recursive: true });
       }
       throw error;
     }
@@ -259,46 +158,19 @@ export class TerminalSession implements AsyncDisposable {
   }
 
   async close(): Promise<void> {
-    if (this.closed) {
+    if (this.state === 'closed') {
       return;
     }
-    this.closed = true;
-    if (this.commandWriter) {
-      try {
-        await this.commandWriter.end();
-      } catch {}
+    if (!this.failure) {
+      this.failure = new Error('Terminal session is closed');
+      this.ready.reject(this.failure);
+      this.rejectPendingExec(this.failure);
     }
-
-    this.fail(new Error('Terminal session is closed'));
-    try {
-      this.shell.kill('SIGTERM');
-    } catch {}
-    const exited = await Promise.race([
-      this.shell.exited.then(() => true),
-      Bun.sleep(500).then(() => false)
-    ]);
-    if (!exited) {
-      try {
-        this.shell.kill('SIGKILL');
-      } catch {}
-      await Promise.race([this.shell.exited, Bun.sleep(500)]);
-    }
-    await rm(this.rcPath, { force: true });
-    await rm(this.commandFifoPath, { force: true });
+    await this.cleanupResources();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.close();
-  }
-
-  private fail(error: Error): void {
-    this.failure ??= error;
-    this.ready.reject(error);
-    if (this.pendingExec) {
-      clearTimeout(this.pendingExec.timeout);
-      this.pendingExec.reject(error);
-      this.pendingExec = undefined;
-    }
   }
 
   private waitForReady(): Promise<void> {
@@ -306,7 +178,7 @@ export class TerminalSession implements AsyncDisposable {
       this.ready.promise,
       Bun.sleep(2_000).then(() => {
         throw new Error(
-          `Timed out waiting for terminal session shell readiness. Transcript: ${JSON.stringify(this.transcript)} Control: ${JSON.stringify(this.controlBuffer)}`
+          `Timed out waiting for terminal session shell readiness. Transcript: ${JSON.stringify(this.transcript)} Protocol: ${JSON.stringify(this.protocolBuffer)}`
         );
       })
     ]);
@@ -316,23 +188,18 @@ export class TerminalSession implements AsyncDisposable {
     command: string,
     timeoutMs: number
   ): Promise<ExecResult> {
-    if (this.closed) {
-      throw new Error('Terminal session is closed');
-    }
-    if (this.failure) {
-      throw this.failure;
-    }
-    if (this.pendingExec) {
-      throw new Error('Terminal session already has a pending exec');
-    }
+    this.assertReadyForExec();
+
     const id = crypto.randomUUID().replaceAll('-', '');
-    const transcriptStart = this.transcript.length;
+    this.transcript = '';
+    const transcriptStart = 0;
     const encodedCommand = Buffer.from(command).toString('base64');
 
     const result = new Promise<ExecResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.pendingExec = undefined;
-        reject(new Error(`Timed out waiting for exec ${id}`));
+        const error = new Error(`Timed out waiting for exec ${id}`);
+        this.fail(error);
+        void this.cleanupResources();
       }, timeoutMs);
       this.pendingExec = { id, transcriptStart, resolve, reject, timeout };
     });
@@ -346,10 +213,26 @@ export class TerminalSession implements AsyncDisposable {
       const message = error instanceof Error ? error.message : String(error);
       const failure = new Error(`Terminal session wakeup failed: ${message}`);
       this.fail(failure);
+      void this.cleanupResources();
       throw failure;
     }
 
     return result;
+  }
+
+  private assertReadyForExec(): void {
+    if (this.state === 'closed' || this.state === 'closing') {
+      throw new Error('Terminal session is closed');
+    }
+    if (this.failure) {
+      throw this.failure;
+    }
+    if (this.state !== 'ready') {
+      throw new Error(`Terminal session is ${this.state}`);
+    }
+    if (this.pendingExec) {
+      throw new Error('Terminal session already has a pending exec');
+    }
   }
 
   private ensureCommandWriter(): ReturnType<typeof Bun.file.prototype.writer> {
@@ -360,66 +243,30 @@ export class TerminalSession implements AsyncDisposable {
   }
 
   private appendTerminalData(data: Uint8Array): void {
-    this.transcript += this.decoder.decode(data, { stream: true });
-  }
-
-  private async readControlFrames(): Promise<void> {
-    const reader = Bun.file(this.controlFd).stream().getReader();
-    while (!this.closed) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) {
-          return;
-        }
-        this.controlBuffer += this.decoder.decode(value, { stream: true });
-        this.drainControlFrames();
-      } catch (error) {
-        if (!this.closed) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          this.fail(new Error(`Control channel failed: ${message}`));
-        }
-        return;
+    const parsed = parseTerminalChunk({
+      buffered: this.protocolBuffer,
+      chunk: this.decoder.decode(data, { stream: true }),
+      nonce: this.nonce
+    });
+    this.protocolBuffer = parsed.buffered;
+    for (const event of parsed.events) {
+      if (event.kind === 'text') {
+        this.transcript += event.value;
+      } else {
+        this.handleFrame(event.frame);
       }
     }
   }
 
-  private drainControlFrames(): void {
-    while (true) {
-      const start = this.controlBuffer.indexOf(RECORD_SEPARATOR);
-      if (start < 0) {
-        return;
-      }
-      const end = this.controlBuffer.indexOf(RECORD_SEPARATOR, start + 1);
-      if (end < 0) {
-        if (start > 0) {
-          this.controlBuffer = this.controlBuffer.slice(start);
-        }
-        return;
-      }
-
-      const frameContent = this.controlBuffer.slice(start + 1, end);
-      this.controlBuffer = this.controlBuffer.slice(end + 1);
-      const frame = this.parseFrame(frameContent);
-      if (frame) {
-        this.handleFrame(frame);
-      }
-    }
-  }
-
-  private parseFrame(content: string): ParsedFrame | null {
-    const [prefix, nonce, type, id, payload] = content.split('|');
-    if (prefix !== FRAME_PREFIX || nonce !== this.nonce || !type) {
-      return null;
-    }
-    return { type, id: id ?? '', payload: payload ?? '' };
-  }
-
-  private handleFrame(frame: ParsedFrame): void {
+  private handleFrame(frame: ProtocolFrame): void {
     if (frame.type === 'READY') {
-      this.ready.resolve();
+      if (this.state === 'starting') {
+        this.state = 'ready';
+        this.ready.resolve();
+      }
       return;
     }
+
     if (frame.type !== 'EXEC_DONE' || !this.pendingExec) {
       return;
     }
@@ -431,11 +278,73 @@ export class TerminalSession implements AsyncDisposable {
     this.pendingExec = undefined;
     clearTimeout(pending.timeout);
     const exitCode = Number.parseInt(frame.payload, 10);
-    setTimeout(() => {
-      pending.resolve({
-        exitCode: Number.isNaN(exitCode) ? 1 : exitCode,
-        transcript: this.transcript.slice(pending.transcriptStart)
-      });
-    }, 20);
+    pending.resolve({
+      exitCode: Number.isNaN(exitCode) ? 1 : exitCode,
+      transcript: this.transcript.slice(pending.transcriptStart)
+    });
+  }
+
+  private fail(error: Error): void {
+    this.failure ??= error;
+    if (this.state !== 'closing' && this.state !== 'closed') {
+      this.state = 'failed';
+    }
+    this.ready.reject(error);
+    this.rejectPendingExec(error);
+  }
+
+  private rejectPendingExec(error: Error): void {
+    if (this.pendingExec) {
+      clearTimeout(this.pendingExec.timeout);
+      this.pendingExec.reject(error);
+      this.pendingExec = undefined;
+    }
+  }
+
+  private cleanupResources(): Promise<void> {
+    this.cleanupPromise ??= this.cleanupResourcesOnce();
+    return this.cleanupPromise;
+  }
+
+  private async cleanupResourcesOnce(): Promise<void> {
+    const failed = this.state === 'failed';
+    if (!failed) {
+      this.state = 'closing';
+    }
+
+    if (this.commandWriter) {
+      try {
+        await this.commandWriter.end();
+      } catch {}
+      this.commandWriter = undefined;
+    }
+
+    try {
+      this.shell.kill('SIGTERM');
+    } catch {}
+    try {
+      this.shell.unref();
+    } catch {}
+    const exited = await Promise.race([
+      this.shell.exited.then(() => true),
+      Bun.sleep(500).then(() => false)
+    ]);
+    if (!exited) {
+      try {
+        this.shell.kill('SIGKILL');
+      } catch {}
+      await Promise.race([this.shell.exited, Bun.sleep(500)]);
+    }
+
+    try {
+      this.terminal.close();
+    } catch {}
+    try {
+      this.terminal.unref();
+    } catch {}
+
+    await rm(this.tempDir, { force: true, recursive: true });
+
+    this.state = failed ? 'failed' : 'closed';
   }
 }

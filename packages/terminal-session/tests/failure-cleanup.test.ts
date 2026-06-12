@@ -11,6 +11,31 @@ async function listTerminalSessionArtifacts(): Promise<string[]> {
 }
 
 describe('TerminalSession failure cleanup', () => {
+  it('allows a create-and-close subprocess to exit cleanly', async () => {
+    const proc = Bun.spawn(
+      [
+        'bun',
+        '-e',
+        'import { TerminalSession } from "./src/index.ts"; const session = await TerminalSession.create(); await session.close();'
+      ],
+      {
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe'
+      }
+    );
+
+    const exitCode = await Promise.race([
+      proc.exited,
+      Bun.sleep(3_000).then(() => {
+        proc.kill('SIGKILL');
+        throw new Error('create-and-close subprocess did not exit');
+      })
+    ]);
+
+    expect(exitCode).toBe(0);
+  });
+
   it('removes generated temp files when creation fails after temp files are created', async () => {
     const missingCwd = join(
       '/tmp',
@@ -32,6 +57,22 @@ describe('TerminalSession failure cleanup', () => {
     await expect(
       session.exec('echo after-exit', { timeoutMs: 500 })
     ).rejects.toThrow(/exited|closed/);
+
+    await session.close();
+  });
+
+  it('treats exec timeout as fatal for future commands', async () => {
+    const session = await TerminalSession.create();
+
+    await expect(
+      session.exec('sleep 2; echo late', { timeoutMs: 50 })
+    ).rejects.toThrow(/Timed out/);
+
+    const start = performance.now();
+    await expect(
+      session.exec('echo after-timeout', { timeoutMs: 1_000 })
+    ).rejects.toThrow(/Timed out|failed|closed/i);
+    expect(performance.now() - start).toBeLessThan(100);
 
     await session.close();
   });
