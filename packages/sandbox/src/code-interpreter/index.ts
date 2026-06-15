@@ -107,6 +107,37 @@ interface StreamingExecutionData {
 // withInterpreter — the factory function
 // ---------------------------------------------------------------------------
 
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+
+function isInterpreterNotReady(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('not ready') ||
+    msg.includes('initializing') ||
+    msg.includes('interpreter_not_ready')
+  );
+}
+
+async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (isInterpreterNotReady(lastError) && attempt < MAX_RETRIES - 1) {
+        const delay = RETRY_BASE_DELAY_MS * 2 ** attempt + Math.random() * 1000;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 export function withInterpreter(sandbox: SandboxLike): Interpreter {
   const contexts = new Map<string, CodeContext>();
 
@@ -114,22 +145,24 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
     path: string,
     init?: RequestInit
   ): Promise<T> {
-    const response = await sandbox.containerFetch(
-      new Request(`http://localhost:3000${path}`, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(init?.headers as Record<string, string>)
-        }
-      })
-    );
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(
-        `Interpreter request failed (${response.status}): ${text}`
+    return withRetry(async () => {
+      const response = await sandbox.containerFetch(
+        new Request(`http://localhost:3000${path}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(init?.headers as Record<string, string>)
+          }
+        })
       );
-    }
-    return response.json() as Promise<T>;
+      if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `Interpreter request failed (${response.status}): ${text}`
+        );
+      }
+      return response.json() as Promise<T>;
+    });
   }
 
   async function getOrCreateDefaultContext(
@@ -182,29 +215,30 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
 
     const execution = new Execution(code, context);
 
-    const response = await sandbox.containerFetch(
-      new Request('http://localhost:3000/api/execute/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context_id: context.id,
-          code,
-          language: options.language
+    const response = await withRetry(async () => {
+      const res = await sandbox.containerFetch(
+        new Request('http://localhost:3000/api/execute/code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context_id: context!.id,
+            code,
+            language: options.language
+          })
         })
-      })
-    );
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(`Code execution failed (${response.status}): ${text}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Code execution returned no body');
-    }
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`Code execution failed (${res.status}): ${text}`);
+      }
+      if (!res.body) {
+        throw new Error('Code execution returned no body');
+      }
+      return res;
+    });
 
     // Parse SSE stream and collect results
-    const reader = response.body.getReader();
+    const reader = response.body!.getReader();
     let buffer = '';
 
     try {
@@ -219,13 +253,13 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
         while (newlineIdx !== -1) {
           const line = buffer.slice(0, newlineIdx);
           buffer = buffer.slice(newlineIdx + 1);
-          processSSELine(line, execution, options);
+          await processSSELine(line, execution, options);
           newlineIdx = buffer.indexOf('\n');
         }
       }
       // Process remaining buffer
       if (buffer.length > 0) {
-        processSSELine(buffer, execution, options);
+        await processSSELine(buffer, execution, options);
       }
     } finally {
       try {
@@ -249,28 +283,27 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
       context = await getOrCreateDefaultContext(language);
     }
 
-    const response = await sandbox.containerFetch(
-      new Request('http://localhost:3000/api/execute/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context_id: context.id,
-          code,
-          language: options.language
+    return withRetry(async () => {
+      const res = await sandbox.containerFetch(
+        new Request('http://localhost:3000/api/execute/code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context_id: context!.id,
+            code,
+            language: options.language
+          })
         })
-      })
-    );
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(`Code execution failed (${response.status}): ${text}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Code execution returned no body');
-    }
-
-    return response.body;
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`Code execution failed (${res.status}): ${text}`);
+      }
+      if (!res.body) {
+        throw new Error('Code execution returned no body');
+      }
+      return res.body;
+    });
   }
 
   async function listContexts(): Promise<CodeContext[]> {
@@ -326,11 +359,11 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function processSSELine(
+async function processSSELine(
   line: string,
   execution: Execution,
   options: RunCodeOptions
-): void {
+): Promise<void> {
   if (!line.trim()) return;
   if (!line.startsWith('data: ')) return;
 
@@ -341,7 +374,7 @@ function processSSELine(
       case 'stdout':
         if (data.text) {
           execution.logs.stdout.push(data.text);
-          options.onStdout?.({
+          await options.onStdout?.({
             text: data.text,
             timestamp: data.timestamp || Date.now()
           });
@@ -351,7 +384,7 @@ function processSSELine(
       case 'stderr':
         if (data.text) {
           execution.logs.stderr.push(data.text);
-          options.onStderr?.({
+          await options.onStderr?.({
             text: data.text,
             timestamp: data.timestamp || Date.now()
           });
@@ -361,7 +394,7 @@ function processSSELine(
       case 'result':
         execution.results.push(new ResultImpl(data) as any);
         if (options.onResult) {
-          options.onResult(new ResultImpl(data));
+          await options.onResult(new ResultImpl(data));
         }
         break;
 
@@ -371,7 +404,7 @@ function processSSELine(
           message: data.evalue || 'Unknown error',
           traceback: data.traceback || []
         };
-        options.onError?.(execution.error);
+        await options.onError?.(execution.error);
         break;
 
       case 'execution_complete':
