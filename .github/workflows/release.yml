@@ -52,7 +52,7 @@ jobs:
             'biome.json',
             '.bun-version',
             'tests/e2e/test-worker/Dockerfile.*'
-          ) }}" >> $GITHUB_OUTPUT
+          ) }}" >> "$GITHUB_OUTPUT"
           echo "deploy=${{ hashFiles(
             'packages/sandbox/Dockerfile',
             'docker-bake.hcl',
@@ -73,7 +73,7 @@ jobs:
             'vitest.e2e.config.ts',
             '.github/workflows/release.yml',
             '.github/workflows/reusable-e2e.yml'
-          ) }}" >> $GITHUB_OUTPUT
+          ) }}" >> "$GITHUB_OUTPUT"
 
   # --- Build (always runs everything on release) ---
   build:
@@ -165,29 +165,15 @@ jobs:
           name: build-${{ github.sha }}
           path: packages
       - name: Install crane
-        run: |
-          VERSION=0.20.3
-          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
-          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/${TARBALL}"
-          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/checksums.txt"
-          grep "${TARBALL}" checksums.txt | sha256sum -c
-          tar xzf "${TARBALL}" crane
-          sudo mv crane /usr/local/bin/
-          rm -f "${TARBALL}" checksums.txt
+        run: .github/install-crane.sh
 
       - name: Login to registries
-        run: |
-          source .github/cf-registry-login.sh
-          cf_registry_credentials 30 '["pull", "push", "library_push"]'
-          echo "$CF_REGISTRY_PASSWORD" | docker login registry.cloudflare.com \
-            -u "$CF_REGISTRY_USERNAME" --password-stdin
-          echo "$CF_REGISTRY_PASSWORD" | crane auth login registry.cloudflare.com \
-            --password-stdin -u "$CF_REGISTRY_USERNAME"
-          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io \
-            --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
+        run: .github/login-release-registries.sh
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -217,48 +203,33 @@ jobs:
       - name: Publish Docker images to Docker Hub
         if: steps.changesets.outputs.published == 'true'
         run: |
-          source .github/load-docker-images.sh
-          source .github/crane-copy-retry.sh
-          REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-          VERSION="${{ needs.build.outputs.version }}"
-          HASH="${{ needs.hashes.outputs.docker }}"
-          SRC_TAG="ci-${HASH}"
-          for image in "${DOCKER_IMAGES[@]}"; do
-            [[ "$image" == "sandbox-standalone" ]] && continue  # CF registry only
-            suffix="${image#sandbox}"
-            crane_copy_retry \
-              "${REGISTRY}/${image}:${SRC_TAG}" \
-              "docker.io/cloudflare/sandbox:${VERSION}${suffix}"
-          done
+          .github/publish-sandbox-images.sh \
+            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
+            --version "${{ needs.build.outputs.version }}" \
+            --docker-hub
 
       - name: Publish Docker images to CF Registry Library
         if: steps.changesets.outputs.published == 'true'
         continue-on-error: true
         id: library-publish
         run: |
-          source .github/load-docker-images.sh
-          source .github/crane-copy-retry.sh
-          REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           VERSION="${{ needs.build.outputs.version }}"
-          HASH="${{ needs.hashes.outputs.docker }}"
-          SRC_TAG="ci-${HASH}"
-          failed=0
-          for image in "${DOCKER_IMAGES[@]}"; do
-            [[ "$image" == "sandbox-standalone" ]] && continue
-            suffix="${image#sandbox}"
-            crane_copy_retry \
-              "${REGISTRY}/${image}:${SRC_TAG}" \
-              "registry.cloudflare.com/library/sandbox:${VERSION}${suffix}" || failed=1
-          done
-          if [[ "$failed" -eq 1 ]]; then
+          if ! .github/publish-sandbox-images.sh \
+            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
+            --version "$VERSION" \
+            --cf-library; then
             echo "::warning::Some images failed to publish to CF Registry Library"
-            echo "## ⚠️ CF Registry Library publish partially failed" >> $GITHUB_STEP_SUMMARY
-            echo "Some sandbox images could not be copied to \`registry.cloudflare.com/library/\`." >> $GITHUB_STEP_SUMMARY
-            echo "Docker Hub publish was not affected." >> $GITHUB_STEP_SUMMARY
+            {
+              echo "## ⚠️ CF Registry Library publish partially failed"
+              echo "Some sandbox images could not be copied to \`registry.cloudflare.com/library/\`."
+              echo "Docker Hub publish was not affected."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "## ✅ CF Registry Library publish succeeded" >> $GITHUB_STEP_SUMMARY
-          echo "Published \`registry.cloudflare.com/library/sandbox:${VERSION}\` (+ variants)" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## ✅ CF Registry Library publish succeeded"
+            printf "Published \`registry.cloudflare.com/library/sandbox:%s\` (+ variants)\n" "$VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Warn if library publish failed
         if: steps.library-publish.outcome == 'failure'

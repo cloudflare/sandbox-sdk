@@ -1,0 +1,22 @@
+name: Release Next
+
+on:
+  push:
+    branches:
+      - next
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+jobs:
+  prerelease:
+    uses: ./.github/workflows/reusable-prerelease.yml
+    with:
+      channel: next
+      prerelease_identifier: next
+      base_bump: minor
+      worker_name_prefix: sandbox-e2e-test-worker-next
+      publish_docker_alias: true
+    secrets: inherit

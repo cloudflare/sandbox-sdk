@@ -1,0 +1,259 @@
+name: Prerelease Channel
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: true
+        description: 'npm dist-tag and Docker moving tag to publish'
+      prerelease_identifier:
+        type: string
+        required: true
+        description: 'Semver prerelease identifier, usually matching the channel'
+      base_bump:
+        type: string
+        default: patch
+        description: 'Base version bump before adding prerelease metadata: major, minor, or patch'
+      worker_name_prefix:
+        type: string
+        required: true
+        description: 'Worker name prefix for prerelease E2E deployments'
+      publish_docker_alias:
+        type: boolean
+        default: true
+        description: 'Publish moving Docker aliases such as cloudflare/sandbox:next'
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+env:
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
+jobs:
+  version:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      image_tag: prerelease-${{ steps.version.outputs.channel }}-${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Compute prerelease version
+        id: version
+        run: |
+          npx tsx .github/prerelease-channel.ts compute \
+            --channel "${{ inputs.channel }}" \
+            --prerelease-identifier "${{ inputs.prerelease_identifier }}" \
+            --base-bump "${{ inputs.base_bump }}"
+
+  hashes:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 1
+    outputs:
+      deploy: ${{ steps.compute.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Compute deploy hash
+        id: compute
+        run: |
+          echo "deploy=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            'docker-images.txt',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.*',
+            'packages/sandbox/src/**',
+            'tests/e2e/test-worker/**',
+            'vitest.e2e.config.ts',
+            '.github/workflows/reusable-prerelease.yml',
+            '.github/workflows/reusable-e2e.yml',
+            '.github/prerelease-channel.ts'
+          ) }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [version, hashes]
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: prerelease-build-${{ inputs.channel }}-${{ github.ref }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: false
+      image_tag: ${{ needs.version.outputs.image_tag }}
+      package_version_override: ${{ needs.version.outputs.version }}
+    secrets: inherit
+
+  quality:
+    needs: build
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: prerelease-quality-${{ inputs.channel }}-${{ github.ref }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      run_sdk_tests: true
+      run_container_tests: true
+      run_changeset_validation: false
+    secrets: inherit
+
+  e2e:
+    needs: [version, hashes, build]
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: prerelease-e2e-${{ inputs.channel }}-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: ${{ inputs.worker_name_prefix }}
+      image_tag: ${{ needs.version.outputs.image_tag }}
+      images_changed: ${{ needs.build.outputs.images_changed }}
+      deploy_hash: ${{ needs.hashes.outputs.deploy }}
+    secrets: inherit
+
+  publish-prerelease:
+    needs: [version, build, quality, e2e]
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    concurrency:
+      group: prerelease-publish-${{ inputs.channel }}-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: Apply prerelease version
+        run: npx tsx .github/prerelease-channel.ts apply --version "${{ needs.version.outputs.version }}"
+
+      - run: npx tsx .github/resolve-workspace-versions.ts
+
+      - name: Install crane
+        run: .github/install-crane.sh
+
+      - name: Login to registries
+        run: .github/login-release-registries.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+
+      - name: Publish npm prerelease
+        run: npm publish ./packages/sandbox --tag "${{ needs.version.outputs.channel }}" --access public
+        env:
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Publish Docker images to Docker Hub
+        run: |
+          alias_args=()
+          if [[ "${{ inputs.publish_docker_alias }}" == "true" ]]; then
+            alias_args=(--alias "${{ needs.version.outputs.channel }}")
+          fi
+          .github/publish-sandbox-images.sh \
+            --source-tag "${{ needs.version.outputs.image_tag }}" \
+            --version "${{ needs.version.outputs.version }}" \
+            "${alias_args[@]}" \
+            --docker-hub
+
+      - name: Publish Docker images to CF Registry Library
+        continue-on-error: true
+        id: library-publish
+        run: |
+          alias_args=()
+          if [[ "${{ inputs.publish_docker_alias }}" == "true" ]]; then
+            alias_args=(--alias "${{ needs.version.outputs.channel }}")
+          fi
+          .github/publish-sandbox-images.sh \
+            --source-tag "${{ needs.version.outputs.image_tag }}" \
+            --version "${{ needs.version.outputs.version }}" \
+            "${alias_args[@]}" \
+            --cf-library
+
+      - name: Warn if library publish failed
+        if: steps.library-publish.outcome == 'failure'
+        run: |
+          echo "::warning::CF Registry Library publish failed — Docker Hub and npm prereleases are unaffected"
+
+      - name: Summarize prerelease
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          CHANNEL="${{ needs.version.outputs.channel }}"
+          {
+            echo "## Published ${CHANNEL} prerelease"
+            echo ""
+            echo 'npm: `npm install @cloudflare/sandbox@'"${CHANNEL}"'`'
+            echo 'Docker: `cloudflare/sandbox:'"${VERSION}"'`'
+            if [[ "${{ inputs.publish_docker_alias }}" == "true" ]]; then
+              echo 'Docker alias: `cloudflare/sandbox:'"${CHANNEL}"'`'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
