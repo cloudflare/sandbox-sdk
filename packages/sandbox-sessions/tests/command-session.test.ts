@@ -51,6 +51,36 @@ describe('CommandSession', () => {
     expect(collect(useAlias.output, 'stdout')).toBe('alias-ok\n');
   });
 
+  it('preserves shell functions across commands', async () => {
+    await using session = await CommandSession.create();
+
+    const defineFunction = await session.exec(
+      String.raw`say_func() { printf "func:%s\n" "$1"; }`
+    );
+    const useFunction = await session.exec('say_func ok');
+
+    expect(defineFunction.exitCode).toBe(0);
+    expect(useFunction.exitCode).toBe(0);
+    expect(collect(useFunction.output, 'stdout')).toBe('func:ok\n');
+  });
+
+  it('preserves sourced shell state across commands', async () => {
+    await using session = await CommandSession.create({ cwd: '/tmp' });
+
+    const writeScript =
+      await session.exec(String.raw`cat > sandbox-source-test.sh <<'EOF'
+export SOURCED_VALUE=ok
+sourced_func() { printf "sourced:%s\n" "$SOURCED_VALUE"; }
+EOF`);
+    const sourceScript = await session.exec('source ./sandbox-source-test.sh');
+    const useSourcedState = await session.exec('sourced_func');
+
+    expect(writeScript.exitCode).toBe(0);
+    expect(sourceScript.exitCode).toBe(0);
+    expect(useSourcedState.exitCode).toBe(0);
+    expect(collect(useSourcedState.output, 'stdout')).toBe('sourced:ok\n');
+  });
+
   it('streams the same output chunks returned in the final result', async () => {
     await using session = await CommandSession.create();
     const streamed: StdioChunk[] = [];
