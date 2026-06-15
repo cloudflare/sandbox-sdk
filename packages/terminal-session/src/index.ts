@@ -3,6 +3,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  CommandChannel,
+  closeSubprocessStdioFd,
+  getSubprocessStdioFd
+} from './command-channel';
+import {
   createRcFileContent,
   type ProtocolFrame,
   parseTerminalChunk
@@ -29,9 +34,8 @@ export class TerminalSession implements AsyncDisposable {
   private readonly terminal: Bun.Terminal;
   private readonly shell: Bun.Subprocess;
   private readonly tempDir: string;
-  private readonly commandFifoPath: string;
+  private readonly commandChannel: CommandChannel;
   private readonly nonce: string;
-  private commandWriter?: ReturnType<typeof Bun.file.prototype.writer>;
   private readonly decoder = new TextDecoder();
   private readonly ready = Promise.withResolvers<void>();
   private state: SessionState = 'starting';
@@ -49,13 +53,13 @@ export class TerminalSession implements AsyncDisposable {
     terminal: Bun.Terminal;
     shell: Bun.Subprocess;
     tempDir: string;
-    commandFifoPath: string;
+    commandChannel: CommandChannel;
     nonce: string;
   }) {
     this.terminal = options.terminal;
     this.shell = options.shell;
     this.tempDir = options.tempDir;
-    this.commandFifoPath = options.commandFifoPath;
+    this.commandChannel = options.commandChannel;
     this.nonce = options.nonce;
     this.ready.promise.catch(() => {});
     this.shell.exited.then((exitCode) => {
@@ -79,54 +83,51 @@ export class TerminalSession implements AsyncDisposable {
     const nonce = crypto.randomUUID().replaceAll('-', '');
     const tempDir = await mkdtemp(join(tmpdir(), 'terminal-session-'));
     const rcPath = join(tempDir, 'bashrc');
-    const commandFifoPath = join(tempDir, 'commands');
     let session: TerminalSession | undefined;
+    let shell: Bun.Subprocess | undefined;
 
     try {
       await writeFile(rcPath, createRcFileContent());
-      const mkfifo = Bun.spawn(['mkfifo', commandFifoPath]);
-      const mkfifoExitCode = await mkfifo.exited;
-      if (mkfifoExitCode !== 0) {
-        throw new Error(`Failed to create command FIFO at ${commandFifoPath}`);
-      }
 
       const earlyData: Uint8Array[] = [];
-      const terminal = new Bun.Terminal({
-        cols: 80,
-        rows: 24,
-        data: (_terminal, data) => {
-          const chunk = new Uint8Array(data);
-          if (session) {
-            session.appendTerminalData(chunk);
-          } else {
-            earlyData.push(chunk);
+      shell = Bun.spawn(['bash', '--noprofile', '--rcfile', rcPath, '-i'], {
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data: (_terminal, data) => {
+            const chunk = new Uint8Array(data);
+            if (session) {
+              session.appendTerminalData(chunk);
+            } else {
+              earlyData.push(chunk);
+            }
           }
-        }
+        },
+        cwd: options.cwd,
+        env: {
+          ...process.env,
+          ...options.env,
+          TERM: 'xterm-256color',
+          HISTFILE: '',
+          TERMINAL_SESSION_NONCE: nonce,
+          TERMINAL_SESSION_CMD_FD: String(COMMAND_FD)
+        },
+        stdio: ['ignore', 'ignore', 'ignore', 'ignore', 'pipe']
       });
-      terminal.unref();
 
-      const shell = Bun.spawn(
-        ['bash', '--noprofile', '--rcfile', rcPath, '-i'],
-        {
-          terminal,
-          cwd: options.cwd,
-          env: {
-            ...process.env,
-            ...options.env,
-            TERM: 'xterm-256color',
-            HISTFILE: '',
-            TERMINAL_SESSION_NONCE: nonce,
-            TERMINAL_SESSION_CMD_FD: String(COMMAND_FD),
-            TERMINAL_SESSION_CMD_FIFO: commandFifoPath
-          }
-        }
-      );
+      const terminal = shell.terminal;
+      if (!terminal) {
+        throw new Error('Terminal session shell did not expose a terminal');
+      }
+      terminal.unref();
 
       session = new TerminalSession({
         terminal,
         shell,
         tempDir,
-        commandFifoPath,
+        commandChannel: new CommandChannel(
+          getSubprocessStdioFd(shell, COMMAND_FD)
+        ),
         nonce
       });
 
@@ -140,6 +141,16 @@ export class TerminalSession implements AsyncDisposable {
       if (session) {
         await session.close();
       } else {
+        if (shell) {
+          closeSubprocessStdioFd(shell, COMMAND_FD);
+          try {
+            shell.kill('SIGTERM');
+          } catch {}
+          await Promise.race([shell.exited, Bun.sleep(500)]);
+          try {
+            shell.terminal?.close();
+          } catch {}
+        }
         await rm(tempDir, { force: true, recursive: true });
       }
       throw error;
@@ -204,14 +215,15 @@ export class TerminalSession implements AsyncDisposable {
       this.pendingExec = { id, transcriptStart, resolve, reject, timeout };
     });
 
-    const writer = this.ensureCommandWriter();
-    writer.write(`${id}|${encodedCommand}\n`);
-    await writer.flush();
     try {
+      await this.commandChannel.write(`${id}|${encodedCommand}\n`);
       process.kill(this.shell.pid, 'SIGWINCH');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failure = new Error(`Terminal session wakeup failed: ${message}`);
+      const failure = new Error(
+        `Terminal session command write failed: ${message}`
+      );
+      result.catch(() => {});
       this.fail(failure);
       void this.cleanupResources();
       throw failure;
@@ -233,13 +245,6 @@ export class TerminalSession implements AsyncDisposable {
     if (this.pendingExec) {
       throw new Error('Terminal session already has a pending exec');
     }
-  }
-
-  private ensureCommandWriter(): ReturnType<typeof Bun.file.prototype.writer> {
-    if (!this.commandWriter) {
-      this.commandWriter = Bun.file(this.commandFifoPath).writer();
-    }
-    return this.commandWriter;
   }
 
   private appendTerminalData(data: Uint8Array): void {
@@ -312,12 +317,7 @@ export class TerminalSession implements AsyncDisposable {
       this.state = 'closing';
     }
 
-    if (this.commandWriter) {
-      try {
-        await this.commandWriter.end();
-      } catch {}
-      this.commandWriter = undefined;
-    }
+    this.commandChannel.close();
 
     try {
       this.shell.kill('SIGTERM');

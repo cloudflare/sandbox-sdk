@@ -36,6 +36,44 @@ describe('TerminalSession failure cleanup', () => {
     expect(exitCode).toBe(0);
   });
 
+  it('closes command-channel file descriptors on session close', async () => {
+    const proc = Bun.spawn(
+      [
+        'bun',
+        '-e',
+        [
+          'import { readdir } from "node:fs/promises";',
+          'import { TerminalSession } from "./src/index.ts";',
+          'const countFDs = async () => (await readdir("/proc/self/fd")).length;',
+          'const before = await countFDs();',
+          'const session = await TerminalSession.create();',
+          'await session.close();',
+          'const after = await countFDs();',
+          'if (after > before) {',
+          '  console.error(JSON.stringify({ before, after }));',
+          '  process.exit(1);',
+          '}'
+        ].join(' ')
+      ],
+      {
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe'
+      }
+    );
+
+    const exitCode = await Promise.race([
+      proc.exited,
+      Bun.sleep(3_000).then(() => {
+        proc.kill('SIGKILL');
+        throw new Error('fd cleanup subprocess did not exit');
+      })
+    ]);
+
+    expect(await proc.stderr.text()).toBe('');
+    expect(exitCode).toBe(0);
+  });
+
   it('removes generated temp files when creation fails after temp files are created', async () => {
     const missingCwd = join(
       '/tmp',

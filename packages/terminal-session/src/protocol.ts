@@ -1,5 +1,4 @@
 // biome-ignore-all lint/style/useTemplate: Bash parameter expansion strings are assembled from pieces because this file generates bash source.
-const COMMAND_FD = 4;
 const MARKER_PREFIX = '\x1b]777;terminal-session|';
 const MARKER_SUFFIX = '\x07';
 const BASH_EXPANSION_START = '$' + '{';
@@ -28,12 +27,6 @@ export function createRcFileContent(): string {
     '__terminal_session_cmd_fd=' +
       BASH_EXPANSION_START +
       'TERMINAL_SESSION_CMD_FD:-4}',
-    'if [[ -n "' +
-      BASH_EXPANSION_START +
-      'TERMINAL_SESSION_CMD_FIFO:-}" ]]; then',
-    `  exec ${COMMAND_FD}<>"$TERMINAL_SESSION_CMD_FIFO"`,
-    'fi',
-    '',
     '__terminal_session_marker() {',
     '  printf \'\\033]777;terminal-session|%s|%s|%s|%s\\007\' "$__terminal_session_nonce" "$1" "$2" "$3"',
     '}',

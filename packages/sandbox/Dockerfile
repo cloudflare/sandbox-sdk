@@ -1,5 +1,5 @@
 # Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
-ARG BUN_VERSION=1
+ARG BUN_VERSION=1.3.14
 # Node version — override via --build-arg NODE_VERSION=24
 ARG NODE_VERSION=24
 # cloudflared release — shared across glibc and musl image variants.
