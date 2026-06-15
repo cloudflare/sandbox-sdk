@@ -2,8 +2,12 @@ import { Buffer } from 'node:buffer';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  COMMAND_SESSION_FRAME_PREFIX,
+  createCommandSessionScript
+} from './shell-script';
 
-const FRAME_PREFIX = '__SANDBOX_SESSIONS__';
+const FRAME_PREFIX = COMMAND_SESSION_FRAME_PREFIX;
 const DEFAULT_TIMEOUT_MS = 2_000;
 
 type SessionState = 'starting' | 'ready' | 'closing' | 'closed' | 'failed';
@@ -334,86 +338,10 @@ export class CommandSession implements AsyncDisposable {
   }
 }
 
-function createCommandSessionScript(tempDir: string): string {
-  const safeTempDir = shellQuote(tempDir);
-  return [
-    'set +H',
-    'shopt -s expand_aliases',
-    'unset HISTFILE',
-    'export HISTFILE=/dev/null',
-    `__sandbox_sessions_dir=${safeTempDir}`,
-    `__sandbox_sessions_frame() { printf '${FRAME_PREFIX}|%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4"; }`,
-    '__sandbox_sessions_emit_payload() {',
-    '  local exec_id="$1" stream="$2" data="$3" payload',
-    '  if [[ -n "$data" ]]; then',
-    "    payload=$(printf '%s' \"$data\" | base64 | tr -d '\\n')",
-    '    __sandbox_sessions_frame OUTPUT "$exec_id" "$stream" "$payload"',
-    '  fi',
-    '}',
-    '__sandbox_sessions_emit_fifo() {',
-    '  local exec_id="$1" stream="$2" fifo="$3" stop_marker="$4" char buffer chunk emit_count',
-    '  local marker_length=$' + '{#stop_marker}',
-    '  buffer=""',
-    '  while true; do',
-    '    if IFS= read -r -t 0.05 -N 1 char; then',
-    '      buffer+="$char"',
-    '      if [[ "$' + '{buffer: -$marker_length}" == "$stop_marker" ]]; then',
-    '        chunk="$' + '{buffer:0:$' + '{#buffer}-$marker_length}"',
-    '        __sandbox_sessions_emit_payload "$exec_id" "$stream" "$chunk"',
-    '        return',
-    '      fi',
-    '      if [[ "$char" == $\'\\n\' ]]; then',
-    '        __sandbox_sessions_emit_payload "$exec_id" "$stream" "$buffer"',
-    '        buffer=""',
-    '      elif (( $' + '{#buffer} > marker_length )); then',
-    '        emit_count=$(($' + '{#buffer} - marker_length))',
-    '        __sandbox_sessions_emit_payload "$exec_id" "$stream" "$' +
-      '{buffer:0:$emit_count}"',
-    '        buffer="$' + '{buffer:$emit_count}"',
-    '      fi',
-    '    elif [[ -n "$buffer" ]]; then',
-    '      __sandbox_sessions_emit_payload "$exec_id" "$stream" "$buffer"',
-    '      buffer=""',
-    '    fi',
-    '  done <> "$fifo"',
-    '  __sandbox_sessions_emit_payload "$exec_id" "$stream" "$buffer"',
-    '}',
-    '__sandbox_sessions_exec() {',
-    '  local exec_id="$1" cmd_b64="$2" cmd stdout_fifo stderr_fifo stdout_pid stderr_pid stop_marker exit_code',
-    '  stdout_fifo="$__sandbox_sessions_dir/$exec_id.stdout.fifo"',
-    '  stderr_fifo="$__sandbox_sessions_dir/$exec_id.stderr.fifo"',
-    '  stop_marker="__SANDBOX_SESSIONS_STOP_$exec_id"',
-    '  cmd=$(echo "$cmd_b64" | base64 -d 2>/dev/null) || { __sandbox_sessions_frame DONE "$exec_id" 1 ""; return; }',
-    '  rm -f "$stdout_fifo" "$stderr_fifo"',
-    '  mkfifo "$stdout_fifo" "$stderr_fifo" || { __sandbox_sessions_frame DONE "$exec_id" 1 ""; return; }',
-    '  __sandbox_sessions_emit_fifo "$exec_id" stdout "$stdout_fifo" "$stop_marker" &',
-    '  stdout_pid=$!',
-    '  __sandbox_sessions_emit_fifo "$exec_id" stderr "$stderr_fifo" "$stop_marker" &',
-    '  stderr_pid=$!',
-    '  {',
-    '    eval "$cmd"',
-    '    exit_code=$?',
-    '  } < /dev/null > "$stdout_fifo" 2> "$stderr_fifo"',
-    '  printf \'%s\\n\' "$stop_marker" > "$stdout_fifo"',
-    '  printf \'%s\\n\' "$stop_marker" > "$stderr_fifo"',
-    '  wait "$stdout_pid"',
-    '  wait "$stderr_pid"',
-    '  rm -f "$stdout_fifo" "$stderr_fifo"',
-    '  __sandbox_sessions_frame DONE "$exec_id" "$exit_code" ""',
-    '}',
-    '__sandbox_sessions_frame READY session 0 ""',
-    ''
-  ].join('\n');
-}
-
 function getShellStdin(shell: Bun.Subprocess): StdinWriter {
   const stdin = shell.stdin;
   if (!stdin || typeof stdin === 'number' || !('write' in stdin)) {
     throw new Error('Command session shell stdin is not writable');
   }
   return stdin;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
