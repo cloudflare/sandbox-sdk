@@ -338,6 +338,7 @@ function createCommandSessionScript(tempDir: string): string {
   const safeTempDir = shellQuote(tempDir);
   return [
     'set +H',
+    'shopt -s expand_aliases',
     'unset HISTFILE',
     'export HISTFILE=/dev/null',
     `__sandbox_sessions_dir=${safeTempDir}`,

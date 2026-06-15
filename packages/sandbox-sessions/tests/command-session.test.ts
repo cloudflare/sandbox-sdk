@@ -38,6 +38,19 @@ describe('CommandSession', () => {
     );
   });
 
+  it('preserves aliases across commands', async () => {
+    await using session = await CommandSession.create();
+
+    const defineAlias = await session.exec(
+      String.raw`alias say_ok='printf "alias-ok\n"'`
+    );
+    const useAlias = await session.exec('say_ok');
+
+    expect(defineAlias.exitCode).toBe(0);
+    expect(useAlias.exitCode).toBe(0);
+    expect(collect(useAlias.output, 'stdout')).toBe('alias-ok\n');
+  });
+
   it('streams the same output chunks returned in the final result', async () => {
     await using session = await CommandSession.create();
     const streamed: StdioChunk[] = [];
