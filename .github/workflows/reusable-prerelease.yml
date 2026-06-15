@@ -99,6 +99,7 @@ jobs:
             'packages/sandbox/src/**',
             'tests/e2e/test-worker/**',
             'vitest.e2e.config.ts',
+            '.github/workflows/prerelease.yml',
             '.github/workflows/reusable-prerelease.yml',
             '.github/workflows/reusable-e2e.yml',
             '.github/prerelease-channel.ts'

@@ -1,4 +1,4 @@
-name: Release Next
+name: Prerelease
 
 on:
   push:
