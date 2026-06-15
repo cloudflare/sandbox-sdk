@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - next
 
 permissions:
   id-token: write
@@ -15,9 +16,26 @@ env:
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
 
 jobs:
-  # --- Compute content hashes for skip optimizations ---
+  # --- Prerelease channels ---
+  prerelease:
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/next' }}
+    uses: ./.github/workflows/reusable-prerelease.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+      packages: write
+    with:
+      channel: next
+      prerelease_identifier: next
+      base_bump: minor
+      worker_name_prefix: sandbox-e2e-test-worker-next
+      publish_docker_alias: true
+    secrets: inherit
+
+  # --- Compute content hashes for stable releases ---
   hashes:
-    if: ${{ github.repository_owner == 'cloudflare' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-hashes-${{ github.ref }}
       cancel-in-progress: true
@@ -75,10 +93,10 @@ jobs:
             '.github/workflows/reusable-e2e.yml'
           ) }}" >> "$GITHUB_OUTPUT"
 
-  # --- Build (always runs everything on release) ---
+  # --- Build (always runs everything on stable release) ---
   build:
     needs: hashes
-    if: ${{ github.repository_owner == 'cloudflare' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-build-${{ github.ref }}
       cancel-in-progress: true
@@ -92,6 +110,7 @@ jobs:
   # --- Quality gates (all checks on release) ---
   quality:
     needs: build
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-quality-${{ github.ref }}
       cancel-in-progress: true
@@ -105,6 +124,7 @@ jobs:
   # --- E2E tests ---
   e2e:
     needs: [hashes, build]
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-e2e-${{ github.ref }}
       cancel-in-progress: true
@@ -122,7 +142,7 @@ jobs:
   # --- Publish release (after all gates pass) ---
   publish-release:
     needs: [hashes, build, quality, e2e]
-    if: ${{ github.repository_owner == 'cloudflare' }}
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
     concurrency:
       group: release-publish-${{ github.ref }}
       cancel-in-progress: false
