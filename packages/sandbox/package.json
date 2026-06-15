@@ -61,6 +61,11 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js"
     },
+    "./interpreter": {
+      "types": "./dist/code-interpreter/index.d.ts",
+      "import": "./dist/code-interpreter/index.js",
+      "require": "./dist/code-interpreter/index.js"
+    },
     "./openai": {
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",

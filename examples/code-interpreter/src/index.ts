@@ -1,4 +1,5 @@
 import { getSandbox } from '@cloudflare/sandbox';
+import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 import { generateText, stepCountIs, tool } from 'ai';
 import { createWorkersAI } from 'workers-ai-provider';
 import { z } from 'zod';
@@ -11,8 +12,10 @@ const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8' as const;
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
   const sandbox = getSandbox(env.Sandbox, sandboxId.toString().slice(0, 63));
-  const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
-  const result = await sandbox.runCode(code, {
+  const interpreter = withInterpreter(sandbox);
+
+  const pythonCtx = await interpreter.createContext({ language: 'python' });
+  const result = await interpreter.runCode(code, {
     context: pythonCtx
   });
 

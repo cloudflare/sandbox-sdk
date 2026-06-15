@@ -90,34 +90,6 @@ export function sanitizeSandboxId(id: string): string {
 }
 
 /**
- * Validates language for code interpreter
- * Only allows supported languages
- */
-export function validateLanguage(language: string | undefined): void {
-  if (!language) {
-    return; // undefined is valid, will default to python
-  }
-
-  const supportedLanguages = [
-    'python',
-    'python3',
-    'javascript',
-    'js',
-    'node',
-    'typescript',
-    'ts'
-  ];
-  const normalized = language.toLowerCase();
-
-  if (!supportedLanguages.includes(normalized)) {
-    throw new SandboxSecurityError(
-      `Unsupported language '${language}'. Supported languages: python, javascript, typescript`,
-      'INVALID_LANGUAGE'
-    );
-  }
-}
-
-/**
  * Validates a single DNS label for use as a Cloudflare Tunnel hostname.
  *
  * Used by `sandbox.tunnels.get(port, { name })` to reject obviously-bad

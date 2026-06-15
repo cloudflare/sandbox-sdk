@@ -75,7 +75,6 @@ import type {
   SandboxCommandsAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
-  SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTunnelsAPI,
@@ -620,9 +619,6 @@ export class ContainerControlClient {
   }
   get tunnels(): SandboxTunnelsAPI {
     return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
-  }
-  get interpreter(): SandboxInterpreterAPI {
-    return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
   }
 
   /**

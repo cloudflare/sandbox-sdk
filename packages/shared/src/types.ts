@@ -1078,16 +1078,6 @@ export interface ExecutionSession {
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
 
-  // Code interpreter methods
-  createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
-  runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ReadableStream<Uint8Array>>;
-  listCodeContexts(): Promise<CodeContext[]>;
-  deleteCodeContext(contextId: string): Promise<void>;
-
   // Bucket mounting operations
   mountBucket(
     bucket: string,
@@ -1429,16 +1419,6 @@ export interface ISandbox {
    * when no handshake has been observed yet on this sandbox.
    */
   getContainerPlacementId(): Promise<string | null | undefined>;
-
-  // Code interpreter methods
-  createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
-  runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ReadableStream>;
-  listCodeContexts(): Promise<CodeContext[]>;
-  deleteCodeContext(contextId: string): Promise<void>;
 
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;

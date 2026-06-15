@@ -50,7 +50,6 @@ export interface SandboxAPI {
   processes: SandboxProcessesAPI;
   ports: SandboxPortsAPI;
   git: SandboxGitAPI;
-  interpreter: SandboxInterpreterAPI;
   utils: SandboxUtilsAPI;
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;

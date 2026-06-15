@@ -12,11 +12,6 @@ import {
 import { Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
 
-// Mock dependencies
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
-
 vi.mock('@cloudflare/containers', () => {
   const MockContainer = class Container {
     ctx: any;

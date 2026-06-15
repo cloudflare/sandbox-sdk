@@ -11,13 +11,10 @@ import type {
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
-  CodeContext,
-  CreateContextOptions,
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecutionResult,
   ExecutionSession,
   FileEncoding,
   ISandbox,
@@ -35,7 +32,6 @@ import type {
   ReadFileStreamResult,
   RemoteMountBucketOptions,
   RestoreBackupResult,
-  RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -82,7 +78,6 @@ import {
   SessionAlreadyExistsError
 } from './errors';
 import { collectFile, streamFile } from './file-stream';
-import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import {
   forwardPreviewRequest,
@@ -848,7 +843,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: ContainerControlClient;
 
-  private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   // Tunnels namespace handler. Lazily constructed on first access via the
   // `tunnels` getter; holds an in-memory map of tunnels created through
@@ -1149,8 +1143,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     this.client = this.createClient();
-
-    this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
 
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
@@ -5492,19 +5484,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       },
 
-      // Code interpreter methods - delegate to sandbox's code interpreter
-      createCodeContext: (options) =>
-        this.codeInterpreter.createCodeContext(options),
-      runCode: async (code, options) => {
-        const execution = await this.codeInterpreter.runCode(code, options);
-        return execution.toJSON();
-      },
-      runCodeStream: (code, options) =>
-        this.codeInterpreter.runCodeStream(code, options),
-      listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
-      deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId),
-
       // Bucket mounting - sandbox-level operations
       mountBucket: (bucket, mountPath, options) =>
         this.mountBucket(bucket, mountPath, options),
@@ -5514,39 +5493,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       createBackup: (options) => this.createBackup(options),
       restoreBackup: (backup: DirectoryBackup) => this.restoreBackup(backup)
     };
-  }
-
-  // ============================================================================
-  // Code interpreter methods - delegate to CodeInterpreter wrapper
-  // ============================================================================
-
-  async createCodeContext(
-    options?: CreateContextOptions
-  ): Promise<CodeContext> {
-    return this.codeInterpreter.createCodeContext(options);
-  }
-
-  async runCode(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ExecutionResult> {
-    const execution = await this.codeInterpreter.runCode(code, options);
-    return execution.toJSON();
-  }
-
-  async runCodeStream(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ReadableStream> {
-    return this.codeInterpreter.runCodeStream(code, options);
-  }
-
-  async listCodeContexts(): Promise<CodeContext[]> {
-    return this.codeInterpreter.listCodeContexts();
-  }
-
-  async deleteCodeContext(contextId: string): Promise<void> {
-    return this.codeInterpreter.deleteCodeContext(contextId);
   }
 
   // ============================================================================

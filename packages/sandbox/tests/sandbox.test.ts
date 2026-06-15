@@ -10,11 +10,6 @@ import {
 import { connect, Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
 
-// Mock dependencies before imports
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
-
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
     // Create a new request with the port in the URL path

@@ -20,6 +20,7 @@ import {
   proxyToSandbox,
   Sandbox
 } from '@cloudflare/sandbox';
+import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -1074,7 +1075,8 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/context/create' &&
         request.method === 'POST'
       ) {
-        const context = await executor.createCodeContext(body);
+        const interpreter = withInterpreter(sandbox);
+        const context = await interpreter.createContext(body);
         return new Response(JSON.stringify(context), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1085,7 +1087,8 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/context/list' &&
         request.method === 'GET'
       ) {
-        const contexts = await executor.listCodeContexts();
+        const interpreter = withInterpreter(sandbox);
+        const contexts = await interpreter.listContexts();
         return new Response(JSON.stringify(contexts), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1096,9 +1099,10 @@ console.log('Terminal server on port ' + port);
         url.pathname.startsWith('/api/code/context/') &&
         request.method === 'DELETE'
       ) {
+        const interpreter = withInterpreter(sandbox);
         const pathParts = url.pathname.split('/');
         const contextId = pathParts[4]; // /api/code/context/:id
-        await executor.deleteCodeContext(contextId);
+        await interpreter.deleteContext(contextId);
         return new Response(JSON.stringify({ success: true, contextId }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1106,7 +1110,11 @@ console.log('Terminal server on port ' + port);
 
       // Code Interpreter - Execute Code
       if (url.pathname === '/api/code/execute' && request.method === 'POST') {
-        const execution = await executor.runCode(body.code, body.options || {});
+        const interpreter = withInterpreter(sandbox);
+        const execution = await interpreter.runCode(
+          body.code,
+          body.options || {}
+        );
         return new Response(JSON.stringify(execution), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1117,7 +1125,8 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/execute/stream' &&
         request.method === 'POST'
       ) {
-        const stream = await executor.runCodeStream(
+        const interpreter = withInterpreter(sandbox);
+        const stream = await interpreter.runCodeStream(
           body.code,
           body.options || {}
         );

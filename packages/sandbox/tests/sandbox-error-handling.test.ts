@@ -2,10 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
-
 vi.mock('@cloudflare/containers', () => {
   const MockContainer = class Container {
     ctx: any;

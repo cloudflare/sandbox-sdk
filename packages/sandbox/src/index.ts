@@ -8,13 +8,10 @@ export type {
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
-  CodeContext,
-  CreateContextOptions,
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecutionResult,
   ExecutionSession,
   FileChunk,
   FileMetadata,
@@ -35,7 +32,6 @@ export type {
   QuickTunnelInfo,
   RemoteMountBucketOptions,
   RestoreBackupResult,
-  RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -47,6 +43,8 @@ export type {
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
+// Export the extension contract type
+export type { SandboxLike } from './code-interpreter';
 export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
 // Export backup and process readiness errors
 export {
@@ -63,8 +61,6 @@ export {
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
-// Export interpreter functionality
-export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
