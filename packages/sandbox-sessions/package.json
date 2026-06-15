@@ -1,5 +1,5 @@
 {
-  "name": "@repo/terminal-session",
+  "name": "@repo/sandbox-sessions",
   "type": "module",
   "private": true,
   "scripts": {
