@@ -8,7 +8,7 @@ import { vi } from 'vitest';
  * invokes `onOutput` / `onComplete` / `onError` callbacks.
  */
 export function createMockSession(id = 'mock-session') {
-  return {
+  const session = {
     id,
     exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
       const result = { stdout: '', stderr: '', exitCode: 0 };
@@ -23,10 +23,23 @@ export function createMockSession(id = 'mock-session') {
       }
       return result;
     }),
+    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
+      await session.exec(cmd, {
+        ...opts,
+        stream: true,
+        onComplete(result: { exitCode: number }) {
+          if (typeof opts?.onExit === 'function') {
+            (opts.onExit as (code: number | null) => void)(result.exitCode);
+          }
+        }
+      });
+      return { id: 'mock-process' };
+    }),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {}),
     terminal: vi.fn(async () => new Response(null, { status: 200 }))
   };
+  return session;
 }
 
 /**
@@ -38,7 +51,7 @@ export function createMockSession(id = 'mock-session') {
  * final result.
  */
 export function createMockSandbox() {
-  return {
+  const sandbox = {
     exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
       const result = { stdout: '', stderr: '', exitCode: 0 };
       if (opts?.stream) {
@@ -52,6 +65,18 @@ export function createMockSandbox() {
         }
       }
       return result;
+    }),
+    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
+      await sandbox.exec(cmd, {
+        ...opts,
+        stream: true,
+        onComplete(result: { exitCode: number }) {
+          if (typeof opts?.onExit === 'function') {
+            (opts.onExit as (code: number | null) => void)(result.exitCode);
+          }
+        }
+      });
+      return { id: 'mock-process' };
     }),
     readFile: vi.fn(async () => ({ content: 'file content' })),
     readFileStream: vi.fn(async () => new ReadableStream()),
@@ -78,6 +103,7 @@ export function createMockSandbox() {
     },
     destroy: vi.fn(async () => {})
   };
+  return sandbox;
 }
 
 /** Base URL used for all test requests against the Hono app. */

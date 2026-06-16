@@ -515,14 +515,13 @@ export function createBridgeApp(
     }
 
     executor
-      .exec(command, {
+      .startProcess(command, {
         ...opts,
-        stream: true,
         onOutput(stream: 'stdout' | 'stderr', data: string) {
           writeSSE(stream, toBase64(data));
         },
-        onComplete(result: { exitCode: number }) {
-          writeSSE('exit', JSON.stringify({ exit_code: result.exitCode }));
+        onExit(code: number | null) {
+          writeSSE('exit', JSON.stringify({ exit_code: code ?? -1 }));
           closeStream();
         },
         onError(err: Error) {

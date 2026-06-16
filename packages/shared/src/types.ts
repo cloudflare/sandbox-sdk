@@ -37,31 +37,6 @@ export interface BaseExecOptions {
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
   /**
-   * Enable real-time output streaming via callbacks
-   */
-  stream?: boolean;
-
-  /**
-   * Callback for real-time output data
-   */
-  onOutput?: (stream: 'stdout' | 'stderr', data: string) => void;
-
-  /**
-   * Callback when command completes (only when stream: true)
-   */
-  onComplete?: (result: ExecResult) => void;
-
-  /**
-   * Callback for execution errors
-   */
-  onError?: (error: Error) => void;
-
-  /**
-   * AbortSignal for cancelling execution
-   */
-  signal?: AbortSignal;
-
-  /**
    * Whether this command was initiated by the user or by internal
    * infrastructure (backup, bucket mount, env setup, etc.).
    * Defaults to 'user' when omitted.

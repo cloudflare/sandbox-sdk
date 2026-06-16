@@ -12,7 +12,6 @@ import type {
   CheckChangesOptions,
   CheckChangesResult,
   DirectoryBackup,
-  ExecEvent,
   ExecOptions,
   ExecResult,
   ExecutionSession,
@@ -3628,69 +3627,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options?: ExecOptions
   ): Promise<ExecResult> {
     const startTime = Date.now();
-    const timestamp = new Date().toISOString();
-
-    let timeoutId: NodeJS.Timeout | undefined;
     let execOutcome: { exitCode: number; success: boolean } | undefined;
     let execError: Error | undefined;
 
     try {
-      // Handle cancellation
-      if (options?.signal?.aborted) {
-        throw new Error('Operation was aborted');
-      }
+      const commandOptions = this.buildExecutionRequestOptions(
+        sessionId,
+        options
+      );
 
-      let result: ExecResult;
+      const response = await this.client.commands.execute(
+        command,
+        sessionId,
+        commandOptions
+      );
 
-      if (options?.stream && options?.onOutput) {
-        // Streaming with callbacks - we need to collect the final result
-        result = await this.executeWithStreaming(
-          command,
-          sessionId,
-          options,
-          startTime,
-          timestamp
-        );
-      } else {
-        // Regular execution with session
-        const commandOptions = this.buildExecutionRequestOptions(
-          sessionId,
-          options
-        );
-
-        const response = await this.client.commands.execute(
-          command,
-          sessionId,
-          commandOptions
-        );
-
-        const duration = Date.now() - startTime;
-        const publicSessionId = this.getPublicExecutionSessionId(sessionId);
-        result = this.mapExecuteResponseToExecResult(
-          response,
-          duration,
-          publicSessionId
-        );
-      }
+      const duration = Date.now() - startTime;
+      const publicSessionId = this.getPublicExecutionSessionId(sessionId);
+      const result = this.mapExecuteResponseToExecResult(
+        response,
+        duration,
+        publicSessionId
+      );
 
       execOutcome = { exitCode: result.exitCode, success: result.success };
-
-      // Call completion callback if provided
-      if (options?.onComplete) {
-        options.onComplete(result);
-      }
-
       return result;
     } catch (error) {
       execError = error instanceof Error ? error : new Error(String(error));
-      if (options?.onError && error instanceof Error) {
-        options.onError(error);
-      }
       throw error;
     } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: execError ? 'error' : 'success',
@@ -3702,78 +3667,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error: execError ?? undefined,
         errorMessage: execError?.message
       });
-    }
-  }
-
-  private async executeWithStreaming(
-    command: string,
-    sessionId: string,
-    options: ExecOptions,
-    startTime: number,
-    timestamp: string
-  ): Promise<ExecResult> {
-    let stdout = '';
-    let stderr = '';
-
-    try {
-      const commandOptions = this.buildExecutionRequestOptions(
-        sessionId,
-        options
-      );
-      const stream = await this.client.commands.executeStream(
-        command,
-        sessionId,
-        commandOptions
-      );
-
-      for await (const event of parseSSEStream<ExecEvent>(stream)) {
-        // Check for cancellation
-        if (options.signal?.aborted) {
-          throw new Error('Operation was aborted');
-        }
-
-        switch (event.type) {
-          case 'stdout':
-          case 'stderr':
-            if (event.data) {
-              // Update accumulated output
-              if (event.type === 'stdout') stdout += event.data;
-              if (event.type === 'stderr') stderr += event.data;
-
-              // Call user's callback
-              if (options.onOutput) {
-                options.onOutput(event.type, event.data);
-              }
-            }
-            break;
-
-          case 'complete': {
-            // Use result from complete event if available
-            const duration = Date.now() - startTime;
-            return {
-              success: (event.exitCode ?? 0) === 0,
-              exitCode: event.exitCode ?? 0,
-              stdout,
-              stderr,
-              command,
-              duration,
-              timestamp,
-              sessionId: this.getPublicExecutionSessionId(sessionId)
-            };
-          }
-
-          case 'error':
-            throw new Error(event.data || 'Command execution failed');
-        }
-      }
-
-      // If we get here without a complete event, something went wrong
-      throw new Error('Stream ended without completion event');
-    } catch (error) {
-      if (options.signal?.aborted) {
-        throw new Error('Operation was aborted');
-      }
-      throw error;
     }
   }
 

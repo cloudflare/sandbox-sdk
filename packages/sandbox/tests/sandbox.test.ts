@@ -364,6 +364,24 @@ describe('Sandbox - Automatic Session Management', () => {
       expect('execStream' in sandbox).toBe(false);
     });
 
+    it('ignores legacy streaming exec options at runtime', async () => {
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
+        new ReadableStream()
+      );
+
+      await sandbox.exec('echo test', {
+        stream: true,
+        onOutput: vi.fn()
+      } as unknown as Parameters<typeof sandbox.exec>[1]);
+
+      expect(sandbox.client.commands.executeStream).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo test',
+        DISABLE_SESSION_TOKEN,
+        undefined
+      );
+    });
+
     it('runs implicit exec without creating a default session', async () => {
       vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
         success: true,
