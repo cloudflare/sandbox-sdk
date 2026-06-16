@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,6 +9,9 @@ import {
 
 const FRAME_PREFIX = COMMAND_SESSION_FRAME_PREFIX;
 const DEFAULT_TIMEOUT_MS = 2_000;
+const CANCEL_SETUP_TIMEOUT_MS = 200;
+const CANCEL_CHILD_TIMEOUT_MS = 500;
+const CANCEL_POLL_MS = 10;
 
 type SessionState = 'starting' | 'ready' | 'closing' | 'closed' | 'failed';
 
@@ -25,6 +28,7 @@ export type StdioChunk = {
 
 export type CommandSessionExecOptions = {
   timeoutMs?: number;
+  signal?: AbortSignal;
   onOutput?: (chunk: StdioChunk) => void;
 };
 
@@ -39,6 +43,9 @@ type PendingCommand = {
   nextSeq: number;
   onOutput?: (chunk: StdioChunk) => void;
   callbackError?: Error;
+  cancellationError?: Error;
+  abortSignal?: AbortSignal;
+  abortListener?: () => void;
   resolve: (result: CommandSessionExecResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -121,6 +128,7 @@ export class CommandSession implements AsyncDisposable {
     const run = async (): Promise<CommandSessionExecResult> =>
       this.execNow(command, {
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: options.signal,
         onOutput: options.onOutput
       });
     const result = this.operationQueue.then(run, run);
@@ -159,9 +167,12 @@ export class CommandSession implements AsyncDisposable {
   private async execNow(
     command: string,
     options: Required<Pick<CommandSessionExecOptions, 'timeoutMs'>> &
-      Pick<CommandSessionExecOptions, 'onOutput'>
+      Pick<CommandSessionExecOptions, 'signal' | 'onOutput'>
   ): Promise<CommandSessionExecResult> {
     this.assertReadyForExec();
+    if (options.signal?.aborted) {
+      throw new Error('Command cancelled');
+    }
 
     const id = crypto.randomUUID().replaceAll('-', '');
     const encodedCommand = Buffer.from(command).toString('base64');
@@ -171,15 +182,23 @@ export class CommandSession implements AsyncDisposable {
         this.fail(error);
         void this.cleanupResources();
       }, options.timeoutMs);
-      this.pending = {
+      const pending: PendingCommand = {
         id,
         output: [],
         nextSeq: 0,
         onOutput: options.onOutput,
+        abortSignal: options.signal,
         resolve,
         reject,
         timeout
       };
+      if (options.signal) {
+        pending.abortListener = () => this.cancelPendingCommand(id);
+        options.signal.addEventListener('abort', pending.abortListener, {
+          once: true
+        });
+      }
+      this.pending = pending;
     });
 
     await this.writeShell(`__sandbox_sessions_exec ${id} ${encodedCommand}\n`);
@@ -272,8 +291,12 @@ export class CommandSession implements AsyncDisposable {
     if (type === 'DONE') {
       const pending = this.pending;
       this.pending = undefined;
-      clearTimeout(pending.timeout);
+      this.cleanupPending(pending);
       const parsedExitCode = Number.parseInt(streamOrExitCode, 10);
+      if (pending.cancellationError) {
+        pending.reject(pending.cancellationError);
+        return;
+      }
       if (pending.callbackError) {
         pending.reject(pending.callbackError);
         return;
@@ -308,6 +331,62 @@ export class CommandSession implements AsyncDisposable {
     }
   }
 
+  private cancelPendingCommand(id: string): void {
+    if (!this.pending || this.pending.id !== id) {
+      return;
+    }
+
+    this.pending.cancellationError ??= new Error('Command cancelled');
+    void this.interruptCurrentCommand(id);
+  }
+
+  private async interruptCurrentCommand(id: string): Promise<void> {
+    const protectedPIDs = await this.waitForProtectedPIDs(id);
+    if (!protectedPIDs) {
+      return;
+    }
+
+    const deadline = performance.now() + CANCEL_CHILD_TIMEOUT_MS;
+    while (this.pending?.id === id && performance.now() < deadline) {
+      const commandPIDs = (await listDirectChildPIDs(this.shell.pid)).filter(
+        (pid) => !protectedPIDs.has(pid)
+      );
+      if (commandPIDs.length > 0) {
+        for (const pid of commandPIDs) {
+          killPID(pid, 'SIGTERM');
+        }
+        return;
+      }
+      await Bun.sleep(CANCEL_POLL_MS);
+    }
+  }
+
+  private async waitForProtectedPIDs(
+    id: string
+  ): Promise<Set<number> | undefined> {
+    const deadline = performance.now() + CANCEL_SETUP_TIMEOUT_MS;
+    while (this.pending?.id === id && performance.now() < deadline) {
+      const protectedPIDs = await this.readProtectedPIDs(id);
+      if (protectedPIDs.size > 0) {
+        return protectedPIDs;
+      }
+      await Bun.sleep(CANCEL_POLL_MS);
+    }
+    return undefined;
+  }
+
+  private async readProtectedPIDs(id: string): Promise<Set<number>> {
+    try {
+      const content = await readFile(
+        join(this.tempDir, `${id}.protected.pids`),
+        'utf8'
+      );
+      return new Set(parsePIDs(content));
+    } catch {
+      return new Set();
+    }
+  }
+
   private fail(error: Error): void {
     this.failure ??= error;
     if (this.state !== 'closing' && this.state !== 'closed') {
@@ -321,9 +400,17 @@ export class CommandSession implements AsyncDisposable {
     if (!this.pending) {
       return;
     }
-    clearTimeout(this.pending.timeout);
-    this.pending.reject(error);
+    const pending = this.pending;
     this.pending = undefined;
+    this.cleanupPending(pending);
+    pending.reject(error);
+  }
+
+  private cleanupPending(pending: PendingCommand): void {
+    clearTimeout(pending.timeout);
+    if (pending.abortSignal && pending.abortListener) {
+      pending.abortSignal.removeEventListener('abort', pending.abortListener);
+    }
   }
 
   private cleanupResources(): Promise<void> {
@@ -349,6 +436,29 @@ export class CommandSession implements AsyncDisposable {
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+async function listDirectChildPIDs(parentPID: number): Promise<number[]> {
+  const ps = Bun.spawn(['ps', '-o', 'pid=', '--ppid', String(parentPID)], {
+    stdout: 'pipe',
+    stderr: 'ignore'
+  });
+  const output = ps.stdout ? await new Response(ps.stdout).text() : '';
+  await ps.exited;
+  return parsePIDs(output);
+}
+
+function parsePIDs(output: string): number[] {
+  return output
+    .split(/\s+/)
+    .map((value) => Number.parseInt(value, 10))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function killPID(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch {}
 }
 
 function getShellStdin(shell: Bun.Subprocess): StdinWriter {

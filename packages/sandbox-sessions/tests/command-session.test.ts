@@ -264,6 +264,127 @@ EOF`);
     expect(collect(nextResult.output, 'stdout')).toBe('after-error\n');
   });
 
+  it('cancels a running command and preserves shell state', async () => {
+    const session = await CommandSession.create();
+    let resultPromise: Promise<CommandSessionExecResult> | undefined;
+
+    try {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      await session.exec('export CANCEL_STATE=survived');
+
+      resultPromise = session.exec(
+        "printf 'started\n'; sleep 10; printf 'after-cancel\n'",
+        {
+          timeoutMs: 5_000,
+          signal: controller.signal,
+          onOutput: (chunk) => {
+            if (chunk.stream === 'stdout' && chunk.data.includes('started')) {
+              started.resolve();
+            }
+          }
+        }
+      );
+
+      await Promise.race([
+        started.promise,
+        Bun.sleep(750).then(() => {
+          throw new Error('Timed out waiting for command start');
+        })
+      ]);
+      controller.abort();
+
+      await expect(
+        Promise.race([
+          resultPromise,
+          Bun.sleep(750).then(() => {
+            throw new Error('Timed out waiting for cancellation');
+          })
+        ])
+      ).rejects.toThrow('Command cancelled');
+
+      const afterCancel = await session.exec('printf "%s\n" "$CANCEL_STATE"');
+      expect(afterCancel.exitCode).toBe(0);
+      expect(collect(afterCancel.output, 'stdout')).toBe('survived\n');
+    } finally {
+      resultPromise?.catch(() => {});
+      await session.close();
+    }
+  });
+
+  it('cancels a command before it emits output', async () => {
+    const session = await CommandSession.create();
+    let resultPromise: Promise<CommandSessionExecResult> | undefined;
+
+    try {
+      const controller = new AbortController();
+      await session.exec('export EARLY_CANCEL_STATE=survived');
+
+      resultPromise = session.exec("sleep 10; printf 'after-cancel\n'", {
+        timeoutMs: 5_000,
+        signal: controller.signal
+      });
+      await Bun.sleep(0);
+      controller.abort();
+
+      await expect(
+        Promise.race([
+          resultPromise,
+          Bun.sleep(750).then(() => {
+            throw new Error('Timed out waiting for cancellation');
+          })
+        ])
+      ).rejects.toThrow('Command cancelled');
+
+      const afterCancel = await session.exec(
+        'printf "%s\n" "$EARLY_CANCEL_STATE"'
+      );
+      expect(afterCancel.exitCode).toBe(0);
+      expect(collect(afterCancel.output, 'stdout')).toBe('survived\n');
+    } finally {
+      resultPromise?.catch(() => {});
+      await session.close();
+    }
+  });
+
+  it('does not cancel background jobs from earlier commands', async () => {
+    const session = await CommandSession.create();
+    let resultPromise: Promise<CommandSessionExecResult> | undefined;
+
+    try {
+      const background = await session.exec('sleep 10 & printf "%s\n" "$!"');
+      const backgroundPID = collect(background.output, 'stdout').trim();
+      const controller = new AbortController();
+
+      resultPromise = session.exec('sleep 10', {
+        timeoutMs: 5_000,
+        signal: controller.signal
+      });
+      await Bun.sleep(0);
+      controller.abort();
+
+      await expect(
+        Promise.race([
+          resultPromise,
+          Bun.sleep(750).then(() => {
+            throw new Error('Timed out waiting for cancellation');
+          })
+        ])
+      ).rejects.toThrow('Command cancelled');
+
+      const backgroundStillRunning = await session.exec(
+        `kill -0 ${backgroundPID}`
+      );
+      expect(backgroundStillRunning.exitCode).toBe(0);
+    } finally {
+      resultPromise?.catch(() => {});
+      await session
+        .exec('kill $(jobs -pr) 2>/dev/null || true')
+        .catch(() => {});
+      await session.close();
+    }
+  });
+
   it('marks the session failed after command timeout', async () => {
     const session = await CommandSession.create();
 
