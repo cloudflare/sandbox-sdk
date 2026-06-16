@@ -79,32 +79,22 @@ describe('ExecutionService', () => {
     );
   });
 
-  it('canonicalizes a missing sessionId to default', async () => {
-    mocked(mockSessionManager.executeInSession).mockResolvedValue({
-      success: true,
-      data: {
-        command: 'pwd',
-        stdout: '/workspace\n',
-        stderr: '',
-        exitCode: 0,
-        duration: 1,
-        timestamp: new Date().toISOString()
-      }
-    } as ServiceResult<RawExecResult>);
-
-    const result = await executionService.execute('pwd');
-
-    expect(result.success).toBe(true);
-    expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-      'default',
-      'pwd',
-      {
-        cwd: undefined,
-        timeoutMs: undefined,
-        env: undefined,
-        origin: undefined
-      }
+  it('runs missing-session execution without persistent shell state', async () => {
+    const first = await executionService.execute(
+      'cd /tmp && export SANDBOX_STATE=leaked',
+      { cwd: process.cwd() }
     );
+    const second = await executionService.execute(
+      'printf "%s:%s" "$PWD" "$SANDBOX_STATE"',
+      { cwd: process.cwd() }
+    );
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    if (second.success) {
+      expect(second.data.stdout).toBe(`${process.cwd()}:`);
+    }
+    expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
   });
 
   it('runs sessionless execute without calling SessionManager', async () => {

@@ -16,7 +16,6 @@ import type { RawExecResult } from '../session';
 import type { SessionManager } from './session-manager';
 
 const BASH_PATH = '/bin/bash';
-const DEFAULT_SESSION_ID = 'default';
 const DEFAULT_CWD = '/workspace';
 const SESSIONLESS_DISPLAY_NAME = 'sessionless';
 const SESSIONLESS_TIMEOUT_EXIT_CODE = 124;
@@ -242,7 +241,7 @@ export class ExecutionService {
       throw new Error('sessionId must not be empty or whitespace');
     }
 
-    return DEFAULT_SESSION_ID;
+    return DISABLE_SESSION_TOKEN;
   }
 
   private mergeNestedExecutionOptions(
