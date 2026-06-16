@@ -163,6 +163,47 @@ printf "done\n"`,
     }
   });
 
+  it('tracks runtime process commands without legacy handles', async () => {
+    const sessionId = 'runtime-tracking-session';
+    const commandId = 'runtime-tracking-command';
+    const getRunningCommandIdsSpy = vi.spyOn(
+      Session.prototype,
+      'getRunningCommandIds'
+    );
+    const killCommandSpy = vi.spyOn(Session.prototype, 'killCommand');
+
+    const streamResult = await sessionManager.executeStreamInSession(
+      sessionId,
+      'sleep 10',
+      async () => {},
+      { cwd: testDir },
+      commandId
+    );
+
+    expect(streamResult.success).toBe(true);
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, Session>;
+    };
+    const session = managerInternals.sessions.get(sessionId);
+
+    expect(session?.getRunningCommandIds()).toContain(commandId);
+    expect(getRunningCommandIdsSpy).not.toHaveBeenCalled();
+
+    const missingKillResult = await sessionManager.killCommand(
+      sessionId,
+      'missing-runtime-command'
+    );
+    expect(missingKillResult.success).toBe(false);
+    expect(killCommandSpy).not.toHaveBeenCalled();
+
+    const killResult = await sessionManager.killCommand(sessionId, commandId);
+    expect(killResult.success).toBe(true);
+    expect(killCommandSpy).not.toHaveBeenCalled();
+    if (streamResult.success) {
+      await streamResult.data.continueStreaming;
+    }
+  });
+
   it('rejects service streaming for legacy sessions', async () => {
     const sessionId = 'legacy-stream-session';
     const legacySession = new Session({

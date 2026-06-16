@@ -271,10 +271,13 @@ class RuntimeBackedSession extends Session {
     }
   }
 
-  override async killCommand(commandId: string): Promise<boolean> {
+  override async killCommand(
+    commandId: string,
+    _waitForExit = true
+  ): Promise<boolean> {
     const runtimeProcess = this.runtimeProcesses.get(commandId);
     if (!runtimeProcess) {
-      return super.killCommand(commandId);
+      return false;
     }
 
     runtimeProcess.controller.abort();
@@ -283,12 +286,7 @@ class RuntimeBackedSession extends Session {
   }
 
   override getRunningCommandIds(): string[] {
-    return [
-      ...new Set([
-        ...super.getRunningCommandIds(),
-        ...this.runtimeProcesses.keys()
-      ])
-    ];
+    return [...this.runtimeProcesses.keys()];
   }
 
   override async destroy(): Promise<void> {
