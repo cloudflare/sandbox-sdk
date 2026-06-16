@@ -13,20 +13,27 @@ export interface TerminalStateSession {
   ): Promise<RawExecResult>;
 }
 
+export interface TerminalHandle {
+  id: string;
+  sessionId: string;
+  pty: Pty;
+}
+
 class SessionTerminal {
-  private pty: Pty | null = null;
+  private handle: TerminalHandle | null = null;
 
   constructor(
+    private readonly id: string,
     private readonly sessionId: string,
     private readonly logger: Logger
   ) {}
 
-  async getPty(
+  async getTerminal(
     session: TerminalStateSession,
     options?: PtyOptions
-  ): Promise<Pty> {
-    if (this.pty) {
-      return this.pty;
+  ): Promise<TerminalHandle> {
+    if (this.handle) {
+      return this.handle;
     }
 
     // Capture the session shell's current environment and working
@@ -74,8 +81,13 @@ class SessionTerminal {
 
     try {
       await pty.initialize(options);
-      this.pty = pty;
-      return pty;
+      const handle = {
+        id: this.id,
+        sessionId: this.sessionId,
+        pty
+      };
+      this.handle = handle;
+      return handle;
     } catch (error) {
       await pty.destroy().catch(() => {});
       throw error;
@@ -83,8 +95,8 @@ class SessionTerminal {
   }
 
   async destroy(): Promise<void> {
-    await this.pty?.destroy().catch(() => {});
-    this.pty = null;
+    await this.handle?.pty.destroy().catch(() => {});
+    this.handle = null;
   }
 }
 
@@ -93,18 +105,27 @@ export class TerminalManager {
 
   constructor(private readonly logger: Logger) {}
 
+  async getTerminal(
+    sessionId: string,
+    session: TerminalStateSession,
+    options?: PtyOptions
+  ): Promise<TerminalHandle> {
+    let terminal = this.terminals.get(sessionId);
+    if (!terminal) {
+      terminal = new SessionTerminal(sessionId, sessionId, this.logger);
+      this.terminals.set(sessionId, terminal);
+    }
+
+    return terminal.getTerminal(session, options);
+  }
+
   async getPty(
     sessionId: string,
     session: TerminalStateSession,
     options?: PtyOptions
   ): Promise<Pty> {
-    let terminal = this.terminals.get(sessionId);
-    if (!terminal) {
-      terminal = new SessionTerminal(sessionId, this.logger);
-      this.terminals.set(sessionId, terminal);
-    }
-
-    return terminal.getPty(session, options);
+    const terminal = await this.getTerminal(sessionId, session, options);
+    return terminal.pty;
   }
 
   async destroyTerminal(sessionId: string): Promise<void> {

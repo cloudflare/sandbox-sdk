@@ -255,6 +255,35 @@ printf "done\n"`,
     expect(session).not.toHaveProperty('pty');
   });
 
+  it('destroying a terminal resource keeps command session state', async () => {
+    const sessionId = 'runtime-terminal-state-session';
+    const setupResult = await sessionManager.executeInSession(
+      sessionId,
+      'export TERMINAL_RESOURCE_VALUE=still-here',
+      { cwd: testDir }
+    );
+    expect(setupResult.success).toBe(true);
+
+    const ptyResult = await sessionManager.getPty(sessionId);
+    expect(ptyResult.success).toBe(true);
+
+    const managerInternals = sessionManager as unknown as {
+      terminals: { destroyTerminal(id: string): Promise<void> };
+    };
+    await managerInternals.terminals.destroyTerminal(sessionId);
+
+    const readResult = await sessionManager.executeInSession(
+      sessionId,
+      'printf "$TERMINAL_RESOURCE_VALUE"',
+      { cwd: testDir }
+    );
+
+    expect(readResult.success).toBe(true);
+    if (readResult.success) {
+      expect(readResult.data.stdout).toBe('still-here');
+    }
+  });
+
   it('does not expose legacy execStream on runtime sessions', async () => {
     const sessionId = 'runtime-no-exec-stream-session';
     const createResult = await sessionManager.executeInSession(

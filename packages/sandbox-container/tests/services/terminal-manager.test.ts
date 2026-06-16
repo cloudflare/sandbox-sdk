@@ -54,19 +54,61 @@ describe('TerminalManager', () => {
     }
   });
 
-  it('caches PTYs by session ID', async () => {
+  it('returns terminal handles with resource identity', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-handle-'));
+    terminalManager = new TerminalManager(createNoOpLogger());
+    const session = new FakeSession(testDir);
+
+    const handle = await terminalManager.getTerminal(
+      'handle-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+
+    expect(handle.id).toBe('handle-session');
+    expect(handle.sessionId).toBe('handle-session');
+    expect(handle.pty).toBeDefined();
+  });
+
+  it('caches terminal handles by resource ID', async () => {
     testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-cache-'));
     terminalManager = new TerminalManager(createNoOpLogger());
     const session = new FakeSession(testDir);
 
-    const firstPty = await terminalManager.getPty('cache-session', session, {
+    const firstHandle = await terminalManager.getTerminal(
+      'cache-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+    const secondHandle = await terminalManager.getTerminal(
+      'cache-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+
+    expect(secondHandle).toBe(firstHandle);
+    expect(secondHandle.pty).toBe(firstHandle.pty);
+  });
+
+  it('keeps getPty as a compatibility wrapper', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-pty-'));
+    terminalManager = new TerminalManager(createNoOpLogger());
+    const session = new FakeSession(testDir);
+
+    const handle = await terminalManager.getTerminal('pty-session', session, {
       shell: '/bin/bash'
     });
-    const secondPty = await terminalManager.getPty('cache-session', session, {
+    const pty = await terminalManager.getPty('pty-session', session, {
       shell: '/bin/bash'
     });
 
-    expect(secondPty).toBe(firstPty);
+    expect(pty).toBe(handle.pty);
   });
 
   it('destroys and clears a terminal by session ID', async () => {
