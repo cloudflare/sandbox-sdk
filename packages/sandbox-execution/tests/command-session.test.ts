@@ -22,18 +22,18 @@ describe('CommandSession', () => {
     await using session = await CommandSession.create({ cwd: '/tmp' });
 
     const first = await session.exec(
-      'mkdir -p sandbox-sessions-test && cd sandbox-sessions-test && pwd'
+      'mkdir -p sandbox-execution-test && cd sandbox-execution-test && pwd'
     );
     const second = await session.exec(
       "printf 'out\n'; printf 'err\n' >&2; pwd"
     );
 
     expect(first.exitCode).toBe(0);
-    expect(first.stdout).toContain('/tmp/sandbox-sessions-test');
+    expect(first.stdout).toContain('/tmp/sandbox-execution-test');
     expect(first.stderr).toBe('');
     expect(second.exitCode).toBe(0);
     expect(second.stdout).toContain('out\n');
-    expect(second.stdout).toContain('/tmp/sandbox-sessions-test');
+    expect(second.stdout).toContain('/tmp/sandbox-execution-test');
     expect(second.stderr).toBe('err\n');
   });
 

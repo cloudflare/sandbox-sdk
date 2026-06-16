@@ -2,7 +2,7 @@
 set -euo pipefail
 
 package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-image="sandbox-sessions-test:local"
+image="sandbox-execution-test:local"
 
 docker build -t "$image" -f "$package_dir/Dockerfile.test" "$package_dir"
 docker run --rm \
