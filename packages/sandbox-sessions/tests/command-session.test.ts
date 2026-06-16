@@ -1,41 +1,24 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  CommandSession,
-  type CommandSessionExecResult,
-  type StdioChunk
-} from '../src/index';
-
-function collect(output: StdioChunk[], stream: StdioChunk['stream']): string {
-  return output
-    .filter((chunk) => chunk.stream === stream)
-    .map((chunk) => chunk.data)
-    .join('');
-}
+import { CommandSession } from '../src/index';
 
 describe('CommandSession', () => {
-  it('preserves shell state and returns structured output chunks', async () => {
+  it('preserves shell state and returns final stdout and stderr', async () => {
     await using session = await CommandSession.create({ cwd: '/tmp' });
 
     const first = await session.exec(
       'mkdir -p sandbox-sessions-test && cd sandbox-sessions-test && pwd'
     );
     const second = await session.exec(
-      "printf 'out\\n'; printf 'err\\n' >&2; pwd"
+      "printf 'out\n'; printf 'err\n' >&2; pwd"
     );
 
     expect(first.exitCode).toBe(0);
-    expect(collect(first.output, 'stdout')).toContain(
-      '/tmp/sandbox-sessions-test'
-    );
+    expect(first.stdout).toContain('/tmp/sandbox-sessions-test');
+    expect(first.stderr).toBe('');
     expect(second.exitCode).toBe(0);
-    expect(collect(second.output, 'stdout')).toContain('out\n');
-    expect(collect(second.output, 'stdout')).toContain(
-      '/tmp/sandbox-sessions-test'
-    );
-    expect(collect(second.output, 'stderr')).toBe('err\n');
-    expect(second.output.map((chunk) => chunk.seq)).toEqual(
-      second.output.map((_, index) => index)
-    );
+    expect(second.stdout).toContain('out\n');
+    expect(second.stdout).toContain('/tmp/sandbox-sessions-test');
+    expect(second.stderr).toBe('err\n');
   });
 
   it('preserves aliases across commands', async () => {
@@ -48,7 +31,7 @@ describe('CommandSession', () => {
 
     expect(defineAlias.exitCode).toBe(0);
     expect(useAlias.exitCode).toBe(0);
-    expect(collect(useAlias.output, 'stdout')).toBe('alias-ok\n');
+    expect(useAlias.stdout).toBe('alias-ok\n');
   });
 
   it('preserves shell functions across commands', async () => {
@@ -61,7 +44,7 @@ describe('CommandSession', () => {
 
     expect(defineFunction.exitCode).toBe(0);
     expect(useFunction.exitCode).toBe(0);
-    expect(collect(useFunction.output, 'stdout')).toBe('func:ok\n');
+    expect(useFunction.stdout).toBe('func:ok\n');
   });
 
   it('preserves sourced shell state across commands', async () => {
@@ -78,7 +61,7 @@ EOF`);
     expect(writeScript.exitCode).toBe(0);
     expect(sourceScript.exitCode).toBe(0);
     expect(useSourcedState.exitCode).toBe(0);
-    expect(collect(useSourcedState.output, 'stdout')).toBe('sourced:ok\n');
+    expect(useSourcedState.stdout).toBe('sourced:ok\n');
   });
 
   it('queues concurrent exec calls in order', async () => {
@@ -96,74 +79,30 @@ EOF`);
 
     expect(setStateResult.exitCode).toBe(0);
     expect(readStateResult.exitCode).toBe(0);
-    expect(collect(setStateResult.output, 'stdout')).toBe('first\n');
-    expect(collect(readStateResult.output, 'stdout')).toBe('ok\n');
+    expect(setStateResult.stdout).toBe('first\n');
+    expect(readStateResult.stdout).toBe('ok\n');
   });
 
-  it('streams the same output chunks returned in the final result', async () => {
+  it('resolves only after command completion', async () => {
     await using session = await CommandSession.create();
-    const streamed: StdioChunk[] = [];
+    const startedAt = performance.now();
 
-    const result = await session.exec("printf 'a\\n'; printf 'b\\n' >&2", {
-      onOutput: (chunk) => streamed.push(chunk)
-    });
+    const result = await session.exec(
+      "printf 'before-sleep\n'; sleep 1; printf 'after-sleep\n'",
+      { timeoutMs: 5_000 }
+    );
 
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(900);
     expect(result.exitCode).toBe(0);
-    expect(streamed).toEqual(result.output);
-    expect(collect(result.output, 'stdout')).toBe('a\n');
-    expect(collect(result.output, 'stderr')).toBe('b\n');
-  });
-
-  it('streams output before the command completes', async () => {
-    const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
-
-    try {
-      const firstOutput = Promise.withResolvers<number>();
-      const startedAt = performance.now();
-
-      resultPromise = session.exec(
-        "printf 'before-sleep\n'; sleep 2; printf 'after-sleep\n'",
-        {
-          timeoutMs: 5_000,
-          onOutput: (chunk) => {
-            if (
-              chunk.stream === 'stdout' &&
-              chunk.data.includes('before-sleep')
-            ) {
-              firstOutput.resolve(performance.now() - startedAt);
-            }
-          }
-        }
-      );
-
-      const elapsedMs = await Promise.race([
-        firstOutput.promise,
-        Bun.sleep(750).then(() => {
-          throw new Error('Timed out waiting for live output');
-        })
-      ]);
-      const stateAfterFirstOutput = await Promise.race([
-        resultPromise.then(() => 'settled'),
-        Bun.sleep(100).then(() => 'pending')
-      ]);
-      const result = await resultPromise;
-
-      expect(elapsedMs).toBeLessThan(750);
-      expect(stateAfterFirstOutput).toBe('pending');
-      expect(result.exitCode).toBe(0);
-      expect(collect(result.output, 'stdout')).toBe(
-        'before-sleep\nafter-sleep\n'
-      );
-    } finally {
-      resultPromise?.catch(() => {});
-      await session.close();
-    }
+    expect(result.stdout).toBe('before-sleep\nafter-sleep\n');
+    expect(result.stderr).toBe('');
   });
 
   it('does not wait for background children that inherit stdout', async () => {
     const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
+    let resultPromise:
+      | Promise<{ exitCode: number; stdout: string }>
+      | undefined;
 
     try {
       resultPromise = session.exec("sleep 2 & printf 'done\n'", {
@@ -178,7 +117,7 @@ EOF`);
       ]);
 
       expect(result.exitCode).toBe(0);
-      expect(collect(result.output, 'stdout')).toBe('done\n');
+      expect(result.stdout).toBe('done\n');
     } finally {
       resultPromise?.catch(() => {});
       await session.close();
@@ -191,48 +130,21 @@ EOF`);
     const result = await session.exec("printf 'no-newline'");
 
     expect(result.exitCode).toBe(0);
-    expect(collect(result.output, 'stdout')).toBe('no-newline');
+    expect(result.stdout).toBe('no-newline');
   });
 
-  it('streams short output before a trailing newline arrives', async () => {
-    const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
+  it('captures partial output after command completion', async () => {
+    await using session = await CommandSession.create();
 
-    try {
-      const firstOutput = Promise.withResolvers<string>();
+    const result = await session.exec(
+      "printf 'prompt: '; sleep 1; printf 'done\n'",
+      {
+        timeoutMs: 5_000
+      }
+    );
 
-      resultPromise = session.exec(
-        "printf 'prompt: '; sleep 2; printf 'done\n'",
-        {
-          timeoutMs: 5_000,
-          onOutput: (chunk) => {
-            if (chunk.stream === 'stdout' && chunk.data.includes('prompt: ')) {
-              firstOutput.resolve(chunk.data);
-            }
-          }
-        }
-      );
-
-      const firstChunk = await Promise.race([
-        firstOutput.promise,
-        Bun.sleep(750).then(() => {
-          throw new Error('Timed out waiting for partial output');
-        })
-      ]);
-      const stateAfterFirstOutput = await Promise.race([
-        resultPromise.then(() => 'settled'),
-        Bun.sleep(100).then(() => 'pending')
-      ]);
-      const result = await resultPromise;
-
-      expect(firstChunk).toContain('prompt: ');
-      expect(stateAfterFirstOutput).toBe('pending');
-      expect(result.exitCode).toBe(0);
-      expect(collect(result.output, 'stdout')).toBe('prompt: done\n');
-    } finally {
-      resultPromise?.catch(() => {});
-      await session.close();
-    }
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('prompt: done\n');
   });
 
   it('keeps command stdin separate from the session protocol', async () => {
@@ -242,147 +154,9 @@ EOF`);
     const nextResult = await session.exec("printf 'still-alive\n'");
 
     expect(readResult.exitCode).not.toBe(0);
-    expect(collect(readResult.output, 'stdout')).toBe('');
+    expect(readResult.stdout).toBe('');
     expect(nextResult.exitCode).toBe(0);
-    expect(collect(nextResult.output, 'stdout')).toBe('still-alive\n');
-  });
-
-  it('keeps the session usable when onOutput throws', async () => {
-    await using session = await CommandSession.create();
-
-    await expect(
-      session.exec("printf 'before-error\n'", {
-        onOutput: () => {
-          throw new Error('consumer failed');
-        }
-      })
-    ).rejects.toThrow('consumer failed');
-
-    const nextResult = await session.exec("printf 'after-error\n'");
-
-    expect(nextResult.exitCode).toBe(0);
-    expect(collect(nextResult.output, 'stdout')).toBe('after-error\n');
-  });
-
-  it('cancels a running command and preserves shell state', async () => {
-    const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
-
-    try {
-      const controller = new AbortController();
-      const started = Promise.withResolvers<void>();
-      await session.exec('export CANCEL_STATE=survived');
-
-      resultPromise = session.exec(
-        "printf 'started\n'; sleep 10; printf 'after-cancel\n'",
-        {
-          timeoutMs: 5_000,
-          signal: controller.signal,
-          onOutput: (chunk) => {
-            if (chunk.stream === 'stdout' && chunk.data.includes('started')) {
-              started.resolve();
-            }
-          }
-        }
-      );
-
-      await Promise.race([
-        started.promise,
-        Bun.sleep(750).then(() => {
-          throw new Error('Timed out waiting for command start');
-        })
-      ]);
-      controller.abort();
-
-      await expect(
-        Promise.race([
-          resultPromise,
-          Bun.sleep(750).then(() => {
-            throw new Error('Timed out waiting for cancellation');
-          })
-        ])
-      ).rejects.toThrow('Command cancelled');
-
-      const afterCancel = await session.exec('printf "%s\n" "$CANCEL_STATE"');
-      expect(afterCancel.exitCode).toBe(0);
-      expect(collect(afterCancel.output, 'stdout')).toBe('survived\n');
-    } finally {
-      resultPromise?.catch(() => {});
-      await session.close();
-    }
-  });
-
-  it('cancels a command before it emits output', async () => {
-    const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
-
-    try {
-      const controller = new AbortController();
-      await session.exec('export EARLY_CANCEL_STATE=survived');
-
-      resultPromise = session.exec("sleep 10; printf 'after-cancel\n'", {
-        timeoutMs: 5_000,
-        signal: controller.signal
-      });
-      await Bun.sleep(0);
-      controller.abort();
-
-      await expect(
-        Promise.race([
-          resultPromise,
-          Bun.sleep(750).then(() => {
-            throw new Error('Timed out waiting for cancellation');
-          })
-        ])
-      ).rejects.toThrow('Command cancelled');
-
-      const afterCancel = await session.exec(
-        'printf "%s\n" "$EARLY_CANCEL_STATE"'
-      );
-      expect(afterCancel.exitCode).toBe(0);
-      expect(collect(afterCancel.output, 'stdout')).toBe('survived\n');
-    } finally {
-      resultPromise?.catch(() => {});
-      await session.close();
-    }
-  });
-
-  it('does not cancel background jobs from earlier commands', async () => {
-    const session = await CommandSession.create();
-    let resultPromise: Promise<CommandSessionExecResult> | undefined;
-
-    try {
-      const background = await session.exec('sleep 10 & printf "%s\n" "$!"');
-      const backgroundPID = collect(background.output, 'stdout').trim();
-      const controller = new AbortController();
-
-      resultPromise = session.exec('sleep 10', {
-        timeoutMs: 5_000,
-        signal: controller.signal
-      });
-      await Bun.sleep(0);
-      controller.abort();
-
-      await expect(
-        Promise.race([
-          resultPromise,
-          Bun.sleep(750).then(() => {
-            throw new Error('Timed out waiting for cancellation');
-          })
-        ])
-      ).rejects.toThrow('Command cancelled');
-
-      const backgroundStillRunning = await session.exec(
-        `kill -0 ${backgroundPID}`
-      );
-      expect(backgroundStillRunning.exitCode).toBe(0);
-    } finally {
-      resultPromise?.catch(() => {});
-      await session
-        .exec('kill $(jobs -pr) 2>/dev/null || true')
-        .catch(() => {});
-      await session.close();
-    }
+    expect(nextResult.stdout).toBe('still-alive\n');
   });
 
   it('marks the session failed after command timeout', async () => {

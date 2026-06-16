@@ -1,7 +1,6 @@
 export {
   CommandSession,
   type CommandSessionExecOptions,
-  type CommandSessionExecResult,
-  type StdioChunk
+  type CommandSessionExecResult
 } from './command-session';
 export { Terminal } from './terminal';
