@@ -289,6 +289,49 @@ cd /`);
     expect(childStatus.exitCode).not.toBe(0);
   });
 
+  it('times out a process tree and keeps the session usable', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess(
+      'sleep 10 & printf \'child:%s\nstarted\n\' "$!"; sleep 10',
+      { timeoutMs: 100 }
+    );
+
+    const result = await Promise.race([
+      process.wait(),
+      Bun.sleep(1_000).then(() => {
+        throw new Error('Timed out waiting for process timeout');
+      })
+    ]);
+    const childPID = result.stdout.match(/child:(\d+)/)?.[1];
+    expect(childPID).toBeDefined();
+
+    const childStatus = await session.exec(`kill -0 ${childPID}`);
+    const afterTimeout = await session.exec("printf 'session-alive\n'");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('started\n');
+    expect(childStatus.exitCode).not.toBe(0);
+    expect(afterTimeout.exitCode).toBe(0);
+    expect(afterTimeout.stdout).toBe('session-alive\n');
+  });
+
+  it('clears process timeout after normal completion', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess("printf 'quick\n'", {
+      timeoutMs: 100
+    });
+    const result = await process.wait();
+    await Bun.sleep(200);
+    const afterTimeoutWindow = await session.exec("printf 'session-alive\n'");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('quick\n');
+    expect(afterTimeoutWindow.exitCode).toBe(0);
+    expect(afterTimeoutWindow.stdout).toBe('session-alive\n');
+  });
+
   it('marks the session failed after command timeout', async () => {
     const session = await CommandSession.create();
 

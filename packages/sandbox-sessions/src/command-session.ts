@@ -9,6 +9,7 @@ import {
 
 const FRAME_PREFIX = COMMAND_SESSION_FRAME_PREFIX;
 const READY_TIMEOUT_MS = 2_000;
+const PROCESS_TIMEOUT_GRACE_MS = 100;
 
 type SessionState = 'starting' | 'ready' | 'closing' | 'closed' | 'failed';
 
@@ -34,6 +35,7 @@ export type StdioChunk = {
 };
 
 export type CommandSessionStartProcessOptions = {
+  timeoutMs?: number;
   onOutput?: (chunk: StdioChunk) => void;
 };
 
@@ -50,6 +52,7 @@ type PendingOperation =
   | {
       kind: 'startProcess';
       id: string;
+      timeoutMs?: number;
       onOutput?: (chunk: StdioChunk) => void;
       resolve: (process: CommandSessionProcess) => void;
       reject: (error: Error) => void;
@@ -59,6 +62,7 @@ type ProcessCompletion = {
   output: StdioChunk[];
   nextSeq: number;
   onOutput?: (chunk: StdioChunk) => void;
+  timeout?: ReturnType<typeof setTimeout>;
   resolve: (result: CommandSessionProcessResult) => void;
   reject: (error: Error) => void;
 };
@@ -75,6 +79,10 @@ export class CommandSessionProcess {
 
   async kill(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
     await killProcessTree(this.pid, signal);
+  }
+
+  async terminate(graceMs = PROCESS_TIMEOUT_GRACE_MS): Promise<void> {
+    await terminateProcessTree(this.pid, graceMs);
   }
 }
 
@@ -234,6 +242,7 @@ export class CommandSession implements AsyncDisposable {
       this.pending = {
         kind: 'startProcess',
         id,
+        timeoutMs: options.timeoutMs,
         onOutput: options.onOutput,
         resolve,
         reject
@@ -347,16 +356,24 @@ export class CommandSession implements AsyncDisposable {
       const pending = this.pending;
       this.pending = undefined;
       const completion = Promise.withResolvers<CommandSessionProcessResult>();
-      this.processes.set(id, {
+      const process = new CommandSessionProcess(
+        parsePID(field),
+        completion.promise
+      );
+      const processCompletion: ProcessCompletion = {
         output: [],
         nextSeq: 0,
         onOutput: pending.onOutput,
         resolve: completion.resolve,
         reject: completion.reject
-      });
-      pending.resolve(
-        new CommandSessionProcess(parsePID(field), completion.promise)
-      );
+      };
+      if (pending.timeoutMs !== undefined) {
+        processCompletion.timeout = setTimeout(() => {
+          void process.terminate();
+        }, pending.timeoutMs);
+      }
+      this.processes.set(id, processCompletion);
+      pending.resolve(process);
     }
   }
 
@@ -384,8 +401,7 @@ export class CommandSession implements AsyncDisposable {
     try {
       process.onOutput?.(chunk);
     } catch (error) {
-      process.reject(toError(error));
-      this.processes.delete(id);
+      this.rejectProcess(id, toError(error));
     }
   }
 
@@ -395,6 +411,7 @@ export class CommandSession implements AsyncDisposable {
       return;
     }
     this.processes.delete(id);
+    this.cleanupProcess(process);
     const parsedExitCode = Number.parseInt(exitCode, 10);
     process.resolve({
       exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
@@ -423,11 +440,28 @@ export class CommandSession implements AsyncDisposable {
     pending.reject(error);
   }
 
+  private rejectProcess(id: string, error: Error): void {
+    const process = this.processes.get(id);
+    if (!process) {
+      return;
+    }
+    this.processes.delete(id);
+    this.cleanupProcess(process);
+    process.reject(error);
+  }
+
   private rejectProcesses(error: Error): void {
     for (const process of this.processes.values()) {
+      this.cleanupProcess(process);
       process.reject(error);
     }
     this.processes.clear();
+  }
+
+  private cleanupProcess(process: ProcessCompletion): void {
+    if (process.timeout) {
+      clearTimeout(process.timeout);
+    }
   }
 
   private cleanupPending(pending: PendingOperation): void {
@@ -494,6 +528,15 @@ function parsePID(pid: string): number {
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+async function terminateProcessTree(
+  rootPID: number,
+  graceMs: number
+): Promise<void> {
+  await killProcessTree(rootPID, 'SIGTERM');
+  await Bun.sleep(graceMs);
+  await killProcessTree(rootPID, 'SIGKILL');
 }
 
 async function killProcessTree(
