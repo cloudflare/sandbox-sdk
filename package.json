@@ -69,7 +69,7 @@
     "vite": "^7.3.5",
     "vitest": "^4.1.8",
     "wrangler": "^4.76.0",
-    "ws": "^8.20.1"
+    "ws": "^8.21.0"
   },
   "private": true,
   "packageManager": "npm@11.6.4"
