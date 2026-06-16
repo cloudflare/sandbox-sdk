@@ -23,6 +23,23 @@ describe('SessionManager runtime integration', () => {
     vi.restoreAllMocks();
   });
 
+  it('stores runtime sessions outside the legacy Session class', async () => {
+    const result = await sessionManager.executeInSession(
+      'runtime-managed-session',
+      'printf "managed"',
+      { cwd: testDir }
+    );
+
+    expect(result.success).toBe(true);
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, unknown>;
+    };
+    const session = managerInternals.sessions.get('runtime-managed-session');
+
+    expect(session).toBeDefined();
+    expect(session).not.toBeInstanceOf(Session);
+  });
+
   it('creates runtime sessions without initializing a legacy shell', async () => {
     const initializeSpy = vi.spyOn(Session.prototype, 'initialize');
 

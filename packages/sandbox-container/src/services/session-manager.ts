@@ -46,6 +46,32 @@ type RuntimeProcessEntry = {
   process?: CommandSessionProcess;
 };
 
+type ManagedSessionExecOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  origin?: 'user' | 'internal';
+};
+
+interface ManagedSession {
+  pty: Pty | null;
+  initialize(): Promise<void>;
+  exec(
+    command: string,
+    options?: ManagedSessionExecOptions
+  ): Promise<RawExecResult>;
+  execStream(
+    command: string,
+    options?: ManagedSessionExecOptions & { commandId?: string }
+  ): AsyncGenerator<ExecEvent, void, unknown>;
+  killCommand(commandId: string, waitForExit?: boolean): Promise<boolean>;
+  getRunningCommandIds(): string[];
+  isReady(): boolean;
+  wasDestroyed(): boolean;
+  getShellExitCode(): number | null;
+  destroy(): Promise<void>;
+}
+
 class ExecEventQueue implements AsyncIterable<ExecEvent> {
   private readonly events: ExecEvent[] = [];
   private readonly waiters: Array<(result: IteratorResult<ExecEvent>) => void> =
@@ -92,14 +118,13 @@ class ExecEventQueue implements AsyncIterable<ExecEvent> {
   }
 }
 
-class RuntimeBackedSession extends Session {
+class RuntimeBackedSession implements ManagedSession {
   private runtimeSession?: CommandSession;
   private readonly runtimeProcesses = new Map<string, RuntimeProcessEntry>();
   private runtimeDestroyed = false;
+  pty: Pty | null = null;
 
-  constructor(private readonly runtimeOptions: SessionOptions) {
-    super(runtimeOptions);
-  }
+  constructor(private readonly runtimeOptions: SessionOptions) {}
 
   async initialize(): Promise<void> {
     this.runtimeDestroyed = false;
@@ -115,9 +140,9 @@ class RuntimeBackedSession extends Session {
     });
   }
 
-  override async exec(
+  async exec(
     command: string,
-    options?: Parameters<Session['exec']>[1]
+    options?: ManagedSessionExecOptions
   ): Promise<RawExecResult> {
     if (!this.runtimeSession) {
       throw new Error('Runtime command session is not initialized');
@@ -151,19 +176,19 @@ class RuntimeBackedSession extends Session {
     }
   }
 
-  override isReady(): boolean {
+  isReady(): boolean {
     return !!this.runtimeSession?.isReady();
   }
 
-  override wasDestroyed(): boolean {
+  wasDestroyed(): boolean {
     return this.runtimeDestroyed;
   }
 
-  override getShellExitCode(): number | null {
+  getShellExitCode(): number | null {
     return this.runtimeSession?.getShellExitCode() ?? null;
   }
 
-  override execStream(): AsyncGenerator<ExecEvent, void, unknown> {
+  execStream(): AsyncGenerator<ExecEvent, void, unknown> {
     const error = new Error(
       'Runtime-backed sessions do not support legacy execStream'
     );
@@ -292,10 +317,7 @@ class RuntimeBackedSession extends Session {
     }
   }
 
-  override async killCommand(
-    commandId: string,
-    _waitForExit = true
-  ): Promise<boolean> {
+  async killCommand(commandId: string, _waitForExit = true): Promise<boolean> {
     const runtimeProcess = this.runtimeProcesses.get(commandId);
     if (!runtimeProcess) {
       return false;
@@ -306,11 +328,11 @@ class RuntimeBackedSession extends Session {
     return true;
   }
 
-  override getRunningCommandIds(): string[] {
+  getRunningCommandIds(): string[] {
     return [...this.runtimeProcesses.keys()];
   }
 
-  override async destroy(): Promise<void> {
+  async destroy(): Promise<void> {
     this.runtimeDestroyed = true;
     await Promise.all([
       this.runtimeSession?.close().catch(() => {}),
@@ -345,14 +367,14 @@ export interface ExecuteInSessionOptions {
 
 /**
  * SessionManager manages persistent execution sessions.
- * Wraps the session.ts Session class with ServiceResult<T> pattern.
+ * Wraps managed shell resources with the ServiceResult<T> pattern.
  */
 export class SessionManager {
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, ManagedSession>();
   /** Per-session mutexes to prevent concurrent command execution */
   private sessionLocks = new Map<string, Mutex>();
   /** Tracks in-progress session creation to prevent duplicate creation races */
-  private creatingLocks = new Map<string, Promise<Session>>();
+  private creatingLocks = new Map<string, Promise<ManagedSession>>();
 
   constructor(private logger: Logger) {}
 
@@ -385,7 +407,7 @@ export class SessionManager {
   private async getOrCreateSession(
     sessionId: string,
     options: { cwd?: string; commandTimeoutMs?: number } = {}
-  ): Promise<ServiceResult<Session>> {
+  ): Promise<ServiceResult<ManagedSession>> {
     // Fast path: session already exists.
     //
     // A session whose shell has exited (user ran `exit`, shell crashed,
@@ -446,7 +468,7 @@ export class SessionManager {
 
     // We need to create the session - set up coordination
     // Since we hold the lock, we can safely set creatingLocks without race
-    const createPromise = (async (): Promise<Session> => {
+    const createPromise = (async (): Promise<ManagedSession> => {
       const session = new RuntimeBackedSession({
         id: sessionId,
         cwd: options.cwd || '/workspace',
@@ -492,7 +514,7 @@ export class SessionManager {
    */
   async createSession(
     options: SessionOptions
-  ): Promise<ServiceResult<Session>> {
+  ): Promise<ServiceResult<ManagedSession>> {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
@@ -522,9 +544,8 @@ export class SessionManager {
       //     has always claimed.
       //   - The dead-replace branch cannot interleave with a
       //     getOrCreateSession that would otherwise construct a
-      //     competing Session between our evict and our set, orphaning
-      //     one of them with a live bash process and an on-disk session
-      //     directory.
+      //     competing managed session between our evict and our set,
+      //     orphaning one of them with live execution resources.
       //   - Two concurrent createSession() calls on the same id also
       //     serialize, so the fresh-create path cannot double-initialize
       //     either.
@@ -535,7 +556,7 @@ export class SessionManager {
       // creatingLocks, and different session ids use different locks.
       const lock = this.getSessionLock(options.id);
       const lockedResult = await lock.runExclusive(
-        async (): Promise<ServiceResult<Session>> => {
+        async (): Promise<ServiceResult<ManagedSession>> => {
           const existing = this.sessions.get(options.id);
           if (existing) {
             if (existing.isReady()) {
@@ -559,8 +580,8 @@ export class SessionManager {
           }
 
           // Create and initialize session under the lock, so no
-          // concurrent caller can insert a competing Session between
-          // `new Session` and `this.sessions.set`.
+          // concurrent caller can insert a competing managed session
+          // before `this.sessions.set`.
           const session = new RuntimeBackedSession({
             ...options,
             logger: this.logger
@@ -614,7 +635,7 @@ export class SessionManager {
   /**
    * Get an existing session
    */
-  async getSession(sessionId: string): Promise<ServiceResult<Session>> {
+  async getSession(sessionId: string): Promise<ServiceResult<ManagedSession>> {
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -730,7 +751,7 @@ export class SessionManager {
    */
   private async evictTerminatedSession(
     sessionId: string,
-    session: Session
+    session: ManagedSession
   ): Promise<void> {
     try {
       await session.destroy();
