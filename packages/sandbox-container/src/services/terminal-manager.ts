@@ -106,14 +106,15 @@ export class TerminalManager {
   constructor(private readonly logger: Logger) {}
 
   async getTerminal(
+    terminalId: string,
     sessionId: string,
     session: TerminalStateSession,
     options?: PtyOptions
   ): Promise<TerminalHandle> {
-    let terminal = this.terminals.get(sessionId);
+    let terminal = this.terminals.get(terminalId);
     if (!terminal) {
-      terminal = new SessionTerminal(sessionId, sessionId, this.logger);
-      this.terminals.set(sessionId, terminal);
+      terminal = new SessionTerminal(terminalId, sessionId, this.logger);
+      this.terminals.set(terminalId, terminal);
     }
 
     return terminal.getTerminal(session, options);
@@ -124,16 +125,21 @@ export class TerminalManager {
     session: TerminalStateSession,
     options?: PtyOptions
   ): Promise<Pty> {
-    const terminal = await this.getTerminal(sessionId, session, options);
+    const terminal = await this.getTerminal(
+      sessionId,
+      sessionId,
+      session,
+      options
+    );
     return terminal.pty;
   }
 
-  async destroyTerminal(sessionId: string): Promise<void> {
+  async destroyTerminal(terminalId: string): Promise<void> {
     await this.terminals
-      .get(sessionId)
+      .get(terminalId)
       ?.destroy()
       .catch(() => {});
-    this.terminals.delete(sessionId);
+    this.terminals.delete(terminalId);
   }
 
   async destroyAll(): Promise<void> {

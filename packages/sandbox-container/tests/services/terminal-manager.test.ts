@@ -60,6 +60,7 @@ describe('TerminalManager', () => {
     const session = new FakeSession(testDir);
 
     const handle = await terminalManager.getTerminal(
+      'handle-terminal',
       'handle-session',
       session,
       {
@@ -67,7 +68,7 @@ describe('TerminalManager', () => {
       }
     );
 
-    expect(handle.id).toBe('handle-session');
+    expect(handle.id).toBe('handle-terminal');
     expect(handle.sessionId).toBe('handle-session');
     expect(handle.pty).toBeDefined();
   });
@@ -78,6 +79,7 @@ describe('TerminalManager', () => {
     const session = new FakeSession(testDir);
 
     const firstHandle = await terminalManager.getTerminal(
+      'cache-terminal',
       'cache-session',
       session,
       {
@@ -85,6 +87,7 @@ describe('TerminalManager', () => {
       }
     );
     const secondHandle = await terminalManager.getTerminal(
+      'cache-terminal',
       'cache-session',
       session,
       {
@@ -96,14 +99,76 @@ describe('TerminalManager', () => {
     expect(secondHandle.pty).toBe(firstHandle.pty);
   });
 
+  it('creates distinct terminals for different resource IDs on one session', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-distinct-'));
+    terminalManager = new TerminalManager(createNoOpLogger());
+    const session = new FakeSession(testDir);
+
+    const firstHandle = await terminalManager.getTerminal(
+      'terminal-a',
+      'shared-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+    const secondHandle = await terminalManager.getTerminal(
+      'terminal-b',
+      'shared-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+
+    expect(firstHandle.id).toBe('terminal-a');
+    expect(firstHandle.sessionId).toBe('shared-session');
+    expect(secondHandle.id).toBe('terminal-b');
+    expect(secondHandle.sessionId).toBe('shared-session');
+    expect(secondHandle.pty).not.toBe(firstHandle.pty);
+  });
+
+  it('destroys one terminal resource without destroying siblings', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-siblings-'));
+    terminalManager = new TerminalManager(createNoOpLogger());
+    const session = new FakeSession(testDir);
+
+    const firstHandle = await terminalManager.getTerminal(
+      'terminal-a',
+      'shared-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+    const secondHandle = await terminalManager.getTerminal(
+      'terminal-b',
+      'shared-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
+
+    await terminalManager.destroyTerminal('terminal-a');
+
+    expect(() => firstHandle.pty.write('echo old\n')).toThrow();
+    expect(() => secondHandle.pty.write('echo still-open\n')).not.toThrow();
+  });
+
   it('keeps getPty as a compatibility wrapper', async () => {
     testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-pty-'));
     terminalManager = new TerminalManager(createNoOpLogger());
     const session = new FakeSession(testDir);
 
-    const handle = await terminalManager.getTerminal('pty-session', session, {
-      shell: '/bin/bash'
-    });
+    const handle = await terminalManager.getTerminal(
+      'pty-session',
+      'pty-session',
+      session,
+      {
+        shell: '/bin/bash'
+      }
+    );
     const pty = await terminalManager.getPty('pty-session', session, {
       shell: '/bin/bash'
     });
