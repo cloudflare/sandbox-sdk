@@ -212,54 +212,19 @@ describe('SessionManager Locking', () => {
   });
 
   describe('streaming execution locking', () => {
-    it('should hold lock during foreground streaming until complete', async () => {
-      const sessionId = 'stream-fg-session';
-
-      // Start foreground streaming command (holds lock)
-      const streamPromise = sessionManager.executeStreamInSession(
-        sessionId,
-        'echo "stream-start"; sleep 0.1; echo "stream-end"',
-        async () => {},
-        { cwd: testDir },
-        'cmd-1',
-        { background: false }
-      );
-
-      // Give streaming a moment to start
-      await new Promise((r) => setTimeout(r, 20));
-
-      // Try to run another command - should wait for stream to complete
-      const execPromise = sessionManager.executeInSession(
-        sessionId,
-        'echo "exec-done"',
-        { cwd: testDir }
-      );
-
-      const [streamResult, execResult] = await Promise.all([
-        streamPromise,
-        execPromise
-      ]);
-
-      expect(streamResult.success).toBe(true);
-      expect(execResult.success).toBe(true);
-    });
-
-    it('should release lock early for background streaming', async () => {
+    it('should release lock early for streaming processes', async () => {
       const sessionId = 'stream-bg-session';
 
-      // Start background streaming command (releases lock after start event)
       const streamResult = await sessionManager.executeStreamInSession(
         sessionId,
         'sleep 0.5; echo "bg-done"',
         async () => {},
         { cwd: testDir },
-        'cmd-bg',
-        { background: true }
+        'cmd-bg'
       );
 
       expect(streamResult.success).toBe(true);
 
-      // Should be able to run another command immediately (not blocked by 500ms sleep)
       const execResult = await sessionManager.executeInSession(
         sessionId,
         'echo "exec-fast"',
@@ -267,6 +232,9 @@ describe('SessionManager Locking', () => {
       );
 
       expect(execResult.success).toBe(true);
+      if (streamResult.success) {
+        await streamResult.data.continueStreaming;
+      }
     });
   });
 
@@ -294,8 +262,7 @@ describe('SessionManager Locking', () => {
           });
         },
         { cwd: testDir },
-        'cmd-destroy-race',
-        { background: true }
+        'cmd-destroy-race'
       );
 
       expect(streamResult.success).toBe(true);

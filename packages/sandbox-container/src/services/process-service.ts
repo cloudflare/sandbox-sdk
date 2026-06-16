@@ -98,8 +98,8 @@ export class ProcessService {
   }
 
   /**
-   * Execute a command with streaming output via the unified execution path
-   * Used by both execStream() and startProcess()
+   * Execute a command with streaming output via the unified execution path.
+   * Used by startProcess() for process lifecycle management.
    */
   async executeCommandStream(
     command: string,
@@ -153,7 +153,6 @@ export class ProcessService {
         env: options.env,
         origin: options.origin,
         commandId: processRecordData.id,
-        background: true,
         onEvent: async (event) => {
           // Route events to process record listeners
           if (event.type === 'start' && event.pid !== undefined) {

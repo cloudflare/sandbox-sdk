@@ -51,7 +51,6 @@ export interface ExecutionOptions {
 export interface ExecutionStreamOptions extends ExecutionOptions {
   onEvent: (event: ExecEvent) => Promise<void>;
   commandId: string;
-  background?: boolean;
 }
 
 export interface ExecutionStreamResult {
@@ -107,8 +106,7 @@ export class ExecutionService {
           timeoutMs: options.timeoutMs,
           origin: options.origin
         },
-        options.commandId,
-        { background: options.background }
+        options.commandId
       );
 
       if (!result.success) {

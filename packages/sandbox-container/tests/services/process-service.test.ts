@@ -203,7 +203,6 @@ describe('ProcessService', () => {
         expect.objectContaining({
           sessionId: 'session-123',
           cwd: '/tmp',
-          background: true,
           commandId: expect.any(String),
           onEvent: expect.any(Function)
         })
@@ -270,8 +269,7 @@ describe('ProcessService', () => {
       expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
-          sessionId: undefined,
-          background: true
+          sessionId: undefined
         })
       );
     });

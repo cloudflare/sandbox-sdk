@@ -266,6 +266,37 @@ describe('ExecutionService', () => {
     expect(mockSessionManager.withSession).not.toHaveBeenCalled();
   });
 
+  it('routes session streaming as a background process', async () => {
+    mocked(mockSessionManager.executeStreamInSession).mockResolvedValue({
+      success: true,
+      data: { continueStreaming: Promise.resolve() }
+    });
+
+    const result = await executionService.executeStream('sleep 10', {
+      sessionId: 'explicit-session',
+      cwd: '/workspace/app',
+      timeoutMs: 5000,
+      env: { TEST_ENV: '1' },
+      origin: 'user',
+      commandId: 'process-command',
+      onEvent: async () => {}
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockSessionManager.executeStreamInSession).toHaveBeenCalledWith(
+      'explicit-session',
+      'sleep 10',
+      expect.any(Function),
+      {
+        cwd: '/workspace/app',
+        env: { TEST_ENV: '1' },
+        timeoutMs: 5000,
+        origin: 'user'
+      },
+      'process-command'
+    );
+  });
+
   it('streams sessionless output events and completion through the execution package', async () => {
     const events: Array<{ type: string; data?: string; exitCode?: number }> =
       [];
@@ -327,7 +358,6 @@ describe('ExecutionService', () => {
       sessionId: DISABLE_SESSION_TOKEN,
       cwd: process.cwd(),
       commandId: 'cmd-kill',
-      background: true,
       onEvent: async (event) => {
         events.push({
           type: event.type,

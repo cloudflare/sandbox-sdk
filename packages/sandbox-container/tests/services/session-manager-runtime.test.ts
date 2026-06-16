@@ -79,8 +79,7 @@ printf "done\n"`,
         });
       },
       { cwd: testDir },
-      'runtime-bg-command',
-      { background: true }
+      'runtime-bg-command'
     );
 
     expect(streamResult.success).toBe(true);
@@ -149,8 +148,7 @@ printf "done\n"`,
       'printf "should-not-run"; sleep 10',
       async () => {},
       { cwd: testDir },
-      commandId,
-      { background: true }
+      commandId
     );
     await startProcessCalled.promise;
 
@@ -183,8 +181,7 @@ printf "done\n"`,
         }
       },
       { cwd: testDir },
-      'runtime-kill-command',
-      { background: true }
+      'runtime-kill-command'
     );
 
     expect(streamResult.success).toBe(true);

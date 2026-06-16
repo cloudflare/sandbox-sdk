@@ -929,9 +929,6 @@ export class SessionManager {
    * @param onEvent - Callback for streaming events
    * @param options - Optional cwd and env overrides
    * @param commandId - Required command identifier for tracking and killing
-   * @param lockOptions - Lock behavior options
-   * @param lockOptions.background - If true, release lock after 'start' event (for startProcess).
-   *                                 If false (default), hold lock until streaming completes (for exec --stream).
    * @returns A promise that resolves when first event is processed, with continueStreaming promise for background execution
    */
   async executeStreamInSession(
@@ -944,122 +941,18 @@ export class SessionManager {
       timeoutMs?: number;
       origin?: 'user' | 'internal';
     } = {},
-    commandId: string,
-    lockOptions: { background?: boolean } = {}
+    commandId: string
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    const { background = false } = lockOptions;
     const lock = this.getSessionLock(sessionId);
 
-    // For background mode: acquire lock, process start event, release lock, continue streaming
-    // For foreground mode: acquire lock, process all events, release lock
-    if (background) {
-      return this.executeStreamBackground(
-        sessionId,
-        command,
-        onEvent,
-        options,
-        commandId,
-        lock
-      );
-    } else {
-      return this.executeStreamForeground(
-        sessionId,
-        command,
-        onEvent,
-        options,
-        commandId,
-        lock
-      );
-    }
-  }
-
-  /**
-   * Foreground streaming: hold lock until all events are processed
-   */
-  private async executeStreamForeground(
-    sessionId: string,
-    command: string,
-    onEvent: (event: ExecEvent) => Promise<void>,
-    options: {
-      cwd?: string;
-      env?: Record<string, string | undefined>;
-      timeoutMs?: number;
-      origin?: 'user' | 'internal';
-    },
-    commandId: string,
-    lock: Mutex
-  ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    return lock.runExclusive(async () => {
-      try {
-        const { cwd, env, timeoutMs, origin } = options;
-
-        const sessionResult = await this.getOrCreateSession(sessionId, {
-          cwd: cwd || '/workspace'
-        });
-
-        if (!sessionResult.success) {
-          return sessionResult as ServiceResult<{
-            continueStreaming: Promise<void>;
-          }>;
-        }
-
-        const session = sessionResult.data;
-        const generator = session.execStream(command, {
-          commandId,
-          cwd,
-          env,
-          timeoutMs,
-          origin
-        });
-
-        // Process ALL events under lock
-        for await (const event of generator) {
-          await onEvent(event);
-        }
-
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      } catch (error) {
-        const {
-          errorMessage,
-          sessionDestroyed,
-          shellTerminated,
-          shellExitCode
-        } = this.classifyCommandError(error, command, sessionId);
-
-        if (sessionDestroyed) {
-          return {
-            success: false,
-            error: this.sessionDestroyedError(sessionId)
-          };
-        }
-
-        if (shellTerminated) {
-          const session = this.sessions.get(sessionId);
-          if (session && !session.isReady()) {
-            await this.evictTerminatedSession(sessionId, session);
-          }
-          return {
-            success: false,
-            error: this.sessionTerminatedError(sessionId, shellExitCode)
-          };
-        }
-
-        return {
-          success: false,
-          error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
-            code: ErrorCode.STREAM_START_ERROR,
-            details: {
-              command,
-              stderr: errorMessage
-            } satisfies CommandErrorContext
-          }
-        };
-      }
-    });
+    return this.executeStreamBackground(
+      sessionId,
+      command,
+      onEvent,
+      options,
+      commandId,
+      lock
+    );
   }
 
   /**
