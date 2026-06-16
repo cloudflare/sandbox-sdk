@@ -1,5 +1,5 @@
 /**
- * SandboxClient implementation backed by direct capnweb RPC calls.
+ * Sandbox control client implementation backed by direct capnweb RPC calls.
  *
  * The server exposes each domain (commands, files, processes, etc.) as a
  * nested RpcTarget. capnweb returns typed stubs for these so the client
@@ -78,7 +78,6 @@ import type {
   SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
-  SandboxTransport,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
@@ -92,7 +91,6 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
-import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import {
   ContainerControlConnection,
@@ -234,7 +232,7 @@ export function translateRPCError(error: unknown): never {
 /**
  * Inspect a transport-level Error's message and produce the ErrorResponse
  * that becomes an RPCTransportError. Pattern strings are pinned to the exact
- * messages emitted by capnweb's WebSocketTransport (see capnweb's
+ * messages emitted by capnweb's WebSocket transport (see capnweb's
  * src/websocket.ts) and our DeferredTransport in container-control/connection.ts —
  * notably the trailing period in `WebSocket connection failed.` matches
  * capnweb verbatim. The DeferredTransport tests in
@@ -256,7 +254,7 @@ function buildTransportErrorResponse(
   // `instanceof` trap: a TypeError raised inside capnweb's serializer lives
   // in capnweb's realm, not the SDK's.
   if (errorName === 'TypeError') {
-    // Only DeferredTransport / capnweb's WebSocketTransport raise a
+    // Only DeferredTransport / capnweb's WebSocket transport raises a
     // TypeError on the receive path — always a non-string frame.
     kind = 'invalid_frame';
   } else if (errorName === 'SyntaxError') {
@@ -376,8 +374,9 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
   /**
    * Fires once when the capnweb session transitions from idle to busy
    * (an RPC call was started or a stream return is now in flight). The
-   * Sandbox DO wires this to `inflightRequests++`, which makes
-   * `isActivityExpired()` skip the sleepAfter comparison.
+   * Sandbox DO wires this to increment the Container base class's
+   * in-flight request counter, which makes `isActivityExpired()` skip the
+   * sleepAfter comparison.
    */
   onSessionBusy?: () => void;
   /**
@@ -391,7 +390,7 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
 }
 
 /**
- * SandboxClient-compatible facade backed by direct capnweb RPC.
+ * Sandbox control facade backed by direct capnweb RPC.
  *
  * All operations call the container's SandboxAPI control interface directly
  * over capnweb, bypassing the HTTP handler/router layer entirely.
@@ -636,10 +635,6 @@ export class ContainerControlClient {
     this.conn?.setRetryTimeoutMs(ms);
   }
 
-  getTransportMode(): SandboxTransport {
-    return 'rpc';
-  }
-
   isWebSocketConnected(): boolean {
     return this.conn?.isConnected() ?? false;
   }
@@ -652,14 +647,3 @@ export class ContainerControlClient {
     this.destroyConnection();
   }
 }
-
-/**
- * Extracts the public key set of a type. Used to verify that
- * ContainerControlClient exposes the same top-level properties and methods
- * as SandboxClient with top-level key coverage. Sub-clients are capnweb stubs, not HTTP
- * client class instances.
- */
-type PublicKeys<T> = { [K in keyof T]: unknown };
-
-// Compile-time check: ContainerControlClient has every public key that SandboxClient has.
-void (0 as unknown as PublicKeys<ContainerControlClient> satisfies PublicKeys<SandboxClient>);

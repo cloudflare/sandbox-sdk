@@ -453,8 +453,6 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
-export type SandboxTransport = 'http' | 'websocket' | 'rpc';
-
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -558,26 +556,6 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
-
-  /**
-   * Transport/control path for communication between the Sandbox DO and the
-   * container runtime.
-   *
-   * - `"http"` (default): Route-based HTTP compatibility path.
-   * - `"websocket"`: Route-based compatibility path multiplexed over a custom
-   *   WebSocket connection.
-   * - `"rpc"`: Primary container-control path over capnweb RPC.
-   *
-   * When set via `getSandbox()` options, this overrides the `SANDBOX_TRANSPORT` env var.
-   *
-   * **Important:** Set this once at creation time and pass the same value on every
-   * subsequent `getSandbox()` call for a given sandbox ID. Changing the transport after
-   * the sandbox is in use disconnects the active client, which drops any in-flight
-   * requests and resets WebSocket connections.
-   *
-   * @default "http"
-   */
-  transport?: SandboxTransport;
 }
 
 /**
@@ -606,7 +584,7 @@ export interface WriteFileResult {
  *
  * - `'utf-8'` / `'utf8'` — treat content as text.
  * - `'base64'` — treat content as base64-encoded binary.
- * - `'none'` — RPC-only streaming variant of `readFile`, returns a
+ * - `'none'` — streaming variant of `readFile`, returns a
  *   `ReadableStream<Uint8Array>` of raw bytes (see `ReadFileStreamResult`).
  */
 export type FileEncoding = 'utf-8' | 'utf8' | 'base64' | 'none';
@@ -640,11 +618,10 @@ export interface ReadFileResult {
 }
 
 /**
- * Result of `readFile()` with `encoding: 'none'` on the RPC transport.
+ * Result of `readFile()` with `encoding: 'none'`.
  *
  * `content` is a raw binary `ReadableStream<Uint8Array>` delivered directly
  * over the capnp channel — no base64 encoding, no SSE framing, no buffering.
- * Only supported on the `rpc` transport; HTTP/WebSocket transports throw.
  */
 export interface ReadFileStreamResult {
   success: true;

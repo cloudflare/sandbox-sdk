@@ -10,6 +10,7 @@ import {
   ProcessReadyTimeoutError
 } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
+import { createMockControlClient } from './helpers/mock-control-client';
 
 // Mock dependencies
 vi.mock('./interpreter', () => ({
@@ -91,6 +92,8 @@ describe('Process Readiness Feature', () => {
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
+
+    sandbox.client = createMockControlClient();
 
     // Mock session creation
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({

@@ -1,20 +1,5 @@
 // Export the main Sandbox class and utilities
 
-// Export the new client architecture
-export {
-  BackupClient,
-  CommandClient,
-  FileClient,
-  GitClient,
-  PortClient,
-  ProcessClient,
-  SandboxClient,
-  UtilityClient
-} from './clients';
-export { getSandbox, Sandbox } from './sandbox';
-
-// Legacy types are now imported from the new client architecture
-
 // Export core SDK types for consumers
 export type {
   BackupOptions,
@@ -52,7 +37,6 @@ export type {
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
-  SandboxTransport,
   SessionOptions,
   StreamOptions,
   TunnelInfo,
@@ -63,51 +47,6 @@ export type {
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
-// Export all client types from new architecture
-export type {
-  BaseApiResponse,
-  CommandsResponse,
-  ContainerStub,
-
-  // Utility client types
-  CreateSessionRequest,
-  CreateSessionResponse,
-  DeleteSessionRequest,
-  DeleteSessionResponse,
-  ErrorResponse,
-
-  // Command client types
-  ExecuteRequest,
-  ExecuteResponse as CommandExecuteResponse,
-  FileOperationRequest,
-
-  // Git client types
-  GitCheckoutRequest,
-  // Base client types
-  HttpClientOptions as SandboxClientOptions,
-
-  // File client types
-  MkdirRequest,
-  PingResponse,
-  ProcessCleanupResult,
-  ProcessInfoResult,
-  ProcessKillResult,
-  ProcessListResult,
-  ProcessLogsResult,
-  ProcessStartResult,
-  ReadFileRequest,
-  RequestConfig,
-  ResponseHandler,
-  SessionRequest,
-
-  // Process client types
-  StartProcessRequest,
-  WriteFileRequest
-} from './clients';
-export type {
-  ExecutionCallbacks,
-  InterpreterClient
-} from './clients/interpreter-client.js';
 export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
 // Export backup and process readiness errors
 export {
@@ -130,7 +69,7 @@ export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
 // Required export for egress intercepting
-export { ContainerProxy } from './sandbox';
+export { ContainerProxy, getSandbox, Sandbox } from './sandbox';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export {
   asyncIterableToSSEStream,

@@ -8,7 +8,6 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		ASSETS: Fetcher;
-		SANDBOX_TRANSPORT: "rpc";
 		AWS_REGION: "us-east-1";
 		S3_BUCKET_NAME: "my-bucket";
 		STS_DURATION_SECONDS: "3600";
@@ -23,7 +22,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "SANDBOX_TRANSPORT" | "AWS_REGION" | "S3_BUCKET_NAME" | "STS_DURATION_SECONDS" | "BROKER_AWS_ACCESS_KEY_ID" | "BROKER_AWS_SECRET_ACCESS_KEY" | "AWS_ROLE_ARN">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "AWS_REGION" | "S3_BUCKET_NAME" | "STS_DURATION_SECONDS" | "BROKER_AWS_ACCESS_KEY_ID" | "BROKER_AWS_SECRET_ACCESS_KEY" | "AWS_ROLE_ARN">> {}
 }
 
 // Begin runtime types

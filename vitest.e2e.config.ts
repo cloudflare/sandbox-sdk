@@ -1,23 +1,7 @@
-import assert from 'node:assert';
 import { config } from 'dotenv';
 import { defineConfig } from 'vitest/config';
 
 config();
-
-if (!process.env.TEST_TRANSPORT) {
-  try {
-    // Attempt to extract the transport from the worker URL for backwards
-    const workerURL = new URL(process.env.TEST_WORKER_URL ?? '');
-    const transportRegexp =
-      /sandbox-e2e-test-worker-(?:.+)-(?<transport>http|websocket).(?:[^.]+)[.]workers[.]dev/;
-    process.env.TEST_TRANSPORT = transportRegexp.exec(
-      workerURL.host
-    )?.groups?.transport;
-    assert(['http', 'websocket'].includes(process.env.TEST_TRANSPORT ?? ''));
-  } catch (err) {
-    throw new Error('Missing TEST_TRANSPORT environment variable');
-  }
-}
 
 /**
  * E2E tests with per-file sandbox isolation - runs in parallel.

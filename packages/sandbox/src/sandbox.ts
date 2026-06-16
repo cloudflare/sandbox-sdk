@@ -37,7 +37,6 @@ import type {
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
-  SandboxTransport,
   SessionOptions,
   StreamOptions,
   WaitForExitResult,
@@ -61,7 +60,6 @@ import {
 } from '@repo/shared/backup';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
-import { type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
 import {
   CurrentRuntimeIdentity,
@@ -149,6 +147,10 @@ import {
 } from './tunnels/tunnels-handler';
 import { SDK_VERSION } from './version';
 
+type ExecuteResponse = Awaited<
+  ReturnType<ContainerControlClient['commands']['execute']>
+>;
+
 /**
  * Persisted record for a single exposed port. `token` authorizes preview
  * URL requests; `name` is the optional friendly name the caller passed to
@@ -201,7 +203,6 @@ type SandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: SandboxTransport;
 };
 
 type CachedSandboxConfiguration = {
@@ -210,7 +211,6 @@ type CachedSandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
-  transport?: SandboxTransport;
 };
 
 type EgressContainerState = DurableObjectState<{}> & {
@@ -331,7 +331,6 @@ type ConfigurableSandboxStub = {
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
-  setTransport?: (transport: SandboxTransport) => Promise<void>;
 };
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
@@ -527,13 +526,6 @@ function buildSandboxConfiguration(
     configuration.containerTimeouts = options.containerTimeouts;
   }
 
-  if (
-    options?.transport !== undefined &&
-    cached?.transport !== options.transport
-  ) {
-    configuration.transport = options.transport;
-  }
-
   return configuration;
 }
 
@@ -542,8 +534,7 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sandboxName !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
-    configuration.containerTimeouts !== undefined ||
-    configuration.transport !== undefined
+    configuration.containerTimeouts !== undefined
   );
 }
 
@@ -565,9 +556,6 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
-    }),
-    ...(configuration.transport !== undefined && {
-      transport: configuration.transport
     })
   };
 }
@@ -607,12 +595,6 @@ function applySandboxConfiguration(
     operations.push(
       stub.setContainerTimeouts?.(configuration.containerTimeouts) ??
         Promise.resolve()
-    );
-  }
-
-  if (configuration.transport !== undefined) {
-    operations.push(
-      stub.setTransport?.(configuration.transport) ?? Promise.resolve()
     );
   }
 
@@ -864,7 +846,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: SandboxClient | ContainerControlClient;
+  client: ContainerControlClient;
 
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
@@ -873,7 +855,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // this Sandbox instance. The sibling `tunnelExitHandler` is the
   // control-plane exit hook invoked by the capnweb session's
   // SandboxControlCallback when the container reports cloudflared has
-  // died; both fields are reset together on transport swap.
+  // died; both fields are reset together when tunnel state is rebound.
   private tunnelsHandler: TunnelsHandler | null = null;
   private tunnelExitHandler: TunnelExitHandler | null = null;
   // destroyAll iterates the stored tunnel map and tears each one down on
@@ -882,9 +864,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private destroyAllTunnels: (() => Promise<void>) | null = null;
   // capnweb localMain exposed to the container side of the RPC
   // session. Constructed once in the constructor (the lazy accessor
-  // keeps it pointing at the current `tunnelExitHandler` even as
-  // transports swap), so the container can call back into the DO
-  // without us re-binding the session.
+  // keeps it pointing at the current `tunnelExitHandler`), so the
+  // container can call back into the DO without us re-binding the session.
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
@@ -903,15 +884,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private activeMounts: Map<string, MountInfo> = new Map();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
-  private transport: SandboxTransport = 'http';
-
-  /**
-   * True once transport has been written to storage at least once (either
-   * via setTransport or restored on cold start). Gates the idempotency
-   * check so a first explicit call persists even when the requested value
-   * already equals the env-derived in-memory default.
-   */
-  private hasStoredTransport = false;
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -1003,12 +975,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Compute the transport retry budget from current container timeouts.
+   * Compute the control-channel upgrade retry budget from current container
+   * timeouts.
    *
    * The budget covers the full container startup window (instance provisioning
-   * + port readiness) plus a 30s margin for the maximum single backoff delay
-   * (capped at 30s in BaseTransport). The 120s floor preserves the previous
-   * default for short timeout configurations.
+   * + port readiness) plus a 30s margin for the maximum single backoff delay.
+   * The 120s floor preserves the default for short timeout configurations.
    */
   private computeRetryTimeoutMs(): number {
     const startupBudgetMs =
@@ -1018,86 +990,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Create the route-based compatibility client with current HTTP/WebSocket
-   * transport settings.
+   * Create the single control-plane client used for all SDK operations.
    */
-  private createSandboxClient(): SandboxClient {
-    return new SandboxClient({
-      logger: this.logger,
-      port: 3000,
+  private createClient(): ContainerControlClient {
+    // Access the base Container's private inflightRequests counter so
+    // the alarm loop's isActivityExpired() check sees active work and
+    // skips the sleepAfterMs comparison while RPC calls or returned
+    // streams are still active over the capnweb session.
+    const self = this as unknown as { inflightRequests: number };
+    return new ContainerControlClient({
       stub: this,
+      port: 3000,
+      logger: this.logger,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
-      defaultHeaders: {
-        'X-Sandbox-Id': this.ctx.id.toString()
+      // localMain exposes the DO-side control callback (tunnel-exit
+      // notifications, etc.) to the container side of the session.
+      localMain: this.controlCallback,
+      // The control channel multiplexes all work over a single capnweb
+      // WebSocket, so we can't bracket per-request — and a method that
+      // returns a ReadableStream resolves its promise long before the
+      // stream is actually drained. Instead, ContainerControlClient polls
+      // capnweb's session stats and reports busy/idle *transitions* of the
+      // whole session. We treat one transition as equivalent to one
+      // in-flight request: increment on busy, decrement on idle. See the
+      // file-level comment in container-control/client.ts for details.
+      onActivity: () => {
+        // Called at the start of each RPC call AND on every busy-poll
+        // tick while the session has work in flight. Equivalent to the
+        // top of containerFetch(): push the sleepAfter deadline forward.
+        this.renewActivityTimeout();
       },
-      ...(this.transport === 'websocket' && {
-        transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
-      })
-    });
-  }
-
-  /**
-   * Create the appropriate client for the configured control path.
-   *
-   * `rpc` currently selects the primary container-control client. `http` and
-   * `websocket` select the route-based compatibility client.
-   */
-  private createClientForTransport(
-    transport: SandboxTransport
-  ): SandboxClient | ContainerControlClient {
-    if (transport === 'rpc') {
-      // Access the base Container's private inflightRequests counter so
-      // the alarm loop's isActivityExpired() check sees active work and
-      // skips the sleepAfterMs comparison while RPC calls or returned
-      // streams are still active over the capnweb session.
-      const self = this as unknown as { inflightRequests: number };
-      return new ContainerControlClient({
-        stub: this,
-        port: 3000,
-        logger: this.logger,
-        retryTimeoutMs: this.computeRetryTimeoutMs(),
-        // localMain exposes the DO-side control callback (tunnel-exit
-        // notifications, etc.) to the container side of the session.
-        localMain: this.controlCallback,
-        // Mirrors containerFetch()'s request lifecycle for the RPC transport.
-        //
-        // The HTTP transport bumps inflightRequests at the top of each
-        // containerFetch() call and decrements in `finally`. The RPC
-        // transport multiplexes all work over a single capnweb WebSocket,
-        // so we can't bracket per-request — and a method that returns a
-        // ReadableStream resolves its promise long before the stream is
-        // actually drained. Instead, ContainerControlClient polls capnweb's
-        // session stats and reports busy/idle *transitions* of the whole
-        // session. We treat one transition as equivalent to one in-flight
-        // request: increment on busy, decrement on idle. See the
-        // file-level comment in container-control/client.ts for details.
-        onActivity: () => {
-          // Called at the start of each RPC call AND on every busy-poll
-          // tick while the session has work in flight. Equivalent to
-          // the top of containerFetch(): push the sleepAfter deadline
-          // forward.
+      onSessionBusy: () => {
+        // Idle → busy: a new RPC call started or a stream return is now
+        // in flight. Mark the DO busy so isActivityExpired() returns false
+        // until the session goes idle again.
+        self.inflightRequests = (self.inflightRequests ?? 0) + 1;
+      },
+      onSessionIdle: () => {
+        // Busy → idle: all RPC promises have settled and all stream exports
+        // have been released. Equivalent to containerFetch's finally block —
+        // decrement and restart the inactivity window from now.
+        self.inflightRequests = Math.max(0, (self.inflightRequests ?? 0) - 1);
+        if (self.inflightRequests === 0) {
           this.renewActivityTimeout();
-        },
-        onSessionBusy: () => {
-          // Idle → busy: a new RPC call started or a stream return is
-          // now in flight. Mark the DO busy so isActivityExpired()
-          // returns false until the session goes idle again.
-          self.inflightRequests++;
-        },
-        onSessionIdle: () => {
-          // Busy → idle: all RPC promises have settled and all stream
-          // exports have been released. Equivalent to containerFetch's
-          // finally block — decrement and restart the inactivity window
-          // from now.
-          self.inflightRequests = Math.max(0, self.inflightRequests - 1);
-          if (self.inflightRequests === 0) {
-            this.renewActivityTimeout();
-          }
         }
-      });
-    }
-    return this.createSandboxClient();
+      }
+    });
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
@@ -1124,18 +1062,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.getState(),
       () => this.ctx.container?.running === true
     );
-
-    // Read transport setting from env var
-    const transportEnv = envObj?.SANDBOX_TRANSPORT;
-    if (transportEnv === 'websocket' || transportEnv === 'rpc') {
-      this.transport = transportEnv;
-    } else if (transportEnv != null && transportEnv !== 'http') {
-      this.logger.warn(
-        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http", "websocket", or "rpc". Defaulting to "http".`
-      );
-    }
-
-    this.logger.info(`Using ${this.transport} transport`);
 
     // Read R2 backup bucket binding if configured
     const backupBucket = envObj?.BACKUP_BUCKET;
@@ -1222,7 +1148,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.logger
     );
 
-    this.client = this.createClientForTransport(this.transport);
+    this.client = this.createClient();
 
     this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
 
@@ -1247,7 +1173,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...storedTimeouts
         };
         this.hasStoredContainerTimeouts = true;
-        // Update the transport retry budget to reflect stored timeouts
+        // Update the control-channel retry budget to reflect stored timeouts.
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
 
@@ -1258,27 +1184,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (storedSleepAfter !== undefined) {
         this.sleepAfter = storedSleepAfter;
         this.renewActivityTimeout();
-      }
-
-      // Restore transport setting from storage (overrides env var default)
-      const storedTransport =
-        await this.ctx.storage.get<SandboxTransport>('transport');
-      if (storedTransport && storedTransport !== this.transport) {
-        this.transport = storedTransport;
-        const previousClient = this.client;
-        this.client = this.createClientForTransport(storedTransport);
-        this.codeInterpreter = new CodeInterpreter(
-          () => this.client.interpreter
-        );
-        // Drop the tunnels handler; the lazy getter rebinds it to the
-        // new client on next access. Same rationale as codeInterpreter.
-        this.tunnelsHandler = null;
-        this.tunnelExitHandler = null;
-        this.destroyAllTunnels = null;
-        previousClient.disconnect();
-      }
-      if (storedTransport) {
-        this.hasStoredTransport = true;
       }
 
       if (this.interceptHttps) {
@@ -1326,10 +1231,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
-    }
-
-    if (configuration.transport !== undefined) {
-      await this.setTransport(configuration.transport);
     }
   }
 
@@ -1448,41 +1349,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.hasStoredContainerTimeouts = true;
     this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
-  }
-
-  async setTransport(transport: SandboxTransport): Promise<void> {
-    if (
-      transport !== 'http' &&
-      transport !== 'websocket' &&
-      transport !== 'rpc'
-    ) {
-      this.logger.warn(
-        `Invalid transport value: "${transport}". Must be "http", "websocket", or "rpc". Ignoring.`
-      );
-      return;
-    }
-
-    if (this.hasStoredTransport && this.transport === transport) {
-      return;
-    }
-
-    await this.ctx.storage.put('transport', transport);
-
-    const previousClient = this.client;
-    this.transport = transport;
-    this.hasStoredTransport = true;
-    this.client = this.createClientForTransport(transport);
-    this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
-    // Drop the tunnels handler so the lazy getter rebinds it to the
-    // new client on next access. Storage is unchanged: existing
-    // tunnels are still backed by their cloudflared processes since the
-    // container did not restart.
-    this.tunnelsHandler = null;
-    this.tunnelExitHandler = null;
-    this.destroyAllTunnels = null;
-    previousClient.disconnect();
-    this.renewActivityTimeout();
-    this.logger.debug('Transport updated', { transport });
   }
 
   private validateTimeout(
@@ -2635,8 +2501,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.clearActivePreviewPorts();
       await this.currentRuntime.clear();
 
-      // Unmount all mounted buckets and cleanup (requires an active connection
-      // for execInternal calls, so this runs before disconnecting the transport)
+      // Unmount all mounted buckets and cleanup. This runs before disconnecting
+      // the control client because FUSE teardown uses execInternal.
       for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
         mountsProcessed++;
         if (mountInfo.mountType === 'local-sync') {
@@ -2696,7 +2562,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
 
-      // Disconnect transport after all cleanup commands have completed
+      // Disconnect the control client after all cleanup commands complete.
       this.client.disconnect();
 
       outcome = 'success';
@@ -3487,8 +3353,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return parseInt(proxyMatch[1], 10);
     }
 
-    // All other requests go to control plane on port 3000
-    // This includes /api/* endpoints and any other control requests
+    // Direct fetch compatibility defaults to the container server port.
+    // SDK control operations use ContainerControlClient over /rpc instead.
     return 3000;
   }
 
@@ -4540,7 +4406,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HTTP client.
+    // Note: signal parameter is not currently supported by process control.
     // sessionId is intentionally unused — kill targets a process by ID which
     // is sandbox-scoped, not session-scoped.
     await this.client.processes.killProcess(id);
@@ -4588,7 +4454,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       env: options?.env,
       cwd: options?.cwd
     });
-    // Get the stream from CommandClient
+    // Get the stream from the control client
     return this.client.commands.executeStream(
       command,
       session,
@@ -4724,7 +4590,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *   - `'utf-8'` / `'utf8'`: always return as UTF-8 string
    *   - `'base64'`: always return as base64-encoded string
    *   - `'none'`: return a result whose `content` is a raw binary `ReadableStream<Uint8Array>`
-   *              with no encoding overhead. **Requires `SANDBOX_TRANSPORT=rpc`.** Throws on HTTP/WebSocket transports.
+   *              with no encoding overhead.
    */
   async readFile(
     path: string,
@@ -5045,7 +4911,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Namespaced tunnel API. Quick tunnels are zero-config preview URLs
-   * backed by Cloudflare's trycloudflare service.
+   * backed by Cloudflare's trycloudflare service. Named tunnels bind a
+   * stable hostname under the configured Cloudflare zone.
    *
    * - `tunnels.get(port)` — idempotent. Returns the cached tunnel for
    *   `port` if one exists in DO storage, otherwise spawns a fresh
@@ -5055,12 +4922,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * - `tunnels.destroy(portOrInfo)` — tear down by port number or by
    *   the record returned from `get()`.
    *
-   * Storage is cleared on container restart (`onStart`), so URLs do
-   * not survive a container restart — the next `get(port)` call will
-   * spawn a fresh tunnel with a new URL.
-   *
-   * Requires the RPC transport. Calling this on a route-based transport
-   * throws "RPC transport required".
+   * Container restarts drop quick-tunnel records because their
+   * `*.trycloudflare.com` URLs are tied to the dead cloudflared process.
+   * Named-tunnel records stay in storage and are marked for respawn so the
+   * next `get(port, { name })` call reuses the Cloudflare tunnel and DNS
+   * record while starting a fresh cloudflared process.
    */
   get tunnels(): TunnelsHandler {
     this.ensureTunnelsBuilt();
@@ -5071,8 +4937,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Lazily construct both the public tunnels handler and its sibling
    * exit-handler callback. Called from the `tunnels` getter on first
-   * access and on every access after a transport swap clears both
-   * fields.
+   * access.
    */
   private ensureTunnelsBuilt(): void {
     if (this.tunnelsHandler) return;
@@ -7213,55 +7078,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         { origin: 'internal' }
       );
 
-      // Write the archive into the container.
-      // On the rpc transport, stream R2ObjectBody.body directly via
-      // writeFileStream to avoid base64-encoding the whole archive in Worker
-      // memory and hitting workerd's 32 MiB RPC payload cap.
-      // On http/websocket transports, fall back to the base64 writeFile path
-      // (those transports send via HTTP POST to the container, no RPC cap).
-      if (this.transport === 'rpc') {
-        const body = archiveObject.body;
-        if (!body) {
-          throw new BackupRestoreError({
-            message: `R2 archive object has no body stream for backup ${id}`,
-            code: ErrorCode.BACKUP_RESTORE_FAILED,
-            httpStatus: 500,
-            context: { dir, backupId: id },
-            timestamp: new Date().toISOString()
-          });
-        }
-        await this.client.files.writeFileStream(
-          archivePath,
-          body,
-          backupSession
-        );
-      } else {
-        const archiveBuffer = await archiveObject.arrayBuffer();
-        const base64Content = Buffer.from(archiveBuffer).toString('base64');
-        const writeResult = await this.client.files.writeFile(
-          archivePath,
-          base64Content,
-          backupSession,
-          { encoding: 'base64' }
-        );
-        if (!writeResult.success) {
-          const writeErrorMessage =
-            'error' in writeResult &&
-            typeof writeResult.error === 'object' &&
-            writeResult.error !== null &&
-            'message' in writeResult.error &&
-            typeof writeResult.error.message === 'string'
-              ? writeResult.error.message
-              : `File write returned success: false for '${archivePath}'`;
-          throw new BackupRestoreError({
-            message: `Failed to write backup archive to ${archivePath}: ${writeErrorMessage}`,
-            code: ErrorCode.BACKUP_RESTORE_FAILED,
-            httpStatus: 500,
-            context: { dir, backupId: id },
-            timestamp: new Date().toISOString()
-          });
-        }
+      // Stream the archive into the container to avoid base64-encoding the
+      // whole archive in Worker memory and hitting workerd's 32 MiB RPC
+      // payload cap.
+      const body = archiveObject.body;
+      if (!body) {
+        throw new BackupRestoreError({
+          message: `R2 archive object has no body stream for backup ${id}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId: id },
+          timestamp: new Date().toISOString()
+        });
       }
+      await this.client.files.writeFileStream(archivePath, body, backupSession);
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
       const extractResult = await this.execWithSession(

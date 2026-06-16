@@ -15,12 +15,9 @@ import {
  * everything down via `destroy()` and verifies the Cloudflare API no
  * longer holds the resources.
  *
- * Skipped unless:
- *   - `TEST_TRANSPORT=rpc` (route-based transport doesn't expose
- *     `sandbox.tunnels`), and
- *   - `CLOUDFLARE_API_TOKEN` is set on the worker env (the SDK infers
- *     account id and zone id from the token when unambiguous; see
- *     `tunnels/credentials.ts`).
+ * Skipped unless `CLOUDFLARE_API_TOKEN` is set on the worker env. The SDK
+ * infers account id and zone id from the token when unambiguous; see
+ * `tunnels/credentials.ts`.
  *
  * The test mints a fresh random suffix for the tunnel name on every run
  * so concurrent CI shards never collide on the same label. A
@@ -31,9 +28,7 @@ import {
 
 const TUNNEL_TEST_PORT = 9881;
 
-const skipNamedTunnel =
-  (process.env.TEST_TRANSPORT ?? 'http') !== 'rpc' ||
-  !process.env.CLOUDFLARE_API_TOKEN;
+const skipNamedTunnel = !process.env.CLOUDFLARE_API_TOKEN;
 
 interface NamedTunnelInfoWire {
   id: string;

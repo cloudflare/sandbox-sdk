@@ -81,7 +81,7 @@ describe('Bucket Mounting E2E', () => {
         });
         expect(putResponse.ok).toBe(true);
 
-        // 2. Mount the bucket (no vi.waitFor - let BaseHttpClient handle retries)
+        // 2. Mount the bucket (no vi.waitFor - let the SDK retry startup)
         const mountResponse = await fetch(`${workerUrl}/api/bucket/mount`, {
           method: 'POST',
           headers,

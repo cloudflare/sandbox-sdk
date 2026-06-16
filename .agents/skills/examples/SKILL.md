@@ -32,7 +32,7 @@ The first run builds the container image, so it's slow. Subsequent runs reuse th
 | `time-machine`               | Snapshot/restore patterns                    |
 | `typescript-validator`       | Running `tsc` against user code              |
 | `vite-sandbox`               | Vite dev server proxied through preview URLs |
-| `websocket-tunnel`           | WebSocket transport / port exposure          |
+| `websocket-tunnel`           | WebSocket tunnel / port exposure             |
 | `alpine`                     | Alpine-based container variant               |
 
 ## `EXPOSE` Directives

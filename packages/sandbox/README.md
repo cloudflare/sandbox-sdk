@@ -106,7 +106,7 @@ setup required — cloudflared opens a persistent QUIC connection to
 Cloudflare's edge and Cloudflare hands back a hostname.
 
 ```ts
-// Inside a Worker with an RPC-transport sandbox:
+// Inside a Worker with a sandbox:
 const tunnel = await sandbox.tunnels.get(8080);
 console.log(tunnel.url);
 // → https://random-words-here.trycloudflare.com
@@ -127,8 +127,6 @@ tunnel.
 
 Notes:
 
-- Requires the RPC transport. The route-based transport's `tunnels`
-  stub throws "RPC transport required".
 - URLs do **not** survive a container restart. Cloudflare assigns the
   hostname during cloudflared's startup handshake, so every restart
   yields a new URL. The SDK clears its cache on container start, so

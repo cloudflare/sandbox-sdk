@@ -46,9 +46,8 @@ describe('SandboxControlCallbackImpl', () => {
   it('is a no-op when the accessor returns null', async () => {
     const cb = new SandboxControlCallbackImpl(() => null, makeLogger());
 
-    // Must not throw — the accessor returning null models the brief
-    // post-setTransport window before the lazy getter rebuilds the
-    // tunnels handler.
+    // Must not throw — the accessor returning null models a callback
+    // arriving before the lazy getter has built the tunnels handler.
     await expect(cb.onTunnelExit('quick-c', 8082, 0)).resolves.toBeUndefined();
   });
 

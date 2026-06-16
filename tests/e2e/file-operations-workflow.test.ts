@@ -312,9 +312,7 @@ describe('File Operations Error Handling', () => {
   }, 90000);
 });
 
-const isRPCTransport = process.env.TEST_TRANSPORT === 'rpc';
-
-describe.skipIf(!isRPCTransport)('File Streaming Write (rpc)', () => {
+describe('File Streaming Write', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -332,7 +330,7 @@ describe.skipIf(!isRPCTransport)('File Streaming Write (rpc)', () => {
 
   test('should stream-write a file and read it back', async () => {
     const testPath = sandbox!.uniquePath('stream-write.txt');
-    const testContent = 'Streamed content for rpc transport ✨';
+    const testContent = 'Streamed content over RPC control ✨';
     const body = new TextEncoder().encode(testContent);
 
     const writeResponse = await fetch(`${workerUrl}/api/file/write-stream`, {
@@ -415,7 +413,7 @@ describe.skipIf(!isRPCTransport)('File Streaming Write (rpc)', () => {
   });
 });
 
-describe.skipIf(!isRPCTransport)('File Binary Read (rpc)', () => {
+describe('File Binary Read', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;

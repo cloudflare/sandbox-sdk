@@ -10,7 +10,7 @@
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "test": "./run-integration-tests.sh"
+    "test:integration": "./run-integration-tests.sh"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",

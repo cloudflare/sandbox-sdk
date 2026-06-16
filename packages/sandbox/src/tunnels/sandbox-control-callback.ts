@@ -15,9 +15,8 @@ export class SandboxControlCallbackImpl
 {
   constructor(
     /**
-     * Accessor (not a direct reference) so that `setTransport` /
-     * eviction can swap the handler without re-binding the capnweb
-     * session. Returns `null` if the handler hasn't been constructed
+     * Accessor (not a direct reference) so eviction can swap the handler
+     * without re-binding the capnweb session. Returns `null` if the handler hasn't been constructed
      * yet — the callback no-ops in that case, which is fine because
      * the container only reaches us via a live session and a live
      * session implies a sandbox that is about to construct (or has

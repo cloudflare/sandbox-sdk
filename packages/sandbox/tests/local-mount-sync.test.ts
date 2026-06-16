@@ -148,7 +148,7 @@ function createControllableWatchClient() {
   };
 }
 
-function createMockSandboxClient(
+function createMockControlClient(
   fileClient: ReturnType<typeof createMockFileClient>,
   watchClient: ReturnType<typeof createMockWatchClient>
 ) {
@@ -184,7 +184,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -241,7 +241,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -265,7 +265,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -296,7 +296,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -340,7 +340,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -379,7 +379,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -419,7 +419,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -457,7 +457,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -494,7 +494,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -533,7 +533,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -575,7 +575,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -606,7 +606,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       expect(
         () =>
@@ -629,7 +629,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(r2Objects);
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -668,7 +668,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -723,7 +723,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -771,7 +771,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -814,7 +814,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -869,7 +869,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -910,7 +910,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -951,7 +951,7 @@ describe('LocalMountSyncManager', () => {
         emit,
         close
       } = createControllableWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,
@@ -992,7 +992,7 @@ describe('LocalMountSyncManager', () => {
       const bucket = createMockR2Bucket(new Map());
       const fileClient = createMockFileClient();
       const watchClient = createMockWatchClient();
-      const client = createMockSandboxClient(fileClient, watchClient);
+      const client = createMockControlClient(fileClient, watchClient);
 
       const manager = new LocalMountSyncManager({
         bucket: bucket as unknown as R2Bucket,

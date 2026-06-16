@@ -2,8 +2,8 @@
  * Capnweb RPC connection to the container.
  *
  * Manages a single WebSocket session and exposes typed methods that map
- * 1:1 to the container's SandboxAPI. The Sandbox DO calls these directly,
- * bypassing the route-based HTTP client layer.
+ * 1:1 to the container's SandboxAPI. The Sandbox DO calls these directly
+ * over the control channel.
  */
 
 import type {
@@ -11,6 +11,7 @@ import type {
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
+  SandboxControlCallback,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
@@ -20,7 +21,12 @@ import type {
   SandboxWatchAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
+import {
+  RpcSession,
+  type RpcStub,
+  type RpcTarget,
+  type RpcTransport
+} from 'capnweb';
 import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
@@ -45,8 +51,8 @@ export interface ContainerControlConnectionOptions {
   logger?: Logger;
   /**
    * Total retry budget (ms) for retryable upgrade responses while the
-   * container is unavailable. Defaults to 120 000 (2 minutes), matching the
-   * route-based `WebSocketTransport`. Set to 0 to disable retries.
+   * container is unavailable. Defaults to 120 000 (2 minutes). Set to 0 to
+   * disable retries.
    */
   retryTimeoutMs?: number;
   /**
@@ -56,7 +62,7 @@ export interface ContainerControlConnectionOptions {
    * (e.g. notifying the DO when a tunnel's cloudflared process has
    * exited). When omitted, the container sees an empty remote main.
    */
-  localMain?: any;
+  localMain?: SandboxControlCallback & RpcTarget;
   /**
    * Invoked when an active WebSocket transitions to closed/errored.
    * Fired at most once per successful connection from the WS event
@@ -64,8 +70,10 @@ export interface ContainerControlConnectionOptions {
    * signal so recovery doesn't depend on a periodic poller running
    * inside what may be an idle isolate.
    *
-   * Not fired for `doConnect` failures (the rejected `connect()`
-   * promise is the signal in that case) nor for `disconnect()`.
+   * Also fired for `doConnect` failures after the deferred transport is
+   * aborted. A failed upgrade poisons the transport, so owners must discard
+   * the connection and create a fresh one for subsequent calls. Not fired for
+   * `disconnect()`.
    */
   onClose?: () => void;
 }
@@ -175,7 +183,7 @@ export class ContainerControlConnection {
   /**
    * Update the upgrade retry budget without recreating the connection. Takes
    * effect on the next `connect()`; an in-flight connect uses the value
-   * captured at start. Mirrors `WebSocketTransport.setRetryTimeoutMs`.
+   * captured at start.
    */
   setRetryTimeoutMs(ms: number): void {
     this.retryTimeoutMs = ms;
@@ -263,6 +271,7 @@ export class ContainerControlConnection {
         'ContainerControlConnection failed',
         error instanceof Error ? error : new Error(String(error))
       );
+      this.fireOnClose();
       throw error;
     }
   }
@@ -342,8 +351,8 @@ export class DeferredTransport implements RpcTransport {
           this.#receiveQueue.push(event.data);
         }
       } else {
-        // Mirrors capnweb's WebSocketTransport. capnweb's wire format is
-        // strictly text (JSON), so a binary frame indicates a misbehaving
+        // Capnweb's wire format is strictly text (JSON), so a binary
+        // frame indicates a misbehaving
         // peer. Failing the transport here surfaces the problem to in-flight
         // RPC calls; without it `receive()` would hang forever waiting for
         // a string that is never going to arrive.

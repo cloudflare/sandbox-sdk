@@ -8,9 +8,6 @@
  * - File operations (write, read, list, delete)
  * - Session isolation
  *
- * Skipped unless TEST_TRANSPORT=rpc. Transport selection flows through the
- * X-Sandbox-Transport header to the test worker, which passes it to
- * getSandbox() as a per-instance transport option.
  */
 
 import type {
@@ -28,9 +25,7 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 
-const isRPCTransport = process.env.TEST_TRANSPORT === 'rpc';
-
-describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
+describe('RPC Container Control', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -73,7 +68,7 @@ describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
 
   test('should write and read a file', async () => {
     const testPath = sandbox!.uniquePath('rpc-test.txt');
-    const testContent = 'Hello from rpc transport! 🚀';
+    const testContent = 'Hello from RPC control! 🚀';
 
     // Write
     const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -206,7 +201,7 @@ describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
       headers: sandbox!.headers(),
       body: JSON.stringify({
         id: sessionId,
-        env: { RPC_TEST: 'transport-works' }
+        env: { RPC_TEST: 'control-works' }
       })
     });
     expect(createResponse.status).toBe(200);
@@ -220,7 +215,7 @@ describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
     });
     expect(execResponse.status).toBe(200);
     const result = (await execResponse.json()) as ExecResult;
-    expect(result.stdout.trim()).toBe('transport-works');
+    expect(result.stdout.trim()).toBe('control-works');
 
     // The original session should NOT have this env var
     const defaultExecResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -253,7 +248,7 @@ describe.skipIf(!isRPCTransport)('RPC Container Control', () => {
 
     // After a handshake the DO must have stored a value (string when
     // CLOUDFLARE_PLACEMENT_ID is set, null when running locally) but not
-    // undefined, which would mean the RPC transport dropped the field.
+    // undefined, which would mean the RPC handshake dropped the field.
     expect(placementId === null || typeof placementId === 'string').toBe(true);
   });
 });

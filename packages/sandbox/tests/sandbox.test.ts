@@ -8,6 +8,7 @@ import {
   ProcessNotFoundError
 } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
+import { createMockControlClient } from './helpers/mock-control-client';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -223,7 +224,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
     mockEnv = {};
 
-    // Create Sandbox instance - SandboxClient is created internally
+    // Create Sandbox instance - control client is created internally
     const stub = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       mockEnv
@@ -243,6 +244,7 @@ describe('Sandbox - Automatic Session Management', () => {
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
     });
+    sandbox.client = createMockControlClient();
 
     // Now spy on the client methods that we need for testing
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
@@ -347,6 +349,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const freshSandbox = Object.assign(freshStub, {
         wsConnect: connect(freshStub)
       });
+      freshSandbox.client = createMockControlClient();
 
       vi.spyOn(freshSandbox.client.utils, 'createSession').mockResolvedValue({
         success: true,
@@ -2693,6 +2696,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
       const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
+      setRetrySpy.mockClear();
       await sandbox.setContainerTimeouts(current);
       expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
       expect(setRetrySpy).not.toHaveBeenCalled();
@@ -2768,6 +2772,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await vi.waitFor(() => {
         expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
       });
+      backupSandbox.client = createMockControlClient();
 
       return { backupSandbox, bucket };
     }
@@ -3121,368 +3126,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('transport configuration', () => {
-    it('defaults to http transport', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((sandbox as any).transport).toBe('http');
-      expect(sandbox.client.getTransportMode()).toBe('http');
-    });
-
-    it('reads websocket transport from SANDBOX_TRANSPORT env var', async () => {
-      const wsCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockResolvedValue(null),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        wsCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        { SANDBOX_TRANSPORT: 'websocket' }
-      );
-
-      await vi.waitFor(() => {
-        expect(wsCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((instance as any).transport).toBe('websocket');
-      expect(instance.client.getTransportMode()).toBe('websocket');
-    });
-
-    it('setTransport switches from http to websocket', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((sandbox as any).transport).toBe('http');
-
-      await sandbox.setTransport('websocket');
-
-      expect((sandbox as any).transport).toBe('websocket');
-      expect(sandbox.client.getTransportMode()).toBe('websocket');
-    });
-
-    it('setTransport switches from websocket to http', async () => {
-      const wsCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockResolvedValue(null),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        wsCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        { SANDBOX_TRANSPORT: 'websocket' }
-      );
-
-      await vi.waitFor(() => {
-        expect(wsCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((instance as any).transport).toBe('websocket');
-
-      await instance.setTransport('http');
-
-      expect((instance as any).transport).toBe('http');
-      expect(instance.client.getTransportMode()).toBe('http');
-    });
-
-    it('setTransport is a no-op when transport has been stored and value is unchanged', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      // First call persists (hasStoredTransport is false)
-      await sandbox.setTransport('http');
-      const putCallsAfterFirst = mockCtx.storage.put.mock.calls.length;
-      const clientBefore = sandbox.client;
-
-      // Second identical call is a no-op
-      await sandbox.setTransport('http');
-
-      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsAfterFirst);
-      expect(sandbox.client).toBe(clientBefore);
-    });
-
-    it('setTransport recreates the client with new transport', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      const clientBefore = sandbox.client;
-
-      await sandbox.setTransport('websocket');
-
-      // Client should be a new instance
-      expect(sandbox.client).not.toBe(clientBefore);
-    });
-
-    it('setTransport recreates the CodeInterpreter so it uses the new client', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      const interpreterBefore = (sandbox as any).codeInterpreter;
-
-      await sandbox.setTransport('websocket');
-
-      const interpreterAfter = (sandbox as any).codeInterpreter;
-      expect(interpreterAfter).not.toBe(interpreterBefore);
-    });
-
-    it('setTransport disconnects the previous client', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      const previousClient = sandbox.client;
-      const disconnectSpy = vi.spyOn(previousClient, 'disconnect');
-
-      await sandbox.setTransport('websocket');
-
-      expect(disconnectSpy).toHaveBeenCalledOnce();
-    });
-
-    it('persists transport to storage before updating in-memory state', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      await sandbox.setTransport('websocket');
-
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'transport',
-        'websocket'
-      );
-    });
-
-    it('persists on first explicit call even when value matches env-derived default', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      // Default transport is 'http'; calling setTransport('http') must still persist
-      await sandbox.setTransport('http');
-
-      expect(mockCtx.storage.put).toHaveBeenCalledWith('transport', 'http');
-
-      // Second identical call is a no-op
-      const putCallsBefore = mockCtx.storage.put.mock.calls.length;
-      await sandbox.setTransport('http');
-      expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
-    });
-
-    it('restores transport from storage on cold start, overriding env var', async () => {
-      const coldCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockImplementation(async (key: string) => {
-            if (key === 'transport') return 'websocket';
-            return null;
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      // Env says 'http' but storage says 'websocket'
-      const instance = new Sandbox(
-        coldCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        {}
-      );
-
-      await vi.waitFor(() => {
-        expect(coldCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-      await Promise.all(
-        (coldCtx.blockConcurrencyWhile as any).mock.results.map(
-          (r: { value: unknown }) => r.value
-        )
-      );
-
-      expect((instance as any).transport).toBe('websocket');
-      expect((instance as any).hasStoredTransport).toBe(true);
-      expect(instance.client.getTransportMode()).toBe('websocket');
-    });
-
-    it('reads rpc transport from SANDBOX_TRANSPORT env var', async () => {
-      const rpcCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockResolvedValue(null),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        rpcCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        { SANDBOX_TRANSPORT: 'rpc' }
-      );
-
-      await vi.waitFor(() => {
-        expect(rpcCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((instance as any).transport).toBe('rpc');
-      expect(instance.client.getTransportMode()).toBe('rpc');
-    });
-
-    it('setTransport switches from http to rpc', async () => {
-      await vi.waitFor(() => {
-        expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((sandbox as any).transport).toBe('http');
-
-      await sandbox.setTransport('rpc');
-
-      expect((sandbox as any).transport).toBe('rpc');
-      expect(sandbox.client.getTransportMode()).toBe('rpc');
-    });
-
-    it('setTransport switches from rpc to http', async () => {
-      const rpcCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockResolvedValue(null),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        rpcCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        { SANDBOX_TRANSPORT: 'rpc' }
-      );
-
-      await vi.waitFor(() => {
-        expect(rpcCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-
-      expect((instance as any).transport).toBe('rpc');
-
-      await instance.setTransport('http');
-
-      expect((instance as any).transport).toBe('http');
-      expect(instance.client.getTransportMode()).toBe('http');
-    });
-
-    it('restores rpc transport from storage on cold start', async () => {
-      const coldCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockImplementation(async (key: string) => {
-            if (key === 'transport') return 'rpc';
-            return null;
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        coldCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        {}
-      );
-
-      await vi.waitFor(() => {
-        expect(coldCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-      await Promise.all(
-        (coldCtx.blockConcurrencyWhile as any).mock.results.map(
-          (r: { value: unknown }) => r.value
-        )
-      );
-
-      expect((instance as any).transport).toBe('rpc');
-      expect((instance as any).hasStoredTransport).toBe(true);
-      expect(instance.client.getTransportMode()).toBe('rpc');
-    });
-
-    it('storage restore does not override env-derived rpc with stored http', async () => {
-      const coldCtx = {
-        ...mockCtx,
-        blockConcurrencyWhile: vi
-          .fn()
-          .mockImplementation(
-            <T>(callback: () => Promise<T>): Promise<T> => callback()
-          ),
-        storage: {
-          get: vi.fn().mockImplementation(async (key: string) => {
-            // Storage has 'http' but env says 'rpc'
-            if (key === 'transport') return 'http';
-            return null;
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          list: vi.fn().mockResolvedValue(new Map())
-        } as any
-      };
-
-      const instance = new Sandbox(
-        coldCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
-        { SANDBOX_TRANSPORT: 'rpc' }
-      );
-
-      await vi.waitFor(() => {
-        expect(coldCtx.blockConcurrencyWhile).toHaveBeenCalled();
-      });
-      await Promise.all(
-        (coldCtx.blockConcurrencyWhile as any).mock.results.map(
-          (r: { value: unknown }) => r.value
-        )
-      );
-
-      // Storage says 'http' which differs from env 'rpc', so storage wins
-      expect((instance as any).transport).toBe('http');
-      expect((instance as any).hasStoredTransport).toBe(true);
-    });
-  });
-
   describe('destroy() coalescing', () => {
     /**
      * Stub the parent Container.destroy() with a caller-controlled promise so
@@ -3687,11 +3330,11 @@ describe('Sandbox - Automatic Session Management', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sandbox.getProcess() — behaviour across HTTP and RPC transports
+// Sandbox.getProcess()
 // ---------------------------------------------------------------------------
 
 describe('Sandbox.getProcess()', () => {
-  async function makeSandbox(transport: 'http' | 'rpc') {
+  async function makeSandbox() {
     const ctx = {
       storage: {
         get: vi.fn().mockResolvedValue(null),
@@ -3705,39 +3348,21 @@ describe('Sandbox.getProcess()', () => {
       waitUntil: vi.fn(),
       id: { toString: () => 'test-id', equals: vi.fn(), name: 'test' } as any
     };
-    const env = transport === 'rpc' ? { SANDBOX_TRANSPORT: 'rpc' } : {};
-    const sb = new Sandbox(ctx as any, env);
+    const sb = new Sandbox(ctx as any, {});
     await vi.waitFor(() =>
       expect(ctx.blockConcurrencyWhile).toHaveBeenCalled()
     );
-    // For RPC transport, sb.client is a ContainerControlClient whose sub-stubs
-    // are capnweb Proxies that reject vi.spyOn. Replace the whole client with a
-    // plain mock object after construction — the individual tests fill in the
-    // methods they need.
-    if (transport === 'rpc') {
-      (sb as any).client = {
-        getTransportMode: () => 'rpc',
-        utils: {
-          createSession: vi.fn().mockResolvedValue({
-            success: true,
-            id: 'default',
-            message: 'ok'
-          } as any)
-        },
-        processes: {}
-      };
-    } else {
-      vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
-        success: true,
-        id: 'default',
-        message: 'ok'
-      } as any);
-    }
+    sb.client = createMockControlClient();
+    vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
+      success: true,
+      id: 'default',
+      message: 'ok'
+    } as any);
     return sb;
   }
 
-  it('HTTP: response with no process field returns null', async () => {
-    const sb = await makeSandbox('http');
+  it('response with no process field returns null', async () => {
+    const sb = await makeSandbox();
     vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
       success: true,
       process: undefined,
@@ -3746,9 +3371,9 @@ describe('Sandbox.getProcess()', () => {
     expect(await sb.getProcess('x')).toBeNull();
   });
 
-  it('RPC: thrown ProcessNotFoundError returns null', async () => {
-    const sb = await makeSandbox('rpc');
-    (sb.client.processes as any).getProcess = vi.fn().mockRejectedValue(
+  it('thrown ProcessNotFoundError returns null', async () => {
+    const sb = await makeSandbox();
+    vi.spyOn(sb.client.processes, 'getProcess').mockRejectedValue(
       new ProcessNotFoundError({
         code: 'PROCESS_NOT_FOUND',
         message: 'Process x not found',

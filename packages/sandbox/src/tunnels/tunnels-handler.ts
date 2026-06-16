@@ -462,10 +462,9 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
    *   4. spawn cloudflared inside the container
    *   5. persist the record + meta
    *
-   * Failure between (2) and (5) intentionally leaves the Cloudflare-side
-   * resources in place so a retry can re-discover them via
-   * `findTunnelByName` and the DNS reuse path. See
-   * `.plans/09-named-tunnel-api.md § Retry-friendly failure model`.
+   * Failure between (2) and (5) leaves the Cloudflare-side resources in
+   * place. Later calls re-discover the tunnel with `findTunnelByName` and
+   * reuse the DNS record through the CNAME upsert path.
    */
   async #provisionNamedTunnel(
     port: number,
@@ -491,8 +490,8 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     const sandboxId = this.#host.sandboxId;
     const tunnelName = `sandbox-${sandboxId}-${name}`;
 
-    // Step 2: reuse an existing tagged tunnel if one is left over from
-    // a previous failed attempt, otherwise create a fresh one.
+    // Step 2: reuse an existing tagged tunnel from an incomplete
+    // provisioning attempt, otherwise create a fresh one.
     let tunnelId: string;
     let tunnelToken: string;
     const existingTunnel = await findTunnelByName({
@@ -506,10 +505,10 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       fetcher: this.#host.fetcher
     });
     if (existingTunnel) {
-      // Reuse the tagged tunnel left over from a previous failed attempt.
+      // Reuse the tagged tunnel from an incomplete provisioning attempt.
       // The opaque `--token` is only returned at create-time, so we fetch
-      // it explicitly here. Re-POSTing the same name would 409 on
-      // Cloudflare's side.
+      // it explicitly here. Re-POSTing the same name returns a conflict
+      // from Cloudflare.
       tunnelId = existingTunnel.id;
       tunnelToken = await getTunnelToken({
         token: config.token,
@@ -889,11 +888,9 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
  *     cache hit falls through to `#provisionNamedTunnel` to respawn
  *     `cloudflared`.
  *
- * Crucially, named-tunnel metadata (including `dnsRecordId`) is
- * preserved so `destroy(port)` and `sandbox.destroy()` can still clean
- * up the Cloudflare-side resources after a restart. Wiping meta
- * unconditionally — the previous behaviour — silently leaked the tunnel
- * and DNS record on every restart.
+ * Named-tunnel metadata, including `dnsRecordId`, is preserved so
+ * `destroy(port)` and `sandbox.destroy()` can clean up Cloudflare-side
+ * resources after a restart.
  */
 export async function pruneTunnelsForRestart(
   storage: TunnelsStorage

@@ -1,17 +1,3 @@
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS';
-
-export interface Handler<TRequest, TResponse> {
-  handle(request: TRequest, context: RequestContext): Promise<TResponse>;
-}
-
-export interface RequestContext {
-  sessionId?: string;
-  sandboxId?: string;
-  corsHeaders: Record<string, string>;
-  requestId: string;
-  timestamp: Date;
-}
-
 export type ValidationResult<T = unknown> =
   | {
       isValid: true;
@@ -24,7 +10,7 @@ export type ValidationResult<T = unknown> =
       errors: ValidationError[];
     };
 
-export interface ValidationError {
+interface ValidationError {
   field: string;
   message: string;
   code: string;
@@ -69,118 +55,6 @@ export function serviceError<T>(error: ServiceError): ServiceResult<T> {
   return { success: false, error } as ServiceResult<T>;
 }
 
-// Handler error response structure - matches BaseHandler.createErrorResponse()
-export interface HandlerErrorResponse {
-  success: false;
-  error: string;
-  code: string;
-  details?: any;
-  timestamp: string;
-}
-
-// Misc handler response interfaces
-export interface PingResponse {
-  message: string;
-  timestamp: string;
-  requestId: string;
-}
-
-export interface CommandsResponse {
-  availableCommands: string[];
-  timestamp: string;
-}
-
-// Process handler response interfaces
-export interface StartProcessResponse {
-  success: true;
-  process: ProcessInfo;
-  message: string;
-  timestamp: string;
-}
-
-export interface ListProcessesResponse {
-  success: true;
-  count: number;
-  processes: ProcessInfo[];
-  timestamp: string;
-}
-
-export interface GetProcessResponse {
-  success: true;
-  process: ProcessInfo;
-  timestamp: string;
-}
-
-export interface KillProcessResponse {
-  success: true;
-  message: string;
-  timestamp: string;
-}
-
-export interface KillAllProcessesResponse {
-  success: true;
-  cleanedCount: number;
-  timestamp: string;
-}
-
-export interface ProcessLogsResponse {
-  success: true;
-  processId: string;
-  stdout: string;
-  stderr: string;
-  timestamp: string;
-}
-
-// Session handler response interfaces
-export interface CreateSessionResponse {
-  message: string;
-  sessionId: string;
-  timestamp: string;
-}
-
-export interface ListSessionsResponse {
-  count: number;
-  sessions: Array<{
-    sessionId: string;
-    // Note: createdAt and hasActiveProcess are not included
-    // as they would require querying each session individually
-  }>;
-  timestamp: string;
-}
-
-export interface Middleware {
-  handle(
-    request: Request,
-    context: RequestContext,
-    next: NextFunction
-  ): Promise<Response>;
-}
-
-export type NextFunction = () => Promise<Response>;
-
-export interface RouteDefinition {
-  method: HttpMethod;
-  path: string;
-  handler: RequestHandler;
-  middleware?: Middleware[];
-}
-
-export type RequestHandler = (
-  request: Request,
-  context: RequestContext
-) => Promise<Response>;
-
-// Session types
-export interface SessionData {
-  id: string;
-  sessionId: string; // Keep for backwards compatibility
-  activeProcess: string | null;
-  createdAt: Date;
-  expiresAt?: Date;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-}
-
 // Process types (enhanced from existing)
 export type ProcessStatus =
   | 'starting'
@@ -217,9 +91,6 @@ export interface ProcessRecord {
   stderrFile?: string;
   monitoringInterval?: Timer;
 }
-
-// Export ProcessRecord as ProcessInfo for consistency with test usage
-export type ProcessInfo = ProcessRecord;
 
 // Process options for container-internal execution (includes session routing)
 export interface ProcessOptions {
@@ -271,13 +142,6 @@ export interface MkdirOptions {
 }
 
 // Git operation types
-export interface GitResult {
-  success: boolean;
-  message: string;
-  targetDirectory?: string;
-  error?: string;
-}
-
 export interface CloneOptions {
   branch?: string;
   targetDir?: string;
@@ -287,74 +151,3 @@ export interface CloneOptions {
   /** Maximum wall-clock time for the git clone subprocess in milliseconds */
   timeoutMs?: number;
 }
-
-export interface ExecuteResponse {
-  success: boolean;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  processId?: string;
-}
-
-export interface ReadFileResponse {
-  success: boolean;
-  content: string;
-  path: string;
-  exitCode: number;
-  encoding: string;
-  timestamp: string;
-}
-
-export interface WriteFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  timestamp: string;
-}
-
-export interface DeleteFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  timestamp: string;
-}
-
-export interface RenameFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  newPath: string;
-  timestamp: string;
-}
-
-export interface MoveFileResponse {
-  success: boolean;
-  exitCode: number;
-  path: string;
-  newPath: string;
-  timestamp: string;
-}
-
-export interface GitCheckoutResponse {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  repoUrl: string;
-  branch: string;
-  targetDir: string;
-  timestamp: string;
-}
-
-export interface MkdirResponse {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  path: string;
-  recursive: boolean;
-  timestamp: string;
-}
-
-// Import StartProcessRequest from @repo/shared for type safety across client/container boundary
-export type { StartProcessRequest } from '@repo/shared';

@@ -1,9 +1,10 @@
 /**
- * TunnelService - container-side orchestration for cloudflared quick tunnels.
+ * TunnelService - container-side orchestration for cloudflared tunnels.
  *
  * Owns the in-memory registry of tunnels running inside this container and
- * delegates the actual subprocess supervision to `TunnelManager`. No
- * Cloudflare API calls happen here; quick tunnels need no credentials.
+ * delegates the actual subprocess supervision to `TunnelManager`. Cloudflare
+ * API calls happen in the SDK; the container only receives the local port and,
+ * for named tunnels, an opaque token.
  *
  * The SDK mints all tunnel ids and passes them in so the SDK can store the
  * id without waiting for the create round-trip to resolve.
@@ -37,8 +38,7 @@ export class TunnelService {
    * @param getControlCallback Optional accessor returning the DO-side
    * control callback exposed over the capnweb session's remote main.
    * Resolved fresh on every cloudflared exit, returning `null` when the
-   * session is not bound yet (legacy callers, tests, or
-   * pre-WS-upgrade window).
+   * session is not bound yet (tests or pre-WS-upgrade window).
    */
   constructor(
     private readonly logger: Logger,

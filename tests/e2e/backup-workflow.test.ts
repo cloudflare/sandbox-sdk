@@ -1120,8 +1120,6 @@ describe('Backup Workflow E2E', () => {
 });
 
 describe('Large localBucket backup (>32 MiB RPC payload)', () => {
-  const isRPCTransport = process.env.TEST_TRANSPORT === 'rpc';
-
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -1152,111 +1150,105 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
     sandbox = null;
   }, 120000);
 
-  test.skipIf(process.env.TEST_TRANSPORT === 'websocket')(
-    'should round-trip a 40 MiB localBucket backup without 1011 WebSocket error',
-    async () => {
-      if (!backupBucketAvailable) return;
+  test('should round-trip a 40 MiB localBucket backup without 1011 WebSocket error', async () => {
+    if (!backupBucketAvailable) return;
 
-      const TEST_DIR = `/workspace/large-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+    const TEST_DIR = `/workspace/large-backup-test-${crypto.randomUUID().slice(0, 8)}`;
 
-      // 40 MiB of incompressible random data — squashfs won't compress it,
-      // so the archive stays large and crosses the 32 MiB RPC payload cap.
-      const seedResult = (await (
-        await fetch(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: [
-              `mkdir -p ${TEST_DIR}`,
-              `dd if=/dev/urandom of=${TEST_DIR}/blob.bin bs=1M count=40 status=none`,
-              `sha256sum ${TEST_DIR}/blob.bin`
-            ].join(' && ')
-          })
-        })
-      ).json()) as ExecuteResponse;
-      expect(seedResult.exitCode).toBe(0);
-      const originalSha = seedResult.stdout?.trim().split(/\s+/)[0];
-      expect(originalSha).toMatch(/^[0-9a-f]{64}$/);
-
-      // Create backup with localBucket: true
-      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+    // 40 MiB of incompressible random data — squashfs won't compress it,
+    // so the archive stays large and crosses the 32 MiB RPC payload cap.
+    const seedResult = (await (
+      await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          dir: TEST_DIR,
-          name: 'large-local-backup',
-          ttl: 3600,
-          localBucket: true
+          command: [
+            `mkdir -p ${TEST_DIR}`,
+            `dd if=/dev/urandom of=${TEST_DIR}/blob.bin bs=1M count=40 status=none`,
+            `sha256sum ${TEST_DIR}/blob.bin`
+          ].join(' && ')
         })
-      });
-      if (!backupResponse.ok) {
-        throw new Error(`createBackup failed: ${await backupResponse.text()}`);
-      }
-      const backup = (await backupResponse.json()) as BackupResponse;
-      expect(backup.id).toBeDefined();
+      })
+    ).json()) as ExecuteResponse;
+    expect(seedResult.exitCode).toBe(0);
+    const originalSha = seedResult.stdout?.trim().split(/\s+/)[0];
+    expect(originalSha).toMatch(/^[0-9a-f]{64}$/);
 
-      // Mutate so the restore is observable, then verify the mutation actually
-      // took effect — if this failed silently the final SHA check could pass
-      // even without a real restore.
-      const mutateResult = (await (
-        await fetch(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: [
-              `echo gone > ${TEST_DIR}/blob.bin`,
-              `sha256sum ${TEST_DIR}/blob.bin`
-            ].join(' && ')
-          })
-        })
-      ).json()) as ExecuteResponse;
-      expect(mutateResult.exitCode).toBe(0);
-      const mutatedSha = mutateResult.stdout?.trim().split(/\s+/)[0];
-      expect(mutatedSha).toMatch(/^[0-9a-f]{64}$/);
-      expect(mutatedSha).not.toBe(originalSha);
+    // Create backup with localBucket: true
+    const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        dir: TEST_DIR,
+        name: 'large-local-backup',
+        ttl: 3600,
+        localBucket: true
+      })
+    });
+    if (!backupResponse.ok) {
+      throw new Error(`createBackup failed: ${await backupResponse.text()}`);
+    }
+    const backup = (await backupResponse.json()) as BackupResponse;
+    expect(backup.id).toBeDefined();
 
-      // Restore — this blows up with 1011 on rpc transport before the fix
-      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+    // Mutate so the restore is observable, then verify the mutation actually
+    // took effect — if this failed silently the final SHA check could pass
+    // even without a real restore.
+    const mutateResult = (await (
+      await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          id: backup.id,
-          dir: TEST_DIR,
-          localBucket: true
+          command: [
+            `echo gone > ${TEST_DIR}/blob.bin`,
+            `sha256sum ${TEST_DIR}/blob.bin`
+          ].join(' && ')
         })
-      });
-      if (!restoreResponse.ok) {
-        const msg = await restoreResponse.text();
-        throw new Error(
-          `restoreBackup failed on ${isRPCTransport ? 'rpc' : (process.env.TEST_TRANSPORT ?? 'http')} transport: ${msg}`
-        );
-      }
-      const restoreResult = (await restoreResponse.json()) as RestoreResponse;
-      expect(restoreResult.success).toBe(true);
+      })
+    ).json()) as ExecuteResponse;
+    expect(mutateResult.exitCode).toBe(0);
+    const mutatedSha = mutateResult.stdout?.trim().split(/\s+/)[0];
+    expect(mutatedSha).toMatch(/^[0-9a-f]{64}$/);
+    expect(mutatedSha).not.toBe(originalSha);
 
-      // Verify byte-for-byte equality via sha256
-      const verifyResult = (await (
-        await fetch(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: [
-              `sha256sum ${TEST_DIR}/blob.bin`,
-              `wc -c ${TEST_DIR}/blob.bin`
-            ].join(' && ')
-          })
+    // Restore large archives over the RPC control channel.
+    const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        id: backup.id,
+        dir: TEST_DIR,
+        localBucket: true
+      })
+    });
+    if (!restoreResponse.ok) {
+      const msg = await restoreResponse.text();
+      throw new Error(`restoreBackup failed: ${msg}`);
+    }
+    const restoreResult = (await restoreResponse.json()) as RestoreResponse;
+    expect(restoreResult.success).toBe(true);
+
+    // Verify byte-for-byte equality via sha256
+    const verifyResult = (await (
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `sha256sum ${TEST_DIR}/blob.bin`,
+            `wc -c ${TEST_DIR}/blob.bin`
+          ].join(' && ')
         })
-      ).json()) as ExecuteResponse;
-      expect(verifyResult.exitCode).toBe(0);
-      const restoredSha = verifyResult.stdout
-        ?.trim()
-        .split('\n')[0]
-        .split(/\s+/)[0];
-      expect(restoredSha).toBe(originalSha);
-      expect(verifyResult.stdout).toContain('41943040');
+      })
+    ).json()) as ExecuteResponse;
+    expect(verifyResult.exitCode).toBe(0);
+    const restoredSha = verifyResult.stdout
+      ?.trim()
+      .split('\n')[0]
+      .split(/\s+/)[0];
+    expect(restoredSha).toBe(originalSha);
+    expect(verifyResult.stdout).toContain('41943040');
 
-      await cleanupDir(workerUrl, headers, TEST_DIR);
-    },
-    180000
-  );
+    await cleanupDir(workerUrl, headers, TEST_DIR);
+  }, 180000);
 });
