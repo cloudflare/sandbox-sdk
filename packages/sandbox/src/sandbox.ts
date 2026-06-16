@@ -72,6 +72,7 @@ import {
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  ContainerUnavailableError,
   CustomDomainRequiredError,
   ErrorCode,
   InvalidBackupConfigError,
@@ -389,6 +390,8 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
+const DEFAULT_SESSION_INIT_MAX_ATTEMPTS = 2;
+const DEFAULT_SESSION_RESTART_SETTLE_MS = 100;
 
 /**
  * Calculate the optimal number of parts for multipart upload/download
@@ -2831,14 +2834,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
           const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
             message:
               'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { phase: 'provisioning' },
+            context: { reason: 'provisioning' },
             httpStatus: 503,
             timestamp: new Date().toISOString(),
             suggestion:
-              'This is expected during first deployment. The SDK will retry automatically.'
+              'The container is still being provisioned. Retry the operation in a moment.'
           };
           return new Response(JSON.stringify(errorBody), {
             status: 503,
@@ -2900,16 +2903,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             });
           }
           const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
             message: 'Container is starting. Please retry in a moment.',
-            context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
-            },
+            context: { reason: 'startup' },
             httpStatus: 503,
             timestamp: new Date().toISOString(),
             suggestion:
-              'The container is booting. The SDK will retry automatically.'
+              'The container is not ready yet. Retry the operation in a moment.'
           };
           return new Response(JSON.stringify(errorBody), {
             status: 503,
@@ -2928,16 +2928,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           error: e instanceof Error ? e.message : String(e)
         });
         const errorBody: ErrorResponse = {
-          code: ErrorCode.INTERNAL_ERROR,
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
           message: 'Container is starting. Please retry in a moment.',
-          context: {
-            phase: 'startup',
-            error: e instanceof Error ? e.message : String(e)
-          },
+          context: { reason: 'startup' },
           httpStatus: 503,
           timestamp: new Date().toISOString(),
           suggestion:
-            'The SDK will retry automatically. If this persists, the container may need redeployment.'
+            'The container is not ready yet. Retry the operation in a moment.'
         };
         return new Response(JSON.stringify(errorBody), {
           status: 503,
@@ -3367,6 +3364,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async ensureDefaultSession(): Promise<string> {
     const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
+    for (
+      let attempt = 1;
+      attempt <= DEFAULT_SESSION_INIT_MAX_ATTEMPTS;
+      attempt++
+    ) {
+      try {
+        return await this.getOrInitializeDefaultSession(sessionId);
+      } catch (error) {
+        if (
+          !this.isDefaultSessionInitContainerRestart(error) ||
+          attempt === DEFAULT_SESSION_INIT_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+        // Give the next container generation a short local settle window
+        // before recreating preparatory default-session state.
+        await new Promise((resolve) =>
+          setTimeout(resolve, DEFAULT_SESSION_RESTART_SETTLE_MS)
+        );
+      }
+    }
+
+    throw new Error('Default session initialization failed unexpectedly');
+  }
+
+  private async getOrInitializeDefaultSession(
+    sessionId: string
+  ): Promise<string> {
     // Fast path: session already initialized in this instance
     if (this.defaultSession === sessionId) {
       return this.defaultSession;
@@ -3396,6 +3421,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.defaultSessionInit = null;
       }
     }
+  }
+
+  private isDefaultSessionInitContainerRestart(error: unknown): boolean {
+    return (
+      error instanceof ContainerUnavailableError &&
+      error.context.reason === 'container_restarted'
+    );
   }
 
   private async initializeDefaultSession(
@@ -3428,9 +3460,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Fail the attempt so the next caller starts fresh against the new
     // container.
     if (generation !== this.containerGeneration) {
-      throw new Error(
-        'Default session initialization was invalidated by a container stop'
-      );
+      throw new ContainerUnavailableError({
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        message:
+          'Container restarted while the default session was being initialized.',
+        context: { reason: 'container_restarted', sessionId },
+        httpStatus: 503,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'The container restarted while the SDK was preparing the default session. Retry the operation to use the new container.'
+      });
     }
 
     // Durable storage is the cross-eviction source of truth for the default

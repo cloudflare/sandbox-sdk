@@ -3,6 +3,8 @@ import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
+  ContainerUnavailableError,
+  ErrorCode,
   InvalidBackupConfigError,
   PortNotExposedError,
   ProcessNotFoundError
@@ -860,27 +862,90 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(calls[2][1]).toBe('sandbox-renamed');
     });
 
-    it('invalidates an in-flight init when onStop runs mid-flight', async () => {
-      let resolveCreate!: (value: unknown) => void;
-      vi.mocked(sandbox.client.utils.createSession).mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveCreate = resolve;
-        }) as any
-      );
+    it('retries default session init once when onStop runs mid-flight', async () => {
+      vi.useFakeTimers();
+      try {
+        let resolveCreate!: (value: unknown) => void;
+        vi.mocked(sandbox.client.utils.createSession)
+          .mockReturnValueOnce(
+            new Promise((resolve) => {
+              resolveCreate = resolve;
+            }) as any
+          )
+          .mockResolvedValueOnce({
+            success: true,
+            id: 'sandbox-default',
+            message: 'ok'
+          } as any);
 
-      const inflight = sandbox.exec('echo one');
-      await (sandbox as any).onStop();
+        const inflight = sandbox.exec('echo one');
+        await (sandbox as any).onStop();
 
-      resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
-      await expect(inflight).rejects.toThrow();
+        resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
+        await vi.advanceTimersByTimeAsync(100);
+        await inflight;
 
-      const defaultSessionPuts = vi
-        .mocked(mockCtx.storage.put)
-        .mock.calls.filter((call) => call[0] === 'defaultSession');
-      expect(defaultSessionPuts).toHaveLength(0);
+        expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+        expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+          'echo one',
+          'sandbox-default',
+          undefined
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('does not join a stale init promise after onStop clears it', async () => {
+    it('surfaces container unavailable when default session init recovery is exhausted', async () => {
+      vi.useFakeTimers();
+      try {
+        let resolveFirst!: (value: unknown) => void;
+        let resolveSecond!: (value: unknown) => void;
+        vi.mocked(sandbox.client.utils.createSession)
+          .mockReturnValueOnce(
+            new Promise((resolve) => {
+              resolveFirst = resolve;
+            }) as any
+          )
+          .mockReturnValueOnce(
+            new Promise((resolve) => {
+              resolveSecond = resolve;
+            }) as any
+          );
+
+        const inflight = sandbox.exec('echo one');
+        inflight.catch(() => {});
+        await (sandbox as any).onStop();
+        resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
+        await vi.advanceTimersByTimeAsync(100);
+
+        await vi.waitFor(() => {
+          expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+        });
+        await (sandbox as any).onStop();
+        resolveSecond({ success: true, id: 'sandbox-default', message: 'ok' });
+        await vi.advanceTimersByTimeAsync(100);
+
+        await expect(inflight).rejects.toMatchObject({
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          context: {
+            reason: 'container_restarted',
+            sessionId: 'sandbox-default'
+          }
+        });
+        await expect(inflight).rejects.toBeInstanceOf(
+          ContainerUnavailableError
+        );
+        const echoOneCalls = vi
+          .mocked(sandbox.client.commands.execute)
+          .mock.calls.filter((call) => call[0] === 'echo one');
+        expect(echoOneCalls).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('joins a fresh default session after onStop clears a stale init', async () => {
       let resolveFirst!: (value: unknown) => void;
       vi.mocked(sandbox.client.utils.createSession)
         .mockReturnValueOnce(
@@ -899,8 +964,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const second = sandbox.exec('echo two');
 
       resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
-      await expect(first).rejects.toThrow();
-      await second;
+      await Promise.all([first, second]);
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });

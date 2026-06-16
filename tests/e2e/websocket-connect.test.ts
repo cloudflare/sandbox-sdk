@@ -5,6 +5,7 @@ import {
   createTestSandbox,
   type TestSandbox
 } from './helpers/global-sandbox';
+import type { WebSocketInitResponse } from './test-worker/types';
 
 /**
  * WebSocket Connection Tests
@@ -26,7 +27,15 @@ describe('WebSocket Connections', () => {
       method: 'POST',
       headers: { 'X-Sandbox-Id': sandboxId }
     });
-    expect(initRes.status).toBe(200);
+    const initBody = await initRes.text();
+    expect(initRes.status, initBody).toBe(200);
+
+    const initResult = JSON.parse(initBody) as WebSocketInitResponse;
+    expect(initResult).toMatchObject({
+      success: true,
+      serversStarted: 1,
+      serversFailed: 0
+    });
   }, 120000);
 
   afterAll(async () => {

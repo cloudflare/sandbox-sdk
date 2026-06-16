@@ -144,6 +144,22 @@ interface RPCErrorPayload {
   context?: Record<string, unknown>;
 }
 
+function isLocalSandboxError(
+  error: Error
+): error is Error & { errorResponse: ErrorResponse } {
+  if (!('errorResponse' in error)) return false;
+  const response = error.errorResponse as Partial<ErrorResponse> | undefined;
+  return (
+    typeof response?.code === 'string' &&
+    Object.hasOwn(ErrorCode, response.code) &&
+    typeof response.message === 'string' &&
+    typeof response.httpStatus === 'number' &&
+    typeof response.timestamp === 'string' &&
+    typeof response.context === 'object' &&
+    response.context !== null
+  );
+}
+
 /**
  * Translate a capnweb-propagated error into a typed SandboxError.
  *
@@ -162,6 +178,10 @@ interface RPCErrorPayload {
  */
 export function translateRPCError(error: unknown): never {
   if (error instanceof Error) {
+    if (isLocalSandboxError(error)) {
+      throw error;
+    }
+
     // Format (1): propagated error properties. Distinguish from arbitrary
     // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
     // code against the ErrorCode registry.
