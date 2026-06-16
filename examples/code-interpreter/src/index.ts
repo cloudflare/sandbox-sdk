@@ -1,5 +1,8 @@
 import { getSandbox } from '@cloudflare/sandbox';
-import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+import {
+  type Interpreter,
+  withInterpreter
+} from '@cloudflare/sandbox/interpreter';
 import { generateText, stepCountIs, tool } from 'ai';
 import { createWorkersAI } from 'workers-ai-provider';
 import { z } from 'zod';
@@ -9,15 +12,27 @@ export { Sandbox } from '@cloudflare/sandbox';
 const API_PATH = '/run';
 const MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct' as const;
 
-async function executePythonCode(env: Env, code: string): Promise<string> {
-  const sandboxId = env.Sandbox.idFromName('default');
-  const sandbox = getSandbox(env.Sandbox, sandboxId.toString().slice(0, 63));
-  const interpreter = withInterpreter(sandbox);
+// Reuse one interpreter per sandbox. The interpreter caches its default
+// context, so subsequent runCode() calls reuse it instead of creating a new
+// container context on every request.
+const interpreters = new Map<string, Interpreter>();
 
-  const pythonCtx = await interpreter.createContext({ language: 'python' });
-  const result = await interpreter.runCode(code, {
-    context: pythonCtx
-  });
+function getInterpreter(env: Env): Interpreter {
+  const sandboxId = env.Sandbox.idFromName('default');
+  const sandboxKey = sandboxId.toString().slice(0, 63);
+  let interpreter = interpreters.get(sandboxKey);
+  if (!interpreter) {
+    const sandbox = getSandbox(env.Sandbox, sandboxKey);
+    interpreter = withInterpreter(sandbox);
+    interpreters.set(sandboxKey, interpreter);
+  }
+  return interpreter;
+}
+
+async function executePythonCode(env: Env, code: string): Promise<string> {
+  const interpreter = getInterpreter(env);
+
+  const result = await interpreter.runCode(code, { language: 'python' });
 
   // Extract output from results (expressions)
   if (result.results?.length) {
