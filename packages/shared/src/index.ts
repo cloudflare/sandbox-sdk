@@ -88,6 +88,7 @@ export type {
   SandboxControlCallback,
   SandboxFilesAPI,
   SandboxGitAPI,
+  SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTunnelsAPI,
@@ -113,9 +114,6 @@ export type {
   CheckChangesOptions,
   CheckChangesRequest,
   CheckChangesResult,
-  ContextCreateResult,
-  ContextDeleteResult,
-  ContextListResult,
   DeleteFileResult,
   DirectoryBackup,
   Disposable,
@@ -137,8 +135,6 @@ export type {
   GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
-  // Code interpreter result types
-  InterpreterHealthResult,
   ISandbox,
   ListFilesOptions,
   ListFilesResult,

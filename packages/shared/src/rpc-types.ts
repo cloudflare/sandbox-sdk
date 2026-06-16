@@ -6,6 +6,13 @@
  */
 
 import type {
+  CodeContext,
+  CreateContextOptions,
+  ExecutionError,
+  OutputMessage,
+  Result
+} from './interpreter-types.js';
+import type {
   CreateBackupResponse,
   RestoreBackupResponse,
   UploadedPart,
@@ -43,6 +50,7 @@ export interface SandboxAPI {
   processes: SandboxProcessesAPI;
   ports: SandboxPortsAPI;
   git: SandboxGitAPI;
+  interpreter: SandboxInterpreterAPI;
   utils: SandboxUtilsAPI;
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
@@ -163,6 +171,29 @@ export interface SandboxGitAPI {
       timeoutMs?: number;
     }
   ): Promise<GitCheckoutResult>;
+}
+
+export interface SandboxInterpreterAPI {
+  createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
+  streamCode(
+    contextId: string,
+    code: string,
+    language?: string
+  ): Promise<ReadableStream<Uint8Array>>;
+  runCodeStream(
+    contextId: string | undefined,
+    code: string,
+    language: string | undefined,
+    callbacks: {
+      onStdout?: (output: OutputMessage) => void | Promise<void>;
+      onStderr?: (output: OutputMessage) => void | Promise<void>;
+      onResult?: (result: Result) => void | Promise<void>;
+      onError?: (error: ExecutionError) => void | Promise<void>;
+    },
+    timeoutMs?: number
+  ): Promise<void>;
+  listCodeContexts(): Promise<CodeContext[]>;
+  deleteCodeContext(contextId: string): Promise<void>;
 }
 
 export interface SandboxUtilsAPI {

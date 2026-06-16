@@ -15,12 +15,19 @@
  */
 
 import {
+  Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
-  proxyToSandbox,
-  Sandbox
+  proxyToSandbox
 } from '@cloudflare/sandbox';
-import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+import {
+  type CodeContext,
+  type CreateContextOptions,
+  type ExecutionResult,
+  type Interpreter,
+  type RunCodeOptions,
+  withInterpreter
+} from '@cloudflare/sandbox/interpreter';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -41,10 +48,42 @@ import type {
   WebSocketInitResponse
 } from './types';
 
+// The interpreter extension is instance-only (talks to the container over RPC),
+// so it is bound to the Sandbox instance and exposed via DO-RPC methods the
+// Worker calls on the stub.
+export class Sandbox extends BaseSandbox<Env> {
+  interpreter: Interpreter = withInterpreter(this);
+
+  createCodeContext(options?: CreateContextOptions): Promise<CodeContext> {
+    return this.interpreter.createContext(options);
+  }
+
+  listCodeContexts(): Promise<CodeContext[]> {
+    return this.interpreter.listContexts();
+  }
+
+  deleteCodeContext(contextId: string): Promise<void> {
+    return this.interpreter.deleteContext(contextId);
+  }
+
+  runCodeExecution(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ExecutionResult> {
+    return this.interpreter.runCode(code, options);
+  }
+
+  runCodeStreamExecution(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ReadableStream> {
+    return this.interpreter.runCodeStream(code, options);
+  }
+}
+
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
 export { ContainerProxy };
-export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
@@ -182,7 +221,7 @@ async function parseBody(request: Request): Promise<any> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // Route requests to exposed container ports via their preview URLs
-    const proxyResponse = await proxyToSandbox(request, env);
+    const proxyResponse = await proxyToSandbox<Sandbox, Env>(request, env);
     if (proxyResponse) return proxyResponse;
 
     const url = new URL(request.url);
@@ -1075,8 +1114,7 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/context/create' &&
         request.method === 'POST'
       ) {
-        const interpreter = withInterpreter(sandbox);
-        const context = await interpreter.createContext(body);
+        const context = await sandbox.createCodeContext(body);
         return new Response(JSON.stringify(context), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1087,8 +1125,7 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/context/list' &&
         request.method === 'GET'
       ) {
-        const interpreter = withInterpreter(sandbox);
-        const contexts = await interpreter.listContexts();
+        const contexts = await sandbox.listCodeContexts();
         return new Response(JSON.stringify(contexts), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1099,10 +1136,9 @@ console.log('Terminal server on port ' + port);
         url.pathname.startsWith('/api/code/context/') &&
         request.method === 'DELETE'
       ) {
-        const interpreter = withInterpreter(sandbox);
         const pathParts = url.pathname.split('/');
         const contextId = pathParts[4]; // /api/code/context/:id
-        await interpreter.deleteContext(contextId);
+        await sandbox.deleteCodeContext(contextId);
         return new Response(JSON.stringify({ success: true, contextId }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1110,8 +1146,7 @@ console.log('Terminal server on port ' + port);
 
       // Code Interpreter - Execute Code
       if (url.pathname === '/api/code/execute' && request.method === 'POST') {
-        const interpreter = withInterpreter(sandbox);
-        const execution = await interpreter.runCode(
+        const execution = await sandbox.runCodeExecution(
           body.code,
           body.options || {}
         );
@@ -1125,8 +1160,7 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/code/execute/stream' &&
         request.method === 'POST'
       ) {
-        const interpreter = withInterpreter(sandbox);
-        const stream = await interpreter.runCodeStream(
+        const stream = await sandbox.runCodeStreamExecution(
           body.code,
           body.options || {}
         );

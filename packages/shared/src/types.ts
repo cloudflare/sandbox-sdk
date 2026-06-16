@@ -959,37 +959,6 @@ export interface PortExposeResult {
   name?: string;
 }
 
-// Code interpreter result types
-export interface InterpreterHealthResult {
-  success: boolean;
-  status: 'healthy' | 'unhealthy';
-  timestamp: string;
-}
-
-export interface ContextCreateResult {
-  success: boolean;
-  contextId: string;
-  language: string;
-  cwd?: string;
-  timestamp: string;
-}
-
-export interface ContextListResult {
-  success: boolean;
-  contexts: Array<{
-    id: string;
-    language: string;
-    cwd?: string;
-  }>;
-  timestamp: string;
-}
-
-export interface ContextDeleteResult {
-  success: boolean;
-  contextId: string;
-  timestamp: string;
-}
-
 // Miscellaneous result types
 export interface HealthCheckResult {
   success: boolean;

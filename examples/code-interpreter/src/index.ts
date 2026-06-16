@@ -1,5 +1,6 @@
-import { getSandbox } from '@cloudflare/sandbox';
+import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
 import {
+  type ExecutionResult,
   type Interpreter,
   withInterpreter
 } from '@cloudflare/sandbox/interpreter';
@@ -7,33 +8,21 @@ import { generateText, stepCountIs, tool } from 'ai';
 import { createWorkersAI } from 'workers-ai-provider';
 import { z } from 'zod';
 
-export { Sandbox } from '@cloudflare/sandbox';
+// The interpreter extension talks to the container over RPC, so it is bound to
+// the Sandbox instance (`this`), not the stub returned by getSandbox(). Holding
+// it as a field lets it cache its default context across requests.
+export class Sandbox extends BaseSandbox<Env> {
+  interpreter: Interpreter = withInterpreter(this);
+
+  async runPython(code: string): Promise<ExecutionResult> {
+    return this.interpreter.runCode(code, { language: 'python' });
+  }
+}
 
 const API_PATH = '/run';
 const MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct' as const;
 
-// Reuse one interpreter per sandbox. The interpreter caches its default
-// context, so subsequent runCode() calls reuse it instead of creating a new
-// container context on every request.
-const interpreters = new Map<string, Interpreter>();
-
-function getInterpreter(env: Env): Interpreter {
-  const sandboxId = env.Sandbox.idFromName('default');
-  const sandboxKey = sandboxId.toString().slice(0, 63);
-  let interpreter = interpreters.get(sandboxKey);
-  if (!interpreter) {
-    const sandbox = getSandbox(env.Sandbox, sandboxKey);
-    interpreter = withInterpreter(sandbox);
-    interpreters.set(sandboxKey, interpreter);
-  }
-  return interpreter;
-}
-
-async function executePythonCode(env: Env, code: string): Promise<string> {
-  const interpreter = getInterpreter(env);
-
-  const result = await interpreter.runCode(code, { language: 'python' });
-
+function formatResult(result: ExecutionResult): string {
   // Extract output from results (expressions)
   if (result.results?.length) {
     const outputs = result.results
@@ -55,6 +44,13 @@ async function executePythonCode(env: Env, code: string): Promise<string> {
   return result.error
     ? `Error: ${result.error}`
     : output || 'Code executed successfully';
+}
+
+async function executePythonCode(env: Env, code: string): Promise<string> {
+  const sandboxId = env.Sandbox.idFromName('default');
+  const sandbox = getSandbox(env.Sandbox, sandboxId.toString().slice(0, 63));
+  const result = await sandbox.runPython(code);
+  return formatResult(result);
 }
 
 async function handleAIRequest(input: string, env: Env): Promise<string> {
