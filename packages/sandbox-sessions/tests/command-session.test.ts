@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { CommandSession } from '../src/index';
+import { CommandSession, type StdioChunk } from '../src/index';
+
+function collect(output: StdioChunk[], stream: StdioChunk['stream']): string {
+  return output
+    .filter((chunk) => chunk.stream === stream)
+    .map((chunk) => chunk.data)
+    .join('');
+}
 
 describe('CommandSession', () => {
   it('preserves shell state and returns final stdout and stderr', async () => {
@@ -157,6 +164,109 @@ EOF`);
     expect(readResult.stdout).toBe('');
     expect(nextResult.exitCode).toBe(0);
     expect(nextResult.stdout).toBe('still-alive\n');
+  });
+
+  it('starts a process from session state without writing back mutations', async () => {
+    await using session = await CommandSession.create({ cwd: '/tmp' });
+
+    await session.exec(String.raw`mkdir -p sandbox-process-test && cd sandbox-process-test
+export PROCESS_VALUE=original
+alias say_process='printf "alias:%s\n" "$PROCESS_VALUE"'
+process_func() { printf "func:%s\n" "$PROCESS_VALUE"; }`);
+
+    const process = await session.startProcess(`pwd
+say_process
+process_func
+export PROCESS_VALUE=changed
+cd /`);
+    const result = await process.wait();
+    const afterProcess = await session.exec(
+      'pwd; printf "%s\n" "$PROCESS_VALUE"'
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(
+      '/tmp/sandbox-process-test\nalias:original\nfunc:original\n'
+    );
+    expect(result.stderr).toBe('');
+    expect(afterProcess.stdout).toBe('/tmp/sandbox-process-test\noriginal\n');
+  });
+
+  it('streams process output before completion', async () => {
+    await using session = await CommandSession.create();
+    const streamed: StdioChunk[] = [];
+    const firstOutput = Promise.withResolvers<void>();
+
+    const process = await session.startProcess(
+      String.raw`printf 'before-sleep\n'; sleep 1; printf 'after-sleep\n'; printf 'err\n' >&2`,
+      {
+        onOutput: (chunk) => {
+          streamed.push(chunk);
+          if (
+            chunk.stream === 'stdout' &&
+            chunk.data.includes('before-sleep')
+          ) {
+            firstOutput.resolve();
+          }
+        }
+      }
+    );
+
+    await Promise.race([
+      firstOutput.promise,
+      Bun.sleep(750).then(() => {
+        throw new Error('Timed out waiting for live process output');
+      })
+    ]);
+    const stateAfterFirstOutput = await Promise.race([
+      process.wait().then(() => 'settled'),
+      Bun.sleep(100).then(() => 'pending')
+    ]);
+    const result = await process.wait();
+    expect(stateAfterFirstOutput).toBe('pending');
+    expect(result.exitCode).toBe(0);
+    expect(collect(streamed, 'stdout')).toBe('before-sleep\nafter-sleep\n');
+    expect(collect(streamed, 'stderr')).toBe('err\n');
+    expect(result.stdout).toBe(collect(streamed, 'stdout'));
+    expect(result.stderr).toBe(collect(streamed, 'stderr'));
+  });
+
+  it('kills a running process and keeps the session usable', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess("printf 'started\n'; sleep 10");
+    await process.kill();
+    const result = await Promise.race([
+      process.wait(),
+      Bun.sleep(750).then(() => {
+        throw new Error('Timed out waiting for killed process');
+      })
+    ]);
+    const afterKill = await session.exec("printf 'session-alive\n'");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toBe('started\n');
+    expect(afterKill.exitCode).toBe(0);
+    expect(afterKill.stdout).toBe('session-alive\n');
+  });
+
+  it('kills a process waiting on a foreground child', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess(
+      "printf 'started\n'; bash -c 'sleep 10'"
+    );
+    await process.kill();
+
+    const result = await Promise.race([
+      process.wait(),
+      Bun.sleep(750).then(() => {
+        throw new Error('Timed out waiting for killed child process');
+      })
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toBe('started\n');
   });
 
   it('marks the session failed after command timeout', async () => {

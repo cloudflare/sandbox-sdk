@@ -27,28 +27,71 @@ export type CommandSessionExecResult = {
   stderr: string;
 };
 
-type PendingCommand = {
-  id: string;
-  resolve: (result: CommandSessionExecResult) => void;
-  reject: (error: Error) => void;
-  timeout?: ReturnType<typeof setTimeout>;
+export type StdioChunk = {
+  stream: 'stdout' | 'stderr';
+  data: string;
+  seq: number;
 };
+
+export type CommandSessionStartProcessOptions = {
+  onOutput?: (chunk: StdioChunk) => void;
+};
+
+export type CommandSessionProcessResult = CommandSessionExecResult;
+
+type PendingOperation =
+  | {
+      kind: 'exec';
+      id: string;
+      resolve: (result: CommandSessionExecResult) => void;
+      reject: (error: Error) => void;
+      timeout?: ReturnType<typeof setTimeout>;
+    }
+  | {
+      kind: 'startProcess';
+      id: string;
+      onOutput?: (chunk: StdioChunk) => void;
+      resolve: (process: CommandSessionProcess) => void;
+      reject: (error: Error) => void;
+    };
+
+type ProcessCompletion = {
+  output: StdioChunk[];
+  nextSeq: number;
+  onOutput?: (chunk: StdioChunk) => void;
+  resolve: (result: CommandSessionProcessResult) => void;
+  reject: (error: Error) => void;
+};
+
+export class CommandSessionProcess {
+  constructor(
+    private readonly pid: number,
+    private readonly completion: Promise<CommandSessionProcessResult>
+  ) {}
+
+  wait(): Promise<CommandSessionProcessResult> {
+    return this.completion;
+  }
+
+  async kill(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+    try {
+      process.kill(this.pid, signal);
+    } catch {}
+  }
+}
 
 export class CommandSession implements AsyncDisposable {
   private readonly shell: Bun.Subprocess;
   private readonly stdin: StdinWriter;
   private readonly tempDir: string;
   private readonly ready = Promise.withResolvers<void>();
+  private readonly processes = new Map<string, ProcessCompletion>();
   private state: SessionState = 'starting';
   private outputBuffer = '';
-  private pending?: PendingCommand;
+  private pending?: PendingOperation;
   private failure?: Error;
   private cleanupPromise?: Promise<void>;
-  private operationQueue: Promise<CommandSessionExecResult> = Promise.resolve({
-    exitCode: 0,
-    stdout: '',
-    stderr: ''
-  });
+  private operationQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: {
     shell: Bun.Subprocess;
@@ -109,15 +152,14 @@ export class CommandSession implements AsyncDisposable {
     command: string,
     options: CommandSessionExecOptions = {}
   ): Promise<CommandSessionExecResult> {
-    const run = async (): Promise<CommandSessionExecResult> =>
-      this.execNow(command, options);
-    const result = this.operationQueue.then(run, run);
-    this.operationQueue = result.catch(() => ({
-      exitCode: 1,
-      stdout: '',
-      stderr: ''
-    }));
-    return result;
+    return this.enqueueOperation(() => this.execNow(command, options));
+  }
+
+  async startProcess(
+    command: string,
+    options: CommandSessionStartProcessOptions = {}
+  ): Promise<CommandSessionProcess> {
+    return this.enqueueOperation(() => this.startProcessNow(command, options));
   }
 
   async close(): Promise<void> {
@@ -132,11 +174,21 @@ export class CommandSession implements AsyncDisposable {
     }
     this.ready.reject(error);
     this.rejectPending(error);
+    this.rejectProcesses(error);
     await this.cleanupResources();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.close();
+  }
+
+  private enqueueOperation<T>(run: () => Promise<T>): Promise<T> {
+    const result = this.operationQueue.then(run, run);
+    this.operationQueue = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
   }
 
   private async waitForReady(): Promise<void> {
@@ -152,12 +204,12 @@ export class CommandSession implements AsyncDisposable {
     command: string,
     options: CommandSessionExecOptions
   ): Promise<CommandSessionExecResult> {
-    this.assertReadyForExec();
+    this.assertReadyForOperation();
 
     const id = crypto.randomUUID().replaceAll('-', '');
     const encodedCommand = Buffer.from(command).toString('base64');
     const result = new Promise<CommandSessionExecResult>((resolve, reject) => {
-      const pending: PendingCommand = { id, resolve, reject };
+      const pending: PendingOperation = { kind: 'exec', id, resolve, reject };
       if (options.timeoutMs !== undefined) {
         pending.timeout = setTimeout(() => {
           const error = new Error(`Timed out waiting for command ${id}`);
@@ -172,7 +224,31 @@ export class CommandSession implements AsyncDisposable {
     return result;
   }
 
-  private assertReadyForExec(): void {
+  private async startProcessNow(
+    command: string,
+    options: CommandSessionStartProcessOptions
+  ): Promise<CommandSessionProcess> {
+    this.assertReadyForOperation();
+
+    const id = crypto.randomUUID().replaceAll('-', '');
+    const encodedCommand = Buffer.from(command).toString('base64');
+    const process = new Promise<CommandSessionProcess>((resolve, reject) => {
+      this.pending = {
+        kind: 'startProcess',
+        id,
+        onOutput: options.onOutput,
+        resolve,
+        reject
+      };
+    });
+
+    await this.writeShell(
+      `__sandbox_sessions_start_process ${id} ${encodedCommand}\n`
+    );
+    return process;
+  }
+
+  private assertReadyForOperation(): void {
     if (this.state === 'closed' || this.state === 'closing') {
       throw new Error('Command session is closed');
     }
@@ -183,7 +259,7 @@ export class CommandSession implements AsyncDisposable {
       throw new Error(`Command session is ${this.state}`);
     }
     if (this.pending) {
-      throw new Error('Command session already has a pending command');
+      throw new Error('Command session already has a pending operation');
     }
   }
 
@@ -237,7 +313,7 @@ export class CommandSession implements AsyncDisposable {
       return;
     }
 
-    const [, type, id, exitCode, stdoutPayload = '', stderrPayload = ''] =
+    const [, type, id, field, stdoutPayload = '', stderrPayload = ''] =
       line.split('|');
     if (type === 'READY') {
       if (this.state === 'starting') {
@@ -247,21 +323,86 @@ export class CommandSession implements AsyncDisposable {
       return;
     }
 
+    if (type === 'PROCESS_OUTPUT') {
+      this.recordProcessOutput(id, field, stdoutPayload);
+      return;
+    }
+
+    if (type === 'PROCESS_DONE') {
+      this.resolveProcess(id, field);
+      return;
+    }
+
     if (!this.pending || this.pending.id !== id) {
       return;
     }
 
-    if (type === 'DONE') {
+    if (type === 'DONE' && this.pending.kind === 'exec') {
       const pending = this.pending;
       this.pending = undefined;
       this.cleanupPending(pending);
-      const parsedExitCode = Number.parseInt(exitCode, 10);
-      pending.resolve({
-        exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
-        stdout: decodePayload(stdoutPayload),
-        stderr: decodePayload(stderrPayload)
-      });
+      pending.resolve(decodeResult(field, stdoutPayload, stderrPayload));
+      return;
     }
+
+    if (type === 'PROCESS_STARTED' && this.pending.kind === 'startProcess') {
+      const pending = this.pending;
+      this.pending = undefined;
+      const completion = Promise.withResolvers<CommandSessionProcessResult>();
+      this.processes.set(id, {
+        output: [],
+        nextSeq: 0,
+        onOutput: pending.onOutput,
+        resolve: completion.resolve,
+        reject: completion.reject
+      });
+      pending.resolve(
+        new CommandSessionProcess(parsePID(field), completion.promise)
+      );
+    }
+  }
+
+  private recordProcessOutput(
+    id: string,
+    stream: string,
+    payload: string
+  ): void {
+    const process = this.processes.get(id);
+    if (!process || (stream !== 'stdout' && stream !== 'stderr')) {
+      return;
+    }
+
+    const data = decodePayload(payload);
+    if (data.length === 0) {
+      return;
+    }
+
+    const chunk: StdioChunk = {
+      stream,
+      data,
+      seq: process.nextSeq++
+    };
+    process.output.push(chunk);
+    try {
+      process.onOutput?.(chunk);
+    } catch (error) {
+      process.reject(toError(error));
+      this.processes.delete(id);
+    }
+  }
+
+  private resolveProcess(id: string, exitCode: string): void {
+    const process = this.processes.get(id);
+    if (!process) {
+      return;
+    }
+    this.processes.delete(id);
+    const parsedExitCode = Number.parseInt(exitCode, 10);
+    process.resolve({
+      exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
+      stdout: collectProcessOutput(process.output, 'stdout'),
+      stderr: collectProcessOutput(process.output, 'stderr')
+    });
   }
 
   private fail(error: Error): void {
@@ -271,6 +412,7 @@ export class CommandSession implements AsyncDisposable {
     }
     this.ready.reject(error);
     this.rejectPending(error);
+    this.rejectProcesses(error);
   }
 
   private rejectPending(error: Error): void {
@@ -283,8 +425,15 @@ export class CommandSession implements AsyncDisposable {
     pending.reject(error);
   }
 
-  private cleanupPending(pending: PendingCommand): void {
-    if (pending.timeout) {
+  private rejectProcesses(error: Error): void {
+    for (const process of this.processes.values()) {
+      process.reject(error);
+    }
+    this.processes.clear();
+  }
+
+  private cleanupPending(pending: PendingOperation): void {
+    if (pending.kind === 'exec' && pending.timeout) {
       clearTimeout(pending.timeout);
     }
   }
@@ -310,8 +459,43 @@ export class CommandSession implements AsyncDisposable {
   }
 }
 
+function decodeResult(
+  exitCode: string,
+  stdoutPayload: string,
+  stderrPayload: string
+): CommandSessionExecResult {
+  const parsedExitCode = Number.parseInt(exitCode, 10);
+  return {
+    exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
+    stdout: decodePayload(stdoutPayload),
+    stderr: decodePayload(stderrPayload)
+  };
+}
+
+function collectProcessOutput(
+  output: StdioChunk[],
+  stream: StdioChunk['stream']
+): string {
+  return output
+    .filter((chunk) => chunk.stream === stream)
+    .map((chunk) => chunk.data)
+    .join('');
+}
+
 function decodePayload(payload: string): string {
   return Buffer.from(payload, 'base64').toString();
+}
+
+function parsePID(pid: string): number {
+  const parsedPID = Number.parseInt(pid, 10);
+  if (!Number.isInteger(parsedPID) || parsedPID <= 0) {
+    throw new Error(`Invalid process PID ${pid}`);
+  }
+  return parsedPID;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function getShellStdin(shell: Bun.Subprocess): StdinWriter {
