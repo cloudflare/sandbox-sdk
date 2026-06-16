@@ -1,3 +1,4 @@
+import { StatelessCommandRunner } from '@repo/sandbox-execution';
 import type { ExecEvent, Logger } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
 import type {
@@ -67,6 +68,8 @@ export interface ExecutionStreamResult {
 }
 
 export class ExecutionService {
+  private readonly statelessCommands = new StatelessCommandRunner();
+
   constructor(
     private sessionManager: SessionManager,
     private logger: Logger
@@ -279,32 +282,20 @@ export class ExecutionService {
     let exitCode: number | undefined;
 
     try {
-      const spawned = this.spawnSessionlessProcess(command, options);
-      const stdoutPromise = this.readStreamText(spawned.stdout);
-      const stderrPromise = this.readStreamText(spawned.stderr);
-      const completion = await this.waitForProcessCompletion(
-        spawned,
-        options.timeoutMs
-      );
-      const [stdout, stderr] = await Promise.all([
-        stdoutPromise,
-        stderrPromise
-      ]);
-      const finalStderr = completion.timedOut
-        ? this.appendLine(
-            stderr,
-            `Command timed out after ${options.timeoutMs}ms`
-          )
-        : stderr;
+      const result = await this.statelessCommands.exec(command, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeoutMs
+      });
 
-      exitCode = completion.exitCode;
+      exitCode = result.exitCode;
       outcome = 'success';
 
       return serviceSuccess({
         command,
-        stdout,
-        stderr: finalStderr,
-        exitCode: completion.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
         duration: Date.now() - startTime,
         timestamp
       });
@@ -585,16 +576,6 @@ export class ExecutionService {
     }
   }
 
-  private async readStreamText(
-    stream: ReadableStream<Uint8Array> | null
-  ): Promise<string> {
-    if (!stream) {
-      return '';
-    }
-
-    return await new Response(stream).text();
-  }
-
   private async pipeStreamToEvents(
     stream: ReadableStream<Uint8Array> | null,
     type: 'stdout' | 'stderr',
@@ -634,16 +615,6 @@ export class ExecutionService {
     } finally {
       reader.releaseLock();
     }
-  }
-
-  private appendLine(existing: string, nextLine: string): string {
-    if (existing.length === 0) {
-      return nextLine;
-    }
-
-    return existing.endsWith('\n')
-      ? `${existing}${nextLine}`
-      : `${existing}\n${nextLine}`;
   }
 
   private isServiceError(error: unknown): error is {

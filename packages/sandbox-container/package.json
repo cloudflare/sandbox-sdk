@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@repo/sandbox-execution": "*",
     "@repo/shared": "*",
     "acorn": "^8.14.0",
     "async-mutex": "^0.5.0",
