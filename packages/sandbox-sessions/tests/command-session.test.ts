@@ -247,6 +247,22 @@ EOF`);
     expect(collect(nextResult.output, 'stdout')).toBe('still-alive\n');
   });
 
+  it('marks the session failed after command timeout', async () => {
+    const session = await CommandSession.create();
+
+    try {
+      await expect(session.exec('sleep 10', { timeoutMs: 50 })).rejects.toThrow(
+        'Timed out waiting for command'
+      );
+
+      await expect(session.exec("printf 'after-timeout\n'")).rejects.toThrow(
+        'Timed out waiting for command'
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   it('does not expose terminal APIs', async () => {
     await using session = await CommandSession.create();
 
