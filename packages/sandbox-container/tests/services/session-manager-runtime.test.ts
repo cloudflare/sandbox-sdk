@@ -237,6 +237,24 @@ printf "done\n"`,
     }
   });
 
+  it('does not expose pty on runtime sessions', async () => {
+    const sessionId = 'runtime-no-pty-session';
+    const createResult = await sessionManager.executeInSession(
+      sessionId,
+      'printf "ready"',
+      { cwd: testDir }
+    );
+    expect(createResult.success).toBe(true);
+
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, Record<string, unknown>>;
+    };
+    const session = managerInternals.sessions.get(sessionId);
+
+    expect(session).toBeDefined();
+    expect(session).not.toHaveProperty('pty');
+  });
+
   it('does not expose legacy execStream on runtime sessions', async () => {
     const sessionId = 'runtime-no-exec-stream-session';
     const createResult = await sessionManager.executeInSession(
