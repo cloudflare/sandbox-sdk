@@ -81,6 +81,25 @@ EOF`);
     expect(collect(useSourcedState.output, 'stdout')).toBe('sourced:ok\n');
   });
 
+  it('queues concurrent exec calls in order', async () => {
+    await using session = await CommandSession.create();
+
+    const setState = session.exec(
+      "sleep 1; export QUEUED_VALUE=ok; printf 'first\n'"
+    );
+    const readState = session.exec('printf "%s\n" "$QUEUED_VALUE"');
+
+    const [setStateResult, readStateResult] = await Promise.all([
+      setState,
+      readState
+    ]);
+
+    expect(setStateResult.exitCode).toBe(0);
+    expect(readStateResult.exitCode).toBe(0);
+    expect(collect(setStateResult.output, 'stdout')).toBe('first\n');
+    expect(collect(readStateResult.output, 'stdout')).toBe('ok\n');
+  });
+
   it('streams the same output chunks returned in the final result', async () => {
     await using session = await CommandSession.create();
     const streamed: StdioChunk[] = [];
