@@ -7,7 +7,7 @@ import { z } from 'zod';
 export { Sandbox } from '@cloudflare/sandbox';
 
 const API_PATH = '/run';
-const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8' as const;
+const MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct' as const;
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
@@ -47,6 +47,10 @@ async function handleAIRequest(input: string, env: Env): Promise<string> {
 
   const result = await generateText({
     model: workersai(MODEL),
+    system:
+      'You are a helpful assistant with access to a Python code execution tool. ' +
+      'When asked to calculate something or run code, always use the execute_python tool. ' +
+      'After receiving the tool result, summarize the output for the user.',
     messages: [{ role: 'user', content: input }],
     tools: {
       execute_python: tool({
