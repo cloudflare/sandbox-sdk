@@ -104,6 +104,7 @@ export class ExecutionService {
         {
           cwd: options.cwd,
           env: options.env,
+          timeoutMs: options.timeoutMs,
           origin: options.origin
         },
         options.commandId,

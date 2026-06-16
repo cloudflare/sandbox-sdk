@@ -1,7 +1,10 @@
 // SessionManager Service - Manages persistent execution sessions
 
 import { rm } from 'node:fs/promises';
-import { CommandSession } from '@repo/sandbox-execution';
+import {
+  CommandSession,
+  type CommandSessionProcess
+} from '@repo/sandbox-execution';
 import {
   type ExecEvent,
   type Logger,
@@ -30,8 +33,68 @@ import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
 
+type RuntimeProcessStreamOptions = {
+  commandId: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  origin?: 'user' | 'internal';
+};
+
+type RuntimeProcessEntry = {
+  controller: AbortController;
+  process?: CommandSessionProcess;
+};
+
+class ExecEventQueue implements AsyncIterable<ExecEvent> {
+  private readonly events: ExecEvent[] = [];
+  private readonly waiters: Array<(result: IteratorResult<ExecEvent>) => void> =
+    [];
+  private closed = false;
+
+  push(event: ExecEvent): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter({ done: false, value: event });
+      return;
+    }
+    this.events.push(event);
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter({ done: true, value: undefined });
+    }
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<ExecEvent> {
+    while (true) {
+      const next = await this.next();
+      if (next.done) {
+        return;
+      }
+      yield next.value;
+    }
+  }
+
+  private next(): Promise<IteratorResult<ExecEvent>> {
+    const event = this.events.shift();
+    if (event) {
+      return Promise.resolve({ done: false, value: event });
+    }
+    if (this.closed) {
+      return Promise.resolve({ done: true, value: undefined });
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+}
+
 class RuntimeBackedSession extends Session {
   private runtimeSession?: CommandSession;
+  private readonly runtimeProcesses = new Map<string, RuntimeProcessEntry>();
 
   constructor(private readonly runtimeOptions: SessionOptions) {
     super(runtimeOptions);
@@ -98,6 +161,134 @@ class RuntimeBackedSession extends Session {
 
   override getShellExitCode(): number | null {
     return this.runtimeSession?.getShellExitCode() ?? super.getShellExitCode();
+  }
+
+  async *execRuntimeProcessStream(
+    command: string,
+    options: RuntimeProcessStreamOptions
+  ): AsyncGenerator<ExecEvent> {
+    if (!this.runtimeSession) {
+      yield {
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        error: 'Runtime command session is not initialized'
+      };
+      return;
+    }
+
+    const startTime = Date.now();
+    const outputEvents = new ExecEventQueue();
+    const runtimeProcess: RuntimeProcessEntry = {
+      controller: new AbortController()
+    };
+    this.runtimeProcesses.set(options.commandId, runtimeProcess);
+    let completed = false;
+
+    try {
+      const process = await this.runtimeSession.startProcess(command, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeoutMs,
+        signal: runtimeProcess.controller.signal,
+        onOutput: (chunk) => {
+          outputEvents.push({
+            type: chunk.stream,
+            data: chunk.data,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
+
+      runtimeProcess.process = process;
+
+      yield {
+        type: 'start',
+        timestamp: new Date().toISOString(),
+        command,
+        pid: process.getPID()
+      };
+
+      const completion = process
+        .wait()
+        .then((result) => {
+          const duration = Date.now() - startTime;
+          outputEvents.push({
+            type: 'complete',
+            exitCode: result.exitCode,
+            timestamp: new Date().toISOString(),
+            result: {
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exitCode: result.exitCode,
+              success: result.exitCode === 0,
+              command,
+              duration,
+              timestamp: new Date(startTime).toISOString()
+            }
+          });
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          outputEvents.push({
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            error: message
+          });
+        })
+        .finally(() => {
+          completed = true;
+          if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+            this.runtimeProcesses.delete(options.commandId);
+          }
+          outputEvents.close();
+        });
+
+      try {
+        for await (const event of outputEvents) {
+          yield event;
+        }
+        await completion;
+      } finally {
+        if (!completed) {
+          runtimeProcess.controller.abort();
+          await runtimeProcess.process?.terminate().catch(() => {});
+          if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+            this.runtimeProcesses.delete(options.commandId);
+          }
+        }
+      }
+    } catch (error) {
+      if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+        this.runtimeProcesses.delete(options.commandId);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      yield {
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        error: message
+      };
+    }
+  }
+
+  override async killCommand(commandId: string): Promise<boolean> {
+    const runtimeProcess = this.runtimeProcesses.get(commandId);
+    if (!runtimeProcess) {
+      return super.killCommand(commandId);
+    }
+
+    runtimeProcess.controller.abort();
+    await runtimeProcess.process?.kill();
+    return true;
+  }
+
+  override getRunningCommandIds(): string[] {
+    return [
+      ...new Set([
+        ...super.getRunningCommandIds(),
+        ...this.runtimeProcesses.keys()
+      ])
+    ];
   }
 
   override async destroy(): Promise<void> {
@@ -750,6 +941,7 @@ export class SessionManager {
     options: {
       cwd?: string;
       env?: Record<string, string | undefined>;
+      timeoutMs?: number;
       origin?: 'user' | 'internal';
     } = {},
     commandId: string,
@@ -791,6 +983,7 @@ export class SessionManager {
     options: {
       cwd?: string;
       env?: Record<string, string | undefined>;
+      timeoutMs?: number;
       origin?: 'user' | 'internal';
     },
     commandId: string,
@@ -798,7 +991,7 @@ export class SessionManager {
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     return lock.runExclusive(async () => {
       try {
-        const { cwd, env, origin } = options;
+        const { cwd, env, timeoutMs, origin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -815,6 +1008,7 @@ export class SessionManager {
           commandId,
           cwd,
           env,
+          timeoutMs,
           origin
         });
 
@@ -894,6 +1088,7 @@ export class SessionManager {
     options: {
       cwd?: string;
       env?: Record<string, string | undefined>;
+      timeoutMs?: number;
       origin?: 'user' | 'internal';
     },
     commandId: string,
@@ -902,7 +1097,7 @@ export class SessionManager {
     // Acquire lock for startup phase only
     const startupResult = await lock.runExclusive(async () => {
       try {
-        const { cwd, env, origin } = options;
+        const { cwd, env, timeoutMs, origin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -913,12 +1108,22 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, {
-          commandId,
-          cwd,
-          env,
-          origin
-        });
+        const generator =
+          session instanceof RuntimeBackedSession
+            ? session.execRuntimeProcessStream(command, {
+                commandId,
+                cwd,
+                env,
+                timeoutMs,
+                origin
+              })
+            : session.execStream(command, {
+                commandId,
+                cwd,
+                env,
+                timeoutMs,
+                origin
+              });
 
         // Process 'start' event under lock
         const firstResult = await generator.next();

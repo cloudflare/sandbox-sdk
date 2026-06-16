@@ -231,12 +231,33 @@ cd /`);
       'pwd; printf "%s\n" "$PROCESS_VALUE"'
     );
 
+    expect(process.getPID()).toBeGreaterThan(0);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe(
       '/tmp/sandbox-process-test\nalias:original\nfunc:original\n'
     );
     expect(result.stderr).toBe('');
     expect(afterProcess.stdout).toBe('/tmp/sandbox-process-test\noriginal\n');
+  });
+
+  it('captures large exec output while a session process is streaming', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess(
+      'for i in $(seq 1 2000); do printf "process:%s\\n" "$i"; done'
+    );
+    const result = await session.exec(
+      String.raw`head -c 131072 /dev/zero | tr '\0' x`,
+      { timeoutMs: 5_000 }
+    );
+    const processResult = await process.wait();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toHaveLength(131_072);
+    expect(result.stdout).toMatch(/^x+$/);
+    expect(result.stderr).toBe('');
+    expect(processResult.exitCode).toBe(0);
+    expect(processResult.stdout).toContain('process:2000\n');
   });
 
   it('streams process output before completion', async () => {

@@ -32,6 +32,8 @@ export type CommandSessionExecResult = {
 };
 
 export type CommandSessionStartProcessOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
   timeoutMs?: number;
   signal?: AbortSignal;
   onOutput?: (chunk: StdioChunk) => void;
@@ -74,6 +76,10 @@ export class CommandSessionProcess {
     private readonly pid: number,
     private readonly completion: Promise<CommandSessionProcessResult>
   ) {}
+
+  getPID(): number {
+    return this.pid;
+  }
 
   wait(): Promise<CommandSessionProcessResult> {
     return this.completion;
@@ -254,7 +260,9 @@ export class CommandSession implements AsyncDisposable {
     }
 
     const id = crypto.randomUUID().replaceAll('-', '');
-    const encodedCommand = Buffer.from(command).toString('base64');
+    const encodedCommand = Buffer.from(
+      buildScopedCommand(command, options)
+    ).toString('base64');
     const process = new Promise<CommandSessionProcess>((resolve, reject) => {
       this.pending = {
         kind: 'startProcess',
@@ -366,7 +374,7 @@ export class CommandSession implements AsyncDisposable {
       const pending = this.pending;
       this.pending = undefined;
       this.cleanupPending(pending);
-      pending.resolve(decodeResult(field, stdoutPayload, stderrPayload));
+      void this.resolveExecResult(pending, id, field);
       return;
     }
 
@@ -401,6 +409,9 @@ export class CommandSession implements AsyncDisposable {
         );
       }
       this.processes.set(id, processCompletion);
+      if (pending.abortSignal?.aborted) {
+        void process.terminate();
+      }
       pending.resolve(process);
     }
   }
@@ -503,6 +514,29 @@ export class CommandSession implements AsyncDisposable {
     }
   }
 
+  private async resolveExecResult(
+    pending: Extract<PendingOperation, { kind: 'exec' }>,
+    id: string,
+    exitCode: string
+  ): Promise<void> {
+    const stdoutFile = join(this.tempDir, `${id}.stdout`);
+    const stderrFile = join(this.tempDir, `${id}.stderr`);
+    try {
+      pending.resolve({
+        exitCode: parseExitCode(exitCode),
+        stdout: await Bun.file(stdoutFile).text(),
+        stderr: await Bun.file(stderrFile).text()
+      });
+    } catch (error) {
+      pending.reject(toError(error));
+    } finally {
+      await Promise.all([
+        rm(stdoutFile, { force: true }),
+        rm(stderrFile, { force: true })
+      ]).catch(() => {});
+    }
+  }
+
   private cleanupPending(pending: PendingOperation): void {
     if (pending.kind === 'exec' && pending.timeout) {
       clearTimeout(pending.timeout);
@@ -530,17 +564,9 @@ export class CommandSession implements AsyncDisposable {
   }
 }
 
-function decodeResult(
-  exitCode: string,
-  stdoutPayload: string,
-  stderrPayload: string
-): CommandSessionExecResult {
+function parseExitCode(exitCode: string): number {
   const parsedExitCode = Number.parseInt(exitCode, 10);
-  return {
-    exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
-    stdout: decodePayload(stdoutPayload),
-    stderr: decodePayload(stderrPayload)
-  };
+  return Number.isNaN(parsedExitCode) ? 1 : parsedExitCode;
 }
 
 function collectProcessOutput(
