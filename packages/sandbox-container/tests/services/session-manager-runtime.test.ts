@@ -3,7 +3,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommandSession } from '@repo/sandbox-execution';
-import { createNoOpLogger } from '@repo/shared';
+import { createNoOpLogger, type ExecEvent } from '@repo/shared';
 import { SessionManager } from '../../src/services/session-manager';
 import { Session } from '../../src/session';
 
@@ -259,29 +259,109 @@ printf "done\n"`,
     }).toThrow('Runtime-backed sessions do not support legacy execStream');
   });
 
-  it('rejects service streaming for legacy sessions', async () => {
-    const sessionId = 'legacy-stream-session';
-    const legacySession = new Session({
-      id: sessionId,
-      cwd: testDir,
-      logger: createNoOpLogger()
-    });
-    await legacySession.initialize();
-    const managerInternals = sessionManager as unknown as {
-      sessions: Map<string, Session>;
-    };
-    managerInternals.sessions.set(sessionId, legacySession);
+  it('streams through the managed session boundary', async () => {
+    const sessionId = 'managed-stream-session';
+    const commandId = 'managed-stream-command';
+    const receivedEvents: ExecEvent[] = [];
+    const streamCalls: Array<{
+      command: string;
+      options: {
+        commandId: string;
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        timeoutMs?: number;
+        origin?: 'user' | 'internal';
+      };
+    }> = [];
     const execStreamSpy = vi.spyOn(Session.prototype, 'execStream');
+    const managedSession = {
+      pty: null,
+      async initialize(): Promise<void> {},
+      async exec(): Promise<never> {
+        throw new Error('exec not used by streaming test');
+      },
+      async *execRuntimeProcessStream(
+        command: string,
+        options: {
+          commandId: string;
+          cwd?: string;
+          env?: Record<string, string | undefined>;
+          timeoutMs?: number;
+          origin?: 'user' | 'internal';
+        }
+      ): AsyncGenerator<ExecEvent, void, unknown> {
+        streamCalls.push({ command, options });
+        yield {
+          type: 'start',
+          timestamp: new Date().toISOString(),
+          command,
+          pid: 1234
+        };
+        yield {
+          type: 'stdout',
+          timestamp: new Date().toISOString(),
+          data: 'managed-output\n'
+        };
+        yield {
+          type: 'complete',
+          timestamp: new Date().toISOString(),
+          exitCode: 0
+        };
+      },
+      async killCommand(): Promise<boolean> {
+        return false;
+      },
+      getRunningCommandIds(): string[] {
+        return [];
+      },
+      isReady(): boolean {
+        return true;
+      },
+      wasDestroyed(): boolean {
+        return false;
+      },
+      getShellExitCode(): number | null {
+        return null;
+      },
+      async destroy(): Promise<void> {}
+    };
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, unknown>;
+    };
+    managerInternals.sessions.set(sessionId, managedSession);
 
     const streamResult = await sessionManager.executeStreamInSession(
       sessionId,
-      'printf "should-not-run"',
-      async () => {},
-      { cwd: testDir },
-      'legacy-stream-command'
+      'printf "managed-output\\n"',
+      async (event) => {
+        receivedEvents.push(event);
+      },
+      { cwd: testDir, env: { TEST_VALUE: '1' }, timeoutMs: 500 },
+      commandId
     );
 
-    expect(streamResult.success).toBe(false);
+    expect(streamResult.success).toBe(true);
+    if (streamResult.success) {
+      await streamResult.data.continueStreaming;
+    }
+
+    expect(streamCalls).toEqual([
+      {
+        command: 'printf "managed-output\\n"',
+        options: {
+          commandId,
+          cwd: testDir,
+          env: { TEST_VALUE: '1' },
+          timeoutMs: 500,
+          origin: undefined
+        }
+      }
+    ]);
+    expect(receivedEvents.map((event) => event.type)).toEqual([
+      'start',
+      'stdout',
+      'complete'
+    ]);
     expect(execStreamSpy).not.toHaveBeenCalled();
   });
 

@@ -60,9 +60,9 @@ interface ManagedSession {
     command: string,
     options?: ManagedSessionExecOptions
   ): Promise<RawExecResult>;
-  execStream(
+  execRuntimeProcessStream(
     command: string,
-    options?: ManagedSessionExecOptions & { commandId?: string }
+    options: RuntimeProcessStreamOptions
   ): AsyncGenerator<ExecEvent, void, unknown>;
   killCommand(commandId: string, waitForExit?: boolean): Promise<boolean>;
   getRunningCommandIds(): string[];
@@ -212,7 +212,7 @@ class RuntimeBackedSession implements ManagedSession {
   async *execRuntimeProcessStream(
     command: string,
     options: RuntimeProcessStreamOptions
-  ): AsyncGenerator<ExecEvent> {
+  ): AsyncGenerator<ExecEvent, void, unknown> {
     if (!this.runtimeSession) {
       yield {
         type: 'error',
@@ -1047,20 +1047,6 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        if (!(session instanceof RuntimeBackedSession)) {
-          return {
-            success: false as const,
-            error: {
-              message: `Session '${sessionId}' does not support runtime process streaming`,
-              code: ErrorCode.STREAM_START_ERROR,
-              details: {
-                command,
-                stderr: 'Session does not support runtime process streaming'
-              } satisfies CommandErrorContext
-            }
-          };
-        }
-
         const generator = session.execRuntimeProcessStream(command, {
           commandId,
           cwd,
