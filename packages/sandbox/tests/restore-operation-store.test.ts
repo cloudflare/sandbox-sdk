@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  type BackupRestoreOperationRecord,
+  BackupRestoreOperationStore,
   backupRestoreOperationKey,
-  createBackupRestoreOperationRecord,
-  DurableOperationRecords,
-  type OperationRecord
-} from '../src/durable-operation-records';
+  createBackupRestoreOperationRecord
+} from '../src/backup/restore-operation-store';
 import type { SandboxIncarnationID } from '../src/sandbox-incarnation';
 
 function createStorage(initial = new Map<string, unknown>()) {
@@ -19,21 +19,9 @@ function createStorage(initial = new Map<string, unknown>()) {
   } as unknown as DurableObjectState['storage'];
 }
 
-type BackupRestoreRecord = OperationRecord<
-  'backup.restore',
-  'validating' | 'verified',
-  {
-    backupId: string;
-    dir: string;
-    archiveSize?: number;
-    restoreToken?: string;
-  },
-  { success: true; id: string; dir: string }
->;
-
 function makeBackupRestoreRecord(
-  overrides: Partial<BackupRestoreRecord> = {}
-): BackupRestoreRecord {
+  overrides: Partial<BackupRestoreOperationRecord> = {}
+): BackupRestoreOperationRecord {
   return {
     operationId: 'op-1',
     operationKey: backupRestoreOperationKey('backup-1', '/workspace/project'),
@@ -51,21 +39,19 @@ function makeBackupRestoreRecord(
   };
 }
 
-describe('DurableOperationRecords', () => {
+describe('BackupRestoreOperationStore', () => {
   it('derives a deterministic backup restore operation key from backup id and target directory', () => {
     expect(backupRestoreOperationKey('backup-1', '/workspace/project')).toBe(
       'restore:backup-1:/workspace/project'
     );
   });
 
-  it('creates a backup restore operation record with the generic envelope and backup payload', () => {
+  it('creates a backup restore operation record with the backup payload', () => {
     const record = createBackupRestoreOperationRecord({
       operationId: 'op-1',
       incarnationId: 'incarnation-1' as SandboxIncarnationID,
       backupId: 'backup-1',
       dir: '/workspace/project',
-      phase: 'validating',
-      status: 'running',
       now: '2026-06-15T12:00:00.000Z'
     });
 
@@ -88,7 +74,7 @@ describe('DurableOperationRecords', () => {
   it('stores operation records under operations-prefixed keys', async () => {
     const map = new Map<string, unknown>();
     const storage = createStorage(map);
-    const operations = new DurableOperationRecords(storage);
+    const operations = new BackupRestoreOperationStore(storage);
     const record = makeBackupRestoreRecord();
 
     await operations.put(record);
@@ -103,7 +89,7 @@ describe('DurableOperationRecords', () => {
     const storage = createStorage(
       new Map([['operations:restore:backup-1:/workspace/project', record]])
     );
-    const operations = new DurableOperationRecords(storage);
+    const operations = new BackupRestoreOperationStore(storage);
 
     const current = await operations.getCurrent(
       record.operationKey,
@@ -120,7 +106,7 @@ describe('DurableOperationRecords', () => {
     const storage = createStorage(
       new Map([['operations:restore:backup-1:/workspace/project', record]])
     );
-    const operations = new DurableOperationRecords(storage);
+    const operations = new BackupRestoreOperationStore(storage);
 
     const current = await operations.getCurrent(
       record.operationKey,
@@ -141,7 +127,7 @@ describe('DurableOperationRecords', () => {
       ]
     ]);
     const storage = createStorage(map);
-    const operations = new DurableOperationRecords(storage);
+    const operations = new BackupRestoreOperationStore(storage);
     const replacement = makeBackupRestoreRecord({
       operationId: 'new-op',
       incarnationId: 'new-incarnation' as SandboxIncarnationID

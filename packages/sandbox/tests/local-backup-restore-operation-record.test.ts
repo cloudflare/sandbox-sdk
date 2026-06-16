@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackupRestoreOperationRecord } from '../src/durable-operation-records';
+import type { BackupRestoreOperationRecord } from '../src/backup/restore-operation-store';
 import {
   ErrorCode,
   OperationInterruptedError,
