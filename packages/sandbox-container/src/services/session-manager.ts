@@ -1,6 +1,5 @@
 // SessionManager Service - Manages persistent execution sessions
 
-import { rm } from 'node:fs/promises';
 import {
   CommandSession,
   type CommandSessionProcess
@@ -22,7 +21,6 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
-import { CONFIG } from '../config';
 import {
   type ServiceError,
   type ServiceResult,
@@ -30,8 +28,9 @@ import {
   serviceSuccess
 } from '../core/types';
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
-import { Pty } from '../pty';
+import type { Pty } from '../pty';
 import type { RawExecResult, SessionOptions } from '../session-types';
+import { TerminalManager } from './terminal-manager';
 
 type RuntimeProcessStreamOptions = {
   commandId: string;
@@ -317,78 +316,6 @@ class RuntimeBackedSession implements ManagedSession {
   }
 }
 
-class SessionTerminal {
-  private pty: Pty | null = null;
-
-  constructor(
-    private readonly sessionId: string,
-    private readonly logger: Logger
-  ) {}
-
-  async getPty(session: ManagedSession, options?: PtyOptions): Promise<Pty> {
-    if (this.pty) {
-      return this.pty;
-    }
-
-    // Capture the session shell's current environment and working
-    // directory so the PTY inherits env vars set via setEnvVars()
-    // and reflects any directory changes made in the session.
-    //
-    // Captures env output to a temp file. The exec pipeline's
-    // `read`-based labeling strips \0 from stdout, so reading
-    // the file directly with Bun preserves the null-byte delimiters.
-    const sessionEnv: Record<string, string> = {};
-    let sessionCwd: string = CONFIG.DEFAULT_CWD;
-    const safeId = this.sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
-    try {
-      const envResult = await session.exec(`env -0 > '${tempEnvFile}'`, {
-        origin: 'internal'
-      });
-      if (envResult.exitCode === 0) {
-        const envText = await Bun.file(tempEnvFile).text();
-        for (const entry of envText.split('\0')) {
-          const idx = entry.indexOf('=');
-          if (idx > 0) {
-            sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
-          }
-        }
-      }
-
-      const cwdResult = await session.exec('pwd', { origin: 'internal' });
-      if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
-        sessionCwd = cwdResult.stdout.trim();
-      }
-    } catch {
-      this.logger.warn('Failed to capture session state for PTY', {
-        sessionId: this.sessionId
-      });
-    } finally {
-      await rm(tempEnvFile, { force: true }).catch(() => {});
-    }
-
-    const pty = new Pty({
-      cwd: sessionCwd,
-      env: sessionEnv,
-      logger: this.logger
-    });
-
-    try {
-      await pty.initialize(options);
-      this.pty = pty;
-      return pty;
-    } catch (error) {
-      await pty.destroy().catch(() => {});
-      throw error;
-    }
-  }
-
-  async destroy(): Promise<void> {
-    await this.pty?.destroy().catch(() => {});
-    this.pty = null;
-  }
-}
-
 function parseExitCommandExitCode(command: string): number | null {
   const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
   if (!match) {
@@ -416,13 +343,15 @@ export interface ExecuteInSessionOptions {
  */
 export class SessionManager {
   private sessions = new Map<string, ManagedSession>();
-  private terminals = new Map<string, SessionTerminal>();
+  private terminals: TerminalManager;
   /** Per-session mutexes to prevent concurrent command execution */
   private sessionLocks = new Map<string, Mutex>();
   /** Tracks in-progress session creation to prevent duplicate creation races */
   private creatingLocks = new Map<string, Promise<ManagedSession>>();
 
-  constructor(private logger: Logger) {}
+  constructor(private logger: Logger) {
+    this.terminals = new TerminalManager(logger);
+  }
 
   /**
    * Get or create a mutex for a specific session
@@ -802,10 +731,7 @@ export class SessionManager {
     try {
       await Promise.all([
         session.destroy(),
-        this.terminals
-          .get(sessionId)
-          ?.destroy()
-          .catch(() => {})
+        this.terminals.destroyTerminal(sessionId)
       ]);
     } catch (error) {
       this.logger.debug('Terminated session, destroy() threw during eviction', {
@@ -814,7 +740,6 @@ export class SessionManager {
       });
     }
     this.sessions.delete(sessionId);
-    this.terminals.delete(sessionId);
     this.creatingLocks.delete(sessionId);
   }
 
@@ -1223,14 +1148,9 @@ export class SessionManager {
       }
 
       const session = sessionResult.data;
-      let terminal = this.terminals.get(sessionId);
-      if (!terminal) {
-        terminal = new SessionTerminal(sessionId, this.logger);
-        this.terminals.set(sessionId, terminal);
-      }
 
       try {
-        const pty = await terminal.getPty(session, options);
+        const pty = await this.terminals.getPty(sessionId, session, options);
         return { success: true, data: pty };
       } catch (error) {
         const errorMessage =
@@ -1396,16 +1316,12 @@ export class SessionManager {
       await lock.runExclusive(async () => {
         await Promise.all([
           session.destroy(),
-          this.terminals
-            .get(sessionId)
-            ?.destroy()
-            .catch(() => {})
+          this.terminals.destroyTerminal(sessionId)
         ]);
       });
 
       // Clean up maps after the lock is released
       this.sessions.delete(sessionId);
-      this.terminals.delete(sessionId);
       this.sessionLocks.delete(sessionId);
       this.creatingLocks.delete(sessionId);
 
@@ -1481,10 +1397,7 @@ export class SessionManager {
         await lock.runExclusive(async () => {
           await Promise.all([
             session.destroy(),
-            this.terminals
-              .get(sessionId)
-              ?.destroy()
-              .catch(() => {})
+            this.terminals.destroyTerminal(sessionId)
           ]);
         });
       } catch {
@@ -1493,7 +1406,7 @@ export class SessionManager {
     }
 
     this.sessions.clear();
-    this.terminals.clear();
+    await this.terminals.destroyAll();
     this.sessionLocks.clear();
     this.creatingLocks.clear();
   }
