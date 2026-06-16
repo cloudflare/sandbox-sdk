@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -20,6 +20,8 @@ type StdinWriter = {
 };
 
 export type CommandSessionExecOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
   timeoutMs?: number;
 };
 
@@ -96,6 +98,7 @@ export class CommandSession implements AsyncDisposable {
   private outputBuffer = '';
   private pending?: PendingOperation;
   private failure?: Error;
+  private shellExitCode: number | null = null;
   private cleanupPromise?: Promise<void>;
   private operationQueue: Promise<void> = Promise.resolve();
 
@@ -109,6 +112,7 @@ export class CommandSession implements AsyncDisposable {
     this.tempDir = options.tempDir;
     this.ready.promise.catch(() => {});
     this.shell.exited.then((exitCode) => {
+      this.shellExitCode = exitCode;
       if (
         this.state !== 'closing' &&
         this.state !== 'closed' &&
@@ -127,7 +131,7 @@ export class CommandSession implements AsyncDisposable {
   ): Promise<CommandSession> {
     const tempDir = await mkdtemp(join(tmpdir(), 'sandbox-command-session-'));
     const shell = Bun.spawn(['bash', '--noprofile', '--norc'], {
-      cwd: options.cwd,
+      cwd: await resolveStartupCwd(options.cwd),
       env: {
         ...process.env,
         ...options.env,
@@ -166,6 +170,14 @@ export class CommandSession implements AsyncDisposable {
     options: CommandSessionStartProcessOptions = {}
   ): Promise<CommandSessionProcess> {
     return this.enqueueOperation(() => this.startProcessNow(command, options));
+  }
+
+  isReady(): boolean {
+    return this.state === 'ready' && !this.failure;
+  }
+
+  getShellExitCode(): number | null {
+    return this.shellExitCode;
   }
 
   async close(): Promise<void> {
@@ -213,7 +225,9 @@ export class CommandSession implements AsyncDisposable {
     this.assertReadyForOperation();
 
     const id = crypto.randomUUID().replaceAll('-', '');
-    const encodedCommand = Buffer.from(command).toString('base64');
+    const encodedCommand = Buffer.from(
+      buildScopedCommand(command, options)
+    ).toString('base64');
     const result = new Promise<CommandSessionExecResult>((resolve, reject) => {
       const pending: PendingOperation = { kind: 'exec', id, resolve, reject };
       if (options.timeoutMs !== undefined) {
@@ -553,6 +567,91 @@ function parsePID(pid: string): number {
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function buildScopedCommand(
+  command: string,
+  options: CommandSessionExecOptions
+): string {
+  const setup: string[] = [];
+  const cleanup: string[] = [];
+
+  if (options.cwd) {
+    setup.push('__sandbox_exec_prev_dir=$(pwd)');
+    setup.push(`cd ${shellQuote(options.cwd)} || __sandbox_exec_status=$?`);
+    cleanup.push('cd "$__sandbox_exec_prev_dir" >/dev/null 2>&1 || true');
+    cleanup.push('unset __sandbox_exec_prev_dir');
+  }
+
+  let index = 0;
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    if (value === undefined) {
+      continue;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+
+    const saved = `__sandbox_exec_saved_${index}`;
+    const had = `__sandbox_exec_had_${index}`;
+    setup.push(`${had}=0`);
+    setup.push(`if declare -p ${key} >/dev/null 2>&1; then`);
+    setup.push(`  ${had}=1`);
+    setup.push(`  ${saved}=$(declare -p ${key})`);
+    setup.push('fi');
+    setup.push(`export ${key}=${shellQuote(value)}`);
+    cleanup.push(`if [[ $${had} -eq 1 ]]; then`);
+    cleanup.push(`  eval "$${saved}"`);
+    cleanup.push('else');
+    cleanup.push(`  unset ${key}`);
+    cleanup.push('fi');
+    cleanup.push(`unset ${saved} ${had}`);
+    index++;
+  }
+
+  if (setup.length === 0 && cleanup.length === 0) {
+    return command;
+  }
+
+  return [
+    '{',
+    '  __sandbox_exec_status=0',
+    ...setup.map((line) => `  ${line}`),
+    '  if [[ $__sandbox_exec_status -eq 0 ]]; then',
+    '    {',
+    indentFirstLine(command, 6),
+    '      __sandbox_exec_status=$?',
+    '    }',
+    '  fi',
+    ...cleanup.map((line) => `  ${line}`),
+    '  ( exit "$__sandbox_exec_status" )',
+    '}'
+  ].join('\n');
+}
+
+function indentFirstLine(command: string, spaces: number): string {
+  const prefix = ' '.repeat(spaces);
+  const lines = command.split('\n');
+  return lines.length === 1
+    ? `${prefix}${command}`
+    : `${prefix}${lines[0]}\n${lines.slice(1).join('\n')}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function resolveStartupCwd(cwd?: string): Promise<string | undefined> {
+  if (!cwd) {
+    return undefined;
+  }
+
+  try {
+    await access(cwd);
+    return cwd;
+  } catch {
+    return process.env.HOME;
+  }
 }
 
 async function terminateProcessTree(

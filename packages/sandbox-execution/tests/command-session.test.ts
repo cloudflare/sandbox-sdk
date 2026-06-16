@@ -80,6 +80,44 @@ EOF`);
     expect(useSourcedState.stdout).toBe('sourced:ok\n');
   });
 
+  it('applies per-command cwd without mutating session cwd', async () => {
+    await using session = await CommandSession.create();
+
+    const scoped = await session.exec('pwd', { cwd: '/tmp' });
+    const persisted = await session.exec('pwd');
+
+    expect(scoped.exitCode).toBe(0);
+    expect(scoped.stdout.trim()).toBe('/tmp');
+    expect(persisted.exitCode).toBe(0);
+    expect(persisted.stdout.trim()).toBe('/workspace');
+  });
+
+  it('does not run a command when per-command cwd is invalid', async () => {
+    await using session = await CommandSession.create();
+
+    const result = await session.exec('printf should-not-run', {
+      cwd: '/definitely/missing/sandbox/session/path'
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('/definitely/missing/sandbox/session/path');
+  });
+
+  it('applies per-command env without mutating session env', async () => {
+    await using session = await CommandSession.create();
+
+    const scoped = await session.exec('printf "$SCOPED_ENV"', {
+      env: { SCOPED_ENV: 'from-call' }
+    });
+    const persisted = await session.exec('printf "$SCOPED_ENV"');
+
+    expect(scoped.exitCode).toBe(0);
+    expect(scoped.stdout).toBe('from-call');
+    expect(persisted.exitCode).toBe(0);
+    expect(persisted.stdout).toBe('');
+  });
+
   it('queues concurrent exec calls in order', async () => {
     await using session = await CommandSession.create();
 

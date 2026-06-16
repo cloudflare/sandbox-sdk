@@ -1,6 +1,7 @@
 // SessionManager Service - Manages persistent execution sessions
 
 import { rm } from 'node:fs/promises';
+import { CommandSession } from '@repo/sandbox-execution';
 import {
   type ExecEvent,
   type Logger,
@@ -28,6 +29,96 @@ import {
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
+
+class RuntimeBackedSession extends Session {
+  private runtimeSession?: CommandSession;
+
+  constructor(private readonly runtimeOptions: SessionOptions) {
+    super(runtimeOptions);
+  }
+
+  async initialize(): Promise<void> {
+    await super.initialize();
+    try {
+      this.runtimeSession = await CommandSession.create({
+        cwd: this.runtimeOptions.cwd,
+        env: this.runtimeOptions.env
+          ? Object.fromEntries(
+              Object.entries(this.runtimeOptions.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined
+              )
+            )
+          : undefined
+      });
+    } catch (error) {
+      await super.destroy().catch(() => {});
+      throw error;
+    }
+  }
+
+  override async exec(
+    command: string,
+    options?: Parameters<Session['exec']>[1]
+  ): Promise<RawExecResult> {
+    if (!this.runtimeSession) {
+      throw new Error('Runtime command session is not initialized');
+    }
+
+    const startTime = Date.now();
+    try {
+      const result = await this.runtimeSession.exec(command, {
+        cwd: options?.cwd,
+        env: options?.env,
+        timeoutMs: options?.timeoutMs ?? this.runtimeOptions.commandTimeoutMs
+      });
+
+      return {
+        command,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        duration: Date.now() - startTime,
+        timestamp: new Date(startTime).toISOString()
+      };
+    } catch (error) {
+      if (!this.runtimeSession.isReady()) {
+        throw new ShellTerminatedError(
+          this.runtimeOptions.id,
+          parseExitCommandExitCode(command) ??
+            this.runtimeSession.getShellExitCode()
+        );
+      }
+      throw error;
+    }
+  }
+
+  override isReady(): boolean {
+    return super.isReady() && !!this.runtimeSession?.isReady();
+  }
+
+  override getShellExitCode(): number | null {
+    return this.runtimeSession?.getShellExitCode() ?? super.getShellExitCode();
+  }
+
+  override async destroy(): Promise<void> {
+    await this.runtimeSession?.close().catch(() => {});
+    await super.destroy();
+  }
+}
+
+function parseExitCommandExitCode(command: string): number | null {
+  const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  if (!match[1]) {
+    return 0;
+  }
+
+  const exitCode = Number.parseInt(match[1], 10);
+  return Number.isNaN(exitCode) ? null : exitCode;
+}
 
 export interface ExecuteInSessionOptions {
   cwd?: string;
@@ -140,7 +231,7 @@ export class SessionManager {
     // We need to create the session - set up coordination
     // Since we hold the lock, we can safely set creatingLocks without race
     const createPromise = (async (): Promise<Session> => {
-      const session = new Session({
+      const session = new RuntimeBackedSession({
         id: sessionId,
         cwd: options.cwd || '/workspace',
         commandTimeoutMs: options.commandTimeoutMs,
@@ -254,7 +345,7 @@ export class SessionManager {
           // Create and initialize session under the lock, so no
           // concurrent caller can insert a competing Session between
           // `new Session` and `this.sessions.set`.
-          const session = new Session({
+          const session = new RuntimeBackedSession({
             ...options,
             logger: this.logger
           });
@@ -333,20 +424,6 @@ export class SessionManager {
   /**
    * Return the explicit exit code when command is a direct shell-exit command.
    */
-  private parseExitCommandExitCode(command: string): number | null {
-    const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
-    if (!match) {
-      return null;
-    }
-
-    if (!match[1]) {
-      return 0;
-    }
-
-    const exitCode = Number.parseInt(match[1], 10);
-    return Number.isNaN(exitCode) ? null : exitCode;
-  }
-
   /**
    * Classify a failure from session.exec / session.execStream into one of:
    *   - API-initiated destruction (SESSION_DESTROYED)
@@ -388,7 +465,7 @@ export class SessionManager {
     // Untyped error fallback (non-shell failures like I/O errors)
     let errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-    const explicitExitCode = this.parseExitCommandExitCode(command);
+    const explicitExitCode = parseExitCommandExitCode(command);
     if (explicitExitCode !== null) {
       errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
     }
