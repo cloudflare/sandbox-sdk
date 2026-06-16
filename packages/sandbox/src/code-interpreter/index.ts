@@ -331,17 +331,21 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
   }
 
   async function deleteContext(contextId: string): Promise<void> {
-    const response = await sandbox.containerFetch(
-      new Request(`http://localhost:3000/api/contexts/${contextId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' }
-      })
-    );
+    await withRetry(async () => {
+      const response = await sandbox.containerFetch(
+        new Request(`http://localhost:3000/api/contexts/${contextId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(`Failed to delete context (${response.status}): ${text}`);
-    }
+      if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `Failed to delete context (${response.status}): ${text}`
+        );
+      }
+    });
 
     contexts.delete(contextId);
   }

@@ -88,7 +88,6 @@ export type {
   SandboxControlCallback,
   SandboxFilesAPI,
   SandboxGitAPI,
-  SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTunnelsAPI,
