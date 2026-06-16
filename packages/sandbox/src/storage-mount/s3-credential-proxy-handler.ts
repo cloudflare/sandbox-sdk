@@ -31,6 +31,83 @@ const HEAD_METADATA_CACHE_TTL_MS = 60_000;
 const NEGATIVE_HEAD_METADATA_CACHE_TTL_MS = 5_000;
 const HEAD_METADATA_CACHE_MAX_ENTRIES = 1_000;
 
+const HEAD_METADATA_CACHE_VARY_HEADERS = [
+  'range',
+  'if-match',
+  'if-none-match',
+  'if-modified-since',
+  'if-unmodified-since',
+  'if-range',
+  'x-amz-checksum-mode',
+  'x-amz-server-side-encryption-customer-algorithm',
+  'x-amz-server-side-encryption-customer-key',
+  'x-amz-server-side-encryption-customer-key-md5',
+  'x-goog-encryption-algorithm',
+  'x-goog-encryption-key',
+  'x-goog-encryption-key-sha256'
+];
+
+const HEAD_METADATA_PUT_REQUEST_HEADERS = new Set([
+  'cache-control',
+  'content-disposition',
+  'content-encoding',
+  'content-language',
+  'content-type',
+  'expires',
+  'x-amz-checksum-crc32',
+  'x-amz-checksum-crc32c',
+  'x-amz-checksum-crc64nvme',
+  'x-amz-checksum-sha1',
+  'x-amz-checksum-sha256',
+  'x-amz-server-side-encryption',
+  'x-amz-server-side-encryption-aws-kms-key-id',
+  'x-amz-storage-class',
+  'x-goog-storage-class'
+]);
+
+const HEAD_METADATA_PUT_RESPONSE_HEADERS = new Set([
+  'etag',
+  'last-modified',
+  'x-amz-checksum-crc32',
+  'x-amz-checksum-crc32c',
+  'x-amz-checksum-crc64nvme',
+  'x-amz-checksum-sha1',
+  'x-amz-checksum-sha256',
+  'x-amz-server-side-encryption',
+  'x-amz-server-side-encryption-aws-kms-key-id',
+  'x-amz-version-id',
+  'x-goog-generation',
+  'x-goog-hash',
+  'x-goog-metageneration',
+  'x-goog-storage-class'
+]);
+
+const SIGV4_SKIPPED_FORWARD_HEADERS = new Set([
+  'connection',
+  'expect',
+  'host',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'user-agent'
+]);
+
+const SIGV4_UNSIGNABLE_HEADERS = new Set([
+  'authorization',
+  'connection',
+  'content-length',
+  'content-type',
+  'expect',
+  'presigned-expires',
+  'range',
+  'user-agent',
+  'x-amzn-trace-id'
+]);
+
 export const DUMMY_AUTH_HEADERS = new Set([
   'authorization',
   'x-amz-date',
@@ -141,7 +218,7 @@ function getCachedHeadMetadataResponse(
 }
 
 function enforceHeadMetadataCacheLimit(): void {
-  if (headMetadataCache.size <= HEAD_METADATA_CACHE_MAX_ENTRIES) {
+  if (headMetadataCache.size < HEAD_METADATA_CACHE_MAX_ENTRIES) {
     return;
   }
   const now = Date.now();
@@ -150,10 +227,10 @@ function enforceHeadMetadataCacheLimit(): void {
       headMetadataCache.delete(key);
     }
   }
-  if (headMetadataCache.size <= HEAD_METADATA_CACHE_MAX_ENTRIES) {
+  if (headMetadataCache.size < HEAD_METADATA_CACHE_MAX_ENTRIES) {
     return;
   }
-  const excess = headMetadataCache.size - HEAD_METADATA_CACHE_MAX_ENTRIES;
+  const excess = headMetadataCache.size - HEAD_METADATA_CACHE_MAX_ENTRIES + 1;
   let removed = 0;
   for (const key of Array.from(headMetadataCache.keys())) {
     if (removed >= excess) break;
@@ -192,25 +269,25 @@ function cacheHeadMetadataFromPUT(
   }
   const headers = new Headers();
   const contentLength = request.headers.get('content-length');
-  const contentType = request.headers.get('content-type');
-  const etag = response.headers.get('etag');
-  const lastModified = response.headers.get('last-modified');
   if (contentLength !== null) {
     headers.set('content-length', contentLength);
-  }
-  if (contentType !== null) {
-    headers.set('content-type', contentType);
-  }
-  if (etag !== null) {
-    headers.set('etag', etag);
-  }
-  if (lastModified !== null) {
-    headers.set('last-modified', lastModified);
   }
   for (const [key, value] of Array.from(
     request.headers as unknown as Iterable<[string, string]>
   )) {
-    if (key.toLowerCase().startsWith('x-amz-meta-')) {
+    const lowerKey = key.toLowerCase();
+    if (
+      HEAD_METADATA_PUT_REQUEST_HEADERS.has(lowerKey) ||
+      lowerKey.startsWith('x-amz-meta-') ||
+      lowerKey.startsWith('x-goog-meta-')
+    ) {
+      headers.set(key, value);
+    }
+  }
+  for (const [key, value] of Array.from(
+    response.headers as unknown as Iterable<[string, string]>
+  )) {
+    if (HEAD_METADATA_PUT_RESPONSE_HEADERS.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   }
@@ -223,16 +300,52 @@ function cacheHeadMetadataFromPUT(
   });
 }
 
-function deleteHeadMetadataCacheEntry(
+function deleteHeadMetadataCacheEntriesForObject(
   mountId: string,
-  realPath: string,
-  url: URL
+  realPath: string
 ): void {
-  headMetadataCache.delete(getHeadMetadataCacheKey(mountId, realPath, url));
+  const baseKey = `${mountId}:${realPath}`;
+  for (const key of Array.from(headMetadataCache.keys())) {
+    if (key === baseKey || key.startsWith(`${baseKey}?`)) {
+      headMetadataCache.delete(key);
+    }
+  }
 }
 
 function isMutatingMethod(method: string): boolean {
   return method === 'PUT' || method === 'POST' || method === 'DELETE';
+}
+
+function canUseHeadMetadataCache(request: Request): boolean {
+  if (request.method.toUpperCase() !== 'HEAD') {
+    return false;
+  }
+  return HEAD_METADATA_CACHE_VARY_HEADERS.every(
+    (header) => request.headers.get(header) === null
+  );
+}
+
+function canPrimeHeadMetadataFromPUT(request: Request, url: URL): boolean {
+  if (request.method.toUpperCase() !== 'PUT') {
+    return false;
+  }
+  if (url.search !== '') {
+    return false;
+  }
+  if (request.headers.get('content-length') === null) {
+    return false;
+  }
+  if (
+    HEAD_METADATA_CACHE_VARY_HEADERS.some(
+      (header) => request.headers.get(header) !== null
+    )
+  ) {
+    return false;
+  }
+  return (
+    request.headers.get('x-amz-copy-source') === null &&
+    request.headers.get('x-goog-copy-source') === null
+  );
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -653,8 +766,11 @@ function getSigV4ForwardInit(request: Request): RequestInit {
   if (contentLength === 0) {
     return { body: new Uint8Array(0) };
   }
-  if (contentLength === null || request.body === null) {
+  if (request.body === null) {
     return {};
+  }
+  if (contentLength === null) {
+    return { body: request.body };
   }
 
   const { readable, writable } = new FixedLengthStream(contentLength);
@@ -675,8 +791,7 @@ function getSigV4ForwardHeaders(
   >) {
     const lower = k.toLowerCase();
     if (
-      lower === 'host' ||
-      lower === 'expect' ||
+      SIGV4_SKIPPED_FORWARD_HEADERS.has(lower) ||
       DUMMY_AUTH_HEADERS.has(lower)
     ) {
       continue;
@@ -695,7 +810,7 @@ function getSigV4SignedHeaderEntries(
   const entries: [string, string][] = [['host', url.host]];
   for (const [k, v] of headers as unknown as Iterable<[string, string]>) {
     const lower = k.toLowerCase();
-    if (lower === 'authorization' || lower === 'content-length') {
+    if (SIGV4_UNSIGNABLE_HEADERS.has(lower)) {
       continue;
     }
     entries.push([lower, v.trim().replace(/\s+/g, ' ')]);
@@ -1004,6 +1119,11 @@ export const s3CredentialProxyHandler: OutboundHandler<
             getDirectoryMarkerCacheKey(mountId, realPath),
             responseHeaders
           );
+          deleteHeadMetadataCacheEntriesForObject(mountId, realPath);
+          deleteHeadMetadataCacheEntriesForObject(
+            mountId,
+            realPath.replace(/\/+$/, '')
+          );
         }
 
         return response;
@@ -1040,7 +1160,12 @@ export const s3CredentialProxyHandler: OutboundHandler<
 
   const method = cleanRequest.method.toUpperCase();
   const headMetadataCacheKey = getHeadMetadataCacheKey(mountId, realPath, url);
-  if (method === 'HEAD') {
+  const useHeadMetadataCache = canUseHeadMetadataCache(cleanRequest);
+  const primeHeadMetadataFromPUT = canPrimeHeadMetadataFromPUT(
+    cleanRequest,
+    url
+  );
+  if (useHeadMetadataCache) {
     const cachedHeadResponse = getCachedHeadMetadataResponse(
       headMetadataCacheKey,
       Date.now()
@@ -1062,7 +1187,7 @@ export const s3CredentialProxyHandler: OutboundHandler<
     }
   } else if (isMutatingMethod(method)) {
     deleteDirectoryMarkerCacheEntry(mountId, realPath);
-    deleteHeadMetadataCacheEntry(mountId, realPath, url);
+    deleteHeadMetadataCacheEntriesForObject(mountId, realPath);
   }
 
   if (mount.authStrategy === 'gcs') {
@@ -1077,9 +1202,9 @@ export const s3CredentialProxyHandler: OutboundHandler<
           mount.credentials,
           requestInfo
         );
-        if (method === 'HEAD') {
+        if (useHeadMetadataCache) {
           cacheHeadMetadataResponse(headMetadataCacheKey, response);
-        } else if (method === 'PUT') {
+        } else if (primeHeadMetadataFromPUT) {
           cacheHeadMetadataFromPUT(
             headMetadataCacheKey,
             cleanRequest,
@@ -1105,9 +1230,9 @@ export const s3CredentialProxyHandler: OutboundHandler<
         mount.credentials,
         requestInfo
       );
-      if (method === 'HEAD') {
+      if (useHeadMetadataCache) {
         cacheHeadMetadataResponse(headMetadataCacheKey, response);
-      } else if (method === 'PUT') {
+      } else if (primeHeadMetadataFromPUT) {
         cacheHeadMetadataFromPUT(headMetadataCacheKey, cleanRequest, response);
       }
       return response;
