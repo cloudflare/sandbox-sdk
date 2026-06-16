@@ -247,6 +247,23 @@ EOF`);
     expect(collect(nextResult.output, 'stdout')).toBe('still-alive\n');
   });
 
+  it('keeps the session usable when onOutput throws', async () => {
+    await using session = await CommandSession.create();
+
+    await expect(
+      session.exec("printf 'before-error\n'", {
+        onOutput: () => {
+          throw new Error('consumer failed');
+        }
+      })
+    ).rejects.toThrow('consumer failed');
+
+    const nextResult = await session.exec("printf 'after-error\n'");
+
+    expect(nextResult.exitCode).toBe(0);
+    expect(collect(nextResult.output, 'stdout')).toBe('after-error\n');
+  });
+
   it('marks the session failed after command timeout', async () => {
     const session = await CommandSession.create();
 

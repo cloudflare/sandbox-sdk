@@ -38,6 +38,7 @@ type PendingCommand = {
   output: StdioChunk[];
   nextSeq: number;
   onOutput?: (chunk: StdioChunk) => void;
+  callbackError?: Error;
   resolve: (result: CommandSessionExecResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -273,6 +274,10 @@ export class CommandSession implements AsyncDisposable {
       this.pending = undefined;
       clearTimeout(pending.timeout);
       const parsedExitCode = Number.parseInt(streamOrExitCode, 10);
+      if (pending.callbackError) {
+        pending.reject(pending.callbackError);
+        return;
+      }
       pending.resolve({
         exitCode: Number.isNaN(parsedExitCode) ? 1 : parsedExitCode,
         output: pending.output
@@ -296,7 +301,11 @@ export class CommandSession implements AsyncDisposable {
       seq: this.pending.nextSeq++
     };
     this.pending.output.push(chunk);
-    this.pending.onOutput?.(chunk);
+    try {
+      this.pending.onOutput?.(chunk);
+    } catch (error) {
+      this.pending.callbackError ??= toError(error);
+    }
   }
 
   private fail(error: Error): void {
@@ -336,6 +345,10 @@ export class CommandSession implements AsyncDisposable {
     await rm(this.tempDir, { force: true, recursive: true });
     this.state = this.failure ? 'failed' : 'closed';
   }
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function getShellStdin(shell: Bun.Subprocess): StdinWriter {
