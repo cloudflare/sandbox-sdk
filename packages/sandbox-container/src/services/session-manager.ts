@@ -8,7 +8,6 @@ import {
   type ExecEvent,
   type Logger,
   logCanonicalEvent,
-  type PtyOptions,
   partitionEnvVars,
   shellEscape
 } from '@repo/shared';
@@ -28,9 +27,7 @@ import {
   serviceSuccess
 } from '../core/types';
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
-import type { Pty } from '../pty';
 import type { RawExecResult, SessionOptions } from '../session-types';
-import { TerminalManager } from './terminal-manager';
 
 type RuntimeProcessStreamOptions = {
   commandId: string;
@@ -343,15 +340,12 @@ export interface ExecuteInSessionOptions {
  */
 export class SessionManager {
   private sessions = new Map<string, ManagedSession>();
-  private terminals: TerminalManager;
   /** Per-session mutexes to prevent concurrent command execution */
   private sessionLocks = new Map<string, Mutex>();
   /** Tracks in-progress session creation to prevent duplicate creation races */
   private creatingLocks = new Map<string, Promise<ManagedSession>>();
 
-  constructor(private logger: Logger) {
-    this.terminals = new TerminalManager(logger);
-  }
+  constructor(private logger: Logger) {}
 
   /**
    * Get or create a mutex for a specific session
@@ -1132,35 +1126,6 @@ export class SessionManager {
     };
   }
 
-  async getPty(
-    sessionId: string,
-    options?: PtyOptions
-  ): Promise<ServiceResult<Pty>> {
-    const lock = this.getSessionLock(sessionId);
-
-    return lock.runExclusive(async () => {
-      try {
-        const terminal = await this.terminals.getOrCreateTerminal({
-          id: sessionId,
-          pty: options
-        });
-        return { success: true, data: terminal.pty };
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        return {
-          success: false,
-          error: {
-            message: `Failed to create PTY: ${errorMessage}`,
-            code: ErrorCode.INTERNAL_ERROR,
-            details: { sessionId }
-          }
-        };
-      }
-    });
-  }
-
   /**
    * Kill a running command in a session.
    * Does not acquire session lock - kill signals must work immediately,
@@ -1393,7 +1358,6 @@ export class SessionManager {
     }
 
     this.sessions.clear();
-    await this.terminals.destroyAll();
     this.sessionLocks.clear();
     this.creatingLocks.clear();
   }

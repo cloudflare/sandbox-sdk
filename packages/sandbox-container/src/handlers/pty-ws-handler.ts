@@ -6,11 +6,11 @@ import type {
 } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import type { Pty } from '../pty';
-import type { SessionManager } from '../services/session-manager';
+import type { TerminalManager } from '../services/terminal-manager';
 
 export interface PtyWSData {
   type: 'pty';
-  sessionId: string;
+  terminalId: string;
   connectionId: string;
   cols?: number;
   rows?: number;
@@ -27,30 +27,30 @@ export class PtyWebSocketHandler {
   private connections = new Map<string, PtyConnection>();
 
   constructor(
-    private sessionManager: SessionManager,
+    private terminalManager: Pick<TerminalManager, 'getOrCreateTerminal'>,
     private logger: Logger
   ) {}
 
   async onOpen(ws: ServerWebSocket<PtyWSData>): Promise<void> {
-    const { sessionId, connectionId, cols, rows, shell } = ws.data;
+    const { terminalId, connectionId, cols, rows, shell } = ws.data;
     // Lifecycle captured in onClose canonical log line
 
-    const result = await this.sessionManager.getPty(sessionId, {
-      cols,
-      rows,
-      shell
-    });
-
-    if (!result.success) {
+    let pty: Pty;
+    try {
+      const terminal = await this.terminalManager.getOrCreateTerminal({
+        id: terminalId,
+        pty: { cols, rows, shell }
+      });
+      pty = terminal.pty;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.sendStatus(ws, {
         type: 'error',
-        message: result.error.message
+        message
       });
-      ws.close(1011, result.error.message);
+      ws.close(1011, message);
       return;
     }
-
-    const pty = result.data;
 
     const bufferedOutput = pty.getBufferedOutput();
     if (bufferedOutput.length > 0) {
@@ -96,10 +96,10 @@ export class PtyWebSocketHandler {
   }
 
   onClose(ws: ServerWebSocket<PtyWSData>, code: number, reason: string): void {
-    const { connectionId, sessionId } = ws.data;
+    const { connectionId, terminalId } = ws.data;
 
     this.logger.debug('pty.connection', {
-      sessionId,
+      terminalId,
       connectionId,
       code,
       reason,

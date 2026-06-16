@@ -83,9 +83,9 @@ async function createApplication(): Promise<{
         const url = new URL(req.url);
 
         if (url.pathname === '/ws/pty') {
-          const sessionId = url.searchParams.get('sessionId');
-          if (!sessionId) {
-            return new Response('sessionId query parameter required', {
+          const terminalId = url.searchParams.get('terminalId');
+          if (!terminalId) {
+            return new Response('terminalId query parameter required', {
               status: 400
             });
           }
@@ -97,7 +97,7 @@ async function createApplication(): Promise<{
           const upgraded = server.upgrade(req, {
             data: {
               type: 'pty' as const,
-              sessionId,
+              terminalId,
               connectionId: generateConnectionId(),
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
               rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined,
@@ -259,6 +259,7 @@ export async function startServer(): Promise<ServerInstance> {
         const watchService = app.container.get('watchService');
         const tunnelService = app.container.get('tunnelService');
         const extensionHost = app.container.get('extensionHost');
+        const terminalManager = app.container.get('terminalManager');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -270,6 +271,7 @@ export async function startServer(): Promise<ServerInstance> {
         await processService.destroy();
         portService.destroy();
         await tunnelService.destroyAll();
+        await terminalManager.destroyAll();
         await extensionHost.stopAll();
 
         logger.info('Services cleaned up successfully');

@@ -12,6 +12,7 @@ import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { TerminalManager } from '../services/terminal-manager';
 import { TunnelService } from '../services/tunnel-service';
 import { WatchService } from '../services/watch-service';
 
@@ -30,6 +31,7 @@ export interface Dependencies {
   logger: Logger;
   security: SecurityService;
   sessionManager: SessionManager;
+  terminalManager: TerminalManager;
   executionService: ExecutionService;
 
   // Handlers
@@ -95,8 +97,9 @@ export class Container {
     // Initialize stores
     const processStore = new ProcessStore(logger);
 
-    // Initialize SessionManager
+    // Initialize execution infrastructure
     const sessionManager = new SessionManager(logger);
+    const terminalManager = new TerminalManager(logger);
     const executionService = new ExecutionService(sessionManager, logger);
 
     // Create git-specific logger that automatically sanitizes credentials
@@ -127,7 +130,7 @@ export class Container {
     const extensionHost = new ExtensionHost(logger);
 
     // Initialize handlers
-    const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
+    const ptyWsHandler = new PtyWebSocketHandler(terminalManager, logger);
 
     // Store all dependencies
     this.dependencies = {
@@ -145,6 +148,7 @@ export class Container {
       logger,
       security,
       sessionManager,
+      terminalManager,
       executionService,
 
       // Handlers

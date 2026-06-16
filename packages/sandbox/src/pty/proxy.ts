@@ -3,12 +3,12 @@ import type { PtyOptions } from '@repo/shared';
 
 export async function proxyTerminal(
   stub: { fetch: (request: Request) => Promise<Response> },
-  sessionId: string,
+  terminalId: string,
   request: Request,
   options?: PtyOptions
 ): Promise<Response> {
-  if (!sessionId || typeof sessionId !== 'string') {
-    throw new Error('sessionId is required for terminal access');
+  if (!terminalId || typeof terminalId !== 'string') {
+    throw new Error('terminalId is required for terminal access');
   }
 
   const upgradeHeader = request.headers.get('Upgrade');
@@ -16,7 +16,7 @@ export async function proxyTerminal(
     throw new Error('terminal() requires a WebSocket upgrade request');
   }
 
-  const params = new URLSearchParams({ sessionId });
+  const params = new URLSearchParams({ terminalId });
   if (options?.cols) params.set('cols', String(options.cols));
   if (options?.rows) params.set('rows', String(options.rows));
   if (options?.shell) params.set('shell', options.shell);
