@@ -1,4 +1,3 @@
-import type { createLogger } from '@repo/shared';
 import type {
   CurrentRuntimeIdentity,
   RuntimeIdentity
@@ -10,14 +9,12 @@ import {
   RPCTransportError
 } from '../errors';
 import type {
-  CurrentSandboxIncarnation,
-  SandboxIncarnation
-} from '../sandbox-incarnation';
-import { SandboxIncarnationChangedError } from '../sandbox-incarnation';
-import {
-  BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS,
-  BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY
-} from './constants';
+  CurrentSandboxLifetime,
+  SandboxLifetime
+} from '../sandbox-lifetime';
+import { SandboxLifetimeChangedError } from '../sandbox-lifetime';
+import { BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS } from './constants';
+import type { BackupRestoreFaultInjector } from './restore-fault-injection';
 import {
   type BackupRestoreOperationPhase,
   type BackupRestoreOperationRecord,
@@ -26,22 +23,15 @@ import {
   createBackupRestoreOperationRecord
 } from './restore-operation-store';
 
-export type BackupRestoreTestFault = {
-  phase: 'after_archive_ready';
-  mode: 'transport_disposed';
-  times: number;
-};
-
 type RestoreLifecycleDeps = {
   storage: DurableObjectStorage;
-  getEnv: () => unknown;
-  logger: ReturnType<typeof createLogger>;
   currentRuntime: CurrentRuntimeIdentity;
-  currentIncarnation: CurrentSandboxIncarnation;
+  currentLifetime: CurrentSandboxLifetime;
+  faultInjector: BackupRestoreFaultInjector;
 };
 
 export type RestoreLifecycleContext = {
-  incarnation: SandboxIncarnation;
+  lifetime: SandboxLifetime;
   archiveReady: (archiveSize?: number) => Promise<{
     runtime: RuntimeIdentity;
     operation: BackupRestoreOperationRecord;
@@ -67,7 +57,7 @@ export class RestoreLifecycleRunner {
     ) => Promise<BackupRestoreOperationResult>;
   }): Promise<BackupRestoreOperationResult> {
     return await this.runWithRecovery(async () => {
-      const { incarnation, operation } = await this.startOperation(
+      const { lifetime, operation } = await this.startOperation(
         params.backupId,
         params.dir
       );
@@ -75,19 +65,34 @@ export class RestoreLifecycleRunner {
       let runtime: RuntimeIdentity | undefined;
 
       const context: RestoreLifecycleContext = {
-        incarnation,
+        lifetime,
         archiveReady: async (archiveSize) => {
           runtime = await this.captureRuntime();
-          await this.deps.currentIncarnation.assertCurrent(incarnation);
+          await this.deps.currentLifetime.assertCurrent(lifetime);
           currentOperation = await this.markArchiveReady(
             currentOperation,
             runtime,
             archiveSize
           );
-          await this.maybeInjectFaultForTesting(
+          const fault = await this.deps.faultInjector.maybeFault(
             'after_archive_ready',
             currentOperation
           );
+          if (fault) {
+            const message =
+              'Backup restore was interrupted before completion could be verified';
+            const interrupted = await this.markInterrupted(
+              currentOperation,
+              message
+            );
+            throw this.createInterruptedError({
+              operation: interrupted,
+              reason: fault.reason,
+              phase: currentOperation.phase,
+              admitted: fault.admitted,
+              message
+            });
+          }
           return { runtime, operation: currentOperation };
         },
         verify: async (result, archiveSize) => {
@@ -97,7 +102,7 @@ export class RestoreLifecycleRunner {
             );
           }
           try {
-            await this.assertFences(runtime, incarnation);
+            await this.assertFences(runtime, lifetime);
           } catch (error) {
             const interrupted = await this.translateFenceError(
               error,
@@ -147,7 +152,7 @@ export class RestoreLifecycleRunner {
           throw error;
         }
 
-        if (error.context.reason === 'incarnation_changed') {
+        if (error.context.reason === 'sandbox_lifetime_changed') {
           throw error;
         }
 
@@ -164,19 +169,19 @@ export class RestoreLifecycleRunner {
     backupId: string,
     dir: string
   ): Promise<{
-    incarnation: SandboxIncarnation;
+    lifetime: SandboxLifetime;
     operation: BackupRestoreOperationRecord;
   }> {
-    const incarnation = await this.deps.currentIncarnation.getOrCreate();
+    const lifetime = await this.deps.currentLifetime.getOrCreate();
     const operation = createBackupRestoreOperationRecord({
       operationId: crypto.randomUUID(),
-      incarnationId: incarnation.id,
+      sandboxLifetimeID: lifetime.id,
       backupId,
       dir,
       now: new Date().toISOString()
     });
     await this.operationRecords.put(operation);
-    return { incarnation, operation };
+    return { lifetime, operation };
   }
 
   async captureRuntime(): Promise<RuntimeIdentity> {
@@ -207,10 +212,10 @@ export class RestoreLifecycleRunner {
 
   async assertFences(
     runtime: RuntimeIdentity,
-    incarnation: SandboxIncarnation
+    lifetime: SandboxLifetime
   ): Promise<void> {
     await this.deps.currentRuntime.assertActive(runtime);
-    await this.deps.currentIncarnation.assertCurrent(incarnation);
+    await this.deps.currentLifetime.assertCurrent(lifetime);
   }
 
   async markVerified(
@@ -245,7 +250,7 @@ export class RestoreLifecycleRunner {
     if (
       !(
         error instanceof RuntimeIdentityInactiveError ||
-        error instanceof SandboxIncarnationChangedError
+        error instanceof SandboxLifetimeChangedError
       )
     ) {
       return null;
@@ -254,10 +259,14 @@ export class RestoreLifecycleRunner {
     const reason =
       error instanceof RuntimeIdentityInactiveError
         ? 'runtime_replaced'
-        : 'incarnation_changed';
+        : 'sandbox_lifetime_changed';
     const message =
       'Backup restore was interrupted before completion could be verified';
-    const interrupted = await this.markInterrupted(operation, message);
+    const interrupted = await this.markInterrupted(
+      operation,
+      message,
+      reason !== 'sandbox_lifetime_changed'
+    );
     return this.createInterruptedError({
       operation: interrupted,
       reason,
@@ -286,63 +295,6 @@ export class RestoreLifecycleRunner {
       admitted: 'unknown',
       message
     });
-  }
-
-  async setFaultForTesting(
-    fault: BackupRestoreTestFault | null
-  ): Promise<void> {
-    const envObj = this.deps.getEnv() as Record<string, unknown>;
-    if (envObj.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
-      throw new Error('Sandbox test hooks are not enabled');
-    }
-
-    if (fault === null || fault.times <= 0) {
-      await this.deps.storage.delete(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY);
-      return;
-    }
-
-    await this.deps.storage.put(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY, fault);
-  }
-
-  async maybeInjectFaultForTesting(
-    phase: BackupRestoreTestFault['phase'],
-    operation: BackupRestoreOperationRecord
-  ): Promise<void> {
-    const envObj = this.deps.getEnv() as Record<string, unknown>;
-    if (envObj.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
-      return;
-    }
-
-    const fault =
-      (await this.deps.storage.get<BackupRestoreTestFault>(
-        BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY
-      )) ?? null;
-    if (!fault || fault.phase !== phase || fault.times <= 0) {
-      return;
-    }
-
-    const nextTimes = fault.times - 1;
-    if (nextTimes > 0) {
-      await this.deps.storage.put(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY, {
-        ...fault,
-        times: nextTimes
-      });
-    } else {
-      await this.deps.storage.delete(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY);
-    }
-
-    if (fault.mode === 'transport_disposed') {
-      const message =
-        'Backup restore was interrupted before completion could be verified';
-      const interrupted = await this.markInterrupted(operation, message);
-      throw this.createInterruptedError({
-        operation: interrupted,
-        reason: 'transport_disposed',
-        phase: operation.phase,
-        admitted: 'unknown',
-        message
-      });
-    }
   }
 
   private async markFailed(
@@ -375,7 +327,8 @@ export class RestoreLifecycleRunner {
 
   private async markInterrupted(
     operation: BackupRestoreOperationRecord,
-    message: string
+    message: string,
+    retryable = true
   ): Promise<BackupRestoreOperationRecord> {
     const next = {
       ...operation,
@@ -384,7 +337,7 @@ export class RestoreLifecycleRunner {
       error: {
         code: ErrorCode.OPERATION_INTERRUPTED,
         message,
-        retryable: true
+        retryable
       },
       updatedAt: new Date().toISOString()
     };
@@ -394,11 +347,19 @@ export class RestoreLifecycleRunner {
 
   private createInterruptedError(params: {
     operation: BackupRestoreOperationRecord;
-    reason: 'runtime_replaced' | 'incarnation_changed' | 'transport_disposed';
+    reason:
+      | 'runtime_replaced'
+      | 'sandbox_lifetime_changed'
+      | 'transport_disposed';
     phase: BackupRestoreOperationPhase;
     admitted: true | 'unknown';
     message: string;
   }): OperationInterruptedError {
+    const retryable = params.reason !== 'sandbox_lifetime_changed';
+    const suggestion = retryable
+      ? 'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
+      : 'Start a new restoreBackup() call only if restoring this backup is still desired for the current sandbox.';
+
     return new OperationInterruptedError({
       message: params.message,
       code: ErrorCode.OPERATION_INTERRUPTED,
@@ -413,11 +374,10 @@ export class RestoreLifecycleRunner {
         dir: params.operation.payload.dir,
         phase: params.phase,
         admitted: params.admitted,
-        retryable: true
+        retryable
       },
       timestamp: new Date().toISOString(),
-      suggestion:
-        'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
+      suggestion
     });
   }
 

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CurrentSandboxIncarnation,
-  SandboxIncarnationChangedError
-} from '../src/sandbox-incarnation';
+  CurrentSandboxLifetime,
+  SandboxLifetimeChangedError
+} from '../src/sandbox-lifetime';
 
 function createStorage(initial = new Map<string, unknown>()) {
   return {
@@ -13,7 +13,7 @@ function createStorage(initial = new Map<string, unknown>()) {
   } as unknown as DurableObjectState['storage'];
 }
 
-describe('CurrentSandboxIncarnation', () => {
+describe('CurrentSandboxLifetime', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-15T10:00:00.000Z'));
@@ -23,49 +23,49 @@ describe('CurrentSandboxIncarnation', () => {
     vi.useRealTimers();
   });
 
-  it('creates an incarnation lazily and returns the stored record on later reads', async () => {
+  it('creates an lifetime lazily and returns the stored record on later reads', async () => {
     const map = new Map<string, unknown>();
     const storage = createStorage(map);
-    const currentIncarnation = new CurrentSandboxIncarnation(storage);
+    const currentLifetime = new CurrentSandboxLifetime(storage);
 
-    const created = await currentIncarnation.getOrCreate();
-    const reread = await currentIncarnation.getOrCreate();
+    const created = await currentLifetime.getOrCreate();
+    const reread = await currentLifetime.getOrCreate();
 
     expect(created.id).toEqual(expect.any(String));
     expect(created.generation).toBe(1);
     expect(created.createdAt).toBe('2026-06-15T10:00:00.000Z');
     expect(created.updatedAt).toBe('2026-06-15T10:00:00.000Z');
     expect(reread).toEqual(created);
-    expect(map.get('sandbox:incarnation')).toEqual(created.record);
+    expect(map.get('sandbox:lifetime')).toEqual(created.record);
     expect(storage.put).toHaveBeenCalledTimes(1);
   });
 
-  it('rotates to a new incarnation and increments the generation', async () => {
+  it('rotates to a new lifetime and increments the generation', async () => {
     const map = new Map<string, unknown>();
     const storage = createStorage(map);
-    const currentIncarnation = new CurrentSandboxIncarnation(storage);
+    const currentLifetime = new CurrentSandboxLifetime(storage);
 
-    const first = await currentIncarnation.getOrCreate();
+    const first = await currentLifetime.getOrCreate();
     vi.setSystemTime(new Date('2026-06-15T10:05:00.000Z'));
 
-    const rotated = await currentIncarnation.rotate();
+    const rotated = await currentLifetime.rotate();
 
     expect(rotated.id).not.toBe(first.id);
     expect(rotated.generation).toBe(2);
     expect(rotated.createdAt).toBe('2026-06-15T10:05:00.000Z');
     expect(rotated.updatedAt).toBe('2026-06-15T10:05:00.000Z');
-    expect(map.get('sandbox:incarnation')).toEqual(rotated.record);
+    expect(map.get('sandbox:lifetime')).toEqual(rotated.record);
   });
 
-  it('throws a typed error when asserting a stale incarnation', async () => {
+  it('throws a typed error when asserting a stale lifetime', async () => {
     const storage = createStorage();
-    const currentIncarnation = new CurrentSandboxIncarnation(storage);
+    const currentLifetime = new CurrentSandboxLifetime(storage);
 
-    const first = await currentIncarnation.getOrCreate();
-    await currentIncarnation.rotate();
+    const first = await currentLifetime.getOrCreate();
+    await currentLifetime.rotate();
 
-    await expect(
-      currentIncarnation.assertCurrent(first)
-    ).rejects.toBeInstanceOf(SandboxIncarnationChangedError);
+    await expect(currentLifetime.assertCurrent(first)).rejects.toBeInstanceOf(
+      SandboxLifetimeChangedError
+    );
   });
 });

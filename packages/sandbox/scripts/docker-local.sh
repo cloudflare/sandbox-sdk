@@ -14,7 +14,6 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION" \
-  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .
 
 docker build \
@@ -23,7 +22,6 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION-python" \
-  --secret id=wrangler_ca,src="$WRANGLER_CA_CERT" \
   .
 
 docker build \

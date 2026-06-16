@@ -65,13 +65,13 @@ function createMockState() {
   return { state, calls, values };
 }
 
-describe('Sandbox destroy incarnation fencing', () => {
+describe('Sandbox destroy lifetime fencing', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-15T11:00:00.000Z'));
   });
 
-  it('rotates sandbox incarnation before clearing runtime identity during destroy', async () => {
+  it('rotates sandbox lifetime before clearing runtime identity during destroy', async () => {
     const { state, calls, values } = createMockState();
     values.set('currentRuntimeIdentity', { id: 'runtime-before-destroy' });
 
@@ -82,19 +82,19 @@ describe('Sandbox destroy incarnation fencing', () => {
 
     await sandbox.destroy();
 
-    const incarnationPutIndex = calls.findIndex(
-      (call) => call.method === 'put' && call.key === 'sandbox:incarnation'
+    const lifetimePutIndex = calls.findIndex(
+      (call) => call.method === 'put' && call.key === 'sandbox:lifetime'
     );
     const runtimeClearIndex = calls.findIndex(
       (call) =>
         call.method === 'delete' && call.key === 'currentRuntimeIdentity'
     );
 
-    expect(incarnationPutIndex).toBeGreaterThanOrEqual(0);
+    expect(lifetimePutIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeClearIndex).toBeGreaterThanOrEqual(0);
-    expect(incarnationPutIndex).toBeLessThan(runtimeClearIndex);
+    expect(lifetimePutIndex).toBeLessThan(runtimeClearIndex);
 
-    expect(values.get('sandbox:incarnation')).toMatchObject({
+    expect(values.get('sandbox:lifetime')).toMatchObject({
       id: expect.any(String),
       generation: 1,
       createdAt: expect.any(String),

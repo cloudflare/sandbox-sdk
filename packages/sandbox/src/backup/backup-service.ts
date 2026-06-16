@@ -20,7 +20,7 @@ import {
   ErrorCode,
   InvalidBackupConfigError
 } from '../errors';
-import type { CurrentSandboxIncarnation } from '../sandbox-incarnation';
+import type { CurrentSandboxLifetime } from '../sandbox-lifetime';
 import { isR2Bucket } from '../storage-mount';
 import {
   BACKUP_ARCHIVE_OBJECT_NAME,
@@ -31,6 +31,9 @@ import {
 import { BackupCreator } from './create';
 import {
   type BackupRestoreTestFault,
+  StorageBackedBackupRestoreFaultInjector
+} from './restore-fault-injection';
+import {
   type RestoreLifecycleContext,
   RestoreLifecycleRunner
 } from './restore-lifecycle';
@@ -38,7 +41,7 @@ import type { BackupRestoreOperationResult } from './restore-operation-store';
 import { BackupTransfer } from './transfer';
 import { validateBackupDir } from './validation';
 
-export type { BackupRestoreTestFault } from './restore-lifecycle';
+export type { BackupRestoreTestFault } from './restore-fault-injection';
 
 type BackupServiceDeps = {
   ctx: DurableObjectState<{}>;
@@ -51,14 +54,14 @@ type BackupServiceDeps = {
     options?: ExecOptions
   ) => Promise<ExecResult>;
   currentRuntime: CurrentRuntimeIdentity;
-  currentIncarnation: CurrentSandboxIncarnation;
+  currentLifetime: CurrentSandboxLifetime;
 };
 
 export class BackupService {
   private readonly ctx: DurableObjectState<{}>;
   private readonly logger: ReturnType<typeof createLogger>;
-  private readonly currentIncarnation: CurrentSandboxIncarnation;
   private readonly creator: BackupCreator;
+  private readonly restoreFaults: StorageBackedBackupRestoreFaultInjector;
   private readonly restoreLifecycle: RestoreLifecycleRunner;
   private readonly transfer: BackupTransfer;
   private backupInProgress: Promise<unknown> = Promise.resolve();
@@ -66,13 +69,15 @@ export class BackupService {
   constructor(private readonly deps: BackupServiceDeps) {
     this.ctx = deps.ctx;
     this.logger = deps.logger;
-    this.currentIncarnation = deps.currentIncarnation;
+    this.restoreFaults = new StorageBackedBackupRestoreFaultInjector(
+      this.ctx.storage,
+      deps.getEnv
+    );
     this.restoreLifecycle = new RestoreLifecycleRunner({
       storage: this.ctx.storage,
-      getEnv: deps.getEnv,
-      logger: deps.logger,
       currentRuntime: deps.currentRuntime,
-      currentIncarnation: deps.currentIncarnation
+      currentLifetime: deps.currentLifetime,
+      faultInjector: this.restoreFaults
     });
     this.transfer = new BackupTransfer({
       getEnv: deps.getEnv,
@@ -214,7 +219,7 @@ export class BackupService {
   async setRestoreFaultForTesting(
     fault: BackupRestoreTestFault | null
   ): Promise<void> {
-    await this.restoreLifecycle.setFaultForTesting(fault);
+    await this.restoreFaults.setFaultForTesting(fault);
   }
 
   private async doRestoreBackup(

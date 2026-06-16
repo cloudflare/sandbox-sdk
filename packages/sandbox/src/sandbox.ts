@@ -87,7 +87,7 @@ import {
 } from './preview-proxy-protocol';
 import { isLocalhostPattern } from './preview-url';
 import { proxyTerminal } from './pty';
-import { CurrentSandboxIncarnation } from './sandbox-incarnation';
+import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
   SandboxSecurityError,
   sanitizeSandboxId,
@@ -896,7 +896,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private activeMounts: Map<string, MountInfo> = new Map();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
-  private currentIncarnation: CurrentSandboxIncarnation;
+  private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
 
   private r2AccessKeyId: string | null = null;
@@ -1078,7 +1078,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.getState(),
       () => this.ctx.container?.running === true
     );
-    this.currentIncarnation = new CurrentSandboxIncarnation(this.ctx.storage);
+    this.currentLifetime = new CurrentSandboxLifetime(this.ctx.storage);
     this.backupService = new BackupService({
       ctx: this.ctx,
       getEnv: () => this.env,
@@ -1087,7 +1087,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       execWithSession: (command, sessionId, options) =>
         this.execWithSession(command, sessionId, options),
       currentRuntime: this.currentRuntime,
-      currentIncarnation: this.currentIncarnation
+      currentLifetime: this.currentLifetime
     });
 
     this.r2AccessKeyId = getEnvString(envObj, 'R2_ACCESS_KEY_ID') ?? null;
@@ -2451,7 +2451,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // the container.
       await this.ctx.storage.delete(PORT_TOKENS_STORAGE_KEY);
       await this.clearActivePreviewPorts();
-      await this.currentIncarnation.rotate();
+      await this.currentLifetime.rotate();
       await this.currentRuntime.clear();
 
       // Unmount all mounted buckets and cleanup. This runs before disconnecting
@@ -2500,7 +2500,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       //
       // Lazily build the handler so destroyAll runs even on a sandbox
       // that never accessed `tunnels` during its lifetime — storage may
-      // hold records from a prior incarnation under the same DO id.
+      // hold records from a prior lifetime under the same DO id.
       try {
         this.ensureTunnelsBuilt();
         await this.destroyAllTunnels?.();

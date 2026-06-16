@@ -60,7 +60,7 @@ describe('OperationInterruptedError', () => {
       context: interrupted.context
     });
     expect(JSON.stringify(interrupted)).not.toContain('runtimeIdentityID');
-    expect(JSON.stringify(interrupted)).not.toContain('incarnationId');
+    expect(JSON.stringify(interrupted)).not.toContain('sandboxLifetimeID');
     expect(JSON.stringify(interrupted)).not.toContain('placementId');
   });
 });

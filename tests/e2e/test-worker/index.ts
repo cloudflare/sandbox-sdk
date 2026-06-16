@@ -70,6 +70,7 @@ interface Env {
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   BACKUP_BUCKET_NAME?: string;
+  SANDBOX_ENABLE_TEST_HOOKS?: string;
   DEPLOY_HASH?: string;
 }
 
@@ -1084,6 +1085,13 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/test/faults/backup-restore' &&
         request.method === 'POST'
       ) {
+        if (env.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
+          return new Response(
+            JSON.stringify({ error: 'Sandbox test hooks are not enabled' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
         await sandbox.__setBackupRestoreFaultForTesting(body);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }

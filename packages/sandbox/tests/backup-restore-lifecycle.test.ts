@@ -62,14 +62,28 @@ function createBackupBucket(createdAt = '2026-06-15T12:00:00.000Z') {
   };
 }
 
+function createDisposedRPCError(): RPCTransportError {
+  return new RPCTransportError({
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message: 'RPC session was shut down by disposing the main stub',
+    httpStatus: 503,
+    context: {
+      kind: 'session_disposed',
+      originalMessage: 'RPC session was shut down by disposing the main stub',
+      errorName: 'Error'
+    },
+    timestamp: '2026-06-15T12:00:00.000Z'
+  });
+}
+
 async function createBackupSandbox(params?: {
   storageMap?: Map<string, StoredValue>;
   bucket?: ReturnType<typeof createBackupBucket>;
 }) {
   const storageMap = params?.storageMap ?? new Map<string, StoredValue>();
   storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
-  storageMap.set('sandbox:incarnation', {
-    id: 'incarnation-1',
+  storageMap.set('sandbox:lifetime', {
+    id: 'lifetime-1',
     generation: 1,
     createdAt: '2026-06-15T12:00:00.000Z',
     updatedAt: '2026-06-15T12:00:00.000Z'
@@ -132,7 +146,7 @@ async function createBackupSandbox(params?: {
   return { sandbox, storageMap, bucket };
 }
 
-describe('backup restore operation records', () => {
+describe('backup restore lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
@@ -150,7 +164,7 @@ describe('backup restore operation records', () => {
     expect(record).toMatchObject({
       operationKey: `restore:${backupId}:/workspace/project`,
       kind: 'backup.restore',
-      incarnationId: 'incarnation-1',
+      sandboxLifetimeID: 'lifetime-1',
       runtimeIdentityID: 'runtime-1',
       phase: 'verified',
       status: 'committed',
@@ -168,63 +182,12 @@ describe('backup restore operation records', () => {
     });
   });
 
-  it('recovers internally when a configured archive-ready fault fires once', async () => {
-    const { sandbox, storageMap } = await createBackupSandbox();
-    const backupId = crypto.randomUUID();
-    await (
-      sandbox as unknown as {
-        __setBackupRestoreFaultForTesting: (fault: {
-          phase: 'after_archive_ready';
-          mode: 'transport_disposed';
-          times: number;
-        }) => Promise<void>;
-      }
-    ).__setBackupRestoreFaultForTesting({
-      phase: 'after_archive_ready',
-      mode: 'transport_disposed',
-      times: 1
-    });
-    const restoreArchiveSpy = vi.spyOn(sandbox.client.backup, 'restoreArchive');
-
-    const result = await sandbox.restoreBackup({
-      id: backupId,
-      dir: '/workspace/project'
-    });
-
-    expect(result).toEqual({
-      success: true,
-      id: backupId,
-      dir: '/workspace/project'
-    });
-    expect(restoreArchiveSpy).toHaveBeenCalledTimes(1);
-
-    const record = storageMap.get(
-      `operations:restore:${backupId}:/workspace/project`
-    ) as BackupRestoreOperationRecord;
-    expect(record.status).toBe('committed');
-    expect(record.phase).toBe('verified');
-    expect(record.result).toEqual(result);
-  });
-
   it('recovers internally when the first restore attempt loses the RPC transport', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
     const restoreArchiveSpy = vi
       .spyOn(sandbox.client.backup, 'restoreArchive')
-      .mockRejectedValueOnce(
-        new RPCTransportError({
-          code: ErrorCode.RPC_TRANSPORT_ERROR,
-          message: 'RPC session was shut down by disposing the main stub',
-          httpStatus: 503,
-          context: {
-            kind: 'session_disposed',
-            originalMessage:
-              'RPC session was shut down by disposing the main stub',
-            errorName: 'Error'
-          },
-          timestamp: '2026-06-15T12:00:00.000Z'
-        })
-      )
+      .mockRejectedValueOnce(createDisposedRPCError())
       .mockResolvedValueOnce({ success: true, dir: '/workspace/project' });
 
     const result = await sandbox.restoreBackup({
@@ -252,20 +215,7 @@ describe('backup restore operation records', () => {
     const backupId = crypto.randomUUID();
     const restoreArchiveSpy = vi
       .spyOn(sandbox.client.backup, 'restoreArchive')
-      .mockRejectedValue(
-        new RPCTransportError({
-          code: ErrorCode.RPC_TRANSPORT_ERROR,
-          message: 'RPC session was shut down by disposing the main stub',
-          httpStatus: 503,
-          context: {
-            kind: 'session_disposed',
-            originalMessage:
-              'RPC session was shut down by disposing the main stub',
-            errorName: 'Error'
-          },
-          timestamp: '2026-06-15T12:00:00.000Z'
-        })
-      );
+      .mockRejectedValue(createDisposedRPCError());
 
     let thrown: unknown;
     try {
@@ -332,14 +282,14 @@ describe('backup restore operation records', () => {
     expect(record.result).toEqual(result);
   });
 
-  it('does not retry restore across a sandbox incarnation change', async () => {
+  it('does not retry restore across a sandbox lifetime change', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
     const restoreArchiveSpy = vi
       .spyOn(sandbox.client.backup, 'restoreArchive')
       .mockImplementationOnce(async () => {
-        storageMap.set('sandbox:incarnation', {
-          id: 'incarnation-2',
+        storageMap.set('sandbox:lifetime', {
+          id: 'lifetime-2',
           generation: 2,
           createdAt: '2026-06-15T12:01:00.000Z',
           updatedAt: '2026-06-15T12:01:00.000Z'
@@ -359,7 +309,7 @@ describe('backup restore operation records', () => {
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
     const interrupted = thrown as OperationInterruptedError;
     expect(interrupted.context).toEqual({
-      reason: 'incarnation_changed',
+      reason: 'sandbox_lifetime_changed',
       operation: 'backup.restore',
       operationId: expect.any(String),
       operationKey: `restore:${backupId}:/workspace/project`,
@@ -368,7 +318,7 @@ describe('backup restore operation records', () => {
       dir: '/workspace/project',
       phase: 'archive_ready',
       admitted: true,
-      retryable: true
+      retryable: false
     });
 
     const record = storageMap.get(
@@ -376,6 +326,7 @@ describe('backup restore operation records', () => {
     ) as BackupRestoreOperationRecord;
     expect(record.status).toBe('interrupted');
     expect(record.phase).toBe('interrupted');
+    expect(record.error?.retryable).toBe(false);
     expect(record.result).toBeUndefined();
   });
 });

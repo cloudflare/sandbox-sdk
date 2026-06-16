@@ -14,7 +14,6 @@ export const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 export const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 export const BACKUP_DOWNLOAD_MAX_PARTS = 64;
 export const BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS = 2;
-export const BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY = 'test:backupRestoreFault';
 
 export function calculatePartCount(
   sizeBytes: number,

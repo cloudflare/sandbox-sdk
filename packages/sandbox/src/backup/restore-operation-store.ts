@@ -1,5 +1,5 @@
 import type { RuntimeIdentityID } from '../current-runtime-identity';
-import type { SandboxIncarnationID } from '../sandbox-incarnation';
+import type { SandboxLifetimeID } from '../sandbox-lifetime';
 
 export type BackupRestoreOperationStatus =
   | 'running'
@@ -36,7 +36,7 @@ export type BackupRestoreOperationRecord = {
   operationId: string;
   operationKey: string;
   kind: 'backup.restore';
-  incarnationId: SandboxIncarnationID;
+  sandboxLifetimeID: SandboxLifetimeID;
   phase: BackupRestoreOperationPhase;
   status: BackupRestoreOperationStatus;
   runtimeIdentityID?: RuntimeIdentityID;
@@ -61,7 +61,7 @@ export function backupRestoreOperationKey(
 
 export function createBackupRestoreOperationRecord(params: {
   operationId: string;
-  incarnationId: SandboxIncarnationID;
+  sandboxLifetimeID: SandboxLifetimeID;
   backupId: string;
   dir: string;
   now: string;
@@ -70,7 +70,7 @@ export function createBackupRestoreOperationRecord(params: {
     operationId: params.operationId,
     operationKey: backupRestoreOperationKey(params.backupId, params.dir),
     kind: 'backup.restore',
-    incarnationId: params.incarnationId,
+    sandboxLifetimeID: params.sandboxLifetimeID,
     phase: 'validating',
     status: 'running',
     payload: {
@@ -97,10 +97,10 @@ export class BackupRestoreOperationStore {
 
   async getCurrent(
     operationKey: string,
-    incarnationId: SandboxIncarnationID
+    sandboxLifetimeID: SandboxLifetimeID
   ): Promise<BackupRestoreOperationRecord | null> {
     const record = await this.get(operationKey);
-    if (!record || record.incarnationId !== incarnationId) {
+    if (!record || record.sandboxLifetimeID !== sandboxLifetimeID) {
       return null;
     }
     return record;

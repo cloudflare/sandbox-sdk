@@ -255,7 +255,7 @@ export type OperationInterruptedReason =
   | 'container_stopped'
   | 'transport_disposed'
   | 'sandbox_destroyed'
-  | 'incarnation_changed'
+  | 'sandbox_lifetime_changed'
   | 'recovery_exhausted'
   | 'unknown';
 

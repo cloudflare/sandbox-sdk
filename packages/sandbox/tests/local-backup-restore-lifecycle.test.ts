@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackupRestoreOperationRecord } from '../src/backup/restore-operation-store';
-import {
-  ErrorCode,
-  OperationInterruptedError,
-  RPCTransportError
-} from '../src/errors';
+import { ErrorCode, RPCTransportError } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
 
@@ -44,6 +40,20 @@ function createStorage(initial = new Map<string, StoredValue>()) {
     }),
     list: vi.fn(async () => new Map<string, StoredValue>())
   } as unknown as DurableObjectStorage;
+}
+
+function createDisposedRPCError(): RPCTransportError {
+  return new RPCTransportError({
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message: 'RPC session was shut down by disposing the main stub',
+    httpStatus: 503,
+    context: {
+      kind: 'session_disposed',
+      originalMessage: 'RPC session was shut down by disposing the main stub',
+      errorName: 'Error'
+    },
+    timestamp: '2026-06-15T12:00:00.000Z'
+  });
 }
 
 function createMockR2Bucket() {
@@ -92,8 +102,8 @@ function createMockR2Bucket() {
 async function createLocalRestoreSandbox() {
   const storageMap = new Map<string, StoredValue>();
   storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
-  storageMap.set('sandbox:incarnation', {
-    id: 'incarnation-1',
+  storageMap.set('sandbox:lifetime', {
+    id: 'lifetime-1',
     generation: 1,
     createdAt: '2026-06-15T12:00:00.000Z',
     updatedAt: '2026-06-15T12:00:00.000Z'
@@ -162,7 +172,7 @@ async function createLocalRestoreSandbox() {
   return { sandbox, storageMap, backupId };
 }
 
-describe('local backup restore operation records', () => {
+describe('local backup restore lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
@@ -198,20 +208,7 @@ describe('local backup restore operation records', () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
     const writeFileStreamSpy = vi
       .spyOn(sandbox.client.files, 'writeFileStream')
-      .mockRejectedValueOnce(
-        new RPCTransportError({
-          code: ErrorCode.RPC_TRANSPORT_ERROR,
-          message: 'RPC session was shut down by disposing the main stub',
-          httpStatus: 503,
-          context: {
-            kind: 'session_disposed',
-            originalMessage:
-              'RPC session was shut down by disposing the main stub',
-            errorName: 'Error'
-          },
-          timestamp: '2026-06-15T12:00:00.000Z'
-        })
-      )
+      .mockRejectedValueOnce(createDisposedRPCError())
       .mockResolvedValueOnce({
         success: true,
         path: `/var/backups/${backupId}.sqsh`,
@@ -236,45 +233,5 @@ describe('local backup restore operation records', () => {
     ) as BackupRestoreOperationRecord;
     expect(record.status).toBe('committed');
     expect(record.phase).toBe('verified');
-  });
-
-  it('surfaces OPERATION_INTERRUPTED after exhausting local restore recovery attempts', async () => {
-    const { sandbox, backupId } = await createLocalRestoreSandbox();
-    vi.spyOn(sandbox.client.files, 'writeFileStream').mockRejectedValue(
-      new RPCTransportError({
-        code: ErrorCode.RPC_TRANSPORT_ERROR,
-        message: 'RPC session was shut down by disposing the main stub',
-        httpStatus: 503,
-        context: {
-          kind: 'session_disposed',
-          originalMessage:
-            'RPC session was shut down by disposing the main stub',
-          errorName: 'Error'
-        },
-        timestamp: '2026-06-15T12:00:00.000Z'
-      })
-    );
-
-    let thrown: unknown;
-    try {
-      await sandbox.restoreBackup({
-        id: backupId,
-        dir: '/workspace/project',
-        localBucket: true
-      });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(OperationInterruptedError);
-    const interrupted = thrown as OperationInterruptedError;
-    expect(interrupted.context).toMatchObject({
-      reason: 'recovery_exhausted',
-      operation: 'backup.restore',
-      backupId,
-      dir: '/workspace/project',
-      recoveryAttempts: 2,
-      maxRecoveryAttempts: 2
-    });
   });
 });

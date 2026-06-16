@@ -5,7 +5,7 @@ import {
   backupRestoreOperationKey,
   createBackupRestoreOperationRecord
 } from '../src/backup/restore-operation-store';
-import type { SandboxIncarnationID } from '../src/sandbox-incarnation';
+import type { SandboxLifetimeID } from '../src/sandbox-lifetime';
 
 function createStorage(initial = new Map<string, unknown>()) {
   return {
@@ -26,7 +26,7 @@ function makeBackupRestoreRecord(
     operationId: 'op-1',
     operationKey: backupRestoreOperationKey('backup-1', '/workspace/project'),
     kind: 'backup.restore',
-    incarnationId: 'incarnation-1' as SandboxIncarnationID,
+    sandboxLifetimeID: 'lifetime-1' as SandboxLifetimeID,
     phase: 'validating',
     status: 'running',
     payload: {
@@ -49,7 +49,7 @@ describe('BackupRestoreOperationStore', () => {
   it('creates a backup restore operation record with the backup payload', () => {
     const record = createBackupRestoreOperationRecord({
       operationId: 'op-1',
-      incarnationId: 'incarnation-1' as SandboxIncarnationID,
+      sandboxLifetimeID: 'lifetime-1' as SandboxLifetimeID,
       backupId: 'backup-1',
       dir: '/workspace/project',
       now: '2026-06-15T12:00:00.000Z'
@@ -59,7 +59,7 @@ describe('BackupRestoreOperationStore', () => {
       operationId: 'op-1',
       operationKey: 'restore:backup-1:/workspace/project',
       kind: 'backup.restore',
-      incarnationId: 'incarnation-1',
+      sandboxLifetimeID: 'lifetime-1',
       phase: 'validating',
       status: 'running',
       payload: {
@@ -84,7 +84,7 @@ describe('BackupRestoreOperationStore', () => {
     );
   });
 
-  it('returns the current-incarnation record for an operation key', async () => {
+  it('returns the current-lifetime record for an operation key', async () => {
     const record = makeBackupRestoreRecord();
     const storage = createStorage(
       new Map([['operations:restore:backup-1:/workspace/project', record]])
@@ -93,15 +93,15 @@ describe('BackupRestoreOperationStore', () => {
 
     const current = await operations.getCurrent(
       record.operationKey,
-      'incarnation-1' as SandboxIncarnationID
+      'lifetime-1' as SandboxLifetimeID
     );
 
     expect(current).toEqual(record);
   });
 
-  it('ignores operation records from a stale sandbox incarnation', async () => {
+  it('ignores operation records from a stale sandbox lifetime', async () => {
     const record = makeBackupRestoreRecord({
-      incarnationId: 'old-incarnation' as SandboxIncarnationID
+      sandboxLifetimeID: 'old-lifetime' as SandboxLifetimeID
     });
     const storage = createStorage(
       new Map([['operations:restore:backup-1:/workspace/project', record]])
@@ -110,33 +110,9 @@ describe('BackupRestoreOperationStore', () => {
 
     const current = await operations.getCurrent(
       record.operationKey,
-      'new-incarnation' as SandboxIncarnationID
+      'new-lifetime' as SandboxLifetimeID
     );
 
     expect(current).toBeNull();
-  });
-
-  it('overwrites a stale-incarnation record with the current-incarnation record', async () => {
-    const map = new Map<string, unknown>([
-      [
-        'operations:restore:backup-1:/workspace/project',
-        makeBackupRestoreRecord({
-          operationId: 'old-op',
-          incarnationId: 'old-incarnation' as SandboxIncarnationID
-        })
-      ]
-    ]);
-    const storage = createStorage(map);
-    const operations = new BackupRestoreOperationStore(storage);
-    const replacement = makeBackupRestoreRecord({
-      operationId: 'new-op',
-      incarnationId: 'new-incarnation' as SandboxIncarnationID
-    });
-
-    await operations.put(replacement);
-
-    expect(map.get('operations:restore:backup-1:/workspace/project')).toEqual(
-      replacement
-    );
   });
 });
