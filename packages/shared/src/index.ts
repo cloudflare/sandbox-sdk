@@ -176,7 +176,6 @@ export type {
   SessionDeleteResult,
   SessionOptions,
   ShutdownResult,
-  StreamOptions,
   // Process readiness types
   WaitForExitResult,
   WaitForLogResult,

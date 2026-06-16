@@ -443,34 +443,6 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      // Command execution with streaming
-      if (url.pathname === '/api/execStream' && request.method === 'POST') {
-        console.log(
-          '[TestWorker] execStream called for command:',
-          body.command
-        );
-        const startTime = Date.now();
-        const stream = await executor.execStream(body.command, {
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout
-        });
-        console.log(
-          '[TestWorker] Stream received in',
-          Date.now() - startTime,
-          'ms'
-        );
-
-        // Return SSE stream directly
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive'
-          }
-        });
-      }
-
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {
         const result = await executor.gitCheckout(body.repoUrl, {

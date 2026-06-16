@@ -34,7 +34,6 @@ export type {
   RestoreBackupResult,
   SandboxOptions,
   SessionOptions,
-  StreamOptions,
   TunnelInfo,
   TunnelOptions,
   WaitForLogResult,

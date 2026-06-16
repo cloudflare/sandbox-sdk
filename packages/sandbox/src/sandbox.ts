@@ -34,7 +34,6 @@ import type {
   RestoreBackupResult,
   SandboxOptions,
   SessionOptions,
-  StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
@@ -345,11 +344,6 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
     sessionId: string,
     options?: ExecOptions
   ) => Promise<ExecResult>;
-  execStreamWithSessionToken: (
-    command: string,
-    sessionId: string,
-    options?: StreamOptions
-  ) => Promise<ReadableStream<Uint8Array>>;
 };
 
 type SandboxExecutionContext =
@@ -706,17 +700,7 @@ export function getSandbox<T extends Sandbox<any>>(
       useDefaultSession || sessionId !== undefined
         ? stub.getProcess(id, sessionId)
         : stub.getProcess(id, DISABLE_SESSION_TOKEN),
-    execStream: (command: string, streamOptions?: StreamOptions) => {
-      if (useDefaultSession || streamOptions?.sessionId !== undefined) {
-        return stub.execStream(command, streamOptions);
-      }
 
-      return stub.execStreamWithSessionToken(
-        command,
-        DISABLE_SESSION_TOKEN,
-        streamOptions
-      );
-    },
     writeFile: (
       path: string,
       content: string | ReadableStream<Uint8Array>,
@@ -4475,64 +4459,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  // Streaming methods - return ReadableStream for RPC compatibility
-  async execStream(
-    command: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    const context = await this.resolveExecution(options?.sessionId);
-    const session = this.serializeExecutionContext(context);
-    const executionOptions = this.buildExecutionRequestOptions(session, {
-      timeout: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd
-    });
-    // Get the stream from the control client
-    return this.client.commands.executeStream(
-      command,
-      session,
-      executionOptions
-    );
-  }
-
-  async execStreamWithSessionToken(
-    command: string,
-    sessionId: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>> {
-    this.validateExplicitSessionId(sessionId);
-    return this.execStreamWithSession(command, sessionId, options);
-  }
-
-  /**
-   * Internal session-aware execStream implementation
-   */
-  private async execStreamWithSession(
-    command: string,
-    sessionId: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    return this.client.commands.executeStream(
-      command,
-      sessionId,
-      this.buildExecutionRequestOptions(sessionId, {
-        timeout: options?.timeout,
-        env: options?.env,
-        cwd: options?.cwd
-      })
-    );
-  }
-
   /**
    * Stream logs from a background process as a ReadableStream.
    */
@@ -5373,8 +5299,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       exec: (command, options) =>
         this.execWithSession(command, sessionId, options),
-      execStream: (command, options) =>
-        this.execStreamWithSession(command, sessionId, options),
 
       // Process management
       startProcess: (command, options) =>

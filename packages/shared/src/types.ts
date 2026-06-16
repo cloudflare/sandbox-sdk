@@ -393,25 +393,6 @@ export interface LogEvent {
   exitCode?: number;
 }
 
-export interface StreamOptions extends BaseExecOptions {
-  /**
-   * Optional session ID to run the streaming command in.
-   *
-   * When omitted, the sandbox's default execution policy applies.
-   */
-  sessionId?: string;
-
-  /**
-   * Buffer size for streaming output
-   */
-  bufferSize?: number;
-
-  /**
-   * AbortSignal for cancelling stream
-   */
-  signal?: AbortSignal;
-}
-
 // Session management types
 export interface SessionOptions {
   /**
@@ -972,10 +953,6 @@ export interface ExecutionSession {
 
   // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
-  execStream(
-    command: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
@@ -1297,10 +1274,6 @@ export interface ISandbox {
   killAllProcesses(): Promise<number>;
 
   // Streaming operations
-  execStream(
-    command: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(
     processId: string,
     options?: { signal?: AbortSignal }

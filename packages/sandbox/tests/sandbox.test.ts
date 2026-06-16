@@ -360,6 +360,10 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('default session management', () => {
+    it('does not expose execStream', () => {
+      expect('execStream' in sandbox).toBe(false);
+    });
+
     it('runs implicit exec without creating a default session', async () => {
       vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
         success: true,
@@ -493,49 +497,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
     });
 
-    it('should forward explicit sessionId for execStream and listFiles', async () => {
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
-        new ReadableStream()
-      );
-      vi.spyOn(sandbox.client.files, 'listFiles').mockResolvedValue({
-        success: true,
-        path: '/workspace',
-        files: [],
-        count: 0,
-        timestamp: new Date().toISOString()
-      });
-
-      await sandbox.execStream('echo streamed', {
-        sessionId: 'explicit-session',
-        cwd: '/workspace/project'
-      });
-      await sandbox.listFiles('/workspace', {
-        recursive: true,
-        sessionId: 'explicit-session'
-      });
-
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
-        'echo streamed',
-        'explicit-session',
-        {
-          cwd: '/workspace/project'
-        }
-      );
-      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
-        '/workspace',
-        'explicit-session',
-        {
-          recursive: true,
-          sessionId: 'explicit-session'
-        }
-      );
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-    });
-
     it('should allow explicit session IDs on top-level methods', async () => {
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
-        new ReadableStream()
-      );
       vi.spyOn(sandbox.client.files, 'listFiles').mockResolvedValue({
         success: true,
         path: '/workspace',
@@ -545,22 +507,11 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       vi.mocked(sandbox.client.utils.createSession).mockClear();
 
-      await sandbox.execStream('echo streamed', {
-        sessionId: 'explicit-session',
-        cwd: '/workspace/project'
-      });
       await sandbox.listFiles('/workspace', {
         includeHidden: true,
         sessionId: 'explicit-session'
       });
 
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
-        'echo streamed',
-        'explicit-session',
-        {
-          cwd: '/workspace/project'
-        }
-      );
       expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
         '/workspace',
         'explicit-session',
@@ -574,10 +525,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     it('should reject empty explicit session IDs', async () => {
-      await expect(
-        sandbox.execStream('echo bad', { sessionId: '   ' })
-      ).rejects.toThrow('sessionId must not be empty or whitespace');
-
       await expect(
         sandbox.listFiles('/workspace', { sessionId: '' })
       ).rejects.toThrow('sessionId must not be empty or whitespace');
@@ -606,44 +553,6 @@ describe('Sandbox - Automatic Session Management', () => {
         'printf sessionless',
         DISABLE_SESSION_TOKEN,
         undefined
-      );
-      expect(result.sessionId).toBeUndefined();
-    });
-
-    it('should not expose the sessionless token on streaming exec results', async () => {
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(
-              new TextEncoder().encode(
-                'data: {"type":"complete","exitCode":0}\n\n'
-              )
-            );
-            controller.close();
-          }
-        })
-      );
-      await sandbox.setEnvVars({ SANDBOX_LEVEL_ENV: 'from-sandbox' });
-
-      const result = await sandbox.execWithSessionToken(
-        'printf sessionless',
-        DISABLE_SESSION_TOKEN,
-        {
-          stream: true,
-          onOutput: vi.fn(),
-          env: { CALL_LEVEL_ENV: 'from-call' }
-        }
-      );
-
-      expect(sandbox.client.commands.executeStream).toHaveBeenCalledWith(
-        'printf sessionless',
-        DISABLE_SESSION_TOKEN,
-        {
-          env: {
-            SANDBOX_LEVEL_ENV: 'from-sandbox',
-            CALL_LEVEL_ENV: 'from-call'
-          }
-        }
       );
       expect(result.sessionId).toBeUndefined();
     });
