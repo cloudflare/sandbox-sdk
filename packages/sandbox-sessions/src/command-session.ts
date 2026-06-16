@@ -74,9 +74,7 @@ export class CommandSessionProcess {
   }
 
   async kill(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
-    try {
-      process.kill(this.pid, signal);
-    } catch {}
+    await killProcessTree(this.pid, signal);
   }
 }
 
@@ -496,6 +494,45 @@ function parsePID(pid: string): number {
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+async function killProcessTree(
+  rootPID: number,
+  signal: NodeJS.Signals
+): Promise<void> {
+  const descendants = await listDescendantPIDs(rootPID);
+  for (const pid of descendants.reverse()) {
+    killPID(pid, signal);
+  }
+  killPID(rootPID, signal);
+}
+
+async function listDescendantPIDs(rootPID: number): Promise<number[]> {
+  const children = await listChildPIDs(rootPID);
+  const descendants: number[] = [];
+  for (const child of children) {
+    descendants.push(child, ...(await listDescendantPIDs(child)));
+  }
+  return descendants;
+}
+
+async function listChildPIDs(parentPID: number): Promise<number[]> {
+  const ps = Bun.spawn(['ps', '-o', 'pid=', '--ppid', String(parentPID)], {
+    stdout: 'pipe',
+    stderr: 'ignore'
+  });
+  const output = ps.stdout ? await new Response(ps.stdout).text() : '';
+  await ps.exited;
+  return output
+    .split(/\s+/)
+    .map((value) => Number.parseInt(value, 10))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function killPID(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch {}
 }
 
 function getShellStdin(shell: Bun.Subprocess): StdinWriter {

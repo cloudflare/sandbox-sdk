@@ -269,6 +269,26 @@ cd /`);
     expect(result.stdout).toBe('started\n');
   });
 
+  it('kills background descendants of a process', async () => {
+    await using session = await CommandSession.create();
+
+    const process = await session.startProcess(
+      'sleep 10 & printf \'child:%s\n\' "$!"; sleep 10'
+    );
+    const result = await Promise.race([
+      process.wait(),
+      Bun.sleep(750).then(async () => {
+        await process.kill();
+        return process.wait();
+      })
+    ]);
+    const childPID = result.stdout.match(/child:(\d+)/)?.[1];
+    expect(childPID).toBeDefined();
+
+    const childStatus = await session.exec(`kill -0 ${childPID}`);
+    expect(childStatus.exitCode).not.toBe(0);
+  });
+
   it('marks the session failed after command timeout', async () => {
     const session = await CommandSession.create();
 
