@@ -59,6 +59,7 @@ type PendingOperation =
     };
 
 type ProcessCompletion = {
+  pid: number;
   output: StdioChunk[];
   nextSeq: number;
   onOutput?: (chunk: StdioChunk) => void;
@@ -180,7 +181,7 @@ export class CommandSession implements AsyncDisposable {
     }
     this.ready.reject(error);
     this.rejectPending(error);
-    this.rejectProcesses(error);
+    await this.terminateProcesses(error);
     await this.cleanupResources();
   }
 
@@ -356,11 +357,10 @@ export class CommandSession implements AsyncDisposable {
       const pending = this.pending;
       this.pending = undefined;
       const completion = Promise.withResolvers<CommandSessionProcessResult>();
-      const process = new CommandSessionProcess(
-        parsePID(field),
-        completion.promise
-      );
+      const pid = parsePID(field);
+      const process = new CommandSessionProcess(pid, completion.promise);
       const processCompletion: ProcessCompletion = {
+        pid,
         output: [],
         nextSeq: 0,
         onOutput: pending.onOutput,
@@ -448,6 +448,22 @@ export class CommandSession implements AsyncDisposable {
     this.processes.delete(id);
     this.cleanupProcess(process);
     process.reject(error);
+  }
+
+  private async terminateProcesses(error: Error): Promise<void> {
+    const entries = [...this.processes.entries()];
+    await Promise.all(
+      entries.map(([, process]) =>
+        terminateProcessTree(process.pid, PROCESS_TIMEOUT_GRACE_MS)
+      )
+    );
+    for (const [id, process] of entries) {
+      if (this.processes.get(id) === process) {
+        this.processes.delete(id);
+        this.cleanupProcess(process);
+        process.reject(error);
+      }
+    }
   }
 
   private rejectProcesses(error: Error): void {

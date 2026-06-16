@@ -8,6 +8,15 @@ function collect(output: StdioChunk[], stream: StdioChunk['stream']): string {
     .join('');
 }
 
+function isPIDAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('CommandSession', () => {
   it('preserves shell state and returns final stdout and stderr', async () => {
     await using session = await CommandSession.create({ cwd: '/tmp' });
@@ -330,6 +339,37 @@ cd /`);
     expect(result.stdout).toBe('quick\n');
     expect(afterTimeoutWindow.exitCode).toBe(0);
     expect(afterTimeoutWindow.stdout).toBe('session-alive\n');
+  });
+
+  it('closes active process trees when closing the session', async () => {
+    const session = await CommandSession.create();
+    const childPID = Promise.withResolvers<number>();
+
+    const runningProcess = await session.startProcess(
+      'sleep 10 & printf \'child:%s\n\' "$!"; sleep 10',
+      {
+        onOutput: (chunk) => {
+          const pid = chunk.data.match(/child:(\d+)/)?.[1];
+          if (pid) {
+            childPID.resolve(Number.parseInt(pid, 10));
+          }
+        }
+      }
+    );
+    const pid = await Promise.race([
+      childPID.promise,
+      Bun.sleep(750).then(() => {
+        throw new Error('Timed out waiting for child PID');
+      })
+    ]);
+
+    const waitForProcess = runningProcess.wait();
+
+    await session.close();
+    const result = await waitForProcess;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(isPIDAlive(pid)).toBe(false);
   });
 
   it('marks the session failed after command timeout', async () => {
