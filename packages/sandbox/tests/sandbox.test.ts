@@ -621,6 +621,45 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(processes[0].sessionId).toBeUndefined();
     });
 
+    it('does not annotate process reads with an existing default session', async () => {
+      await sandbox.writeFile('/test.txt', 'content');
+
+      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
+        success: true,
+        processes: [
+          {
+            id: 'proc-existing-default',
+            pid: 4321,
+            command: 'sleep 10',
+            status: 'running',
+            startTime: new Date().toISOString()
+          }
+        ],
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-existing-default',
+          pid: 4321,
+          command: 'sleep 10',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.mocked(sandbox.client.utils.createSession).mockClear();
+
+      const listed = await sandbox.listProcesses();
+      const fetched = await sandbox.getProcess('proc-existing-default');
+
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(listed[0].sessionId).toBeUndefined();
+      expect(fetched?.sessionId).toBeUndefined();
+    });
+
     it('does not annotate implicit process objects with a default session', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,

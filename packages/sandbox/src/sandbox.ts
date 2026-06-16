@@ -3525,23 +3525,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Resolves the session ID to annotate returned Process objects.
    *
    * Unlike `resolveExecution`, this is synchronous and never creates a
-   * session. When the default session hasn't been established yet, it returns
-   * `undefined` rather than triggering session creation. The resolved value is
-   * only used to populate `Process.sessionId` on the returned object — it is
-   * never sent to the container API.
+   * session. Top-level process reads are sandbox-scoped, so they only carry a
+   * public session annotation when the caller provides an explicit session id.
+   * The resolved value is only used to populate `Process.sessionId` on the
+   * returned object — it is never sent to the container API.
    */
   private getProcessSessionBinding(
     explicitSessionId?: string
   ): string | undefined {
-    if (explicitSessionId !== undefined) {
-      this.validateExplicitSessionId(explicitSessionId);
-      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
-        return undefined;
-      }
-      return explicitSessionId;
+    if (explicitSessionId === undefined) {
+      return undefined;
     }
 
-    return this.defaultSession ?? undefined;
+    this.validateExplicitSessionId(explicitSessionId);
+    if (explicitSessionId === DISABLE_SESSION_TOKEN) {
+      return undefined;
+    }
+    return explicitSessionId;
   }
 
   private resolveExecutionEnv(
