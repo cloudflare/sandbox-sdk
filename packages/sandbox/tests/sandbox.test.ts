@@ -576,7 +576,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(fileSessionId).toMatch(/^sandbox-/);
     });
 
-    it('should use default session for process management', async () => {
+    it('starts implicit processes without creating a default session', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-1',
@@ -602,12 +602,11 @@ describe('Sandbox - Automatic Session Management', () => {
       const process = await sandbox.startProcess('sleep 10');
       const processes = await sandbox.listProcesses();
 
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
-      // startProcess uses sessionId (to start process in that session)
       const startSessionId = vi.mocked(sandbox.client.processes.startProcess)
         .mock.calls[0][1];
-      expect(startSessionId).toMatch(/^sandbox-/);
+      expect(startSessionId).toBe(DISABLE_SESSION_TOKEN);
 
       // listProcesses is sandbox-scoped - no sessionId parameter
       const listProcessesCall = vi.mocked(
@@ -615,16 +614,14 @@ describe('Sandbox - Automatic Session Management', () => {
       ).mock.calls[0];
       expect(listProcessesCall).toEqual([]);
 
-      // Verify the started process appears in the list with session annotation
       expect(process.id).toBe('proc-1');
-      expect(process.sessionId).toMatch(/^sandbox-/);
+      expect(process.sessionId).toBeUndefined();
       expect(processes).toHaveLength(1);
       expect(processes[0].id).toBe('proc-1');
-      expect(processes[0].sessionId).toMatch(/^sandbox-/);
-      expect(process.sessionId).toBe(processes[0].sessionId);
+      expect(processes[0].sessionId).toBeUndefined();
     });
 
-    it('should preserve the default session on process objects', async () => {
+    it('does not annotate implicit process objects with a default session', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-none',
@@ -665,20 +662,18 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toMatch(/^sandbox-/);
+      ).toBe(DISABLE_SESSION_TOKEN);
       expect(
         vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
       ).toEqual([]);
       expect(
         vi.mocked(sandbox.client.processes.getProcess).mock.calls[0]
       ).toEqual(['proc-none']);
-      expect(started.sessionId).toMatch(/^sandbox-/);
+      expect(started.sessionId).toBeUndefined();
       expect(listed).toHaveLength(1);
-      expect(listed[0].sessionId).toMatch(/^sandbox-/);
-      expect(fetched?.sessionId).toMatch(/^sandbox-/);
-      expect(started.sessionId).toBe(listed[0].sessionId);
-      expect(started.sessionId).toBe(fetched?.sessionId);
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledOnce();
+      expect(listed[0].sessionId).toBeUndefined();
+      expect(fetched?.sessionId).toBeUndefined();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('should not expose the sessionless token on process objects', async () => {

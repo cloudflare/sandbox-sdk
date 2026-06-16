@@ -4257,7 +4257,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const execution = await this.resolveExecution(sessionId);
+      const requestedSessionId = sessionId ?? options?.sessionId;
+      const execution =
+        requestedSessionId === undefined
+          ? { kind: 'sessionless' as const }
+          : await this.resolveExecution(requestedSessionId);
       const session = this.serializeExecutionContext(execution);
       const processSession = this.getProcessSessionBinding(session);
       const executionOptions = this.buildExecutionRequestOptions(session, {
