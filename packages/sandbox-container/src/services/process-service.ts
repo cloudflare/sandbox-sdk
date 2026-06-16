@@ -5,6 +5,7 @@ import type {
   ProcessNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   CommandResult,
   ProcessCommandHandle,
@@ -128,7 +129,7 @@ export class ProcessService {
         options
       );
       const commandHandle: ProcessCommandHandle = {
-        sessionId: options.sessionId ?? 'default',
+        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN,
         commandId: processRecordData.id
       };
 

@@ -227,6 +227,55 @@ describe('ProcessService', () => {
       );
     });
 
+    it('uses stateless command handles for missing-session processes', async () => {
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandHandleAtCreate = process.commandHandle;
+        }
+      );
+
+      mocked(mockExecutionService.executeStream).mockImplementation(
+        async (_command, options) =>
+          ({
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                sessionId: DISABLE_SESSION_TOKEN,
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          }) as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: {
+              sessionId: string;
+              commandId: string;
+              pid?: number;
+            };
+          }>
+      );
+
+      const result = await processService.startProcess('sleep 10');
+
+      expect(result.success).toBe(true);
+      expect(createdCommandHandleAtCreate).toEqual({
+        sessionId: DISABLE_SESSION_TOKEN,
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
+      expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
+        'sleep 10',
+        expect.objectContaining({
+          sessionId: undefined,
+          background: true
+        })
+      );
+    });
+
     it('should preserve the sessionless command handle for background processes', async () => {
       let createdCommandHandleAtCreate:
         | ProcessRecord['commandHandle']
