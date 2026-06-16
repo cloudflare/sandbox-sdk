@@ -31,7 +31,7 @@ import {
 } from '../core/types';
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
-import { type RawExecResult, Session, type SessionOptions } from '../session';
+import type { RawExecResult, SessionOptions } from '../session-types';
 
 type RuntimeProcessStreamOptions = {
   commandId: string;
@@ -186,27 +186,6 @@ class RuntimeBackedSession implements ManagedSession {
 
   getShellExitCode(): number | null {
     return this.runtimeSession?.getShellExitCode() ?? null;
-  }
-
-  execStream(): AsyncGenerator<ExecEvent, void, unknown> {
-    const error = new Error(
-      'Runtime-backed sessions do not support legacy execStream'
-    );
-    return {
-      [Symbol.asyncIterator]() {
-        return this;
-      },
-      async next(): Promise<IteratorResult<ExecEvent, void>> {
-        throw error;
-      },
-      async return(): Promise<IteratorResult<ExecEvent, void>> {
-        return { done: true, value: undefined };
-      },
-      async throw(error?: unknown): Promise<IteratorResult<ExecEvent, void>> {
-        throw error;
-      },
-      async [Symbol.asyncDispose](): Promise<void> {}
-    };
   }
 
   async *execRuntimeProcessStream(

@@ -237,8 +237,8 @@ printf "done\n"`,
     }
   });
 
-  it('rejects direct legacy execStream calls on runtime sessions', async () => {
-    const sessionId = 'runtime-direct-exec-stream-session';
+  it('does not expose legacy execStream on runtime sessions', async () => {
+    const sessionId = 'runtime-no-exec-stream-session';
     const createResult = await sessionManager.executeInSession(
       sessionId,
       'printf "ready"',
@@ -247,16 +247,12 @@ printf "done\n"`,
     expect(createResult.success).toBe(true);
 
     const managerInternals = sessionManager as unknown as {
-      sessions: Map<string, Session>;
+      sessions: Map<string, Record<string, unknown>>;
     };
     const session = managerInternals.sessions.get(sessionId);
-    expect(session).toBeDefined();
 
-    await expect(async () => {
-      for await (const _event of session!.execStream('printf "nope"')) {
-        // The runtime-backed session rejects before yielding events.
-      }
-    }).toThrow('Runtime-backed sessions do not support legacy execStream');
+    expect(session).toBeDefined();
+    expect(session).not.toHaveProperty('execStream');
   });
 
   it('streams through the managed session boundary', async () => {

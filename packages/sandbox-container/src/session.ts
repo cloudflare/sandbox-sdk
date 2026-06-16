@@ -105,6 +105,9 @@ import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
 import type { Pty } from './pty';
+import type { RawExecResult, SessionOptions } from './session-types';
+
+export type { RawExecResult, SessionOptions } from './session-types';
 
 // Binary prefixes for output labeling (won't appear in normal text)
 // Using three bytes to minimize collision probability
@@ -136,53 +139,6 @@ interface ExecState {
   labelerTimeoutMs?: number;
   /** Whether this command was initiated by the user or internally by the SDK */
   origin?: 'user' | 'internal';
-}
-
-export interface SessionOptions {
-  /** Session identifier (generated if not provided) */
-  id: string;
-
-  /**
-   * Initial working directory for the shell.
-   *
-   * Note: This only affects where the shell starts. Individual commands can
-   * specify their own cwd via exec options, and the shell can cd anywhere.
-   * If the specified directory doesn't exist when the session initializes,
-   * the session will fall back to the home directory.
-   */
-  cwd?: string;
-
-  /** Environment variables for the session. Undefined values are skipped. */
-  env?: Record<string, string | undefined>;
-
-  /** Legacy isolation flag (ignored - kept for compatibility) */
-  isolation?: boolean;
-
-  /** Command timeout in milliseconds (overrides CONFIG.COMMAND_TIMEOUT_MS) */
-  commandTimeoutMs?: number;
-
-  /** Logger instance for structured logging (optional - uses no-op logger if not provided) */
-  logger?: Logger;
-}
-
-export interface RawExecResult {
-  /** Standard output */
-  stdout: string;
-
-  /** Standard error */
-  stderr: string;
-
-  /** Process exit code */
-  exitCode: number;
-
-  /** Command that was executed */
-  command: string;
-
-  /** Execution duration in milliseconds */
-  duration: number;
-
-  /** ISO timestamp when command started */
-  timestamp: string;
 }
 
 interface ExecOptions {

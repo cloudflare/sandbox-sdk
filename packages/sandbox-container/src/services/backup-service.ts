@@ -7,7 +7,7 @@ import {
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
-import type { RawExecResult } from '../session';
+import type { RawExecResult } from '../session-types';
 import type { ExecutionService } from './execution-service';
 
 export const BACKUP_WORK_DIR = '/var/backups';

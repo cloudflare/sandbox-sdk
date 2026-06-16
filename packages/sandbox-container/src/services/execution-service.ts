@@ -17,7 +17,7 @@ import {
   serviceError,
   serviceSuccess
 } from '../core/types';
-import type { RawExecResult } from '../session';
+import type { RawExecResult } from '../session-types';
 import type { SessionManager } from './session-manager';
 
 const SESSIONLESS_DISPLAY_NAME = 'sessionless';
