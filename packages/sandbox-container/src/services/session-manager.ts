@@ -95,28 +95,24 @@ class ExecEventQueue implements AsyncIterable<ExecEvent> {
 class RuntimeBackedSession extends Session {
   private runtimeSession?: CommandSession;
   private readonly runtimeProcesses = new Map<string, RuntimeProcessEntry>();
+  private runtimeDestroyed = false;
 
   constructor(private readonly runtimeOptions: SessionOptions) {
     super(runtimeOptions);
   }
 
   async initialize(): Promise<void> {
-    await super.initialize();
-    try {
-      this.runtimeSession = await CommandSession.create({
-        cwd: this.runtimeOptions.cwd,
-        env: this.runtimeOptions.env
-          ? Object.fromEntries(
-              Object.entries(this.runtimeOptions.env).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined
-              )
+    this.runtimeDestroyed = false;
+    this.runtimeSession = await CommandSession.create({
+      cwd: this.runtimeOptions.cwd,
+      env: this.runtimeOptions.env
+        ? Object.fromEntries(
+            Object.entries(this.runtimeOptions.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined
             )
-          : undefined
-      });
-    } catch (error) {
-      await super.destroy().catch(() => {});
-      throw error;
-    }
+          )
+        : undefined
+    });
   }
 
   override async exec(
@@ -156,11 +152,36 @@ class RuntimeBackedSession extends Session {
   }
 
   override isReady(): boolean {
-    return super.isReady() && !!this.runtimeSession?.isReady();
+    return !!this.runtimeSession?.isReady();
+  }
+
+  override wasDestroyed(): boolean {
+    return this.runtimeDestroyed;
   }
 
   override getShellExitCode(): number | null {
-    return this.runtimeSession?.getShellExitCode() ?? super.getShellExitCode();
+    return this.runtimeSession?.getShellExitCode() ?? null;
+  }
+
+  override execStream(): AsyncGenerator<ExecEvent, void, unknown> {
+    const error = new Error(
+      'Runtime-backed sessions do not support legacy execStream'
+    );
+    return {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next(): Promise<IteratorResult<ExecEvent, void>> {
+        throw error;
+      },
+      async return(): Promise<IteratorResult<ExecEvent, void>> {
+        return { done: true, value: undefined };
+      },
+      async throw(error?: unknown): Promise<IteratorResult<ExecEvent, void>> {
+        throw error;
+      },
+      async [Symbol.asyncDispose](): Promise<void> {}
+    };
   }
 
   async *execRuntimeProcessStream(
@@ -290,8 +311,14 @@ class RuntimeBackedSession extends Session {
   }
 
   override async destroy(): Promise<void> {
-    await this.runtimeSession?.close().catch(() => {});
-    await super.destroy();
+    this.runtimeDestroyed = true;
+    await Promise.all([
+      this.runtimeSession?.close().catch(() => {}),
+      this.pty?.destroy().catch(() => {})
+    ]);
+    this.runtimeSession = undefined;
+    this.runtimeProcesses.clear();
+    this.pty = null;
   }
 }
 

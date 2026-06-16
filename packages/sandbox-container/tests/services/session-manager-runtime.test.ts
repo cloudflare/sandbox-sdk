@@ -23,6 +23,22 @@ describe('SessionManager runtime integration', () => {
     vi.restoreAllMocks();
   });
 
+  it('creates runtime sessions without initializing a legacy shell', async () => {
+    const initializeSpy = vi.spyOn(Session.prototype, 'initialize');
+
+    const result = await sessionManager.executeInSession(
+      'runtime-no-legacy-shell-session',
+      'printf "runtime-only"',
+      { cwd: testDir }
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.stdout).toBe('runtime-only');
+    }
+    expect(initializeSpy).not.toHaveBeenCalled();
+  });
+
   it('creates persistent exec sessions through the execution runtime', async () => {
     const createSpy = vi.spyOn(CommandSession, 'create');
 
@@ -202,6 +218,28 @@ printf "done\n"`,
     if (streamResult.success) {
       await streamResult.data.continueStreaming;
     }
+  });
+
+  it('rejects direct legacy execStream calls on runtime sessions', async () => {
+    const sessionId = 'runtime-direct-exec-stream-session';
+    const createResult = await sessionManager.executeInSession(
+      sessionId,
+      'printf "ready"',
+      { cwd: testDir }
+    );
+    expect(createResult.success).toBe(true);
+
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, Session>;
+    };
+    const session = managerInternals.sessions.get(sessionId);
+    expect(session).toBeDefined();
+
+    await expect(async () => {
+      for await (const _event of session!.execStream('printf "nope"')) {
+        // The runtime-backed session rejects before yielding events.
+      }
+    }).toThrow('Runtime-backed sessions do not support legacy execStream');
   });
 
   it('rejects service streaming for legacy sessions', async () => {
