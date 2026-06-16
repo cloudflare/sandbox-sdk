@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { CommandSession } from '@repo/sandbox-execution';
 import { createNoOpLogger } from '@repo/shared';
 import { SessionManager } from '../../src/services/session-manager';
+import { Session } from '../../src/session';
 
 describe('SessionManager runtime integration', () => {
   let sessionManager: SessionManager;
@@ -160,6 +161,32 @@ printf "done\n"`,
     if (streamResult.success) {
       await streamResult.data.continueStreaming;
     }
+  });
+
+  it('rejects service streaming for legacy sessions', async () => {
+    const sessionId = 'legacy-stream-session';
+    const legacySession = new Session({
+      id: sessionId,
+      cwd: testDir,
+      logger: createNoOpLogger()
+    });
+    await legacySession.initialize();
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, Session>;
+    };
+    managerInternals.sessions.set(sessionId, legacySession);
+    const execStreamSpy = vi.spyOn(Session.prototype, 'execStream');
+
+    const streamResult = await sessionManager.executeStreamInSession(
+      sessionId,
+      'printf "should-not-run"',
+      async () => {},
+      { cwd: testDir },
+      'legacy-stream-command'
+    );
+
+    expect(streamResult.success).toBe(false);
+    expect(execStreamSpy).not.toHaveBeenCalled();
   });
 
   it('kills background session processes through the execution runtime', async () => {

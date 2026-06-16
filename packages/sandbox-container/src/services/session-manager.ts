@@ -616,7 +616,7 @@ export class SessionManager {
    * Return the explicit exit code when command is a direct shell-exit command.
    */
   /**
-   * Classify a failure from session.exec / session.execStream into one of:
+   * Classify a failure from session command execution into one of:
    *   - API-initiated destruction (SESSION_DESTROYED)
    *   - shell terminated on its own (SESSION_TERMINATED)
    *   - a plain command execution failure (COMMAND_EXECUTION_ERROR)
@@ -1001,22 +1001,27 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator =
-          session instanceof RuntimeBackedSession
-            ? session.execRuntimeProcessStream(command, {
-                commandId,
-                cwd,
-                env,
-                timeoutMs,
-                origin
-              })
-            : session.execStream(command, {
-                commandId,
-                cwd,
-                env,
-                timeoutMs,
-                origin
-              });
+        if (!(session instanceof RuntimeBackedSession)) {
+          return {
+            success: false as const,
+            error: {
+              message: `Session '${sessionId}' does not support runtime process streaming`,
+              code: ErrorCode.STREAM_START_ERROR,
+              details: {
+                command,
+                stderr: 'Session does not support runtime process streaming'
+              } satisfies CommandErrorContext
+            }
+          };
+        }
+
+        const generator = session.execRuntimeProcessStream(command, {
+          commandId,
+          cwd,
+          env,
+          timeoutMs,
+          origin
+        });
 
         // Process 'start' event under lock
         const firstResult = await generator.next();
