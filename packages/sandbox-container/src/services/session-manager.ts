@@ -721,18 +721,15 @@ export class SessionManager {
   /**
    * Tear down a session whose shell has exited, and remove it from the
    * manager's maps. Best-effort: the shell is already gone, we only care
-   * that associated resources (pty, in-flight command handles) are reaped
-   * and that the next call on this sessionId creates a fresh session.
+   * that in-flight command handles are reaped and that the next call on
+   * this sessionId creates a fresh session.
    */
   private async evictTerminatedSession(
     sessionId: string,
     session: ManagedSession
   ): Promise<void> {
     try {
-      await Promise.all([
-        session.destroy(),
-        this.terminals.destroyTerminal(sessionId)
-      ]);
+      await session.destroy();
     } catch (error) {
       this.logger.debug('Terminated session, destroy() threw during eviction', {
         sessionId,
@@ -1142,16 +1139,12 @@ export class SessionManager {
     const lock = this.getSessionLock(sessionId);
 
     return lock.runExclusive(async () => {
-      const sessionResult = await this.getOrCreateSession(sessionId);
-      if (!sessionResult.success) {
-        return sessionResult as ServiceResult<Pty>;
-      }
-
-      const session = sessionResult.data;
-
       try {
-        const pty = await this.terminals.getPty(sessionId, session, options);
-        return { success: true, data: pty };
+        const terminal = await this.terminals.getOrCreateTerminal({
+          id: sessionId,
+          pty: options
+        });
+        return { success: true, data: terminal.pty };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
@@ -1314,10 +1307,7 @@ export class SessionManager {
       // before session state is torn down.
       const lock = this.getSessionLock(sessionId);
       await lock.runExclusive(async () => {
-        await Promise.all([
-          session.destroy(),
-          this.terminals.destroyTerminal(sessionId)
-        ]);
+        await session.destroy();
       });
 
       // Clean up maps after the lock is released
@@ -1395,10 +1385,7 @@ export class SessionManager {
       try {
         const lock = this.getSessionLock(sessionId);
         await lock.runExclusive(async () => {
-          await Promise.all([
-            session.destroy(),
-            this.terminals.destroyTerminal(sessionId)
-          ]);
+          await session.destroy();
         });
       } catch {
         // Session cleanup errors during shutdown are non-fatal

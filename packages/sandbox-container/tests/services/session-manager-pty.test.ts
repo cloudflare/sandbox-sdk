@@ -1,17 +1,11 @@
-/**
- * Session Manager PTY Tests
- * Tests that env vars and working directory set on a session are correctly
- * inherited by a PTY opened from that session.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createNoOpLogger } from '@repo/shared';
 import type { Pty } from '../../src/pty';
 import { SessionManager } from '../../src/services/session-manager';
 
-const SESSION_ID = 'pty-env-test-session';
+const SESSION_ID = 'pty-compat-test-session';
 
-describe('SessionManager PTY env inheritance', () => {
+describe('SessionManager PTY compatibility', () => {
   let sessionManager: SessionManager;
   let pty: Pty | undefined;
 
@@ -40,57 +34,23 @@ describe('SessionManager PTY env inheritance', () => {
     return Buffer.concat(chunks).toString('utf8');
   }
 
-  it('should inherit env vars set via setEnvVars() before getPty()', async () => {
-    const setResult = await sessionManager.setEnvVars(SESSION_ID, {
-      PTY_TEST_VAR: 'hello_from_session'
-    });
-    expect(setResult.success).toBe(true);
-
+  it('does not create a command session when opening a PTY', async () => {
     const ptyResult = await sessionManager.getPty(SESSION_ID);
     if (!ptyResult.success) throw new Error(ptyResult.error.message);
     pty = ptyResult.data;
 
-    await Bun.sleep(200);
-
-    const output = await collectPtyOutput(
-      pty,
-      'echo "PTY_VAR=$PTY_TEST_VAR"\n'
-    );
-    expect(output).toContain('PTY_VAR=hello_from_session');
-
-    // If null-byte splitting is broken, all env vars merge into one
-    // entry and only the first var is parsed correctly.
-    const pathOutput = await collectPtyOutput(
-      pty,
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional shell variable syntax
-      'echo "HAS_PATH=${PATH:+yes}"\n'
-    );
-    expect(pathOutput).toContain('HAS_PATH=yes');
+    const managerInternals = sessionManager as unknown as {
+      sessions: Map<string, unknown>;
+    };
+    expect(managerInternals.sessions.has(SESSION_ID)).toBe(false);
   });
 
-  it('should inherit working directory changes made in the session', async () => {
-    const execResult = await sessionManager.executeInSession(
+  it('does not inherit command-session environment or cwd', async () => {
+    const setupResult = await sessionManager.executeInSession(
       SESSION_ID,
-      'cd /tmp'
+      'export PTY_TEST_VAR=hello_from_session && cd /tmp'
     );
-    expect(execResult.success).toBe(true);
-
-    const ptyResult = await sessionManager.getPty(SESSION_ID);
-    if (!ptyResult.success) throw new Error(ptyResult.error.message);
-    pty = ptyResult.data;
-
-    await Bun.sleep(200);
-
-    const output = await collectPtyOutput(pty, 'pwd\n');
-    expect(output).toContain('/tmp');
-  });
-
-  it('should inherit multiple env vars set before getPty()', async () => {
-    const setResult = await sessionManager.setEnvVars(SESSION_ID, {
-      PTY_MULTI_A: 'alpha',
-      PTY_MULTI_B: 'beta'
-    });
-    expect(setResult.success).toBe(true);
+    expect(setupResult.success).toBe(true);
 
     const ptyResult = await sessionManager.getPty(SESSION_ID);
     if (!ptyResult.success) throw new Error(ptyResult.error.message);
@@ -100,13 +60,26 @@ describe('SessionManager PTY env inheritance', () => {
 
     const output = await collectPtyOutput(
       pty,
-      'echo "$PTY_MULTI_A $PTY_MULTI_B"\n'
+      `printf "var:%s cwd:%s\\n" "\${PTY_TEST_VAR:-missing}" "$PWD"\n`
     );
-    expect(output).toContain('alpha beta');
+    expect(output).toContain('var:missing');
+    expect(output).not.toContain('cwd:/tmp');
+  });
 
-    // If env parsing fails, all vars merge into one unparsable
-    // entry — verify system env vars also survived parsing.
-    const homeOutput = await collectPtyOutput(pty, 'echo "HOME=$HOME"\n');
-    expect(homeOutput).toMatch(/HOME=\//);
+  it('does not destroy terminal resources when deleting command sessions', async () => {
+    const setupResult = await sessionManager.executeInSession(
+      SESSION_ID,
+      'printf "session-ready"'
+    );
+    expect(setupResult.success).toBe(true);
+
+    const ptyResult = await sessionManager.getPty(SESSION_ID);
+    if (!ptyResult.success) throw new Error(ptyResult.error.message);
+    pty = ptyResult.data;
+
+    const deleteResult = await sessionManager.deleteSession(SESSION_ID);
+    expect(deleteResult.success).toBe(true);
+
+    expect(() => pty?.write('printf "terminal-still-open\\n"\n')).not.toThrow();
   });
 });
