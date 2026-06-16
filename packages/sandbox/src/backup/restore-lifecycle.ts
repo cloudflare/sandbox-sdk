@@ -32,6 +32,10 @@ type RestoreLifecycleDeps = {
 
 export type RestoreLifecycleContext = {
   lifetime: SandboxLifetime;
+  runtimeReady: (archiveSize?: number) => Promise<{
+    runtime: RuntimeIdentity;
+    operation: BackupRestoreOperationRecord;
+  }>;
   archiveReady: (archiveSize?: number) => Promise<{
     runtime: RuntimeIdentity;
     operation: BackupRestoreOperationRecord;
@@ -66,9 +70,43 @@ export class RestoreLifecycleRunner {
 
       const context: RestoreLifecycleContext = {
         lifetime,
+        runtimeReady: async (archiveSize) => {
+          try {
+            runtime = await this.captureRuntime();
+            await this.deps.currentLifetime.assertCurrent(lifetime);
+          } catch (error) {
+            const interrupted = await this.translateFenceError(
+              error,
+              currentOperation,
+              'validating',
+              'unknown'
+            );
+            throw interrupted ?? error;
+          }
+          currentOperation = await this.markRuntimeReady(
+            currentOperation,
+            runtime,
+            archiveSize
+          );
+          return { runtime, operation: currentOperation };
+        },
         archiveReady: async (archiveSize) => {
-          runtime = await this.captureRuntime();
-          await this.deps.currentLifetime.assertCurrent(lifetime);
+          if (!runtime) {
+            throw new Error(
+              'Backup restore archiveReady requires runtimeReady()'
+            );
+          }
+          try {
+            await this.assertFences(runtime, lifetime);
+          } catch (error) {
+            const interrupted = await this.translateFenceError(
+              error,
+              currentOperation,
+              currentOperation.phase,
+              true
+            );
+            throw interrupted ?? error;
+          }
           currentOperation = await this.markArchiveReady(
             currentOperation,
             runtime,
@@ -191,6 +229,25 @@ export class RestoreLifecycleRunner {
     return runtime;
   }
 
+  async markRuntimeReady(
+    operation: BackupRestoreOperationRecord,
+    runtime: RuntimeIdentity,
+    archiveSize?: number
+  ): Promise<BackupRestoreOperationRecord> {
+    const next = {
+      ...operation,
+      phase: 'runtime_ready' as const,
+      runtimeIdentityID: runtime.id,
+      payload: {
+        ...operation.payload,
+        ...(archiveSize !== undefined && { archiveSize })
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await this.operationRecords.put(next);
+    return next;
+  }
+
   async markArchiveReady(
     operation: BackupRestoreOperationRecord,
     runtime: RuntimeIdentity,
@@ -245,7 +302,8 @@ export class RestoreLifecycleRunner {
   async translateFenceError(
     error: unknown,
     operation: BackupRestoreOperationRecord,
-    phase: BackupRestoreOperationPhase
+    phase: BackupRestoreOperationPhase,
+    admitted: true | 'unknown' = true
   ): Promise<OperationInterruptedError | null> {
     if (
       !(
@@ -271,7 +329,7 @@ export class RestoreLifecycleRunner {
       operation: interrupted,
       reason,
       phase,
-      admitted: true,
+      admitted,
       message
     });
   }

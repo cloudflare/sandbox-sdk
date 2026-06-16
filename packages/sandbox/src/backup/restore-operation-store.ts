@@ -9,6 +9,7 @@ export type BackupRestoreOperationStatus =
 
 export type BackupRestoreOperationPhase =
   | 'validating'
+  | 'runtime_ready'
   | 'archive_ready'
   | 'verified'
   | 'failed'

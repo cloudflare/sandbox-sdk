@@ -204,6 +204,30 @@ describe('local backup restore lifecycle', () => {
     });
   });
 
+  it('does not mark the local archive ready before stream upload completes', async () => {
+    const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
+    vi.spyOn(sandbox.client.files, 'writeFileStream').mockImplementationOnce(
+      async () => {
+        const record = storageMap.get(
+          `operations:restore:${backupId}:/workspace/project`
+        ) as BackupRestoreOperationRecord;
+        expect(record.phase).toBe('runtime_ready');
+        return {
+          success: true,
+          path: `/var/backups/${backupId}.sqsh`,
+          bytesWritten: 4,
+          timestamp: '2026-06-15T12:00:00.000Z'
+        } as never;
+      }
+    );
+
+    await sandbox.restoreBackup({
+      id: backupId,
+      dir: '/workspace/project',
+      localBucket: true
+    });
+  });
+
   it('recovers internally when local archive streaming loses the RPC transport once', async () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
     const writeFileStreamSpy = vi

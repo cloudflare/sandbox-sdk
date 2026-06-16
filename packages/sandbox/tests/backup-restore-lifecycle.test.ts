@@ -33,11 +33,17 @@ vi.mock('@cloudflare/containers', () => {
 
 type StoredValue = unknown;
 
-function createStorage(initial = new Map<string, StoredValue>()) {
+function createStorage(
+  initial = new Map<string, StoredValue>(),
+  hooks?: {
+    onPut?: (key: string, value: StoredValue) => void;
+  }
+) {
   return {
     get: vi.fn(async (key: string) => initial.get(key)),
     put: vi.fn(async (key: string, value: StoredValue) => {
       initial.set(key, value);
+      hooks?.onPut?.(key, value);
     }),
     delete: vi.fn(async (key: string) => {
       initial.delete(key);
@@ -79,6 +85,9 @@ function createDisposedRPCError(): RPCTransportError {
 async function createBackupSandbox(params?: {
   storageMap?: Map<string, StoredValue>;
   bucket?: ReturnType<typeof createBackupBucket>;
+  storageHooks?: {
+    onPut?: (key: string, value: StoredValue) => void;
+  };
 }) {
   const storageMap = params?.storageMap ?? new Map<string, StoredValue>();
   storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
@@ -90,7 +99,7 @@ async function createBackupSandbox(params?: {
   });
 
   const ctx = {
-    storage: createStorage(storageMap),
+    storage: createStorage(storageMap, params?.storageHooks),
     blockConcurrencyWhile: vi.fn(<T>(callback: () => Promise<T>) => callback()),
     waitUntil: vi.fn(),
     id: {
@@ -280,6 +289,55 @@ describe('backup restore lifecycle', () => {
     expect(record.runtimeIdentityID).toEqual(expect.any(String));
     expect(record.runtimeIdentityID).not.toBe('runtime-1');
     expect(record.result).toEqual(result);
+  });
+
+  it('surfaces interruption when the sandbox lifetime changes before runtime work starts', async () => {
+    const storageMap = new Map<string, StoredValue>();
+    const { sandbox } = await createBackupSandbox({
+      storageMap,
+      storageHooks: {
+        onPut: (key) => {
+          if (key === 'currentRuntimeIdentity') {
+            storageMap.set('sandbox:lifetime', {
+              id: 'lifetime-2',
+              generation: 2,
+              createdAt: '2026-06-15T12:01:00.000Z',
+              updatedAt: '2026-06-15T12:01:00.000Z'
+            });
+          }
+        }
+      }
+    });
+    storageMap.delete('currentRuntimeIdentity');
+    const backupId = crypto.randomUUID();
+    const restoreArchiveSpy = vi.spyOn(sandbox.client.backup, 'restoreArchive');
+
+    let thrown: unknown;
+    try {
+      await sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(restoreArchiveSpy).not.toHaveBeenCalled();
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    const interrupted = thrown as OperationInterruptedError;
+    expect(interrupted.context).toMatchObject({
+      reason: 'sandbox_lifetime_changed',
+      operation: 'backup.restore',
+      backupId,
+      dir: '/workspace/project',
+      phase: 'validating',
+      admitted: 'unknown',
+      retryable: false
+    });
+
+    const record = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(record.status).toBe('interrupted');
+    expect(record.phase).toBe('interrupted');
+    expect(record.error?.retryable).toBe(false);
   });
 
   it('does not retry restore across a sandbox lifetime change', async () => {

@@ -127,8 +127,7 @@ export class BackupService {
   }
 
   /**
-   * Returns validated presigned URL configuration or throws if not configured.
-   * All credential fields plus the R2 binding are required for backup to work.
+   * Serialize backup operations so concurrent calls run one at a time.
    */
   private async enqueueBackupOp<T>(fn: () => Promise<T>): Promise<T> {
     try {
@@ -300,6 +299,8 @@ export class BackupService {
           timestamp: new Date().toISOString()
         });
       }
+
+      await lifecycle.runtimeReady(archiveHead.size);
 
       backupSession = await this.ensureBackupSession();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
@@ -498,6 +499,8 @@ export class BackupService {
         });
       }
 
+      await lifecycle.runtimeReady(metadata.sizeBytes);
+
       backupSession = await this.ensureBackupSession();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
@@ -521,9 +524,9 @@ export class BackupService {
           timestamp: new Date().toISOString()
         });
       }
-      await lifecycle.archiveReady(metadata.sizeBytes);
-
       await this.client.files.writeFileStream(archivePath, body, backupSession);
+
+      await lifecycle.archiveReady(metadata.sizeBytes);
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
       const extractResult = await this.execWithSession(

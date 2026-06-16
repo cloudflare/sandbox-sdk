@@ -110,7 +110,7 @@ export class BackupTransfer {
     return parsed.origin;
   }
 
-  /** UUID v4 format validator for backup IDs */
+  /** Validate that the BACKUP_BUCKET R2 binding is present and return it. */
   requireBackupBucket(): R2Bucket {
     const bucket = (this.env as Record<string, unknown>).BACKUP_BUCKET;
     if (!isR2Bucket(bucket)) {
