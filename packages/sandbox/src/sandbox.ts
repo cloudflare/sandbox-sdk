@@ -3613,9 +3613,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const context = await this.resolveExecution();
-    const session = this.serializeExecutionContext(context);
-    return this.execWithSession(command, session, options);
+    return this.execWithSession(command, DISABLE_SESSION_TOKEN, options);
   }
 
   async execWithSessionToken(

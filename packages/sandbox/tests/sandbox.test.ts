@@ -360,7 +360,7 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('default session management', () => {
-    it('should create default session on first operation', async () => {
+    it('runs implicit exec without creating a default session', async () => {
       vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
         success: true,
         stdout: 'test output',
@@ -370,19 +370,13 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await sandbox.exec('echo test');
+      const result = await sandbox.exec('echo test');
 
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: expect.stringMatching(/^sandbox-/),
-          cwd: '/workspace'
-        })
-      );
-
+      expect(result.sessionId).toBeUndefined();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        expect.stringMatching(/^sandbox-/),
+        DISABLE_SESSION_TOKEN,
         undefined
       );
     });
@@ -445,16 +439,23 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await freshSandbox.exec('echo test');
+      vi.spyOn(freshSandbox.client.files, 'writeFile').mockResolvedValue({
+        success: true,
+        path: '/test.txt',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await freshSandbox.writeFile('/test.txt', 'content');
 
       expect(nullStorageCtx.storage.get).not.toHaveBeenCalledWith(
         'enableDefaultSession'
       );
       expect(freshSandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
-      expect(freshSandbox.client.commands.execute).toHaveBeenCalledWith(
-        'echo test',
+      expect(freshSandbox.client.files.writeFile).toHaveBeenCalledWith(
+        '/test.txt',
+        'content',
         expect.stringMatching(/^sandbox-/),
-        undefined
+        { encoding: undefined }
       );
     });
 
@@ -467,7 +468,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo $OPTION',
-        expect.stringMatching(/^sandbox-/),
+        DISABLE_SESSION_TOKEN,
         {
           timeoutMs: 5000,
           env: { OPTION: 'value' },
@@ -647,22 +648,23 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(result.sessionId).toBeUndefined();
     });
 
-    it('should reuse default session across multiple operations', async () => {
+    it('keeps implicit exec separate from default file sessions', async () => {
       await sandbox.exec('echo test1');
       await sandbox.writeFile('/test.txt', 'content');
       await sandbox.exec('echo test2');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
 
-      const firstSessionId = vi.mocked(sandbox.client.commands.execute).mock
+      const firstExecSessionId = vi.mocked(sandbox.client.commands.execute).mock
         .calls[0][1];
       const fileSessionId = vi.mocked(sandbox.client.files.writeFile).mock
         .calls[0][2];
-      const secondSessionId = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[1][1];
+      const secondExecSessionId = vi.mocked(sandbox.client.commands.execute)
+        .mock.calls[1][1];
 
-      expect(firstSessionId).toBe(fileSessionId);
-      expect(firstSessionId).toBe(secondSessionId);
+      expect(firstExecSessionId).toBe(DISABLE_SESSION_TOKEN);
+      expect(secondExecSessionId).toBe(DISABLE_SESSION_TOKEN);
+      expect(fileSessionId).toMatch(/^sandbox-/);
     });
 
     it('should use default session for process management', async () => {
@@ -853,7 +855,7 @@ describe('Sandbox - Automatic Session Management', () => {
     it('should initialize session with sandbox name when available', async () => {
       await sandbox.setSandboxName('my-sandbox');
 
-      await sandbox.exec('pwd');
+      await sandbox.writeFile('/test.txt', 'content');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -871,8 +873,8 @@ describe('Sandbox - Automatic Session Management', () => {
         }) as any
       );
 
-      const first = sandbox.exec('echo one');
-      const second = sandbox.exec('echo two');
+      const first = sandbox.writeFile('/one.txt', 'one');
+      const second = sandbox.writeFile('/two.txt', 'two');
 
       resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
       await Promise.all([first, second]);
@@ -889,8 +891,10 @@ describe('Sandbox - Automatic Session Management', () => {
           message: 'ok'
         } as any);
 
-      await expect(sandbox.exec('echo one')).rejects.toThrow('boom');
-      await sandbox.exec('echo two');
+      await expect(sandbox.writeFile('/one.txt', 'one')).rejects.toThrow(
+        'boom'
+      );
+      await sandbox.writeFile('/two.txt', 'two');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
@@ -900,10 +904,12 @@ describe('Sandbox - Automatic Session Management', () => {
         if (key === 'defaultSession') throw new Error('storage down');
       });
 
-      await expect(sandbox.exec('echo one')).rejects.toThrow('storage down');
+      await expect(sandbox.writeFile('/one.txt', 'one')).rejects.toThrow(
+        'storage down'
+      );
 
       vi.mocked(mockCtx.storage.put).mockResolvedValue(undefined);
-      await sandbox.exec('echo two');
+      await sandbox.writeFile('/two.txt', 'two');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
@@ -923,20 +929,20 @@ describe('Sandbox - Automatic Session Management', () => {
           }) as any
         );
 
-      const first = sandbox.exec('echo one');
+      const first = sandbox.writeFile('/one.txt', 'one');
       await sandbox.setSandboxName('renamed');
-      const second = sandbox.exec('echo two');
-      const third = sandbox.exec('echo three');
+      const second = sandbox.writeFile('/two.txt', 'two');
+      const third = sandbox.writeFile('/three.txt', 'three');
 
       resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
       resolveSecond({ success: true, id: 'sandbox-renamed', message: 'ok' });
       await Promise.all([first, second, third]);
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-      const calls = vi.mocked(sandbox.client.commands.execute).mock.calls;
-      expect(calls[0][1]).toBe('sandbox-default');
-      expect(calls[1][1]).toBe('sandbox-renamed');
-      expect(calls[2][1]).toBe('sandbox-renamed');
+      const calls = vi.mocked(sandbox.client.files.writeFile).mock.calls;
+      expect(calls[0][2]).toBe('sandbox-default');
+      expect(calls[1][2]).toBe('sandbox-renamed');
+      expect(calls[2][2]).toBe('sandbox-renamed');
     });
 
     it('retries default session init once when onStop runs mid-flight', async () => {
@@ -955,7 +961,7 @@ describe('Sandbox - Automatic Session Management', () => {
             message: 'ok'
           } as any);
 
-        const inflight = sandbox.exec('echo one');
+        const inflight = sandbox.writeFile('/one.txt', 'one');
         await (sandbox as any).onStop();
 
         resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
@@ -1036,9 +1042,9 @@ describe('Sandbox - Automatic Session Management', () => {
           message: 'ok'
         } as any);
 
-      const first = sandbox.exec('echo one');
+      const first = sandbox.writeFile('/one.txt', 'one');
       await (sandbox as any).onStop();
-      const second = sandbox.exec('echo two');
+      const second = sandbox.writeFile('/two.txt', 'two');
 
       resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
       await Promise.all([first, second]);
@@ -1175,40 +1181,32 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(session1Id).not.toBe(session2Id);
     });
 
-    it('should not interfere with default session', async () => {
-      vi.mocked(sandbox.client.utils.createSession)
-        .mockResolvedValueOnce({
-          success: true,
-          id: 'sandbox-default',
-          message: 'Created'
-        } as any)
-        .mockResolvedValueOnce({
-          success: true,
-          id: 'explicit-session',
-          message: 'Created'
-        } as any);
+    it('keeps explicit sessions separate from implicit exec', async () => {
+      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
+        success: true,
+        id: 'explicit-session',
+        message: 'Created'
+      } as any);
 
-      await sandbox.exec('echo default');
+      await sandbox.exec('echo implicit');
 
       const explicitSession = await sandbox.createSession({
         id: 'explicit-session'
       });
       await explicitSession.exec('echo explicit');
 
-      await sandbox.exec('echo default-again');
+      await sandbox.exec('echo implicit-again');
 
-      const defaultSessionId1 = vi.mocked(sandbox.client.commands.execute).mock
+      const implicitSessionId1 = vi.mocked(sandbox.client.commands.execute).mock
         .calls[0][1];
       const explicitSessionId = vi.mocked(sandbox.client.commands.execute).mock
         .calls[1][1];
-      const defaultSessionId2 = vi.mocked(sandbox.client.commands.execute).mock
+      const implicitSessionId2 = vi.mocked(sandbox.client.commands.execute).mock
         .calls[2][1];
 
-      expect(defaultSessionId1).toBe('sandbox-default');
+      expect(implicitSessionId1).toBe(DISABLE_SESSION_TOKEN);
       expect(explicitSessionId).toBe('explicit-session');
-      expect(defaultSessionId2).toBe('sandbox-default');
-      expect(defaultSessionId1).toBe(defaultSessionId2);
-      expect(explicitSessionId).not.toBe(defaultSessionId1);
+      expect(implicitSessionId2).toBe(DISABLE_SESSION_TOKEN);
     });
 
     it('should generate session ID if not provided', async () => {
@@ -1237,7 +1235,7 @@ describe('Sandbox - Automatic Session Management', () => {
         containerPlacementId: 'placement-abc-123'
       } as any);
 
-      await sandbox.exec('echo hi');
+      await sandbox.writeFile('/test.txt', 'content');
 
       expect(mockCtx.storage.put).toHaveBeenCalledWith(
         'containerPlacementId',
@@ -1253,7 +1251,7 @@ describe('Sandbox - Automatic Session Management', () => {
         containerPlacementId: null
       } as any);
 
-      await sandbox.exec('echo hi');
+      await sandbox.writeFile('/test.txt', 'content');
 
       expect(mockCtx.storage.put).toHaveBeenCalledWith(
         'containerPlacementId',
@@ -1268,7 +1266,7 @@ describe('Sandbox - Automatic Session Management', () => {
         message: 'Created'
       } as any);
 
-      await sandbox.exec('echo hi');
+      await sandbox.writeFile('/test.txt', 'content');
 
       const placementCalls = mockCtx.storage.put.mock.calls.filter(
         (call: unknown[]) => call[0] === 'containerPlacementId'
@@ -1388,13 +1386,13 @@ describe('Sandbox - Automatic Session Management', () => {
         new Error('Session creation failed')
       );
 
-      await expect(sandbox.exec('echo test')).rejects.toThrow(
+      await expect(sandbox.writeFile('/test.txt', 'content')).rejects.toThrow(
         'Session creation failed'
       );
     });
 
     it('should initialize with empty environment when not set', async () => {
-      await sandbox.exec('pwd');
+      await sandbox.writeFile('/test.txt', 'content');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1407,7 +1405,7 @@ describe('Sandbox - Automatic Session Management', () => {
     it('should use updated environment after setEnvVars', async () => {
       await sandbox.setEnvVars({ NODE_ENV: 'production', DEBUG: 'true' });
 
-      await sandbox.exec('env');
+      await sandbox.writeFile('/test.txt', 'content');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
         id: expect.any(String),
@@ -1845,7 +1843,7 @@ describe('Sandbox - Automatic Session Management', () => {
   describe('deleteSession', () => {
     it('should prevent deletion of default session', async () => {
       // Trigger creation of default session
-      await sandbox.exec('echo "test"');
+      await sandbox.writeFile('/test.txt', 'content');
 
       // Verify default session exists
       expect((sandbox as any).defaultSession).toBeTruthy();
