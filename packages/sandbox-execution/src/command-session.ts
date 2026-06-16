@@ -6,6 +6,7 @@ import {
   COMMAND_SESSION_FRAME_PREFIX,
   createCommandSessionScript
 } from './shell-script';
+import type { StdioChunk } from './stateless-process-runner';
 
 const FRAME_PREFIX = COMMAND_SESSION_FRAME_PREFIX;
 const READY_TIMEOUT_MS = 2_000;
@@ -26,12 +27,6 @@ export type CommandSessionExecResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
-};
-
-export type StdioChunk = {
-  stream: 'stdout' | 'stderr';
-  data: string;
-  seq: number;
 };
 
 export type CommandSessionStartProcessOptions = {

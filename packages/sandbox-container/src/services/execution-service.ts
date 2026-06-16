@@ -1,4 +1,8 @@
-import { StatelessCommandRunner } from '@repo/sandbox-execution';
+import {
+  StatelessCommandRunner,
+  type StatelessProcess,
+  StatelessProcessRunner
+} from '@repo/sandbox-execution';
 import type { ExecEvent, Logger } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
 import type {
@@ -16,12 +20,7 @@ import {
 import type { RawExecResult } from '../session';
 import type { SessionManager } from './session-manager';
 
-const BASH_PATH = '/bin/bash';
-const DEFAULT_CWD = '/workspace';
 const SESSIONLESS_DISPLAY_NAME = 'sessionless';
-const SESSIONLESS_TIMEOUT_EXIT_CODE = 124;
-const SESSIONLESS_KILL_GRACE_PERIOD_MS = 5_000;
-const SESSIONLESS_FORCE_KILL_WAIT_MS = 1_000;
 
 type ExecutionTarget =
   | { kind: 'session'; sessionId: string }
@@ -40,13 +39,6 @@ type ExecutionCallback<T> = (
     options?: NestedExecutionOptions
   ) => Promise<RawExecResult>
 ) => Promise<T>;
-
-type SpawnedExecutionProcess = {
-  pid: number;
-  stdout: ReadableStream<Uint8Array> | null;
-  stderr: ReadableStream<Uint8Array> | null;
-  exited: Promise<number>;
-};
 
 export interface ExecutionOptions {
   sessionId?: string;
@@ -69,6 +61,11 @@ export interface ExecutionStreamResult {
 
 export class ExecutionService {
   private readonly statelessCommands = new StatelessCommandRunner();
+  private readonly statelessProcesses = new StatelessProcessRunner();
+  private readonly activeSessionlessProcesses = new Map<
+    string,
+    StatelessProcess
+  >();
 
   constructor(
     private sessionManager: SessionManager,
@@ -199,7 +196,8 @@ export class ExecutionService {
       );
     }
 
-    if (handle.pid === undefined || !this.processExists(handle.pid)) {
+    const process = this.activeSessionlessProcesses.get(handle.commandId);
+    if (!process) {
       return serviceError({
         message: `Command '${handle.commandId}' not found or already completed in session '${DISABLE_SESSION_TOKEN}'`,
         code: ErrorCode.COMMAND_NOT_FOUND,
@@ -210,7 +208,7 @@ export class ExecutionService {
     }
 
     try {
-      await this.terminateProcessTree(handle.pid);
+      await process.kill();
       return { success: true };
     } catch (error) {
       const errorMessage =
@@ -342,22 +340,47 @@ export class ExecutionService {
     command: string,
     options: ExecutionStreamOptions
   ): Promise<ServiceResult<ExecutionStreamResult>> {
+    const startEventSent = Promise.withResolvers<void>();
+    startEventSent.promise.catch(() => {});
+
     try {
-      const spawned = this.spawnSessionlessProcess(command, options);
+      const process = this.statelessProcesses.start(command, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeoutMs,
+        onOutput: async (chunk) => {
+          await startEventSent.promise;
+          await options.onEvent({
+            type: chunk.stream,
+            data: chunk.data,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
       const commandHandle: ProcessCommandHandle = {
         sessionId: DISABLE_SESSION_TOKEN,
         commandId: options.commandId,
-        pid: spawned.pid
+        pid: process.pid
       };
 
-      await options.onEvent({
-        type: 'start',
-        pid: spawned.pid,
-        timestamp: new Date().toISOString()
-      });
+      this.activeSessionlessProcesses.set(options.commandId, process);
+
+      try {
+        await options.onEvent({
+          type: 'start',
+          pid: process.pid,
+          timestamp: new Date().toISOString()
+        });
+        startEventSent.resolve();
+      } catch (error) {
+        startEventSent.reject(error);
+        await process.kill();
+        this.activeSessionlessProcesses.delete(options.commandId);
+        throw error;
+      }
 
       const continueStreaming = this.continueSessionlessStreaming(
-        spawned,
+        process,
         options
       );
 
@@ -381,42 +404,15 @@ export class ExecutionService {
   }
 
   private async continueSessionlessStreaming(
-    spawned: SpawnedExecutionProcess,
+    process: StatelessProcess,
     options: ExecutionStreamOptions
   ): Promise<void> {
-    const stdoutPromise = this.pipeStreamToEvents(
-      spawned.stdout,
-      'stdout',
-      options.onEvent
-    );
-    const stderrPromise = this.pipeStreamToEvents(
-      spawned.stderr,
-      'stderr',
-      options.onEvent
-    );
-
     try {
-      const completion = await this.waitForProcessCompletion(
-        spawned,
-        options.timeoutMs
-      );
-      // Wait for pipe draining AFTER the process exits. When the process
-      // terminates (or is killed on timeout) the OS closes its write end of
-      // the pipe, which signals EOF to the readers. Awaiting here ensures all
-      // buffered output is delivered before the 'complete' event fires.
-      await Promise.all([stdoutPromise, stderrPromise]);
-
-      if (completion.timedOut) {
-        await options.onEvent({
-          type: 'stderr',
-          data: `Command timed out after ${options.timeoutMs}ms\n`,
-          timestamp: new Date().toISOString()
-        });
-      }
+      const result = await process.wait();
 
       await options.onEvent({
         type: 'complete',
-        exitCode: completion.exitCode,
+        exitCode: result.exitCode,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -428,192 +424,8 @@ export class ExecutionService {
         error: errorMessage,
         timestamp: new Date().toISOString()
       });
-    }
-  }
-
-  private spawnSessionlessProcess(
-    command: string,
-    options: ExecutionOptions
-  ): SpawnedExecutionProcess {
-    return Bun.spawn([BASH_PATH, '-c', command], {
-      cwd: options.cwd ?? DEFAULT_CWD,
-      env: this.buildEnv(options.env),
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      // Process-group signaling reaches descendants that remain in the group.
-      detached: true
-    });
-  }
-
-  private buildEnv(
-    env?: Record<string, string | undefined>
-  ): Record<string, string> {
-    const merged: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined) {
-        merged[key] = value;
-      }
-    }
-
-    for (const [key, value] of Object.entries(env ?? {})) {
-      if (value !== undefined) {
-        merged[key] = value;
-      }
-    }
-
-    return merged;
-  }
-
-  private async waitForProcessCompletion(
-    spawned: SpawnedExecutionProcess,
-    timeoutMs?: number
-  ): Promise<{ exitCode: number; timedOut: boolean }> {
-    if (timeoutMs === undefined) {
-      return { exitCode: await spawned.exited, timedOut: false };
-    }
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-
-    try {
-      const exitCode = await Promise.race<number>([
-        spawned.exited,
-        new Promise<number>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            timedOut = true;
-            reject(new Error(`Command timed out after ${timeoutMs}ms`));
-          }, timeoutMs);
-        })
-      ]);
-
-      return { exitCode, timedOut: false };
-    } catch (error) {
-      if (!timedOut) {
-        throw error;
-      }
-
-      await this.terminateProcessTree(spawned.pid);
-      await spawned.exited.catch(() => {});
-
-      return {
-        exitCode: SESSIONLESS_TIMEOUT_EXIT_CODE,
-        timedOut: true
-      };
     } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  private async terminateProcessTree(pid: number): Promise<void> {
-    this.killProcessGroup(pid, 'SIGTERM');
-
-    if (
-      await this.waitForProcessTreeExit(pid, SESSIONLESS_KILL_GRACE_PERIOD_MS)
-    ) {
-      return;
-    }
-
-    this.killProcessGroup(pid, 'SIGKILL');
-    await this.waitForProcessTreeExit(pid, SESSIONLESS_FORCE_KILL_WAIT_MS);
-  }
-
-  private killProcessGroup(pid: number, signal: NodeJS.Signals): void {
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'ESRCH') {
-        this.logger.warn('Unexpected error sending signal to process group', {
-          pid,
-          signal,
-          code
-        });
-      }
-    }
-
-    try {
-      process.kill(pid, signal);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'ESRCH') {
-        this.logger.warn('Unexpected error sending signal to process', {
-          pid,
-          signal,
-          code
-        });
-      }
-    }
-  }
-
-  private async waitForProcessTreeExit(
-    pid: number,
-    timeoutMs: number
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-
-    while (Date.now() < deadline) {
-      if (!this.processExists(pid)) {
-        return true;
-      }
-
-      await Bun.sleep(50);
-    }
-
-    return !this.processExists(pid);
-  }
-
-  private processExists(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async pipeStreamToEvents(
-    stream: ReadableStream<Uint8Array> | null,
-    type: 'stdout' | 'stderr',
-    onEvent: (event: ExecEvent) => Promise<void>
-  ): Promise<void> {
-    if (!stream) {
-      return;
-    }
-
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          const remaining = decoder.decode();
-          if (remaining.length > 0) {
-            await onEvent({
-              type,
-              data: remaining,
-              timestamp: new Date().toISOString()
-            });
-          }
-          return;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk.length > 0) {
-          await onEvent({
-            type,
-            data: chunk,
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-    } finally {
-      reader.releaseLock();
+      this.activeSessionlessProcesses.delete(options.commandId);
     }
   }
 

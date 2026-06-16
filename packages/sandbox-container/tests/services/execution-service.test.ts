@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
+import { StatelessProcessRunner } from '@repo/sandbox-execution';
 import type { Logger } from '@repo/shared';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ServiceResult } from '@sandbox-container/core/types';
@@ -265,9 +266,10 @@ describe('ExecutionService', () => {
     expect(mockSessionManager.withSession).not.toHaveBeenCalled();
   });
 
-  it('streams sessionless output events and completion', async () => {
+  it('streams sessionless output events and completion through the execution package', async () => {
     const events: Array<{ type: string; data?: string; exitCode?: number }> =
       [];
+    const startSpy = vi.spyOn(StatelessProcessRunner.prototype, 'start');
 
     const result = await executionService.executeStream(
       'printf "hello"; printf "warn" >&2',
@@ -290,6 +292,15 @@ describe('ExecutionService', () => {
       return;
     }
 
+    expect(startSpy).toHaveBeenCalledWith(
+      'printf "hello"; printf "warn" >&2',
+      expect.objectContaining({
+        cwd: process.cwd(),
+        timeoutMs: undefined,
+        env: undefined,
+        onOutput: expect.any(Function)
+      })
+    );
     expect(result.data.commandHandle.sessionId).toBe(DISABLE_SESSION_TOKEN);
     expect(result.data.commandHandle.commandId).toBe('cmd-1');
     expect(result.data.commandHandle.pid).toBeDefined();
