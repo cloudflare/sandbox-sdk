@@ -59,6 +59,8 @@ export type {
   InvalidPortContext,
   MissingCredentialsContext,
   OpencodeStartupContext,
+  OperationInterruptedContext,
+  OperationInterruptedReason,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,

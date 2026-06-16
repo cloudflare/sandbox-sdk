@@ -250,6 +250,30 @@ export interface ContainerUnavailableContext {
   sessionId?: string;
 }
 
+export type OperationInterruptedReason =
+  | 'runtime_replaced'
+  | 'container_stopped'
+  | 'transport_disposed'
+  | 'sandbox_destroyed'
+  | 'incarnation_changed'
+  | 'recovery_exhausted'
+  | 'unknown';
+
+export interface OperationInterruptedContext {
+  reason: OperationInterruptedReason;
+  operation: string;
+  phase?: string;
+  admitted: true | 'unknown';
+  retryable: boolean;
+  operationId?: string;
+  operationKey?: string;
+  idempotencyKey?: string;
+  recoveryAttempts?: number;
+  maxRecoveryAttempts?: number;
+  backupId?: string;
+  dir?: string;
+}
+
 /**
  * RPC transport error contexts. Surfaced when the capnweb WebSocket session
  * fails on the SDK side rather than the container reporting a structured

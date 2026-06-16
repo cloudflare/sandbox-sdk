@@ -63,6 +63,8 @@ export type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
+  OperationInterruptedReason,
   OperationType,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -114,6 +116,7 @@ export {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  OperationInterruptedError,
   PermissionDeniedError,
   // Port Errors
   PortAlreadyExposedError,

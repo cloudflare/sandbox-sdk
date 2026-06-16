@@ -145,6 +145,9 @@ export const ErrorCode = {
   // Container Availability Errors (503)
   CONTAINER_UNAVAILABLE: 'CONTAINER_UNAVAILABLE',
 
+  // Operation Lifecycle Errors (409)
+  OPERATION_INTERRUPTED: 'OPERATION_INTERRUPTED',
+
   // RPC Transport Errors (503) — capnweb WebSocket session-level failures
   // raised on the SDK side, not by the container. The container went away
   // mid-call (peer close), the WebSocket failed before/after upgrade, the

@@ -110,6 +110,11 @@ export function getSuggestion(
       }
     }
 
+    case ErrorCode.OPERATION_INTERRUPTED:
+      return context.retryable
+        ? 'Retry the operation with the same idempotency key or operation inputs so the SDK can reconcile the previous attempt.'
+        : 'The operation may have started before it was interrupted. Inspect application state before retrying.';
+
     case ErrorCode.RPC_TRANSPORT_ERROR: {
       const kind = context.kind as string | undefined;
       switch (kind) {

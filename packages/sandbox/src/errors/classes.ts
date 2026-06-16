@@ -28,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -833,6 +834,29 @@ export class ContainerUnavailableError extends SandboxError<ContainerUnavailable
   constructor(errorResponse: ErrorResponse<ContainerUnavailableContext>) {
     super(errorResponse);
     this.name = 'ContainerUnavailableError';
+  }
+}
+
+// ============================================================================
+// Operation Lifecycle Errors
+// ============================================================================
+
+export class OperationInterruptedError extends SandboxError<OperationInterruptedContext> {
+  constructor(errorResponse: ErrorResponse<OperationInterruptedContext>) {
+    super(errorResponse);
+    this.name = 'OperationInterruptedError';
+  }
+
+  get reason() {
+    return this.context.reason;
+  }
+
+  get retryable() {
+    return this.context.retryable;
+  }
+
+  get operationName() {
+    return this.context.operation;
   }
 }
 

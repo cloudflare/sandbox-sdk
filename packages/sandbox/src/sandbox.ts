@@ -60,8 +60,16 @@ import { ContainerControlClient } from './container-control';
 import {
   CurrentRuntimeIdentity,
   type RuntimeIdentity,
+  RuntimeIdentityInactiveError,
   type RuntimeScoped
 } from './current-runtime-identity';
+import {
+  type BackupRestoreOperationPhase,
+  type BackupRestoreOperationRecord,
+  type BackupRestoreOperationResult,
+  createBackupRestoreOperationRecord,
+  DurableOperationRecords
+} from './durable-operation-records';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -72,9 +80,11 @@ import {
   CustomDomainRequiredError,
   ErrorCode,
   InvalidBackupConfigError,
+  OperationInterruptedError,
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
+  RPCTransportError,
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
@@ -94,6 +104,11 @@ import {
 } from './preview-proxy-protocol';
 import { isLocalhostPattern } from './preview-url';
 import { proxyTerminal } from './pty';
+import {
+  CurrentSandboxIncarnation,
+  type SandboxIncarnation,
+  SandboxIncarnationChangedError
+} from './sandbox-incarnation';
 import {
   SandboxSecurityError,
   sanitizeSandboxId,
@@ -156,6 +171,12 @@ type ExecuteResponse = Awaited<
 type PortTokenEntry = {
   token: string;
   name?: string;
+};
+
+type BackupRestoreTestFault = {
+  phase: 'after_archive_ready';
+  mode: 'transport_disposed';
+  times: number;
 };
 
 type PreviewURLRuntimeValidation =
@@ -391,6 +412,8 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
+const BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS = 2;
+const BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY = 'test:backupRestoreFault';
 const DEFAULT_SESSION_INIT_MAX_ATTEMPTS = 2;
 const DEFAULT_SESSION_RESTART_SETTLE_MS = 100;
 
@@ -938,6 +961,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private activeMounts: Map<string, MountInfo> = new Map();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
+  private currentIncarnation: CurrentSandboxIncarnation;
+  private operationRecords: DurableOperationRecords;
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -1137,6 +1162,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.getState(),
       () => this.ctx.container?.running === true
     );
+    this.currentIncarnation = new CurrentSandboxIncarnation(this.ctx.storage);
+    this.operationRecords = new DurableOperationRecords(this.ctx.storage);
 
     // Read R2 backup bucket binding if configured
     const backupBucket = envObj?.BACKUP_BUCKET;
@@ -2572,6 +2599,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // the container.
       await this.ctx.storage.delete(PORT_TOKENS_STORAGE_KEY);
       await this.clearActivePreviewPorts();
+      await this.currentIncarnation.rotate();
       await this.currentRuntime.clear();
 
       // Unmount all mounted buckets and cleanup. This runs before disconnecting
@@ -6812,11 +6840,320 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
     if (backup.localBucket) {
       return await this.enqueueBackupOp(() =>
-        this.doRestoreBackupLocal(backup)
+        this.doRestoreBackupWithRecovery(backup, () =>
+          this.doRestoreBackupLocal(backup)
+        )
       );
     }
     this.requireBackupBucket();
-    return await this.enqueueBackupOp(() => this.doRestoreBackup(backup));
+    return await this.enqueueBackupOp(() =>
+      this.doRestoreBackupWithRecovery(backup, () =>
+        this.doRestoreBackup(backup)
+      )
+    );
+  }
+
+  private async doRestoreBackupWithRecovery(
+    backup: DirectoryBackup,
+    restoreAttempt: () => Promise<RestoreBackupResult>
+  ): Promise<RestoreBackupResult> {
+    let recoveryAttempts = 0;
+
+    while (true) {
+      try {
+        return await restoreAttempt();
+      } catch (error) {
+        if (!(error instanceof OperationInterruptedError)) {
+          throw error;
+        }
+
+        if (error.context.reason === 'incarnation_changed') {
+          throw error;
+        }
+
+        if (recoveryAttempts >= BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS) {
+          throw this.createRestoreRecoveryExhaustedError(
+            error,
+            recoveryAttempts
+          );
+        }
+
+        recoveryAttempts++;
+      }
+    }
+  }
+
+  private createRestoreRecoveryExhaustedError(
+    error: OperationInterruptedError,
+    recoveryAttempts: number
+  ): OperationInterruptedError {
+    const context = error.context;
+    return new OperationInterruptedError({
+      message: 'Backup restore recovery attempts were exhausted',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      httpStatus: 409,
+      context: {
+        reason: 'recovery_exhausted',
+        operation: context.operation,
+        operationId: context.operationId,
+        operationKey: context.operationKey,
+        idempotencyKey: context.idempotencyKey,
+        backupId: context.backupId,
+        dir: context.dir,
+        phase: 'interrupted',
+        admitted: context.admitted,
+        retryable: true,
+        recoveryAttempts,
+        maxRecoveryAttempts: BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS
+      },
+      timestamp: new Date().toISOString(),
+      suggestion:
+        'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
+    });
+  }
+
+  private async startBackupRestoreOperation(
+    backupId: string,
+    dir: string
+  ): Promise<{
+    incarnation: SandboxIncarnation;
+    operation: BackupRestoreOperationRecord;
+  }> {
+    const incarnation = await this.currentIncarnation.getOrCreate();
+    const operation = createBackupRestoreOperationRecord({
+      operationId: crypto.randomUUID(),
+      incarnationId: incarnation.id,
+      backupId,
+      dir,
+      phase: 'validating',
+      status: 'running',
+      now: new Date().toISOString()
+    });
+    await this.operationRecords.put(operation);
+    return { incarnation, operation };
+  }
+
+  private async captureBackupRestoreRuntime(): Promise<RuntimeIdentity> {
+    let runtime = await this.currentRuntime.get();
+    runtime = runtime ?? (await this.currentRuntime.markStarted());
+    await this.currentRuntime.assertActive(runtime);
+    return runtime;
+  }
+
+  private async markBackupRestoreArchiveReady(
+    operation: BackupRestoreOperationRecord,
+    runtime: RuntimeIdentity,
+    archiveSize?: number
+  ): Promise<BackupRestoreOperationRecord> {
+    const next = {
+      ...operation,
+      phase: 'archive_ready' as const,
+      runtimeIdentityID: runtime.id,
+      payload: {
+        ...operation.payload,
+        ...(archiveSize !== undefined && { archiveSize })
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await this.operationRecords.put(next);
+    return next;
+  }
+
+  private async assertBackupRestoreFences(
+    runtime: RuntimeIdentity,
+    incarnation: SandboxIncarnation
+  ): Promise<void> {
+    await this.currentRuntime.assertActive(runtime);
+    await this.currentIncarnation.assertCurrent(incarnation);
+  }
+
+  private async markBackupRestoreVerified(
+    operation: BackupRestoreOperationRecord,
+    runtime: RuntimeIdentity,
+    result: BackupRestoreOperationResult,
+    archiveSize?: number
+  ): Promise<BackupRestoreOperationRecord> {
+    const completedAt = new Date().toISOString();
+    const next = {
+      ...operation,
+      phase: 'verified' as const,
+      status: 'committed' as const,
+      runtimeIdentityID: runtime.id,
+      payload: {
+        ...operation.payload,
+        ...(archiveSize !== undefined && { archiveSize })
+      },
+      result,
+      completedAt,
+      updatedAt: completedAt
+    };
+    await this.operationRecords.put(next);
+    return next;
+  }
+
+  private async markBackupRestoreInterrupted(
+    operation: BackupRestoreOperationRecord,
+    message: string
+  ): Promise<BackupRestoreOperationRecord> {
+    const next = {
+      ...operation,
+      phase: 'interrupted' as const,
+      status: 'interrupted' as const,
+      error: {
+        code: ErrorCode.OPERATION_INTERRUPTED,
+        message,
+        retryable: true
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await this.operationRecords.put(next);
+    return next;
+  }
+
+  private createBackupRestoreInterruptedError(params: {
+    operation: BackupRestoreOperationRecord;
+    reason: 'runtime_replaced' | 'incarnation_changed' | 'transport_disposed';
+    phase: BackupRestoreOperationPhase;
+    admitted: true | 'unknown';
+    message: string;
+  }): OperationInterruptedError {
+    return new OperationInterruptedError({
+      message: params.message,
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      httpStatus: 409,
+      context: {
+        reason: params.reason,
+        operation: 'backup.restore',
+        operationId: params.operation.operationId,
+        operationKey: params.operation.operationKey,
+        idempotencyKey: params.operation.operationKey,
+        backupId: params.operation.payload.backupId,
+        dir: params.operation.payload.dir,
+        phase: params.phase,
+        admitted: params.admitted,
+        retryable: true
+      },
+      timestamp: new Date().toISOString(),
+      suggestion:
+        'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
+    });
+  }
+
+  private async translateBackupRestoreFenceError(
+    error: unknown,
+    operation: BackupRestoreOperationRecord,
+    phase: BackupRestoreOperationPhase
+  ): Promise<OperationInterruptedError | null> {
+    if (
+      !(
+        error instanceof RuntimeIdentityInactiveError ||
+        error instanceof SandboxIncarnationChangedError
+      )
+    ) {
+      return null;
+    }
+
+    const reason =
+      error instanceof RuntimeIdentityInactiveError
+        ? 'runtime_replaced'
+        : 'incarnation_changed';
+    const message =
+      'Backup restore was interrupted before completion could be verified';
+    const interrupted = await this.markBackupRestoreInterrupted(
+      operation,
+      message
+    );
+    return this.createBackupRestoreInterruptedError({
+      operation: interrupted,
+      reason,
+      phase,
+      admitted: true,
+      message
+    });
+  }
+
+  private async translateBackupRestoreRPCError(
+    error: unknown,
+    operation: BackupRestoreOperationRecord
+  ): Promise<OperationInterruptedError | null> {
+    if (!(error instanceof RPCTransportError)) {
+      return null;
+    }
+
+    const message =
+      'Backup restore was interrupted before completion could be verified';
+    const interruptedPhase = operation.phase;
+    const interrupted = await this.markBackupRestoreInterrupted(
+      operation,
+      message
+    );
+    return this.createBackupRestoreInterruptedError({
+      operation: interrupted,
+      reason: 'transport_disposed',
+      phase: interruptedPhase,
+      admitted: 'unknown',
+      message
+    });
+  }
+
+  async __setBackupRestoreFaultForTesting(
+    fault: BackupRestoreTestFault | null
+  ): Promise<void> {
+    const envObj = this.env as Record<string, unknown>;
+    if (envObj.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
+      throw new Error('Sandbox test hooks are not enabled');
+    }
+
+    if (fault === null || fault.times <= 0) {
+      await this.ctx.storage.delete(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY);
+      return;
+    }
+
+    await this.ctx.storage.put(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY, fault);
+  }
+
+  private async maybeInjectBackupRestoreFaultForTesting(
+    phase: BackupRestoreTestFault['phase'],
+    operation: BackupRestoreOperationRecord
+  ): Promise<void> {
+    const envObj = this.env as Record<string, unknown>;
+    if (envObj.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
+      return;
+    }
+
+    const fault =
+      (await this.ctx.storage.get<BackupRestoreTestFault>(
+        BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY
+      )) ?? null;
+    if (!fault || fault.phase !== phase || fault.times <= 0) {
+      return;
+    }
+
+    const nextTimes = fault.times - 1;
+    if (nextTimes > 0) {
+      await this.ctx.storage.put(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY, {
+        ...fault,
+        times: nextTimes
+      });
+    } else {
+      await this.ctx.storage.delete(BACKUP_RESTORE_TEST_FAULT_STORAGE_KEY);
+    }
+
+    if (fault.mode === 'transport_disposed') {
+      const message =
+        'Backup restore was interrupted before completion could be verified';
+      const interrupted = await this.markBackupRestoreInterrupted(
+        operation,
+        message
+      );
+      throw this.createBackupRestoreInterruptedError({
+        operation: interrupted,
+        reason: 'transport_disposed',
+        phase: operation.phase,
+        admitted: 'unknown',
+        message
+      });
+    }
   }
 
   private async doRestoreBackup(
@@ -6830,6 +7167,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let backupSession: string | undefined;
+    let restoreOperation: BackupRestoreOperationRecord | undefined;
 
     try {
       // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
@@ -6853,6 +7191,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
       Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
+
+      const { incarnation: restoreIncarnation, operation } =
+        await this.startBackupRestoreOperation(id, dir);
+      restoreOperation = operation;
 
       // Step 1: Read metadata to check TTL
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${id}/${BACKUP_METADATA_OBJECT_NAME}`;
@@ -6920,6 +7262,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       backupSession = await this.ensureBackupSession();
+      const restoreRuntime = await this.captureBackupRestoreRuntime();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -6964,6 +7307,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      await this.currentIncarnation.assertCurrent(restoreIncarnation);
+      restoreOperation = await this.markBackupRestoreArchiveReady(
+        restoreOperation,
+        restoreRuntime,
+        archiveHead.size
+      );
+      await this.maybeInjectBackupRestoreFaultForTesting(
+        'after_archive_ready',
+        restoreOperation
+      );
+
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
@@ -6980,15 +7334,49 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      outcome = 'success';
+      try {
+        await this.assertBackupRestoreFences(
+          restoreRuntime,
+          restoreIncarnation
+        );
+      } catch (error) {
+        const interrupted = await this.translateBackupRestoreFenceError(
+          error,
+          restoreOperation,
+          'archive_ready'
+        );
+        throw interrupted ?? error;
+      }
 
-      return {
-        success: true,
+      const result = {
+        success: true as const,
         dir,
         id
       };
+      restoreOperation = await this.markBackupRestoreVerified(
+        restoreOperation,
+        restoreRuntime,
+        result,
+        archiveHead.size
+      );
+
+      outcome = 'success';
+
+      return result;
     } catch (error) {
-      caughtError = error instanceof Error ? error : new Error(String(error));
+      let errorToThrow: unknown = error;
+      if (restoreOperation) {
+        errorToThrow =
+          (await this.translateBackupRestoreRPCError(
+            error,
+            restoreOperation
+          )) ?? error;
+      }
+
+      caughtError =
+        errorToThrow instanceof Error
+          ? errorToThrow
+          : new Error(String(errorToThrow));
       if (id && backupSession) {
         const cleanupPath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
         await this.execWithSession(
@@ -6997,7 +7385,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           { origin: 'internal' }
         ).catch(() => {});
       }
-      throw error;
+      throw errorToThrow;
     } finally {
       if (backupSession) {
         await this.client.utils.deleteSession(backupSession).catch(() => {});
@@ -7027,6 +7415,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     let backupSession: string | undefined;
+    let restoreOperation: BackupRestoreOperationRecord | undefined;
 
     // Resolve backup bucket from env as an R2 binding
     const envObj = this.env as Record<string, unknown>;
@@ -7066,6 +7455,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
       Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
 
+      const { incarnation: restoreIncarnation, operation } =
+        await this.startBackupRestoreOperation(id, dir);
+      restoreOperation = operation;
+
       // Step 1: Read metadata to check TTL
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${id}/${BACKUP_METADATA_OBJECT_NAME}`;
       const metaObject = await bucket.get(metaKey);
@@ -7085,6 +7478,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ttl: number;
         createdAt: string;
         dir: string;
+        sizeBytes?: number;
       }>();
 
       // Check TTL with 60-second buffer
@@ -7132,6 +7526,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       backupSession = await this.ensureBackupSession();
+      const restoreRuntime = await this.captureBackupRestoreRuntime();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Ensure backup directory exists
@@ -7154,6 +7549,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp: new Date().toISOString()
         });
       }
+      await this.currentIncarnation.assertCurrent(restoreIncarnation);
+      restoreOperation = await this.markBackupRestoreArchiveReady(
+        restoreOperation,
+        restoreRuntime,
+        metadata.sizeBytes
+      );
+      await this.maybeInjectBackupRestoreFaultForTesting(
+        'after_archive_ready',
+        restoreOperation
+      );
+
       await this.client.files.writeFileStream(archivePath, body, backupSession);
 
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
@@ -7180,15 +7586,49 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         { origin: 'internal' }
       ).catch(() => {});
 
-      outcome = 'success';
+      try {
+        await this.assertBackupRestoreFences(
+          restoreRuntime,
+          restoreIncarnation
+        );
+      } catch (error) {
+        const interrupted = await this.translateBackupRestoreFenceError(
+          error,
+          restoreOperation,
+          'archive_ready'
+        );
+        throw interrupted ?? error;
+      }
 
-      return {
-        success: true,
+      const result = {
+        success: true as const,
         dir,
         id
       };
+      restoreOperation = await this.markBackupRestoreVerified(
+        restoreOperation,
+        restoreRuntime,
+        result,
+        metadata.sizeBytes
+      );
+
+      outcome = 'success';
+
+      return result;
     } catch (error) {
-      caughtError = error instanceof Error ? error : new Error(String(error));
+      let errorToThrow: unknown = error;
+      if (restoreOperation) {
+        errorToThrow =
+          (await this.translateBackupRestoreRPCError(
+            error,
+            restoreOperation
+          )) ?? error;
+      }
+
+      caughtError =
+        errorToThrow instanceof Error
+          ? errorToThrow
+          : new Error(String(errorToThrow));
       if (id && backupSession) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
         await this.execWithSession(
@@ -7197,7 +7637,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           { origin: 'internal' }
         ).catch(() => {});
       }
-      throw error;
+      throw errorToThrow;
     } finally {
       if (backupSession) {
         await this.client.utils.deleteSession(backupSession).catch(() => {});

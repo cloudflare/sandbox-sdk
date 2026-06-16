@@ -117,6 +117,7 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   InvalidBackupConfigError: { status: 400, code: 'INVALID_BACKUP_CONFIG' },
   BackupCreateError: { status: 500, code: 'BACKUP_CREATE_FAILED' },
   BackupRestoreError: { status: 500, code: 'BACKUP_RESTORE_FAILED' },
+  OperationInterruptedError: { status: 409, code: 'OPERATION_INTERRUPTED' },
   // File errors
   FileNotFoundError: { status: 404, code: 'FILE_NOT_FOUND' },
   FileExistsError: { status: 409, code: 'FILE_EXISTS' },
@@ -1074,6 +1075,18 @@ console.log('Echo server on port ' + port);
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive'
           }
+        });
+      }
+
+      // Test-only backup restore fault configuration.
+      // The next normal /api/backup/restore call consumes this out-of-band setup.
+      if (
+        url.pathname === '/api/test/faults/backup-restore' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.__setBackupRestoreFaultForTesting(body);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
         });
       }
 

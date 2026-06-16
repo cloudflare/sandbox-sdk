@@ -139,12 +139,17 @@ describe('Local Backup & Restore', () => {
     vi.clearAllMocks();
 
     mockBucket = createMockR2Bucket();
+    const storageMap = new Map<string, unknown>();
 
     mockCtx = {
       storage: {
-        get: vi.fn().mockResolvedValue(null),
-        put: vi.fn().mockResolvedValue(undefined),
-        delete: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn(async (key: string) => storageMap.get(key)),
+        put: vi.fn(async (key: string, value: unknown) => {
+          storageMap.set(key, value);
+        }),
+        delete: vi.fn(async (key: string) => {
+          storageMap.delete(key);
+        }),
         list: vi.fn().mockResolvedValue(new Map())
       },
       blockConcurrencyWhile: vi
@@ -157,8 +162,9 @@ describe('Local Backup & Restore', () => {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
         name: 'test-sandbox'
-      } as any
-    };
+      } as any,
+      container: { running: true }
+    } as MockCtx & { container: { running: boolean } };
 
     mockEnv = {
       BACKUP_BUCKET: mockBucket
