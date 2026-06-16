@@ -372,6 +372,69 @@ cd /`);
     expect(isPIDAlive(pid)).toBe(false);
   });
 
+  it('aborts a process tree and keeps the session usable', async () => {
+    await using session = await CommandSession.create();
+    const controller = new AbortController();
+
+    const process = await session.startProcess(
+      'sleep 10 & printf \'child:%s\nstarted\n\' "$!"; sleep 10',
+      { signal: controller.signal }
+    );
+    controller.abort();
+
+    const result = await Promise.race([
+      process.wait(),
+      Bun.sleep(1_000).then(() => {
+        throw new Error('Timed out waiting for aborted process');
+      })
+    ]);
+    const childPID = result.stdout.match(/child:(\d+)/)?.[1];
+    expect(childPID).toBeDefined();
+
+    const childStatus = await session.exec(`kill -0 ${childPID}`);
+    const afterAbort = await session.exec("printf 'session-alive\n'");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('started\n');
+    expect(childStatus.exitCode).not.toBe(0);
+    expect(afterAbort.exitCode).toBe(0);
+    expect(afterAbort.stdout).toBe('session-alive\n');
+  });
+
+  it('rejects startProcess when the signal is already aborted', async () => {
+    await using session = await CommandSession.create();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      session.startProcess("printf 'should-not-run\n'", {
+        signal: controller.signal
+      })
+    ).rejects.toThrow('Process start aborted');
+
+    const afterAbort = await session.exec("printf 'session-alive\n'");
+    expect(afterAbort.exitCode).toBe(0);
+    expect(afterAbort.stdout).toBe('session-alive\n');
+  });
+
+  it('removes abort listener after process completion', async () => {
+    await using session = await CommandSession.create();
+    const controller = new AbortController();
+
+    const process = await session.startProcess("printf 'quick\n'", {
+      signal: controller.signal
+    });
+    const result = await process.wait();
+    controller.abort();
+    await Bun.sleep(100);
+    const afterAbort = await session.exec("printf 'session-alive\n'");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('quick\n');
+    expect(afterAbort.exitCode).toBe(0);
+    expect(afterAbort.stdout).toBe('session-alive\n');
+  });
+
   it('marks the session failed after command timeout', async () => {
     const session = await CommandSession.create();
 
@@ -388,6 +451,44 @@ cd /`);
     }
   });
 
+  it('terminates active process trees when command timeout fails the session', async () => {
+    const session = await CommandSession.create();
+    const childPID = Promise.withResolvers<number>();
+
+    try {
+      const runningProcess = await session.startProcess(
+        'sleep 10 & printf \'child:%s\n\' "$!"; sleep 10',
+        {
+          onOutput: (chunk) => {
+            const pid = chunk.data.match(/child:(\d+)/)?.[1];
+            if (pid) {
+              childPID.resolve(Number.parseInt(pid, 10));
+            }
+          }
+        }
+      );
+      const pid = await Promise.race([
+        childPID.promise,
+        Bun.sleep(750).then(() => {
+          throw new Error('Timed out waiting for child PID');
+        })
+      ]);
+      const waitForProcess = runningProcess.wait();
+      waitForProcess.catch(() => {});
+
+      await expect(session.exec('sleep 10', { timeoutMs: 50 })).rejects.toThrow(
+        'Timed out waiting for command'
+      );
+      await expect(waitForProcess).rejects.toThrow(
+        'Timed out waiting for command'
+      );
+
+      expect(isPIDAlive(pid)).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
   it('marks the session failed when the shell exits', async () => {
     const session = await CommandSession.create();
 
@@ -399,6 +500,43 @@ cd /`);
       await expect(session.exec("printf 'after-exit\n'")).rejects.toThrow(
         'Command session shell exited'
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('terminates active process trees when shell exit fails the session', async () => {
+    const session = await CommandSession.create();
+    const childPID = Promise.withResolvers<number>();
+
+    try {
+      const runningProcess = await session.startProcess(
+        'sleep 10 & printf \'child:%s\n\' "$!"; sleep 10',
+        {
+          onOutput: (chunk) => {
+            const pid = chunk.data.match(/child:(\d+)/)?.[1];
+            if (pid) {
+              childPID.resolve(Number.parseInt(pid, 10));
+            }
+          }
+        }
+      );
+      const pid = await Promise.race([
+        childPID.promise,
+        Bun.sleep(750).then(() => {
+          throw new Error('Timed out waiting for child PID');
+        })
+      ]);
+      const waitForProcess = runningProcess.wait();
+      waitForProcess.catch(() => {});
+
+      await expect(session.exec('exit')).rejects.toThrow(
+        'Command session shell exited'
+      );
+      const result = await waitForProcess;
+
+      expect(result.exitCode).not.toBe(0);
+      expect(isPIDAlive(pid)).toBe(false);
     } finally {
       await session.close();
     }

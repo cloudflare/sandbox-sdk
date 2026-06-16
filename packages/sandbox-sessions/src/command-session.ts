@@ -36,6 +36,7 @@ export type StdioChunk = {
 
 export type CommandSessionStartProcessOptions = {
   timeoutMs?: number;
+  signal?: AbortSignal;
   onOutput?: (chunk: StdioChunk) => void;
 };
 
@@ -53,6 +54,7 @@ type PendingOperation =
       kind: 'startProcess';
       id: string;
       timeoutMs?: number;
+      abortSignal?: AbortSignal;
       onOutput?: (chunk: StdioChunk) => void;
       resolve: (process: CommandSessionProcess) => void;
       reject: (error: Error) => void;
@@ -64,6 +66,8 @@ type ProcessCompletion = {
   nextSeq: number;
   onOutput?: (chunk: StdioChunk) => void;
   timeout?: ReturnType<typeof setTimeout>;
+  abortSignal?: AbortSignal;
+  abortListener?: () => void;
   resolve: (result: CommandSessionProcessResult) => void;
   reject: (error: Error) => void;
 };
@@ -236,6 +240,9 @@ export class CommandSession implements AsyncDisposable {
     options: CommandSessionStartProcessOptions
   ): Promise<CommandSessionProcess> {
     this.assertReadyForOperation();
+    if (options.signal?.aborted) {
+      throw new Error('Process start aborted');
+    }
 
     const id = crypto.randomUUID().replaceAll('-', '');
     const encodedCommand = Buffer.from(command).toString('base64');
@@ -244,6 +251,7 @@ export class CommandSession implements AsyncDisposable {
         kind: 'startProcess',
         id,
         timeoutMs: options.timeoutMs,
+        abortSignal: options.signal,
         onOutput: options.onOutput,
         resolve,
         reject
@@ -364,6 +372,7 @@ export class CommandSession implements AsyncDisposable {
         output: [],
         nextSeq: 0,
         onOutput: pending.onOutput,
+        abortSignal: pending.abortSignal,
         resolve: completion.resolve,
         reject: completion.reject
       };
@@ -371,6 +380,16 @@ export class CommandSession implements AsyncDisposable {
         processCompletion.timeout = setTimeout(() => {
           void process.terminate();
         }, pending.timeoutMs);
+      }
+      if (pending.abortSignal) {
+        processCompletion.abortListener = () => {
+          void process.terminate();
+        };
+        pending.abortSignal.addEventListener(
+          'abort',
+          processCompletion.abortListener,
+          { once: true }
+        );
       }
       this.processes.set(id, processCompletion);
       pending.resolve(process);
@@ -427,7 +446,7 @@ export class CommandSession implements AsyncDisposable {
     }
     this.ready.reject(error);
     this.rejectPending(error);
-    this.rejectProcesses(error);
+    void this.terminateProcesses(error);
   }
 
   private rejectPending(error: Error): void {
@@ -466,17 +485,12 @@ export class CommandSession implements AsyncDisposable {
     }
   }
 
-  private rejectProcesses(error: Error): void {
-    for (const process of this.processes.values()) {
-      this.cleanupProcess(process);
-      process.reject(error);
-    }
-    this.processes.clear();
-  }
-
   private cleanupProcess(process: ProcessCompletion): void {
     if (process.timeout) {
       clearTimeout(process.timeout);
+    }
+    if (process.abortSignal && process.abortListener) {
+      process.abortSignal.removeEventListener('abort', process.abortListener);
     }
   }
 
