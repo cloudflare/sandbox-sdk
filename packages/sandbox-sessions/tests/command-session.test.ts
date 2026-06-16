@@ -263,6 +263,22 @@ EOF`);
     }
   });
 
+  it('marks the session failed when the shell exits', async () => {
+    const session = await CommandSession.create();
+
+    try {
+      await expect(session.exec('exit')).rejects.toThrow(
+        'Command session shell exited'
+      );
+
+      await expect(session.exec("printf 'after-exit\n'")).rejects.toThrow(
+        'Command session shell exited'
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   it('does not expose terminal APIs', async () => {
     await using session = await CommandSession.create();
 
