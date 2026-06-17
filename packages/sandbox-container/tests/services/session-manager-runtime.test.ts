@@ -199,11 +199,8 @@ printf "done\n"`,
   it('tracks runtime process commands without legacy handles', async () => {
     const sessionId = 'runtime-tracking-session';
     const commandId = 'runtime-tracking-command';
-    const getRunningCommandIdsSpy = vi.spyOn(
-      Session.prototype,
-      'getRunningCommandIds'
-    );
-    const killCommandSpy = vi.spyOn(Session.prototype, 'killCommand');
+    expect('getRunningCommandIds' in Session.prototype).toBe(false);
+    expect('killCommand' in Session.prototype).toBe(false);
 
     const streamResult = await sessionManager.executeStreamInSession(
       sessionId,
@@ -215,23 +212,20 @@ printf "done\n"`,
 
     expect(streamResult.success).toBe(true);
     const managerInternals = sessionManager as unknown as {
-      sessions: Map<string, Session>;
+      sessions: Map<string, { getRunningCommandIds(): string[] }>;
     };
     const session = managerInternals.sessions.get(sessionId);
 
     expect(session?.getRunningCommandIds()).toContain(commandId);
-    expect(getRunningCommandIdsSpy).not.toHaveBeenCalled();
 
     const missingKillResult = await sessionManager.killCommand(
       sessionId,
       'missing-runtime-command'
     );
     expect(missingKillResult.success).toBe(false);
-    expect(killCommandSpy).not.toHaveBeenCalled();
 
     const killResult = await sessionManager.killCommand(sessionId, commandId);
     expect(killResult.success).toBe(true);
-    expect(killCommandSpy).not.toHaveBeenCalled();
     if (streamResult.success) {
       await streamResult.data.continueStreaming;
     }
@@ -287,7 +281,7 @@ printf "done\n"`,
         origin?: 'user' | 'internal';
       };
     }> = [];
-    const execStreamSpy = vi.spyOn(Session.prototype, 'execStream');
+    expect('execStream' in Session.prototype).toBe(false);
     const managedSession = {
       pty: null,
       async initialize(): Promise<void> {},
@@ -376,7 +370,6 @@ printf "done\n"`,
       'stdout',
       'complete'
     ]);
-    expect(execStreamSpy).not.toHaveBeenCalled();
   });
 
   it('kills background session processes through the execution runtime', async () => {

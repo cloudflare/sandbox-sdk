@@ -1,5 +1,5 @@
 /**
- * Session Tests - FIFO-based persistent shell execution
+ * Session Tests - persistent shell execution
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -403,98 +403,17 @@ describe('Session', () => {
     });
   });
 
-  describe('execStream', () => {
-    beforeEach(async () => {
+  describe('legacy streaming surface', () => {
+    it('does not expose streaming or process-control methods', async () => {
       session = new Session({
-        id: 'test-stream',
+        id: 'test-no-streaming-surface',
         cwd: testDir
       });
       await session.initialize();
-    });
 
-    it('should stream command output', async () => {
-      const events: any[] = [];
-
-      for await (const event of session.execStream(
-        'echo "Hello"; echo "World"'
-      )) {
-        events.push(event);
-      }
-
-      // Should have start, stdout events, and complete
-      expect(events.length).toBeGreaterThanOrEqual(3);
-
-      // First event should be start
-      expect(events[0].type).toBe('start');
-      expect(events[0].command).toBe('echo "Hello"; echo "World"');
-
-      // Last event should be complete
-      const lastEvent = events[events.length - 1];
-      expect(lastEvent.type).toBe('complete');
-      expect(lastEvent.exitCode).toBe(0);
-
-      // Should have stdout events
-      const stdoutEvents = events.filter((e) => e.type === 'stdout');
-      expect(stdoutEvents.length).toBeGreaterThan(0);
-    });
-
-    it('should stream stderr separately', async () => {
-      const events: any[] = [];
-
-      for await (const event of session.execStream(
-        'echo "out"; echo "err" >&2'
-      )) {
-        events.push(event);
-      }
-
-      const stdoutEvents = events.filter((e) => e.type === 'stdout');
-      const stderrEvents = events.filter((e) => e.type === 'stderr');
-
-      expect(stdoutEvents.length).toBeGreaterThan(0);
-      expect(stderrEvents.length).toBeGreaterThan(0);
-
-      // Verify data
-      expect(stdoutEvents.some((e) => e.data.includes('out'))).toBe(true);
-      expect(stderrEvents.some((e) => e.data.includes('err'))).toBe(true);
-    });
-
-    it('should maintain session state during streaming', async () => {
-      // Set a variable
-      await session.exec('STREAM_VAR="stream-test"');
-
-      // Stream command that uses the variable
-      const events: any[] = [];
-      for await (const event of session.execStream('echo $STREAM_VAR')) {
-        events.push(event);
-      }
-
-      // Should complete successfully
-      const completeEvent = events.find((e) => e.type === 'complete');
-      expect(completeEvent).toBeDefined();
-      expect(completeEvent.exitCode).toBe(0);
-
-      // Should have correct output
-      const stdoutEvents = events.filter((e) => e.type === 'stdout');
-      const output = stdoutEvents.map((e) => e.data).join('');
-      expect(output.trim()).toBe('stream-test');
-    });
-
-    it('should handle errors during streaming', async () => {
-      const events: any[] = [];
-
-      for await (const event of session.execStream('nonexistentcommand456')) {
-        events.push(event);
-      }
-
-      // Should have error or complete with non-zero exit code
-      const completeEvent = events.find((e) => e.type === 'complete');
-      const errorEvent = events.find((e) => e.type === 'error');
-
-      expect(completeEvent || errorEvent).toBeDefined();
-
-      if (completeEvent) {
-        expect(completeEvent.exitCode).not.toBe(0);
-      }
+      expect('execStream' in session).toBe(false);
+      expect('killCommand' in session).toBe(false);
+      expect('getRunningCommandIds' in session).toBe(false);
     });
   });
 
@@ -639,10 +558,10 @@ describe('Session', () => {
     });
   });
 
-  describe('FIFO cleanup', () => {
-    it('should cleanup FIFO pipes after command execution', async () => {
+  describe('command cleanup', () => {
+    it('should cleanup command files after execution', async () => {
       session = new Session({
-        id: 'test-fifo-cleanup',
+        id: 'test-command-cleanup',
         cwd: testDir
       });
 
@@ -651,11 +570,10 @@ describe('Session', () => {
       // Execute a command
       await session.exec('echo test');
 
-      // FIFO pipes should be cleaned up (can't easily verify without accessing private session dir)
-      // But we can verify the session is still ready
+      // Command temp files should be cleaned up; verify the session remains usable.
       expect(session.isReady()).toBe(true);
 
-      // Execute another command to ensure no leftover pipes interfere
+      // Execute another command to ensure no leftover files interfere
       const result = await session.exec('echo test2');
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('test2');

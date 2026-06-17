@@ -243,8 +243,8 @@ describe('SessionManager Locking', () => {
       const sessionId = 'stream-destroy-session';
       const events: { type: string; error?: string; exitCode?: number }[] = [];
 
-      // Background mode releases the lock after the 'start' event,
-      // so the execStream generator continues polling without the mutex.
+      // Runtime process streaming releases the lock after the 'start' event,
+      // so the process lifecycle continues without holding the session mutex.
       const streamResult = await sessionManager.executeStreamInSession(
         sessionId,
         'sleep 10',
@@ -267,9 +267,9 @@ describe('SessionManager Locking', () => {
 
       expect(streamResult.success).toBe(true);
 
-      // The generator is now polling in the background.
-      // Destroying the session while it polls exercises the
-      // concurrent destroy + streaming code path.
+      // The runtime process stream is now active in the background.
+      // Destroying the session exercises the concurrent destroy + streaming
+      // code path.
       const deleteResult = await sessionManager.deleteSession(sessionId);
       expect(deleteResult.success).toBe(true);
 
@@ -292,11 +292,9 @@ describe('SessionManager Locking', () => {
       // Verify we got a start event (streaming did begin)
       expect(events.some((e) => e.type === 'start')).toBe(true);
 
-      // Session teardown races with execStream() exit detection. If destroy()
-      // wins first, the generator reports an error. If the synthetic exit file
-      // written during teardown wins first, the generator can finish with a
-      // non-zero complete event instead. Either outcome is valid as long as the
-      // stream settles and reports a terminal event.
+      // Session teardown races with runtime process completion. Either an error
+      // or a non-zero complete event is valid as long as the stream settles and
+      // reports a terminal event.
       const errorEvent = events.find((e) => e.type === 'error');
       const completeEvent = events.find((e) => e.type === 'complete');
 
