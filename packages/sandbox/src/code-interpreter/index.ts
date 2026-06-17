@@ -16,6 +16,7 @@
  *   }
  */
 
+import { RpcTarget } from 'cloudflare:workers';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -47,21 +48,6 @@ export type SandboxLike = {
 };
 
 // ---------------------------------------------------------------------------
-// Interpreter interface — the public API returned by withInterpreter()
-// ---------------------------------------------------------------------------
-
-export interface Interpreter {
-  createContext(options?: CreateContextOptions): Promise<CodeContext>;
-  runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ReadableStream>;
-  listContexts(): Promise<CodeContext[]>;
-  deleteContext(contextId: string): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
 // Supported languages
 // ---------------------------------------------------------------------------
 
@@ -85,7 +71,31 @@ function validateLanguage(language: string | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
-// withInterpreter — the factory function
+// Interpreter — the extension's public API, as an RpcTarget
+//
+// This is the canonical shape for a Sandbox extension:
+//
+//   1. Extend `RpcTarget` so the instance can be passed by reference across
+//      the Workers RPC boundary. Only `RpcTarget` instances may be exposed
+//      this way; a plain object of closures cannot (its methods are dropped
+//      by structured clone). This makes `sandbox.<ext>.method()` reachable
+//      from a Worker once the runtime supports getter pipelining (see note).
+//   2. Capture the Sandbox in an ECMAScript `#private` field. Private fields
+//      are NOT observable as own properties on the RPC receiver, so the
+//      sandbox reference can never be read or invoked across the boundary.
+//      Only the public async methods below are callable.
+//   3. Stay lazy: the constructor only stores the reference. The control
+//      client (`sandbox.client.interpreter`) is dereferenced per-call via
+//      `#rpc`, never at construction time — so `ext = withX(this)` as a class
+//      field initializer is safe (it runs after the base constructor).
+//
+// Note on Worker access: direct property pipelining (`stub.interpreter.x()`)
+// is currently broken under the vite-plugin runtime — the same constraint
+// documented on `TunnelsRpcTarget`. Until it lifts, expose extension methods
+// to the Worker via thin delegate methods on the Sandbox subclass (e.g.
+// `runPython()` calling `this.interpreter.runCode(...)`), or a
+// `call<Ext>(method, args)` dispatch + Proxy as `tunnels` does. The
+// `RpcTarget` base keeps the pipelining shape ready for when it works.
 // ---------------------------------------------------------------------------
 
 const MAX_RETRIES = 3;
@@ -118,43 +128,57 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
-export function withInterpreter(sandbox: SandboxLike): Interpreter {
-  const contexts = new Map<string, CodeContext>();
+export class Interpreter extends RpcTarget {
+  // ECMAScript private fields (not TS `private`) so they are not observable
+  // as own properties on the RPC receiver and cannot be reached from a Worker.
+  readonly #sandbox: SandboxLike;
+  // Best-effort cache of contexts created through this instance. The container
+  // is the source of truth; `listContexts()` re-syncs it.
+  readonly #contexts = new Map<string, CodeContext>();
 
-  const rpc = (): SandboxInterpreterAPI => sandbox.client.interpreter;
-
-  async function getOrCreateDefaultContext(
-    language: 'python' | 'javascript' | 'typescript'
-  ): Promise<CodeContext> {
-    for (const ctx of contexts.values()) {
-      if (ctx.language === language) return ctx;
-    }
-    return createContext({ language });
+  constructor(sandbox: SandboxLike) {
+    super();
+    this.#sandbox = sandbox;
   }
 
-  async function createContext(
+  get #rpc(): SandboxInterpreterAPI {
+    return this.#sandbox.client.interpreter;
+  }
+
+  async #getOrCreateDefaultContext(
+    language: 'python' | 'javascript' | 'typescript'
+  ): Promise<CodeContext> {
+    for (const ctx of this.#contexts.values()) {
+      if (ctx.language === language) return ctx;
+    }
+    return this.createContext({ language });
+  }
+
+  async createContext(
     options: CreateContextOptions = {}
   ): Promise<CodeContext> {
     validateLanguage(options.language);
-    const context = await withRetry(() => rpc().createCodeContext(options));
-    contexts.set(context.id, context);
+    const context = await withRetry(() => this.#rpc.createCodeContext(options));
+    this.#contexts.set(context.id, context);
     return context;
   }
 
-  async function runCode(
+  async runCode(
     code: string,
     options: RunCodeOptions = {}
   ): Promise<ExecutionResult> {
     let context = options.context;
     if (!context) {
-      context = await getOrCreateDefaultContext(options.language || 'python');
+      context = await this.#getOrCreateDefaultContext(
+        options.language || 'python'
+      );
     }
 
     const execution = new Execution(code, context);
     const contextId = context.id;
 
     await withRetry(() =>
-      rpc().runCodeStream(
+      this.#rpc.runCodeStream(
         contextId,
         code,
         options.language,
@@ -183,36 +207,40 @@ export function withInterpreter(sandbox: SandboxLike): Interpreter {
     return execution.toJSON();
   }
 
-  async function runCodeStream(
+  async runCodeStream(
     code: string,
     options: RunCodeOptions = {}
   ): Promise<ReadableStream> {
     let context = options.context;
     if (!context) {
-      context = await getOrCreateDefaultContext(options.language || 'python');
+      context = await this.#getOrCreateDefaultContext(
+        options.language || 'python'
+      );
     }
     const contextId = context.id;
-    return withRetry(() => rpc().streamCode(contextId, code, options.language));
+    return withRetry(() =>
+      this.#rpc.streamCode(contextId, code, options.language)
+    );
   }
 
-  async function listContexts(): Promise<CodeContext[]> {
-    const list = await withRetry(() => rpc().listCodeContexts());
+  async listContexts(): Promise<CodeContext[]> {
+    const list = await withRetry(() => this.#rpc.listCodeContexts());
     for (const ctx of list) {
-      contexts.set(ctx.id, ctx);
+      this.#contexts.set(ctx.id, ctx);
     }
     return list;
   }
 
-  async function deleteContext(contextId: string): Promise<void> {
-    await withRetry(() => rpc().deleteCodeContext(contextId));
-    contexts.delete(contextId);
+  async deleteContext(contextId: string): Promise<void> {
+    await withRetry(() => this.#rpc.deleteCodeContext(contextId));
+    this.#contexts.delete(contextId);
   }
+}
 
-  return {
-    createContext,
-    runCode,
-    runCodeStream,
-    listContexts,
-    deleteContext
-  };
+// ---------------------------------------------------------------------------
+// withInterpreter — the factory consumers use as a class-field initializer
+// ---------------------------------------------------------------------------
+
+export function withInterpreter(sandbox: SandboxLike): Interpreter {
+  return new Interpreter(sandbox);
 }
