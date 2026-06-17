@@ -298,7 +298,7 @@ describe('getSandbox', () => {
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
-    it('routes implicit exec through the sessionless token regardless of default-session options', async () => {
+    it('routes implicit exec through the sessionless token', async () => {
       mockStub.exec = vi.fn().mockResolvedValue({
         success: true,
         stdout: '',
@@ -317,9 +317,7 @@ describe('getSandbox', () => {
       });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.exec('echo test', {
         env: { TEST_ENV: '1' },
@@ -339,7 +337,7 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit startProcess through the sessionless token regardless of default-session options', async () => {
+    it('routes implicit startProcess through the sessionless token', async () => {
       mockStub.startProcess = vi.fn().mockResolvedValue({
         success: true,
         processId: 'proc-sessionless',
@@ -348,9 +346,7 @@ describe('getSandbox', () => {
       });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.startProcess('sleep 10', {
         env: { TEST_ENV: '1' },
@@ -366,14 +362,12 @@ describe('getSandbox', () => {
       });
     });
 
-    it('keeps implicit process reads sandbox-scoped regardless of default-session options', async () => {
+    it('keeps implicit process reads sandbox-scoped', async () => {
       mockStub.listProcesses = vi.fn().mockResolvedValue([]);
       mockStub.getProcess = vi.fn().mockResolvedValue(null);
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.listProcesses();
       await sandbox.getProcess('proc-sessionless');
@@ -382,14 +376,12 @@ describe('getSandbox', () => {
       expect(mockStub.getProcess).toHaveBeenCalledWith('proc-sessionless');
     });
 
-    it('preserves explicit sessionIds for process reads when default sessions are disabled', async () => {
+    it('preserves explicit sessionIds for process reads', async () => {
       mockStub.listProcesses = vi.fn().mockResolvedValue([]);
       mockStub.getProcess = vi.fn().mockResolvedValue(null);
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.listProcesses('explicit-session');
       await sandbox.getProcess('proc-explicit', 'explicit-session');
@@ -401,7 +393,7 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit file operations through the sessionless token regardless of default-session options', async () => {
+    it('routes implicit file operations through the sessionless token', async () => {
       mockStub.writeFile = vi.fn().mockResolvedValue({});
       mockStub.readFile = vi.fn().mockResolvedValue({});
       mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
@@ -413,9 +405,7 @@ describe('getSandbox', () => {
       mockStub.exists = vi.fn().mockResolvedValue({ exists: true });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.writeFile('/workspace/file.txt', 'content', {
         encoding: 'utf8'
@@ -470,16 +460,14 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit watch and change checks through the sessionless token regardless of default-session options', async () => {
+    it('routes implicit watch and change checks through the sessionless token', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
       mockStub.checkChanges = vi
         .fn()
         .mockResolvedValue({ status: 'unchanged', version: 1 });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.watch('/workspace', { recursive: false });
       await sandbox.checkChanges('/workspace', { since: 'watch-1:0' });
@@ -494,7 +482,7 @@ describe('getSandbox', () => {
       });
     });
 
-    it('routes implicit git checkout through the sessionless token regardless of default-session options', async () => {
+    it('routes implicit git checkout through the sessionless token', async () => {
       mockStub.gitCheckout = vi.fn().mockResolvedValue({
         success: true,
         stdout: 'Cloned',
@@ -505,9 +493,7 @@ describe('getSandbox', () => {
       });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.gitCheckout('https://github.com/test/repo.git', {
         branch: 'main',
@@ -543,9 +529,7 @@ describe('getSandbox', () => {
       });
 
       const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: true
-      });
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.watch('/workspace', { sessionId: 'my-session' });
       await sandbox.checkChanges('/workspace', { sessionId: 'my-session' });

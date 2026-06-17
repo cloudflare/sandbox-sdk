@@ -63,10 +63,7 @@ describe('Sessionless Execution Workflow', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = {
-      ...sandbox.headers(),
-      'X-Sandbox-Enable-Default-Session': 'false'
-    };
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -74,7 +71,7 @@ describe('Sessionless Execution Workflow', () => {
     sandbox = null;
   }, 120000);
 
-  test('should run implicit exec calls without shared shell state when default sessions are disabled', async () => {
+  test('should run implicit exec calls without shared shell state', async () => {
     const testDir = sandbox!.uniquePath('sessionless-state');
     const first = await executeCommand(
       workerUrl,
@@ -97,7 +94,7 @@ describe('Sessionless Execution Workflow', () => {
     expect(cwd).not.toBe(testDir);
   }, 90000);
 
-  test('should stream implicit commands without a persistent shell when default sessions are disabled', async () => {
+  test('should stream implicit commands without a persistent shell', async () => {
     const setup = await executeCommand(
       workerUrl,
       headers,
@@ -128,7 +125,7 @@ describe('Sessionless Execution Workflow', () => {
     expect(error).toBeUndefined();
   }, 90000);
 
-  test('should time out implicit commands when default sessions are disabled', async () => {
+  test('should time out implicit commands', async () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
@@ -146,7 +143,7 @@ describe('Sessionless Execution Workflow', () => {
     expect(result.stderr).toContain('Command timed out after 50ms');
   }, 90000);
 
-  test('should allow explicit session IDs when default sessions are disabled', async () => {
+  test('should allow explicit session IDs', async () => {
     const testDir = sandbox!.uniquePath('session-list-files');
     const filePath = `${testDir}/session-only.txt`;
 

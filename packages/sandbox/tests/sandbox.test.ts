@@ -403,12 +403,10 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('does not read enableDefaultSession from storage', async () => {
+    it('initializes default file sessions from storage state', async () => {
       const nullStorageCtx: MockCtx = {
         storage: {
-          get: vi.fn().mockImplementation(async (key: string) => {
-            return key === 'enableDefaultSession' ? null : undefined;
-          }),
+          get: vi.fn().mockResolvedValue(undefined),
           put: vi.fn().mockResolvedValue(undefined),
           delete: vi.fn().mockResolvedValue(undefined),
           list: vi.fn().mockResolvedValue(new Map())
@@ -469,9 +467,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await freshSandbox.writeFile('/test.txt', 'content');
 
-      expect(nullStorageCtx.storage.get).not.toHaveBeenCalledWith(
-        'enableDefaultSession'
-      );
       expect(freshSandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
       expect(freshSandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
@@ -1013,7 +1008,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps default shell state independent of sessionless proxy configuration', async () => {
+    it('keeps default shell state independent of top-level exec', async () => {
       vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
         success: true,
         sessionId: 'sandbox-default',
@@ -1037,10 +1032,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(result.stdout).toBe('sessionless');
       expect(sandbox.client.utils.deleteSession).not.toHaveBeenCalled();
       expect(mockCtx.storage.delete).not.toHaveBeenCalledWith('defaultSession');
-      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
-        'enableDefaultSession',
-        false
-      );
     });
   });
 

@@ -427,17 +427,6 @@ export interface SandboxOptions {
   keepAlive?: boolean;
 
   /**
-   * Legacy compatibility option for implicit non-command operations that still
-   * use SDK-managed session context. Top-level `exec()` and `startProcess()` are
-   * stateless regardless of this option; create an explicit session when you
-   * need persistent shell state.
-   *
-   * @deprecated Top-level execution is stateless. Prefer explicit sessions for
-   * persistent state instead of relying on SDK-managed default sessions.
-   */
-  enableDefaultSession?: boolean;
-
-  /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
    *
    * Required for preview URLs because hostnames are case-insensitive (RFC 3986), which
