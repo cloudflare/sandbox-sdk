@@ -470,51 +470,101 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit watch through the sessionless token when default sessions are disabled', async () => {
+    it('routes implicit watch and change checks through the sessionless token regardless of default-session options', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
-      });
-
-      await sandbox.watch('/workspace');
-
-      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
-        sessionId: DISABLE_SESSION_TOKEN
-      });
-    });
-
-    it('routes implicit checkChanges through the sessionless token when default sessions are disabled', async () => {
       mockStub.checkChanges = vi
         .fn()
         .mockResolvedValue({ status: 'unchanged', version: 1 });
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
+        enableDefaultSession: true
       });
 
-      await sandbox.checkChanges('/workspace');
+      await sandbox.watch('/workspace', { recursive: false });
+      await sandbox.checkChanges('/workspace', { since: 'watch-1:0' });
 
+      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
+        recursive: false,
+        sessionId: DISABLE_SESSION_TOKEN
+      });
       expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
+        since: 'watch-1:0',
         sessionId: DISABLE_SESSION_TOKEN
       });
     });
 
-    it('passes an explicit sessionId through watch even when default sessions are disabled', async () => {
-      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
+    it('routes implicit git checkout through the sessionless token regardless of default-session options', async () => {
+      mockStub.gitCheckout = vi.fn().mockResolvedValue({
+        success: true,
+        stdout: 'Cloned',
+        stderr: '',
+        branch: 'main',
+        targetDir: '/workspace/repo',
+        timestamp: new Date().toISOString()
+      });
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
+        enableDefaultSession: true
+      });
+
+      await sandbox.gitCheckout('https://github.com/test/repo.git', {
+        branch: 'main',
+        targetDir: '/workspace/repo',
+        depth: 1,
+        cloneTimeoutMs: 90_000
+      });
+
+      expect(mockStub.gitCheckout).toHaveBeenCalledWith(
+        'https://github.com/test/repo.git',
+        {
+          branch: 'main',
+          targetDir: '/workspace/repo',
+          depth: 1,
+          cloneTimeoutMs: 90_000,
+          sessionId: DISABLE_SESSION_TOKEN
+        }
+      );
+    });
+
+    it('passes explicit session IDs through watch, change checks, and git checkout', async () => {
+      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
+      mockStub.checkChanges = vi
+        .fn()
+        .mockResolvedValue({ status: 'unchanged', version: 1 });
+      mockStub.gitCheckout = vi.fn().mockResolvedValue({
+        success: true,
+        stdout: 'Cloned',
+        stderr: '',
+        branch: 'main',
+        targetDir: '/workspace/repo',
+        timestamp: new Date().toISOString()
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: true
       });
 
       await sandbox.watch('/workspace', { sessionId: 'my-session' });
+      await sandbox.checkChanges('/workspace', { sessionId: 'my-session' });
+      await sandbox.gitCheckout('https://github.com/test/repo.git', {
+        sessionId: 'my-session'
+      });
 
       expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
         sessionId: 'my-session'
       });
+      expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
+        sessionId: 'my-session'
+      });
+      expect(mockStub.gitCheckout).toHaveBeenCalledWith(
+        'https://github.com/test/repo.git',
+        {
+          sessionId: 'my-session'
+        }
+      );
     });
 
     it('routes terminal handle connections with explicit terminal IDs', async () => {

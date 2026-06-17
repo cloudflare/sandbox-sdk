@@ -673,8 +673,6 @@ export function getSandbox<T extends Sandbox<any>>(
     });
   }
 
-  const useDefaultSession = options?.enableDefaultSession !== false;
-
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     exec: (command: string, execOptions?: ExecOptions) =>
@@ -765,12 +763,10 @@ export function getSandbox<T extends Sandbox<any>>(
         cloneTimeoutMs?: number;
       }
     ) =>
-      useDefaultSession || gitOptions?.sessionId !== undefined
-        ? stub.gitCheckout(repoUrl, gitOptions)
-        : stub.gitCheckout(repoUrl, {
-            ...gitOptions,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
+      stub.gitCheckout(repoUrl, {
+        ...gitOptions,
+        sessionId: gitOptions?.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return rpcSession as ExecutionSession;
@@ -780,16 +776,15 @@ export function getSandbox<T extends Sandbox<any>>(
       return rpcSession as ExecutionSession;
     },
     watch: (path: string, options: WatchOptions = {}) =>
-      useDefaultSession || options.sessionId !== undefined
-        ? stub.watch(path, options)
-        : stub.watch(path, { ...options, sessionId: DISABLE_SESSION_TOKEN }),
+      stub.watch(path, {
+        ...options,
+        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     checkChanges: (path: string, options: CheckChangesOptions = {}) =>
-      useDefaultSession || options.sessionId !== undefined
-        ? stub.checkChanges(path, options)
-        : stub.checkChanges(path, {
-            ...options,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
+      stub.checkChanges(path, {
+        ...options,
+        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     terminal: (opts?: TerminalOptions) => createSandboxTerminal(stub, opts),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
