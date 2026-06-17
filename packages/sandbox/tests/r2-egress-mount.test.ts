@@ -1,4 +1,5 @@
 import { getContainer } from '@cloudflare/containers';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
@@ -7,6 +8,7 @@ import {
   r2EgressHandler
 } from '../src/storage-mount/r2-egress-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
+import { createMockControlClient } from './helpers/mock-control-client';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -875,6 +877,48 @@ describe('Sandbox R2 egress mounts', () => {
 
     expect(mockCtx.container.interceptOutboundHttp).not.toHaveBeenCalled();
     expect(mockCtx.exports.ContainerProxy).not.toHaveBeenCalled();
+  });
+
+  it('uses sessionless file APIs for local R2 sync mounts', async () => {
+    const mockCtx = createMockCtx();
+    const bucket = createMockR2Bucket();
+    (bucket.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      objects: [],
+      truncated: false,
+      delimitedPrefixes: []
+    });
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: bucket }
+    );
+    const client = createMockControlClient();
+    sandbox.client = client;
+
+    vi.mocked(client.utils.createSession).mockResolvedValue({
+      success: true,
+      id: 'sandbox-default',
+      message: 'Created',
+      timestamp: new Date().toISOString()
+    });
+    vi.mocked(client.files.mkdir).mockResolvedValue({
+      success: true,
+      path: '/mnt/local',
+      recursive: true,
+      timestamp: new Date().toISOString()
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/local', {
+      localBucket: true,
+      readOnly: true
+    });
+    await sandbox.unmountBucket('/mnt/local');
+
+    expect(client.utils.createSession).not.toHaveBeenCalled();
+    expect(client.files.mkdir).toHaveBeenCalledWith(
+      '/mnt/local',
+      DISABLE_SESSION_TOKEN,
+      { recursive: true }
+    );
   });
 
   describe('handler prefix translation', () => {

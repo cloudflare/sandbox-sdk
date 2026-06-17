@@ -1505,7 +1505,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      const sessionId = await this.ensureDefaultSession();
+      const sessionId = DISABLE_SESSION_TOKEN;
 
       const syncManager = new LocalMountSyncManager({
         bucket: r2Binding,
@@ -2332,12 +2332,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // exited (i.e. until unmount), hanging the script for the lifetime
     // of the mount.
     //
-    // The whole script runs inside a `( ... )` subshell. execInternal and
-    // execWithSession dispatch into a long-lived bash session shell; a bare
-    // top-level `exit N` would terminate that session and surface as
-    // SESSION_TERMINATED to every subsequent caller. The subshell scopes the
-    // exits so only the subshell exits, and its status becomes the command's
-    // exit code as the caller expects.
+    // The whole script runs inside a `( ... )` subshell. When a caller supplies
+    // an explicit sessionId, execWithSession dispatches into that session's
+    // long-lived bash shell; a bare top-level `exit N` would terminate the
+    // session. The subshell scopes exits so only the subshell exits, and its
+    // status becomes the command's exit code as the caller expects.
     //
     // Exit codes consumed by the caller:
     //   0 — mount established
@@ -3600,8 +3599,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, { origin: 'internal' });
+    return this.execWithSession(command, DISABLE_SESSION_TOKEN, {
+      origin: 'internal'
+    });
   }
 
   /**

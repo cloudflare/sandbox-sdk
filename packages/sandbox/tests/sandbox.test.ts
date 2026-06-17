@@ -1,4 +1,5 @@
 import { Container, getContainer } from '@cloudflare/containers';
+import type { ExecResult } from '@repo/shared';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
@@ -109,6 +110,10 @@ interface MockCtx {
     equals: ReturnType<typeof vi.fn>;
     name: string;
   };
+}
+
+interface SandboxInternalExec {
+  execInternal(command: string): Promise<ExecResult>;
 }
 
 const PREVIEW_TEST_PORT = 8080;
@@ -400,6 +405,35 @@ describe('Sandbox - Automatic Session Management', () => {
         'echo test',
         DISABLE_SESSION_TOKEN,
         undefined
+      );
+    });
+
+    it('runs infrastructure exec without creating a default session', async () => {
+      await sandbox.setEnvVars({ INFRA_TOKEN: 'secret' });
+      vi.mocked(sandbox.client.utils.createSession).mockClear();
+      vi.mocked(sandbox.client.commands.execute).mockClear();
+      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
+        success: true,
+        stdout: 'infra',
+        stderr: '',
+        exitCode: 0,
+        command: 'printf infra',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      const result = await (
+        sandbox as unknown as SandboxInternalExec
+      ).execInternal('printf infra');
+
+      expect(result.sessionId).toBeUndefined();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'printf infra',
+        DISABLE_SESSION_TOKEN,
+        {
+          env: { INFRA_TOKEN: 'secret' },
+          origin: 'internal'
+        }
       );
     });
 
