@@ -283,6 +283,12 @@ describe('ExecutionService', () => {
     });
 
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.commandHandle).toEqual({
+        target: { kind: 'session', sessionId: 'explicit-session' },
+        commandId: 'process-command'
+      });
+    }
     expect(mockSessionManager.startProcessStreamInSession).toHaveBeenCalledWith(
       'explicit-session',
       'sleep 10',
@@ -332,7 +338,7 @@ describe('ExecutionService', () => {
         onOutput: expect.any(Function)
       })
     );
-    expect(result.data.commandHandle.sessionId).toBe(DISABLE_SESSION_TOKEN);
+    expect(result.data.commandHandle.target).toEqual({ kind: 'sessionless' });
     expect(result.data.commandHandle.commandId).toBe('cmd-1');
     expect(result.data.commandHandle.pid).toBeDefined();
 
@@ -351,6 +357,19 @@ describe('ExecutionService', () => {
     expect(
       mockSessionManager.startProcessStreamInSession
     ).not.toHaveBeenCalled();
+  });
+
+  it('returns sessionless kill errors without sentinel session IDs', async () => {
+    const result = await executionService.kill({
+      target: { kind: 'sessionless' },
+      commandId: 'missing-process'
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.message).toContain('sessionless execution');
+      expect(result.error.message).not.toContain(DISABLE_SESSION_TOKEN);
+    }
   });
 
   it('kills a sessionless streaming process by pid', async () => {

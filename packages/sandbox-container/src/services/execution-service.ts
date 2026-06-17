@@ -12,6 +12,7 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import {
+  type ExecutionTarget,
   type ProcessCommandHandle,
   type ServiceResult,
   serviceError,
@@ -21,10 +22,6 @@ import type { RawExecResult } from '../session-types';
 import type { SessionManager } from './session-manager';
 
 const SESSIONLESS_DISPLAY_NAME = 'sessionless';
-
-type ExecutionTarget =
-  | { kind: 'session'; sessionId: string }
-  | { kind: 'sessionless' };
 
 type NestedExecutionOptions = {
   cwd?: string;
@@ -116,7 +113,7 @@ export class ExecutionService {
       return serviceSuccess({
         continueStreaming: result.data.continueStreaming,
         commandHandle: {
-          sessionId: target.sessionId,
+          target,
           commandId: options.commandId
         }
       });
@@ -155,10 +152,10 @@ export class ExecutionService {
 
     try {
       const result = await fn((command, execOptions) =>
-        this.executeSessionlessOrThrow(command, {
-          sessionId: DISABLE_SESSION_TOKEN,
-          ...(this.mergeNestedExecutionOptions(options, execOptions) ?? {})
-        })
+        this.executeSessionlessOrThrow(
+          command,
+          this.mergeNestedExecutionOptions(options, execOptions) ?? {}
+        )
       );
 
       return serviceSuccess(result);
@@ -178,7 +175,7 @@ export class ExecutionService {
         message: `withExecution callback failed for sessionless execution: ${errorMessage}`,
         code: ErrorCode.INTERNAL_ERROR,
         details: {
-          sessionId: DISABLE_SESSION_TOKEN,
+          execution: SESSIONLESS_DISPLAY_NAME,
           originalError: errorMessage
         }
       });
@@ -186,11 +183,9 @@ export class ExecutionService {
   }
 
   async kill(handle: ProcessCommandHandle): Promise<ServiceResult<void>> {
-    const target = this.resolveTarget(handle.sessionId);
-
-    if (target.kind === 'session') {
+    if (handle.target.kind === 'session') {
       return this.sessionManager.killCommand(
-        target.sessionId,
+        handle.target.sessionId,
         handle.commandId
       );
     }
@@ -198,7 +193,7 @@ export class ExecutionService {
     const process = this.activeSessionlessProcesses.get(handle.commandId);
     if (!process) {
       return serviceError({
-        message: `Command '${handle.commandId}' not found or already completed in session '${DISABLE_SESSION_TOKEN}'`,
+        message: `Command '${handle.commandId}' not found or already completed in ${SESSIONLESS_DISPLAY_NAME} execution`,
         code: ErrorCode.COMMAND_NOT_FOUND,
         details: {
           command: handle.commandId
@@ -214,7 +209,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to kill command '${handle.commandId}' in session '${DISABLE_SESSION_TOKEN}': ${errorMessage}`,
+        message: `Failed to kill command '${handle.commandId}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
         code: ErrorCode.PROCESS_ERROR,
         details: {
           processId: handle.commandId,
@@ -225,23 +220,15 @@ export class ExecutionService {
   }
 
   private resolveTarget(sessionId?: string): ExecutionTarget {
-    const resolved = this.resolveExecutionSessionId(sessionId);
-
-    return resolved === DISABLE_SESSION_TOKEN
-      ? { kind: 'sessionless' }
-      : { kind: 'session', sessionId: resolved };
-  }
-
-  private resolveExecutionSessionId(sessionId?: string): string {
-    if (sessionId && sessionId.trim().length > 0) {
-      return sessionId;
+    if (sessionId === undefined || sessionId === DISABLE_SESSION_TOKEN) {
+      return { kind: 'sessionless' };
     }
 
-    if (sessionId !== undefined && sessionId.trim().length === 0) {
+    if (sessionId.trim().length === 0) {
       throw new Error('sessionId must not be empty or whitespace');
     }
 
-    return DISABLE_SESSION_TOKEN;
+    return { kind: 'session', sessionId };
   }
 
   private mergeNestedExecutionOptions(
@@ -357,7 +344,7 @@ export class ExecutionService {
         }
       });
       const commandHandle: ProcessCommandHandle = {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         commandId: options.commandId,
         pid: process.pid
       };

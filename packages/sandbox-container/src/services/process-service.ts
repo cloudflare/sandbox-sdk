@@ -8,6 +8,7 @@ import { ErrorCode } from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   CommandResult,
+  ExecutionTarget,
   ProcessCommandHandle,
   ProcessOptions,
   ProcessRecord,
@@ -120,7 +121,7 @@ export class ProcessService {
         options
       );
       const commandHandle: ProcessCommandHandle = {
-        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN,
+        target: this.resolveProcessTarget(options.sessionId),
         commandId: processRecordData.id
       };
 
@@ -129,7 +130,7 @@ export class ProcessService {
         commandHandle
       };
       const storedRecord = processRecord;
-      let executionSessionId = commandHandle.sessionId;
+      let executionSessionId = this.getLogSessionId(commandHandle.target);
 
       // 4. Store record (data layer)
       await this.store.create(storedRecord);
@@ -243,7 +244,9 @@ export class ProcessService {
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
-      executionSessionId = streamResult.data.commandHandle.sessionId;
+      executionSessionId = this.getLogSessionId(
+        streamResult.data.commandHandle.target
+      );
       processRecord.commandHandle = streamResult.data.commandHandle;
       await this.store.update(processRecord.id, {
         commandHandle: streamResult.data.commandHandle
@@ -285,6 +288,18 @@ export class ProcessService {
         }
       };
     }
+  }
+
+  private resolveProcessTarget(sessionId?: string): ExecutionTarget {
+    if (sessionId && sessionId !== DISABLE_SESSION_TOKEN) {
+      return { kind: 'session', sessionId };
+    }
+
+    return { kind: 'sessionless' };
+  }
+
+  private getLogSessionId(target: ExecutionTarget): string {
+    return target.kind === 'session' ? target.sessionId : 'sessionless';
   }
 
   private async markStartupFailed(

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ProcessRecord } from '@sandbox-container/core/types';
 import { ProcessStore } from '@sandbox-container/services/process-store.js';
 
@@ -27,7 +28,7 @@ const createMockProcess = (
   outputListeners: new Set(),
   statusListeners: new Set(),
   commandHandle: {
-    sessionId: 'default',
+    target: { kind: 'session', sessionId: 'default' },
     commandId: 'proc-123'
   },
   ...overrides
@@ -104,6 +105,35 @@ describe('ProcessStore', () => {
       expect(result).not.toBeNull();
       expect(result?.status).toBe('completed');
       expect(result?.exitCode).toBe(0);
+    });
+
+    it('should migrate legacy disk command handles', async () => {
+      await mkdir(testProcessDir, { recursive: true });
+      await Bun.write(
+        `${testProcessDir}/proc-legacy.json`,
+        JSON.stringify({
+          id: 'proc-legacy',
+          pid: 12345,
+          command: 'sleep 1',
+          status: 'completed',
+          startTime: '2024-01-01T00:00:00Z',
+          endTime: '2024-01-01T00:01:00Z',
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          commandHandle: {
+            sessionId: DISABLE_SESSION_TOKEN,
+            commandId: 'proc-legacy'
+          }
+        })
+      );
+
+      const result = await processStore.get('proc-legacy');
+
+      expect(result?.commandHandle).toEqual({
+        target: { kind: 'sessionless' },
+        commandId: 'proc-legacy'
+      });
     });
 
     it('should return null for non-existent process', async () => {

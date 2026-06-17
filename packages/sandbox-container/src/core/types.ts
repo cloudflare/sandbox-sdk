@@ -64,8 +64,12 @@ export type ProcessStatus =
   | 'killed'
   | 'error';
 
+export type ExecutionTarget =
+  | { kind: 'sessionless' }
+  | { kind: 'session'; sessionId: string };
+
 export interface ProcessCommandHandle {
-  sessionId: string;
+  target: ExecutionTarget;
   commandId: string;
   pid?: number;
 }
