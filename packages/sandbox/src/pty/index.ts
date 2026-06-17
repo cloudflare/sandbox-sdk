@@ -1,1 +1,1 @@
-export { proxyTerminal } from './proxy';
+export { createSandboxTerminal, proxyTerminal } from './proxy';

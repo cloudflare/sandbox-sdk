@@ -1169,9 +1169,11 @@ console.log('Echo server on port ' + port);
 
         const pathParts = url.pathname.split('/').filter(Boolean);
 
-        const terminalId = pathParts.length > 1 ? pathParts[1] : undefined;
-        return sandbox.terminal(request, {
-          id: terminalId,
+        const terminalId = pathParts[1];
+        if (!terminalId) {
+          return new Response('Terminal ID required', { status: 400 });
+        }
+        return sandbox.terminal({ id: terminalId }).connect(request, {
           cols: parseInt(url.searchParams.get('cols') || '80', 10),
           rows: parseInt(url.searchParams.get('rows') || '24', 10)
         });

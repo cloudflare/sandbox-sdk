@@ -412,7 +412,7 @@ describe('getSandbox', () => {
       });
     });
 
-    it('routes terminal upgrades with explicit terminal IDs', async () => {
+    it('routes terminal handle connections with explicit terminal IDs', async () => {
       let proxiedRequest: Request | undefined;
       mockStub.fetch = vi.fn(async (request: Request) => {
         proxiedRequest = request;
@@ -425,8 +425,10 @@ describe('getSandbox', () => {
         headers: { Upgrade: 'websocket' }
       });
 
-      await sandbox.terminal(request, { id: 'terminal-a' });
+      const terminal = sandbox.terminal({ id: 'terminal-a' });
+      await terminal.connect(request);
 
+      expect(terminal.id).toBe('terminal-a');
       expect(mockStub.fetch).toHaveBeenCalledOnce();
       const url = new URL(proxiedRequest?.url ?? 'http://missing');
       expect(url.pathname).toBe('/proxy/3000/ws/terminal');
@@ -446,16 +448,34 @@ describe('getSandbox', () => {
         headers: { Upgrade: 'websocket' }
       });
 
-      await sandbox.terminal(request);
+      const terminal = sandbox.terminal();
+      await terminal.connect(request);
 
+      expect(terminal.id).toMatch(/^terminal-[0-9a-f-]{36}$/);
       expect(mockStub.fetch).toHaveBeenCalledOnce();
       const url = new URL(proxiedRequest?.url ?? 'http://missing');
-      expect(url.searchParams.get('terminalId')).toMatch(
-        /^terminal-[0-9a-f-]{36}$/
-      );
+      expect(url.searchParams.get('terminalId')).toBe(terminal.id);
       expect(url.searchParams.get('terminalId')).not.toBe(
         'sandbox-test-sandbox'
       );
+    });
+
+    it('destroys terminal handles by ID', async () => {
+      let destroyRequest: Request | undefined;
+      mockStub.fetch = vi.fn(async (request: Request) => {
+        destroyRequest = request;
+        return new Response(null, { status: 204 });
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      await sandbox.terminal({ id: 'terminal-a' }).destroy();
+
+      expect(mockStub.fetch).toHaveBeenCalledOnce();
+      expect(destroyRequest?.method).toBe('DELETE');
+      const url = new URL(destroyRequest?.url ?? 'http://missing');
+      expect(url.pathname).toBe('/proxy/3000/terminals/terminal-a');
     });
 
     it('does not attach terminal helpers to command sessions', async () => {

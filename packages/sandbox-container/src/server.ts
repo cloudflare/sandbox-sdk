@@ -103,8 +103,7 @@ async function createApplication(): Promise<{
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
               rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined,
               shell: shellParam ?? undefined,
-              cwd: cwdParam ?? undefined,
-              ephemeral: url.searchParams.get('ephemeral') === '1'
+              cwd: cwdParam ?? undefined
             }
           });
           if (upgraded) {
@@ -130,6 +129,18 @@ async function createApplication(): Promise<{
           }
           return webSocketUpgradeFailedResponse();
         }
+      }
+
+      const url = new URL(req.url);
+      if (req.method === 'DELETE' && url.pathname.startsWith('/terminals/')) {
+        const terminalId = decodeURIComponent(
+          url.pathname.slice('/terminals/'.length)
+        );
+        if (!terminalId) {
+          return new Response('terminal id required', { status: 400 });
+        }
+        await container.get('terminalManager').destroyTerminal(terminalId);
+        return new Response(null, { status: 204 });
       }
 
       return new Response('Not Found', { status: 404 });

@@ -44,8 +44,7 @@ function createTerminalManager(mockPty = createMockPty()) {
   };
 
   return {
-    getOrCreateTerminal: mock(() => Promise.resolve(handle)),
-    destroyTerminal: mock(() => Promise.resolve())
+    getOrCreateTerminal: mock(() => Promise.resolve(handle))
   };
 }
 
@@ -80,10 +79,7 @@ describe('TerminalWebSocketHandler', () => {
 
   it('closes connection with error when terminal creation fails', async () => {
     const terminalManager = {
-      getOrCreateTerminal: mock(() =>
-        Promise.reject(new Error('Spawn failed'))
-      ),
-      destroyTerminal: mock(() => Promise.resolve())
+      getOrCreateTerminal: mock(() => Promise.reject(new Error('Spawn failed')))
     };
     const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
@@ -135,7 +131,7 @@ describe('TerminalWebSocketHandler', () => {
     expect(mockPty.resize).toHaveBeenCalledWith(120, 40);
   });
 
-  it('cleans up subscription on close without destroying persistent terminals', async () => {
+  it('cleans up subscription on close without destroying terminals', async () => {
     const mockDispose = mock(() => {});
     const mockPty = createMockPty({
       onData: mock(() => ({ dispose: mockDispose }))
@@ -156,33 +152,5 @@ describe('TerminalWebSocketHandler', () => {
     );
 
     expect(mockDispose).toHaveBeenCalled();
-    expect(terminalManager.destroyTerminal).not.toHaveBeenCalled();
-  });
-
-  it('destroys ephemeral terminals after the last connection closes', async () => {
-    const mockDispose = mock(() => {});
-    const mockPty = createMockPty({
-      onData: mock(() => ({ dispose: mockDispose }))
-    });
-    const terminalManager = createTerminalManager(mockPty);
-    const handler = new TerminalWebSocketHandler(terminalManager, logger);
-    const ws = createMockWS({
-      type: 'terminal',
-      terminalId: 'test-terminal',
-      connectionId: 'conn-1',
-      ephemeral: true
-    });
-
-    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
-    handler.onClose(
-      ws as ServerWebSocket<TerminalWSData>,
-      1000,
-      'Normal closure'
-    );
-
-    expect(mockDispose).toHaveBeenCalled();
-    expect(terminalManager.destroyTerminal).toHaveBeenCalledWith(
-      'test-terminal'
-    );
   });
 });

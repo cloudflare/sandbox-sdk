@@ -1,4 +1,4 @@
-import type { TerminalOptions } from './pty-types';
+import type { SandboxTerminal, TerminalOptions } from './pty-types';
 
 /**
  * Represents a disposable resource with a cleanup function.
@@ -1335,8 +1335,8 @@ export interface ISandbox {
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;
 
-  // Terminal access (browser WebSocket passthrough)
-  terminal(request: Request, options?: TerminalOptions): Promise<Response>;
+  // Terminal resources
+  terminal(options?: TerminalOptions): SandboxTerminal;
 }
 
 // Type guards for runtime validation

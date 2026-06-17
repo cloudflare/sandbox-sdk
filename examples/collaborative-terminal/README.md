@@ -42,7 +42,7 @@ The Worker routes requests to the appropriate Durable Object:
 ```typescript
 // Terminal: proxy WebSocket directly to the room sandbox terminal
 const sandbox = getSandbox(env.Sandbox, `room-${roomId}`);
-return sandbox.terminal(request, { id: `room-${roomId}` });
+return sandbox.terminal({ id: `room-${roomId}` }).connect(request);
 ```
 
 Each room maps to a sandbox ID (`room-${roomId}`), so room workspaces do not share a filesystem, processes, or environment variables. In production, derive sandbox IDs from the authenticated user or a user-owned workspace.

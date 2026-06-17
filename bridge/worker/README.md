@@ -271,12 +271,12 @@ Open a WebSocket terminal to the sandbox. The connection is a bidirectional prox
 
 **Query parameters:**
 
-| Param        | Type   | Default   | Description                                 |
-| ------------ | ------ | --------- | ------------------------------------------- |
-| `cols`       | number | 80        | Terminal width in columns                   |
-| `rows`       | number | 24        | Terminal height in rows                     |
-| `shell`      | string | —         | Shell binary (e.g. `/bin/bash`)             |
-| `terminalId` | string | generated | Terminal resource ID for reconnecting later |
+| Param        | Type   | Default  | Description                                 |
+| ------------ | ------ | -------- | ------------------------------------------- |
+| `cols`       | number | 80       | Terminal width in columns                   |
+| `rows`       | number | 24       | Terminal height in rows                     |
+| `shell`      | string | —        | Shell binary (e.g. `/bin/bash`)             |
+| `terminalId` | string | required | Terminal resource ID for reconnecting later |
 
 **WebSocket frame protocol:**
 

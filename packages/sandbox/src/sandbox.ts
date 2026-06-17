@@ -31,6 +31,7 @@ import type {
   RemoteMountBucketOptions,
   RestoreBackupResult,
   SandboxOptions,
+  SandboxTerminal,
   SessionOptions,
   TerminalOptions,
   WaitForExitResult,
@@ -91,7 +92,7 @@ import {
   PREVIEW_PROXY_TOKEN_HEADER
 } from './preview-proxy-protocol';
 import { isLocalhostPattern } from './preview-url';
-import { proxyTerminal } from './pty';
+import { createSandboxTerminal, proxyTerminal } from './pty';
 import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
   SandboxSecurityError,
@@ -797,8 +798,7 @@ export function getSandbox<T extends Sandbox<any>>(
             ...options,
             sessionId: DISABLE_SESSION_TOKEN
           }),
-    terminal: (request: Request, opts?: TerminalOptions) =>
-      proxyTerminal(stub, request, opts),
+    terminal: (opts?: TerminalOptions) => createSandboxTerminal(stub, opts),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
@@ -3312,7 +3312,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  terminal(_request: Request, _options?: TerminalOptions): Promise<Response> {
+  terminal(_options?: TerminalOptions): SandboxTerminal {
     throw new Error(
       'terminal must be called on the stub returned by getSandbox()'
     );

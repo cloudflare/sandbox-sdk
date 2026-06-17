@@ -26,7 +26,8 @@ describe('PTY', () => {
     ws: WebSocket;
     output: string[];
   }> {
-    const path = terminalId ? `/terminal/${terminalId}` : '/terminal';
+    const resolvedTerminalId = terminalId ?? `pty-${Date.now()}`;
+    const path = `/terminal/${resolvedTerminalId}`;
     const wsUrl = `${workerUrl.replace(/^http/, 'ws')}${path}?sandboxId=${sandboxId}`;
     const ws = new WebSocket(wsUrl);
     const output: string[] = [];

@@ -191,7 +191,11 @@ describe('PTY terminal ID precedence', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
+    mockSandbox.terminal.mockImplementation((opts?: { id?: string }) => ({
+      id: opts?.id ?? 'mock-terminal',
+      connect: vi.fn(async () => MOCK_TERMINAL_RESPONSE),
+      destroy: vi.fn(async () => {})
+    }));
   });
 
   it('Terminal-Id header takes priority over query params', async () => {
@@ -206,7 +210,7 @@ describe('PTY terminal ID precedence', () => {
 
     expect(res.status).toBe(200);
     expect(mockSandbox.getSession).not.toHaveBeenCalled();
-    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
+    const [opts] = mockSandbox.terminal.mock.calls[0] as [Record<string, unknown>];
     expect(opts.id).toBe('from-header');
   });
 
@@ -222,7 +226,7 @@ describe('PTY terminal ID precedence', () => {
 
     expect(res.status).toBe(200);
     expect(mockSandbox.getSession).not.toHaveBeenCalled();
-    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
+    const [opts] = mockSandbox.terminal.mock.calls[0] as [Record<string, unknown>];
     expect(opts.id).toBe('from-query');
   });
 });

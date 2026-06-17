@@ -795,10 +795,9 @@ export const OPENAPI_SCHEMA = {
           {
             name: 'terminalId',
             in: 'query',
-            required: false,
+            required: true,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
-            description:
-              'Terminal resource ID. A new terminal ID is generated when omitted.'
+            description: 'Terminal resource ID for reconnecting later.'
           },
           {
             name: 'Terminal-Id',

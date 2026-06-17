@@ -58,10 +58,9 @@ app.get('/ws/terminal/:sandboxId', async (c) => {
   }
   const sandboxId = c.req.param('sandboxId');
   const sandbox = getSandbox(c.env.Sandbox, sandboxId);
-  return sandbox.terminal(c.req.raw, {
-    id: `s3-terminal-${sandboxId}`,
-    cwd: '/mnt/s3'
-  });
+  return sandbox
+    .terminal({ id: `s3-terminal-${sandboxId}`, cwd: '/mnt/s3' })
+    .connect(c.req.raw);
 });
 
 // Catch-all: anything we don't handle falls through to the static-asset

@@ -12,6 +12,7 @@ import type {
   MountBucketOptions,
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions,
+  TerminalConnectOptions,
   TerminalOptions,
   TunnelInfo,
   TunnelOptions
@@ -745,7 +746,7 @@ export function createBridgeApp(
 
     const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
 
-    // 2. Parse PtyOptions from query params
+    // 2. Parse terminal options from query params
     const colsParam = c.req.query('cols');
     const rowsParam = c.req.query('rows');
     const shell = c.req.query('shell');
@@ -766,22 +767,31 @@ export function createBridgeApp(
       );
     }
 
-    const opts: TerminalOptions = { cols, rows };
+    const terminalOptions: TerminalOptions = {};
+    const connectOptions: TerminalConnectOptions = { cols, rows };
     if (shell) {
-      opts.shell = shell;
+      terminalOptions.shell = shell;
     }
     if (cwd) {
-      opts.cwd = cwd;
+      terminalOptions.cwd = cwd;
     }
-    if (terminalId) {
-      const validatedId = validateSessionId(terminalId);
-      if (!validatedId)
-        return errorJson('Invalid terminal ID format', 'invalid_request', 400);
-      opts.id = validatedId;
+    if (!terminalId) {
+      return errorJson(
+        'terminalId query parameter or Terminal-Id header required',
+        'invalid_request',
+        400
+      );
     }
 
+    const validatedId = validateSessionId(terminalId);
+    if (!validatedId)
+      return errorJson('Invalid terminal ID format', 'invalid_request', 400);
+    terminalOptions.id = validatedId;
+
     try {
-      return await sandbox.terminal(c.req.raw, opts);
+      return await sandbox
+        .terminal(terminalOptions)
+        .connect(c.req.raw, connectOptions);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return errorJson(`terminal failed: ${msg}`, 'exec_transport_error', 502);

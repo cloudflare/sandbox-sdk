@@ -16,6 +16,16 @@ const env = createMockEnv();
 // parsing, and auth — actual WebSocket framing requires integration tests.
 const MOCK_TERMINAL_RESPONSE = new Response(null, { status: 200 });
 
+function mockTerminalResponse(response = MOCK_TERMINAL_RESPONSE) {
+  const handle = {
+    id: 'mock-terminal',
+    connect: vi.fn(async () => response),
+    destroy: vi.fn(async () => {})
+  };
+  mockSandbox.terminal.mockReturnValue(handle);
+  return handle;
+}
+
 /** Send a GET request with WebSocket upgrade headers. */
 function wsUpgradeRequest(url: string, headers?: Record<string, string>, envOverride?: Record<string, unknown>) {
   return app.request(
@@ -31,7 +41,7 @@ function wsUpgradeRequest(url: string, headers?: Record<string, string>, envOver
 describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
+    mockTerminalResponse();
     mockSandbox.getSession.mockImplementation(async () => ({
       id: 'mock-session'
     }));
@@ -45,32 +55,40 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
     expect(body.code).toBe('invalid_request');
   });
 
-  it('calls sandbox.terminal() with parsed PtyOptions', async () => {
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'cols=120&rows=30&shell=/bin/zsh'));
-    expect(res.status).toBe(200);
-    expect(mockSandbox.terminal).toHaveBeenCalledTimes(1);
+  it('creates a terminal and connects with parsed options', async () => {
+    const terminal = mockTerminalResponse();
 
-    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
-    expect(opts).toEqual({ cols: 120, rows: 30, shell: '/bin/zsh' });
+    const res = await wsUpgradeRequest(
+      sandboxUrl('test', 'pty', 'terminalId=zsh-terminal&cols=120&rows=30&shell=/bin/zsh')
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSandbox.terminal).toHaveBeenCalledWith({
+      id: 'zsh-terminal',
+      shell: '/bin/zsh'
+    });
+    expect(terminal.connect).toHaveBeenCalledTimes(1);
+    const [, connectOptions] = terminal.connect.mock.calls[0] as [Request, Record<string, unknown>];
+    expect(connectOptions).toEqual({ cols: 120, rows: 30 });
   });
 
-  it('uses default cols=80 rows=24 when no query params', async () => {
+  it('requires a terminal ID', async () => {
     const res = await wsUpgradeRequest(sandboxUrl('test', 'pty'));
-    expect(res.status).toBe(200);
-    expect(mockSandbox.terminal).toHaveBeenCalledTimes(1);
 
-    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
-    expect(opts).toEqual({ cols: 80, rows: 24 });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.error).toBe('terminalId query parameter or Terminal-Id header required');
+    expect(mockSandbox.terminal).not.toHaveBeenCalled();
   });
 
-  it('passes through the terminal() Response as-is', async () => {
+  it('passes through the terminal connect Response as-is', async () => {
     const customResponse = new Response('custom-body', {
       status: 200,
       headers: { 'X-Test': 'yes' }
     });
-    mockSandbox.terminal.mockResolvedValue(customResponse);
+    mockTerminalResponse(customResponse);
 
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty'));
+    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=custom-terminal'));
     expect(res).toBe(customResponse);
   });
 
@@ -88,10 +106,11 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
     expect(body.error).toBe('cols and rows must be valid numbers');
   });
 
-  it('returns 502 when terminal() throws', async () => {
-    mockSandbox.terminal.mockRejectedValue(new Error('container unreachable'));
+  it('returns 502 when terminal connect throws', async () => {
+    const terminal = mockTerminalResponse();
+    terminal.connect.mockRejectedValue(new Error('container unreachable'));
 
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty'));
+    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=failing-terminal'));
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: string; code: string };
     expect(body.error).toContain('container unreachable');
@@ -99,13 +118,15 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
   });
 
   it('passes explicit terminal IDs to sandbox.terminal()', async () => {
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=my-terminal&cols=100&rows=50'));
-    expect(res.status).toBe(200);
+    const terminal = mockTerminalResponse();
 
+    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=my-terminal&cols=100&rows=50'));
+
+    expect(res.status).toBe(200);
     expect(mockSandbox.getSession).not.toHaveBeenCalled();
-    expect(mockSandbox.terminal).toHaveBeenCalledTimes(1);
-    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
-    expect(opts).toEqual({ id: 'my-terminal', cols: 100, rows: 50 });
+    expect(mockSandbox.terminal).toHaveBeenCalledWith({ id: 'my-terminal' });
+    const [, connectOptions] = terminal.connect.mock.calls[0] as [Request, Record<string, unknown>];
+    expect(connectOptions).toEqual({ cols: 100, rows: 50 });
   });
 
   it('returns 400 for invalid terminal IDs', async () => {
@@ -121,7 +142,7 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
 describe('GET /v1/sandbox/:id/pty — auth', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
+    mockTerminalResponse();
   });
 
   it('requires auth when SANDBOX_API_KEY is set', async () => {
@@ -131,7 +152,7 @@ describe('GET /v1/sandbox/:id/pty — auth', () => {
 
   it('accepts valid auth token', async () => {
     const res = await wsUpgradeRequest(
-      sandboxUrl('test', 'pty'),
+      sandboxUrl('test', 'pty', 'terminalId=auth-terminal'),
       { Authorization: 'Bearer secret' },
       createMockEnv({ SANDBOX_API_KEY: 'secret' })
     );

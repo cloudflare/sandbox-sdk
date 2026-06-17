@@ -16,7 +16,6 @@ export interface TerminalWSData {
   rows?: number;
   shell?: string;
   cwd?: string;
-  ephemeral?: boolean;
 }
 
 interface TerminalConnection {
@@ -29,10 +28,7 @@ export class TerminalWebSocketHandler {
   private connections = new Map<string, TerminalConnection>();
 
   constructor(
-    private terminalManager: Pick<
-      TerminalManager,
-      'getOrCreateTerminal' | 'destroyTerminal'
-    >,
+    private terminalManager: Pick<TerminalManager, 'getOrCreateTerminal'>,
     private logger: Logger
   ) {}
 
@@ -121,21 +117,11 @@ export class TerminalWebSocketHandler {
       conn.subscription.dispose();
       this.connections.delete(connectionId);
     }
-
-    if (ws.data.ephemeral && !this.hasConnectionsForTerminal(terminalId)) {
-      void this.terminalManager.destroyTerminal(terminalId);
-    }
   }
 
   onDrain(ws: ServerWebSocket<TerminalWSData>): void {
     const { connectionId } = ws.data;
     this.logger.debug('terminal.drain', { connectionId });
-  }
-
-  private hasConnectionsForTerminal(terminalId: string): boolean {
-    return [...this.connections.values()].some(
-      (connection) => connection.ws.data.terminalId === terminalId
-    );
   }
 
   private sendTerminalData(

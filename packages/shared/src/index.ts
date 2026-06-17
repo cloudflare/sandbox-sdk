@@ -41,6 +41,8 @@ export type {
   PtyControlMessage,
   PtyOptions,
   PtyStatusMessage,
+  SandboxTerminal,
+  TerminalConnectOptions,
   TerminalOptions
 } from './pty-types.js';
 // Export all request types (enforce contract between client and container)

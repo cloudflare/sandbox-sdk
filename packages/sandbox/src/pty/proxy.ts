@@ -1,36 +1,68 @@
 import { switchPort } from '@cloudflare/containers';
-import type { TerminalOptions } from '@repo/shared';
+import type {
+  SandboxTerminal,
+  TerminalConnectOptions,
+  TerminalOptions
+} from '@repo/shared';
 
-function resolveTerminal(options?: TerminalOptions): {
-  id: string;
-  ephemeral: boolean;
-} {
+interface SandboxTerminalStub {
+  fetch(request: Request): Promise<Response>;
+}
+
+function resolveTerminalId(options?: TerminalOptions): string {
   if (options?.id !== undefined) {
     if (typeof options.id !== 'string' || options.id.length === 0) {
       throw new Error('terminal id must be a non-empty string');
     }
 
-    return { id: options.id, ephemeral: false };
+    return options.id;
   }
 
-  return { id: `terminal-${crypto.randomUUID()}`, ephemeral: true };
+  return `terminal-${crypto.randomUUID()}`;
+}
+
+export function createSandboxTerminal(
+  stub: SandboxTerminalStub,
+  options?: TerminalOptions
+): SandboxTerminal {
+  const id = resolveTerminalId(options);
+
+  return {
+    id,
+    connect: (request, connectOptions) =>
+      proxyTerminal(stub, id, request, options, connectOptions),
+    destroy: async () => {
+      const response = await stub.fetch(
+        switchPort(
+          new Request(`http://localhost/terminals/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+          }),
+          3000
+        )
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to destroy terminal ${id}: ${response.status}`);
+      }
+    }
+  };
 }
 
 export async function proxyTerminal(
-  stub: { fetch: (request: Request) => Promise<Response> },
+  stub: SandboxTerminalStub,
+  terminalId: string,
   request: Request,
-  options?: TerminalOptions
+  options?: TerminalOptions,
+  connectOptions?: TerminalConnectOptions
 ): Promise<Response> {
   const upgradeHeader = request.headers.get('Upgrade');
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    throw new Error('terminal() requires a WebSocket upgrade request');
+    throw new Error('terminal.connect() requires a WebSocket upgrade request');
   }
 
-  const terminal = resolveTerminal(options);
-  const params = new URLSearchParams({ terminalId: terminal.id });
-  if (terminal.ephemeral) params.set('ephemeral', '1');
-  if (options?.cols) params.set('cols', String(options.cols));
-  if (options?.rows) params.set('rows', String(options.rows));
+  const params = new URLSearchParams({ terminalId });
+  if (connectOptions?.cols) params.set('cols', String(connectOptions.cols));
+  if (connectOptions?.rows) params.set('rows', String(connectOptions.rows));
   if (options?.shell) params.set('shell', options.shell);
   if (options?.cwd) params.set('cwd', options.cwd);
 

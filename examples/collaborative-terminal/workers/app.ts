@@ -73,7 +73,7 @@ export default {
       try {
         // Each room maps to its own sandbox workspace and terminal resource.
         const sandbox = getSandbox(env.Sandbox, terminalId);
-        return await sandbox.terminal(request, { id: terminalId });
+        return await sandbox.terminal({ id: terminalId }).connect(request);
       } catch (err) {
         console.error('Terminal connection error:', err);
         return new Response(

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { proxyTerminal } from '../src/pty';
+import { createSandboxTerminal } from '../src/pty';
 
-describe('proxyTerminal', () => {
-  it('routes terminal websocket upgrades with explicit terminal IDs', async () => {
+describe('createSandboxTerminal', () => {
+  it('routes terminal handle connections with explicit terminal IDs', async () => {
     let proxiedRequest: Request | undefined;
     const stub = {
       fetch: vi.fn(async (request: Request) => {
@@ -14,12 +14,17 @@ describe('proxyTerminal', () => {
       headers: { Upgrade: 'websocket' }
     });
 
-    await proxyTerminal(stub, request, {
+    const terminal = createSandboxTerminal(stub, {
       id: 'terminal-123',
-      cols: 120,
-      rows: 40,
       shell: '/bin/bash',
       cwd: '/mnt/s3'
+    });
+
+    expect(terminal.id).toBe('terminal-123');
+
+    await terminal.connect(request, {
+      cols: 120,
+      rows: 40
     });
 
     expect(stub.fetch).toHaveBeenCalledOnce();
@@ -35,7 +40,7 @@ describe('proxyTerminal', () => {
     expect(url.searchParams.get('cwd')).toBe('/mnt/s3');
   });
 
-  it('generates a terminal ID when none is provided', async () => {
+  it('generates visible terminal IDs when none is provided', async () => {
     let proxiedRequest: Request | undefined;
     const stub = {
       fetch: vi.fn(async (request: Request) => {
@@ -47,13 +52,34 @@ describe('proxyTerminal', () => {
       headers: { Upgrade: 'websocket' }
     });
 
-    await proxyTerminal(stub, request);
+    const terminal = createSandboxTerminal(stub);
+
+    expect(terminal.id).toMatch(/^terminal-[0-9a-f-]{36}$/);
+
+    await terminal.connect(request);
 
     expect(proxiedRequest).toBeDefined();
     const url = new URL(proxiedRequest?.url ?? 'http://missing');
-    expect(url.searchParams.get('terminalId')).toMatch(
-      /^terminal-[0-9a-f-]{36}$/
-    );
-    expect(url.searchParams.get('ephemeral')).toBe('1');
+    expect(url.searchParams.get('terminalId')).toBe(terminal.id);
+    expect(url.searchParams.get('ephemeral')).toBeNull();
+  });
+
+  it('destroys terminal resources by ID', async () => {
+    let destroyRequest: Request | undefined;
+    const stub = {
+      fetch: vi.fn(async (request: Request) => {
+        destroyRequest = request;
+        return new Response(null, { status: 204 });
+      })
+    };
+
+    const terminal = createSandboxTerminal(stub, { id: 'terminal-123' });
+
+    await terminal.destroy();
+
+    expect(stub.fetch).toHaveBeenCalledOnce();
+    expect(destroyRequest?.method).toBe('DELETE');
+    const url = new URL(destroyRequest?.url ?? 'http://missing');
+    expect(url.pathname).toBe('/terminals/terminal-123');
   });
 });

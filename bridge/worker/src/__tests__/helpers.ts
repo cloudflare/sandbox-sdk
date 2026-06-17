@@ -80,11 +80,13 @@ export function createMockSandbox() {
     readFile: vi.fn(async () => ({ content: 'file content' })),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {}),
-    terminal: vi.fn(async (_request: Request, _opts?: Record<string, unknown>) => {
+    terminal: vi.fn((opts?: { id?: string }) => ({
+      id: opts?.id ?? 'mock-terminal',
       // In real usage this returns a 101 WebSocket upgrade response, but Node
       // doesn't allow constructing Response with status 101, so we use 200.
-      return new Response(null, { status: 200 });
-    }),
+      connect: vi.fn(async () => new Response(null, { status: 200 })),
+      destroy: vi.fn(async () => {})
+    })),
     getSession: vi.fn(async (sessionId: string) => createMockSession(sessionId)),
     createSession: vi.fn(async (opts?: { id?: string }) => ({
       id: opts?.id || 'auto-session-id'
