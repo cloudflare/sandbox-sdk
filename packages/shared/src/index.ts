@@ -91,6 +91,7 @@ export type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,

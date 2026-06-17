@@ -460,22 +460,17 @@ describe('getSandbox', () => {
       );
     });
 
-    it('destroys terminal handles by ID', async () => {
-      let destroyRequest: Request | undefined;
-      mockStub.fetch = vi.fn(async (request: Request) => {
-        destroyRequest = request;
-        return new Response(null, { status: 204 });
-      });
+    it('destroys terminal handles by ID through the sandbox RPC method', async () => {
+      mockStub.fetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockStub.destroyTerminal = vi.fn(async (_id: string) => undefined);
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.terminal({ id: 'terminal-a' }).destroy();
 
-      expect(mockStub.fetch).toHaveBeenCalledOnce();
-      expect(destroyRequest?.method).toBe('DELETE');
-      const url = new URL(destroyRequest?.url ?? 'http://missing');
-      expect(url.pathname).toBe('/proxy/3000/terminals/terminal-a');
+      expect(mockStub.destroyTerminal).toHaveBeenCalledWith('terminal-a');
+      expect(mockStub.fetch).not.toHaveBeenCalled();
     });
 
     it('does not attach terminal helpers to command sessions', async () => {

@@ -29,6 +29,7 @@ import type { GitService } from '../services/git-service';
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
+import type { TerminalManager } from '../services/terminal-manager';
 import type { TunnelService } from '../services/tunnel-service';
 import type { WatchService } from '../services/watch-service';
 
@@ -40,6 +41,7 @@ export interface SandboxAPIDeps {
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
+  terminalManager: TerminalManager;
   extensionHost: ExtensionHost;
   sessionManager: SessionManager;
   logger: Logger;
@@ -107,8 +109,29 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   get tunnels() {
     return new TunnelsRPCAPI(this.#deps.tunnelService);
   }
+  get terminals() {
+    return new TerminalsRPCAPI(this.#deps.terminalManager);
+  }
   get extensions() {
     return new ExtensionsRPCAPI(this.#deps.extensionHost);
+  }
+}
+
+// ===========================================================================
+// Terminals
+// ===========================================================================
+
+class TerminalsRPCAPI extends RpcTarget {
+  #terminalManager: TerminalManager;
+
+  constructor(terminalManager: TerminalManager) {
+    super();
+    this.#terminalManager = terminalManager;
+  }
+
+  async destroyTerminal(id: string): Promise<{ success: true; id: string }> {
+    await this.#terminalManager.destroyTerminal(id);
+    return { success: true, id };
   }
 }
 

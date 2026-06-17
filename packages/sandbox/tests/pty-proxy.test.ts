@@ -8,7 +8,8 @@ describe('createSandboxTerminal', () => {
       fetch: vi.fn(async (request: Request) => {
         proxiedRequest = request;
         return new Response(null, { status: 200 });
-      })
+      }),
+      destroyTerminal: vi.fn(async (_id: string) => {})
     };
     const request = new Request('https://example.com/terminal', {
       headers: { Upgrade: 'websocket' }
@@ -46,7 +47,8 @@ describe('createSandboxTerminal', () => {
       fetch: vi.fn(async (request: Request) => {
         proxiedRequest = request;
         return new Response(null, { status: 200 });
-      })
+      }),
+      destroyTerminal: vi.fn(async (_id: string) => {})
     };
     const request = new Request('https://example.com/terminal', {
       headers: { Upgrade: 'websocket' }
@@ -64,22 +66,17 @@ describe('createSandboxTerminal', () => {
     expect(url.searchParams.get('ephemeral')).toBeNull();
   });
 
-  it('destroys terminal resources by ID', async () => {
-    let destroyRequest: Request | undefined;
+  it('destroys terminal resources through the lifecycle API', async () => {
     const stub = {
-      fetch: vi.fn(async (request: Request) => {
-        destroyRequest = request;
-        return new Response(null, { status: 204 });
-      })
+      fetch: vi.fn(async () => new Response(null, { status: 200 })),
+      destroyTerminal: vi.fn(async (_id: string) => {})
     };
 
     const terminal = createSandboxTerminal(stub, { id: 'terminal-123' });
 
     await terminal.destroy();
 
-    expect(stub.fetch).toHaveBeenCalledOnce();
-    expect(destroyRequest?.method).toBe('DELETE');
-    const url = new URL(destroyRequest?.url ?? 'http://missing');
-    expect(url.pathname).toBe('/terminals/terminal-123');
+    expect(stub.destroyTerminal).toHaveBeenCalledWith('terminal-123');
+    expect(stub.fetch).not.toHaveBeenCalled();
   });
 });

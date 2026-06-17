@@ -78,6 +78,7 @@ import type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
@@ -729,6 +730,9 @@ export class ContainerControlClient {
       'tunnels',
       this.renewActivity
     );
+  }
+  get terminals(): SandboxTerminalsAPI {
+    return wrapStub(this.getConnection().rpc().terminals, this.renewActivity);
   }
   get extensions(): SandboxExtensionsAPI {
     return wrapStub(

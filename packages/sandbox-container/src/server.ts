@@ -68,6 +68,7 @@ async function createApplication(): Promise<{
     backupService: container.get('backupService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
+    terminalManager: container.get('terminalManager'),
     extensionHost: container.get('extensionHost'),
     sessionManager: container.get('sessionManager'),
     logger
@@ -129,18 +130,6 @@ async function createApplication(): Promise<{
           }
           return webSocketUpgradeFailedResponse();
         }
-      }
-
-      const url = new URL(req.url);
-      if (req.method === 'DELETE' && url.pathname.startsWith('/terminals/')) {
-        const terminalId = decodeURIComponent(
-          url.pathname.slice('/terminals/'.length)
-        );
-        if (!terminalId) {
-          return new Response('terminal id required', { status: 400 });
-        }
-        await container.get('terminalManager').destroyTerminal(terminalId);
-        return new Response(null, { status: 204 });
       }
 
       return new Response('Not Found', { status: 404 });

@@ -1801,6 +1801,21 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('terminal lifecycle', () => {
+    it('destroys terminals through the container control API', async () => {
+      vi.mocked(sandbox.client.terminals.destroyTerminal).mockResolvedValue({
+        success: true,
+        id: 'terminal-a'
+      });
+
+      await sandbox.destroyTerminal('terminal-a');
+
+      expect(sandbox.client.terminals.destroyTerminal).toHaveBeenCalledWith(
+        'terminal-a'
+      );
+    });
+  });
+
   describe('deleteSession', () => {
     it('should prevent deletion of default session', async () => {
       // Trigger creation of default session

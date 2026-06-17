@@ -339,6 +339,7 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
     method: string,
     args: unknown[]
   ) => Promise<unknown>;
+  destroyTerminal: (id: string) => Promise<void>;
   execWithSessionToken: (
     command: string,
     sessionId: string,
@@ -3316,6 +3317,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     throw new Error(
       'terminal must be called on the stub returned by getSandbox()'
     );
+  }
+
+  async destroyTerminal(id: string): Promise<void> {
+    await this.client.terminals.destroyTerminal(id);
   }
 
   private determinePort(url: URL): number {

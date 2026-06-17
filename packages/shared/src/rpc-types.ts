@@ -47,6 +47,7 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
   tunnels: SandboxTunnelsAPI;
+  terminals: SandboxTerminalsAPI;
   extensions: SandboxExtensionsAPI;
 }
 
@@ -326,6 +327,10 @@ export interface TunnelRunExitEvent extends TunnelRunIdentity {
   mode: TunnelRunMode;
   port: number;
   exitCode: number | null;
+}
+
+export interface SandboxTerminalsAPI {
+  destroyTerminal(id: string): Promise<{ success: true; id: string }>;
 }
 
 export interface SandboxTunnelsAPI {

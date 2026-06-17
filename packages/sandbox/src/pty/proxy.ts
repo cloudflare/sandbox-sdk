@@ -7,6 +7,7 @@ import type {
 
 interface SandboxTerminalStub {
   fetch(request: Request): Promise<Response>;
+  destroyTerminal(id: string): Promise<void>;
 }
 
 function resolveTerminalId(options?: TerminalOptions): string {
@@ -31,20 +32,7 @@ export function createSandboxTerminal(
     id,
     connect: (request, connectOptions) =>
       proxyTerminal(stub, id, request, options, connectOptions),
-    destroy: async () => {
-      const response = await stub.fetch(
-        switchPort(
-          new Request(`http://localhost/terminals/${encodeURIComponent(id)}`, {
-            method: 'DELETE'
-          }),
-          3000
-        )
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to destroy terminal ${id}: ${response.status}`);
-      }
-    }
+    destroy: () => stub.destroyTerminal(id)
   };
 }
 
