@@ -2,7 +2,7 @@
  * Minimal test worker for integration tests
  *
  * Exposes SDK methods via HTTP endpoints for E2E testing.
- * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
+ * Supports sessionless top-level calls and explicit sessions via X-Session-Id header.
  *
  * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)

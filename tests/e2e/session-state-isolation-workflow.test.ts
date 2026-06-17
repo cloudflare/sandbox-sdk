@@ -162,7 +162,7 @@ describe('Session State Isolation Workflow', () => {
   }, 90000);
 
   test('should isolate working directories between sessions', async () => {
-    // Create directory structure first (using default session)
+    // Create directory structure first using sessionless top-level APIs.
     await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers: createTestHeaders(sandboxId!),
@@ -691,7 +691,7 @@ describe('Session State Isolation Workflow', () => {
     // Verify we can still use the sandbox (it wasn't destroyed)
     const sandboxStillAliveResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
-      headers: createTestHeaders(sandboxId!), // Use default session
+      headers: createTestHeaders(sandboxId!), // Use sessionless top-level APIs
       body: JSON.stringify({
         command: 'echo "sandbox-alive"'
       })

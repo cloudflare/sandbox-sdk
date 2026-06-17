@@ -246,8 +246,8 @@ async function writeUnrelatedRuntimeFile(
 function createPortHeaders(
   headers: Record<string, string>
 ): Record<string, string> {
-  // Port APIs use the sandbox's default session, while file/process setup uses
-  // the test session headers for deterministic workspace state.
+  // Port APIs are sandbox-scoped, while file/process setup uses the test
+  // session headers for deterministic workspace state.
   const portHeaders = { ...headers };
   delete portHeaders['X-Session-Id'];
   return portHeaders;
