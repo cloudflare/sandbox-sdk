@@ -211,11 +211,11 @@ describe('SessionManager Locking', () => {
     });
   });
 
-  describe('streaming execution locking', () => {
+  describe('process stream locking', () => {
     it('should release lock early for streaming processes', async () => {
       const sessionId = 'stream-bg-session';
 
-      const streamResult = await sessionManager.executeStreamInSession(
+      const streamResult = await sessionManager.startProcessStreamInSession(
         sessionId,
         'sleep 0.5; echo "bg-done"',
         async () => {},
@@ -245,7 +245,7 @@ describe('SessionManager Locking', () => {
 
       // Runtime process streaming releases the lock after the 'start' event,
       // so the process lifecycle continues without holding the session mutex.
-      const streamResult = await sessionManager.executeStreamInSession(
+      const streamResult = await sessionManager.startProcessStreamInSession(
         sessionId,
         'sleep 10',
         async (event) => {

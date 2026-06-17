@@ -70,16 +70,6 @@ export interface SandboxCommandsAPI {
     command: string;
     timestamp: string;
   }>;
-  executeStream(
-    command: string,
-    sessionId: string,
-    options?: {
-      timeoutMs?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
-  ): Promise<ReadableStream<Uint8Array>>;
 }
 
 export interface SandboxFilesAPI {

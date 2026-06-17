@@ -87,7 +87,7 @@ alias say_runtime_process='printf "alias:%s\n" "$RUNTIME_PROCESS_VALUE"'`,
     );
     expect(setupResult.success).toBe(true);
 
-    const streamResult = await sessionManager.executeStreamInSession(
+    const streamResult = await sessionManager.startProcessStreamInSession(
       'runtime-process-session',
       String.raw`printf "out:%s\n" "$RUNTIME_PROCESS_VALUE"
 say_runtime_process
@@ -167,7 +167,7 @@ printf "done\n"`,
     );
     expect(createResult.success).toBe(true);
 
-    const streamPromise = sessionManager.executeStreamInSession(
+    const streamPromise = sessionManager.startProcessStreamInSession(
       sessionId,
       'printf "should-not-run"; sleep 10',
       async () => {},
@@ -189,7 +189,7 @@ printf "done\n"`,
   it('tracks runtime process commands without legacy handles', async () => {
     const sessionId = 'runtime-tracking-session';
     const commandId = 'runtime-tracking-command';
-    const streamResult = await sessionManager.executeStreamInSession(
+    const streamResult = await sessionManager.startProcessStreamInSession(
       sessionId,
       'sleep 10',
       async () => {},
@@ -274,7 +274,7 @@ printf "done\n"`,
       async exec(): Promise<never> {
         throw new Error('exec not used by streaming test');
       },
-      async *execRuntimeProcessStream(
+      async *startRuntimeProcessStream(
         command: string,
         options: {
           commandId: string;
@@ -324,7 +324,7 @@ printf "done\n"`,
     };
     managerInternals.sessions.set(sessionId, managedSession);
 
-    const streamResult = await sessionManager.executeStreamInSession(
+    const streamResult = await sessionManager.startProcessStreamInSession(
       sessionId,
       'printf "managed-output\\n"',
       async (event) => {
@@ -363,7 +363,7 @@ printf "done\n"`,
       [];
     const sawStartOutput = Promise.withResolvers<void>();
 
-    const streamResult = await sessionManager.executeStreamInSession(
+    const streamResult = await sessionManager.startProcessStreamInSession(
       'runtime-kill-session',
       String.raw`printf "started\n"; sleep 10`,
       async (event) => {

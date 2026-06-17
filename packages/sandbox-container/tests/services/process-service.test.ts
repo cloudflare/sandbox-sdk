@@ -35,7 +35,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockExecutionService = {
   execute: vi.fn(),
-  executeStream: vi.fn(),
+  startProcessStream: vi.fn(),
   withExecution: vi.fn(),
   kill: vi.fn()
 } as unknown as ExecutionService;
@@ -164,7 +164,7 @@ describe('ProcessService', () => {
         }
       );
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) =>
           ({
             success: true,
@@ -197,8 +197,8 @@ describe('ProcessService', () => {
         });
       }
 
-      // Verify SessionManager.executeStreamInSession was called
-      expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
+      // Verify SessionManager.startProcessStreamInSession was called
+      expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
           sessionId: 'session-123',
@@ -237,7 +237,7 @@ describe('ProcessService', () => {
         }
       );
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) =>
           ({
             success: true,
@@ -266,7 +266,7 @@ describe('ProcessService', () => {
         sessionId: DISABLE_SESSION_TOKEN,
         commandId: result.success ? result.data.id : expect.any(String)
       });
-      expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
+      expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
           sessionId: undefined
@@ -285,7 +285,7 @@ describe('ProcessService', () => {
         }
       );
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) =>
           ({
             success: true,
@@ -340,7 +340,7 @@ describe('ProcessService', () => {
     it('should reflect a later non-zero complete event on the returned process record', async () => {
       let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) => {
           onEvent = options.onEvent;
 
@@ -392,11 +392,11 @@ describe('ProcessService', () => {
       }
 
       // Verify SessionManager was not called
-      expect(mockExecutionService.executeStream).not.toHaveBeenCalled();
+      expect(mockExecutionService.startProcessStream).not.toHaveBeenCalled();
     });
 
-    it('should handle stream execution errors', async () => {
-      mocked(mockExecutionService.executeStream).mockImplementation(() => {
+    it('should handle process stream errors', async () => {
+      mocked(mockExecutionService.startProcessStream).mockImplementation(() => {
         throw new Error('Failed to execute stream');
       });
 
@@ -406,7 +406,7 @@ describe('ProcessService', () => {
       if (!result.success) {
         expect(result.error.code).toBe('STREAM_START_ERROR');
         expect(result.error.message).toContain(
-          'Failed to start streaming command'
+          'Failed to start process stream'
         );
       }
 
@@ -421,7 +421,7 @@ describe('ProcessService', () => {
     });
 
     it('should mark returned stream startup failures as terminal error', async () => {
-      mocked(mockExecutionService.executeStream).mockResolvedValue({
+      mocked(mockExecutionService.startProcessStream).mockResolvedValue({
         success: false,
         error: {
           message: 'Failed before stream was ready',

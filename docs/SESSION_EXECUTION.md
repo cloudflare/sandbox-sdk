@@ -49,7 +49,7 @@ For streaming/lifecycle:
 ```text
 sandbox.startProcess(command)
   -> ProcessService.startProcess(..., DISABLE_SESSION_TOKEN)
-  -> ExecutionService.executeStreamSessionless(...)
+  -> ExecutionService.startSessionlessProcessStream(...)
   -> StatelessProcessRunner.start(...)
 ```
 
@@ -92,8 +92,8 @@ state.
 
 ```text
 session.startProcess(command)
-  -> SessionManager.executeStreamInSession(...)
-  -> RuntimeBackedSession.execRuntimeProcessStream(...)
+  -> SessionManager.startProcessStreamInSession(...)
+  -> RuntimeBackedSession.startRuntimeProcessStream(...)
   -> CommandSession.startProcess(...)
 ```
 

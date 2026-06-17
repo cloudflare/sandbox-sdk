@@ -29,7 +29,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockSessionManager = {
   executeInSession: vi.fn(),
-  executeStreamInSession: vi.fn(),
+  startProcessStreamInSession: vi.fn(),
   withSession: vi.fn(),
   killCommand: vi.fn()
 } as unknown as SessionManager;
@@ -266,13 +266,13 @@ describe('ExecutionService', () => {
     expect(mockSessionManager.withSession).not.toHaveBeenCalled();
   });
 
-  it('routes session streaming as a background process', async () => {
-    mocked(mockSessionManager.executeStreamInSession).mockResolvedValue({
+  it('routes session process streaming as a background process', async () => {
+    mocked(mockSessionManager.startProcessStreamInSession).mockResolvedValue({
       success: true,
       data: { continueStreaming: Promise.resolve() }
     });
 
-    const result = await executionService.executeStream('sleep 10', {
+    const result = await executionService.startProcessStream('sleep 10', {
       sessionId: 'explicit-session',
       cwd: '/workspace/app',
       timeoutMs: 5000,
@@ -283,7 +283,7 @@ describe('ExecutionService', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockSessionManager.executeStreamInSession).toHaveBeenCalledWith(
+    expect(mockSessionManager.startProcessStreamInSession).toHaveBeenCalledWith(
       'explicit-session',
       'sleep 10',
       expect.any(Function),
@@ -302,7 +302,7 @@ describe('ExecutionService', () => {
       [];
     const startSpy = vi.spyOn(StatelessProcessRunner.prototype, 'start');
 
-    const result = await executionService.executeStream(
+    const result = await executionService.startProcessStream(
       'printf "hello"; printf "warn" >&2',
       {
         sessionId: DISABLE_SESSION_TOKEN,
@@ -348,13 +348,15 @@ describe('ExecutionService', () => {
     expect(
       events.some((event) => event.type === 'complete' && event.exitCode === 0)
     ).toBe(true);
-    expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+    expect(
+      mockSessionManager.startProcessStreamInSession
+    ).not.toHaveBeenCalled();
   });
 
   it('kills a sessionless streaming process by pid', async () => {
     const events: Array<{ type: string; exitCode?: number }> = [];
 
-    const result = await executionService.executeStream('sleep 30', {
+    const result = await executionService.startProcessStream('sleep 30', {
       sessionId: DISABLE_SESSION_TOKEN,
       cwd: process.cwd(),
       commandId: 'cmd-kill',

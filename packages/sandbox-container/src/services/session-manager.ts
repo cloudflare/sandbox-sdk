@@ -55,7 +55,7 @@ interface ManagedSession {
     command: string,
     options?: ManagedSessionExecOptions
   ): Promise<RawExecResult>;
-  execRuntimeProcessStream(
+  startRuntimeProcessStream(
     command: string,
     options: RuntimeProcessStreamOptions
   ): AsyncGenerator<ExecEvent, void, unknown>;
@@ -182,7 +182,7 @@ class RuntimeBackedSession implements ManagedSession {
     return this.runtimeSession?.getShellExitCode() ?? null;
   }
 
-  async *execRuntimeProcessStream(
+  async *startRuntimeProcessStream(
     command: string,
     options: RuntimeProcessStreamOptions
   ): AsyncGenerator<ExecEvent, void, unknown> {
@@ -508,7 +508,7 @@ export class SessionManager {
       // directly). We acquire it here and hold it across the entire
       // check -> evict -> construct -> initialize -> set sequence, so:
       //
-      //   - Concurrent executeInSession / withSession / streaming
+      //   - Concurrent executeInSession / withSession / process streaming
       //     callers serialize behind the recreate, as the design comment
       //     has always claimed.
       //   - The dead-replace branch cannot interleave with a
@@ -937,16 +937,16 @@ export class SessionManager {
   }
 
   /**
-   * Execute a command with streaming output.
+   * Start a lifecycle-managed process from a persistent session.
    *
    * @param sessionId - The session identifier
    * @param command - The command to execute
-   * @param onEvent - Callback for streaming events
+   * @param onEvent - Callback for process events
    * @param options - Optional cwd and env overrides
    * @param commandId - Required command identifier for tracking and killing
-   * @returns A promise that resolves when first event is processed, with continueStreaming promise for background execution
+   * @returns Process startup result plus a promise for remaining events
    */
-  async executeStreamInSession(
+  async startProcessStreamInSession(
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
@@ -960,7 +960,7 @@ export class SessionManager {
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     const lock = this.getSessionLock(sessionId);
 
-    return this.executeStreamBackground(
+    return this.startProcessStreamWithLock(
       sessionId,
       command,
       onEvent,
@@ -971,7 +971,7 @@ export class SessionManager {
   }
 
   /**
-   * Background streaming: hold lock only until 'start' event, then release.
+   * Process streaming holds the lock only until 'start' event, then releases it.
    *
    * This mode is used for long-running background processes (like servers)
    * where we want to:
@@ -989,7 +989,7 @@ export class SessionManager {
    * - Starting background services
    * - Any long-running process that should not block other operations
    */
-  private async executeStreamBackground(
+  private async startProcessStreamWithLock(
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
@@ -1002,7 +1002,7 @@ export class SessionManager {
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    // Acquire lock for startup phase only
+    // Acquire lock for startup phase only.
     const startupResult = await lock.runExclusive(async () => {
       try {
         const { cwd, env, timeoutMs, origin } = options;
@@ -1016,7 +1016,7 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execRuntimeProcessStream(command, {
+        const generator = session.startRuntimeProcessStream(command, {
           commandId,
           cwd,
           env,
@@ -1024,7 +1024,7 @@ export class SessionManager {
           origin
         });
 
-        // Process 'start' event under lock
+        // Process 'start' event under lock.
         const firstResult = await generator.next();
 
         if (firstResult.done) {
@@ -1037,7 +1037,7 @@ export class SessionManager {
 
         await onEvent(firstResult.value);
 
-        // If already complete/error, drain remaining events under lock
+        // If already complete/error, drain remaining events under lock.
         if (
           firstResult.value.type === 'complete' ||
           firstResult.value.type === 'error'
@@ -1052,7 +1052,7 @@ export class SessionManager {
           };
         }
 
-        // Return generator for background processing (lock will be released)
+        // Return generator for background processing after lock release.
         return {
           success: true as const,
           generator,
@@ -1087,7 +1087,7 @@ export class SessionManager {
         return {
           success: false as const,
           error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to start process stream '${command}' in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.STREAM_START_ERROR,
             details: {
               command,
@@ -1105,7 +1105,7 @@ export class SessionManager {
       };
     }
 
-    // If generator is null, everything completed during startup
+    // If generator is null, everything completed during startup.
     if (!startupResult.generator) {
       return {
         success: true,
@@ -1113,7 +1113,7 @@ export class SessionManager {
       };
     }
 
-    // Continue streaming remaining events WITHOUT lock
+    // Continue streaming remaining events without the session lock.
     const continueStreaming = (async () => {
       for await (const event of startupResult.generator!) {
         await onEvent(event);

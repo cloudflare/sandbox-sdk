@@ -374,16 +374,13 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     it('ignores legacy streaming exec options at runtime', async () => {
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(
-        new ReadableStream()
-      );
+      expect('executeStream' in sandbox.client.commands).toBe(false);
 
       await sandbox.exec('echo test', {
         stream: true,
         onOutput: vi.fn()
       } as unknown as Parameters<typeof sandbox.exec>[1]);
 
-      expect(sandbox.client.commands.executeStream).not.toHaveBeenCalled();
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         DISABLE_SESSION_TOKEN,

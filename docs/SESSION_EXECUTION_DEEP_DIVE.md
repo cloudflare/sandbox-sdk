@@ -103,8 +103,8 @@ launch. Its later mutations do not write back to the parent command session.
 
 ```text
 session.startProcess(command)
-  -> SessionManager.executeStreamInSession(...)
-  -> RuntimeBackedSession.execRuntimeProcessStream(...)
+  -> SessionManager.startProcessStreamInSession(...)
+  -> RuntimeBackedSession.startRuntimeProcessStream(...)
   -> CommandSession.startProcess(...)
   -> start/stdout/stderr/complete events
   -> ProcessService record and SDK process handle

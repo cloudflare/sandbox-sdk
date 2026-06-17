@@ -48,12 +48,12 @@ export interface ExecutionOptions {
   origin?: 'user' | 'internal';
 }
 
-export interface ExecutionStreamOptions extends ExecutionOptions {
+export interface ProcessStreamStartOptions extends ExecutionOptions {
   onEvent: (event: ExecEvent) => Promise<void>;
   commandId: string;
 }
 
-export interface ExecutionStreamResult {
+export interface ProcessStreamStartResult {
   continueStreaming: Promise<void>;
   commandHandle: ProcessCommandHandle;
 }
@@ -89,14 +89,14 @@ export class ExecutionService {
     return this.executeSessionless(command, options);
   }
 
-  async executeStream(
+  async startProcessStream(
     command: string,
-    options: ExecutionStreamOptions
-  ): Promise<ServiceResult<ExecutionStreamResult>> {
+    options: ProcessStreamStartOptions
+  ): Promise<ServiceResult<ProcessStreamStartResult>> {
     const target = this.resolveTarget(options.sessionId);
 
     if (target.kind === 'session') {
-      const result = await this.sessionManager.executeStreamInSession(
+      const result = await this.sessionManager.startProcessStreamInSession(
         target.sessionId,
         command,
         options.onEvent,
@@ -110,7 +110,7 @@ export class ExecutionService {
       );
 
       if (!result.success) {
-        return result as ServiceResult<ExecutionStreamResult>;
+        return result as ServiceResult<ProcessStreamStartResult>;
       }
 
       return serviceSuccess({
@@ -122,7 +122,7 @@ export class ExecutionService {
       });
     }
 
-    return this.executeStreamSessionless(command, options);
+    return this.startSessionlessProcessStream(command, options);
   }
 
   async withExecution<T>(
@@ -335,10 +335,10 @@ export class ExecutionService {
     return result.data;
   }
 
-  private async executeStreamSessionless(
+  private async startSessionlessProcessStream(
     command: string,
-    options: ExecutionStreamOptions
-  ): Promise<ServiceResult<ExecutionStreamResult>> {
+    options: ProcessStreamStartOptions
+  ): Promise<ServiceResult<ProcessStreamStartResult>> {
     const startEventSent = Promise.withResolvers<void>();
     startEventSent.promise.catch(() => {});
 
@@ -378,7 +378,7 @@ export class ExecutionService {
         throw error;
       }
 
-      const continueStreaming = this.continueSessionlessStreaming(
+      const continueStreaming = this.continueSessionlessProcessStream(
         process,
         options
       );
@@ -392,7 +392,7 @@ export class ExecutionService {
         error instanceof Error ? error.message : 'Unknown error';
 
       return serviceError({
-        message: `Failed to execute streaming command '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
+        message: `Failed to start process stream '${command}' in ${SESSIONLESS_DISPLAY_NAME} execution: ${errorMessage}`,
         code: ErrorCode.STREAM_START_ERROR,
         details: {
           command,
@@ -402,9 +402,9 @@ export class ExecutionService {
     }
   }
 
-  private async continueSessionlessStreaming(
+  private async continueSessionlessProcessStream(
     process: StatelessProcess,
-    options: ExecutionStreamOptions
+    options: ProcessStreamStartOptions
   ): Promise<void> {
     try {
       const result = await process.wait();

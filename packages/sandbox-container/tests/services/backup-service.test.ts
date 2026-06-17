@@ -17,7 +17,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockSessionManager = {
   executeInSession: vi.fn(),
-  executeStreamInSession: vi.fn(),
+  startProcessStreamInSession: vi.fn(),
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
@@ -30,7 +30,7 @@ const mockSessionManager = {
 
 const mockExecutionService = {
   execute: vi.fn(),
-  executeStream: vi.fn(),
+  startProcessStream: vi.fn(),
   withExecution: vi.fn(),
   kill: vi.fn()
 } as unknown as ExecutionService;
