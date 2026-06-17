@@ -129,6 +129,21 @@ class TerminalsRPCAPI extends RpcTarget {
     this.#terminalManager = terminalManager;
   }
 
+  async createTerminal(options: {
+    id: string;
+    cwd?: string;
+    shell?: string;
+    cols?: number;
+    rows?: number;
+  }): Promise<{ success: true; id: string }> {
+    await this.#terminalManager.getOrCreateTerminal({
+      id: options.id,
+      cwd: options.cwd,
+      pty: { shell: options.shell, cols: options.cols, rows: options.rows }
+    });
+    return { success: true, id: options.id };
+  }
+
   async destroyTerminal(id: string): Promise<{ success: true; id: string }> {
     await this.#terminalManager.destroyTerminal(id);
     return { success: true, id };

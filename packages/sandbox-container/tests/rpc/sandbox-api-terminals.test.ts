@@ -28,8 +28,41 @@ describe('SandboxControlAPI terminals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTerminalManager = {
+      getOrCreateTerminal: vi.fn(async (options: { id: string }) => ({
+        id: options.id,
+        pty: {}
+      })),
       destroyTerminal: vi.fn(async () => undefined)
     } as unknown as TerminalManager;
+  });
+
+  it('creates terminal resources through TerminalManager', async () => {
+    const api = buildApi(mockTerminalManager) as SandboxControlAPI & {
+      terminals: {
+        createTerminal(options: {
+          id: string;
+          cwd?: string;
+          shell?: string;
+          cols?: number;
+          rows?: number;
+        }): Promise<{ success: true; id: string }>;
+      };
+    };
+
+    const result = await api.terminals.createTerminal({
+      id: 'terminal-a',
+      cwd: '/workspace/app',
+      shell: '/bin/bash',
+      cols: 120,
+      rows: 40
+    });
+
+    expect(result).toEqual({ success: true, id: 'terminal-a' });
+    expect(mockTerminalManager.getOrCreateTerminal).toHaveBeenCalledWith({
+      id: 'terminal-a',
+      cwd: '/workspace/app',
+      pty: { shell: '/bin/bash', cols: 120, rows: 40 }
+    });
   });
 
   it('destroys terminal resources through TerminalManager', async () => {

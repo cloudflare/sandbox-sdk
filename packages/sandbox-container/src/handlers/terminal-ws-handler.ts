@@ -14,8 +14,6 @@ export interface TerminalWSData {
   connectionId: string;
   cols?: number;
   rows?: number;
-  shell?: string;
-  cwd?: string;
 }
 
 interface TerminalConnection {
@@ -28,30 +26,37 @@ export class TerminalWebSocketHandler {
   private connections = new Map<string, TerminalConnection>();
 
   constructor(
-    private terminalManager: Pick<TerminalManager, 'getOrCreateTerminal'>,
+    private terminalManager: Pick<TerminalManager, 'getTerminal'>,
     private logger: Logger
   ) {}
 
   async onOpen(ws: ServerWebSocket<TerminalWSData>): Promise<void> {
-    const { terminalId, connectionId, cols, rows, shell, cwd } = ws.data;
+    const { terminalId, connectionId, cols, rows } = ws.data;
     // Lifecycle captured in onClose canonical log line
 
-    let pty: Pty;
-    try {
-      const terminal = await this.terminalManager.getOrCreateTerminal({
-        id: terminalId,
-        cwd,
-        pty: { cols, rows, shell }
-      });
-      pty = terminal.pty;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    const terminal = this.terminalManager.getTerminal(terminalId);
+    if (!terminal) {
       this.sendStatus(ws, {
         type: 'error',
-        message
+        message: 'Terminal not found'
       });
-      ws.close(1011, message);
+      ws.close(1008, 'Terminal not found');
       return;
+    }
+
+    const { pty } = terminal;
+    if (cols !== undefined && rows !== undefined) {
+      try {
+        pty.resize(cols, rows);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.sendStatus(ws, {
+          type: 'error',
+          message
+        });
+        ws.close(1011, message);
+        return;
+      }
     }
 
     const bufferedOutput = pty.getBufferedOutput();

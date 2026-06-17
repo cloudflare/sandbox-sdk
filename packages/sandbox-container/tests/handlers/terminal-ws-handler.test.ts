@@ -44,14 +44,14 @@ function createTerminalManager(mockPty = createMockPty()) {
   };
 
   return {
-    getOrCreateTerminal: mock(() => Promise.resolve(handle))
+    getTerminal: mock(() => handle)
   };
 }
 
 describe('TerminalWebSocketHandler', () => {
   const logger = createNoOpLogger();
 
-  it('creates terminals through TerminalManager on connection', async () => {
+  it('attaches to existing terminals on connection', async () => {
     const mockPty = createMockPty();
     const terminalManager = createTerminalManager(mockPty);
     const handler = new TerminalWebSocketHandler(terminalManager, logger);
@@ -59,38 +59,32 @@ describe('TerminalWebSocketHandler', () => {
       type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1',
-      cwd: '/mnt/s3'
+      cols: 120,
+      rows: 40
     });
 
     await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
 
-    expect(terminalManager.getOrCreateTerminal).toHaveBeenCalledWith({
-      id: 'test-terminal',
-      cwd: '/mnt/s3',
-      pty: {
-        cols: undefined,
-        rows: undefined,
-        shell: undefined
-      }
-    });
+    expect(terminalManager.getTerminal).toHaveBeenCalledWith('test-terminal');
+    expect(mockPty.resize).toHaveBeenCalledWith(120, 40);
     expect(ws.sendBinary).toHaveBeenCalled();
     expect(ws.send).toHaveBeenCalled();
   });
 
-  it('closes connection with error when terminal creation fails', async () => {
+  it('closes connection with error when terminal does not exist', async () => {
     const terminalManager = {
-      getOrCreateTerminal: mock(() => Promise.reject(new Error('Spawn failed')))
+      getTerminal: mock(() => undefined)
     };
     const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
       type: 'terminal',
-      terminalId: 'test-terminal',
+      terminalId: 'missing-terminal',
       connectionId: 'conn-1'
     });
 
     await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
 
-    expect(ws.close).toHaveBeenCalledWith(1011, 'Spawn failed');
+    expect(ws.close).toHaveBeenCalledWith(1008, 'Terminal not found');
   });
 
   it('forwards binary messages to terminal as input', async () => {

@@ -418,6 +418,10 @@ describe('getSandbox', () => {
         proxiedRequest = request;
         return new Response(null, { status: 200 });
       });
+      mockStub.createTerminal = vi.fn(
+        async (_options: { id: string; cwd?: string; shell?: string }) =>
+          undefined
+      );
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
@@ -429,6 +433,9 @@ describe('getSandbox', () => {
       await terminal.connect(request);
 
       expect(terminal.id).toBe('terminal-a');
+      expect(mockStub.createTerminal).toHaveBeenCalledWith({
+        id: 'terminal-a'
+      });
       expect(mockStub.fetch).toHaveBeenCalledOnce();
       const url = new URL(proxiedRequest?.url ?? 'http://missing');
       expect(url.pathname).toBe('/proxy/3000/ws/terminal');
@@ -441,6 +448,10 @@ describe('getSandbox', () => {
         proxiedRequest = request;
         return new Response(null, { status: 200 });
       });
+      mockStub.createTerminal = vi.fn(
+        async (_options: { id: string; cwd?: string; shell?: string }) =>
+          undefined
+      );
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
@@ -452,6 +463,9 @@ describe('getSandbox', () => {
       await terminal.connect(request);
 
       expect(terminal.id).toMatch(/^terminal-[0-9a-f-]{36}$/);
+      expect(mockStub.createTerminal).toHaveBeenCalledWith({
+        id: terminal.id
+      });
       expect(mockStub.fetch).toHaveBeenCalledOnce();
       const url = new URL(proxiedRequest?.url ?? 'http://missing');
       expect(url.searchParams.get('terminalId')).toBe(terminal.id);
@@ -462,6 +476,10 @@ describe('getSandbox', () => {
 
     it('destroys terminal handles by ID through the sandbox RPC method', async () => {
       mockStub.fetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockStub.createTerminal = vi.fn(
+        async (_options: { id: string; cwd?: string; shell?: string }) =>
+          undefined
+      );
       mockStub.destroyTerminal = vi.fn(async (_id: string) => undefined);
 
       const mockNamespace = {} as any;

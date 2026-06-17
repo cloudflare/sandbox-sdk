@@ -10,6 +10,14 @@ export interface TerminalOptions {
   shell?: string;
 }
 
+export interface TerminalCreateOptions {
+  id: string;
+  cwd?: string;
+  shell?: string;
+  cols?: number;
+  rows?: number;
+}
+
 export interface TerminalConnectOptions {
   cols?: number;
   rows?: number;

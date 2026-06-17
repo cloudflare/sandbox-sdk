@@ -33,6 +33,7 @@ import type {
   SandboxOptions,
   SandboxTerminal,
   SessionOptions,
+  TerminalCreateOptions,
   TerminalOptions,
   WaitForExitResult,
   WaitForLogResult,
@@ -339,6 +340,7 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
     method: string,
     args: unknown[]
   ) => Promise<unknown>;
+  createTerminal: (options: TerminalCreateOptions) => Promise<void>;
   destroyTerminal: (id: string) => Promise<void>;
   execWithSessionToken: (
     command: string,
@@ -3317,6 +3319,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     throw new Error(
       'terminal must be called on the stub returned by getSandbox()'
     );
+  }
+
+  async createTerminal(options: TerminalCreateOptions): Promise<void> {
+    await this.client.terminals.createTerminal(options);
   }
 
   async destroyTerminal(id: string): Promise<void> {

@@ -62,6 +62,7 @@ export function createMockControlClient(): Sandbox['client'] {
       stopTunnelRun: vi.fn()
     },
     terminals: {
+      createTerminal: vi.fn(),
       destroyTerminal: vi.fn()
     },
     setRetryTimeoutMs: vi.fn(),

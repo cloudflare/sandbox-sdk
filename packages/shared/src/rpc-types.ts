@@ -5,6 +5,7 @@
  * control-plane API. The current wire implementation uses capnweb RPC.
  */
 
+import type { TerminalCreateOptions } from './pty-types.js';
 import type {
   CreateBackupResponse,
   RestoreBackupResponse,
@@ -330,6 +331,9 @@ export interface TunnelRunExitEvent extends TunnelRunIdentity {
 }
 
 export interface SandboxTerminalsAPI {
+  createTerminal(
+    options: TerminalCreateOptions
+  ): Promise<{ success: true; id: string }>;
   destroyTerminal(id: string): Promise<{ success: true; id: string }>;
 }
 

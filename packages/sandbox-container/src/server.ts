@@ -93,8 +93,6 @@ async function createApplication(): Promise<{
 
           const colsParam = url.searchParams.get('cols');
           const rowsParam = url.searchParams.get('rows');
-          const shellParam = url.searchParams.get('shell');
-          const cwdParam = url.searchParams.get('cwd');
 
           const upgraded = server.upgrade(req, {
             data: {
@@ -102,9 +100,7 @@ async function createApplication(): Promise<{
               terminalId,
               connectionId: generateConnectionId(),
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
-              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined,
-              shell: shellParam ?? undefined,
-              cwd: cwdParam ?? undefined
+              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
             }
           });
           if (upgraded) {

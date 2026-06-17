@@ -2,11 +2,13 @@ import { switchPort } from '@cloudflare/containers';
 import type {
   SandboxTerminal,
   TerminalConnectOptions,
+  TerminalCreateOptions,
   TerminalOptions
 } from '@repo/shared';
 
 interface SandboxTerminalStub {
   fetch(request: Request): Promise<Response>;
+  createTerminal(options: TerminalCreateOptions): Promise<unknown>;
   destroyTerminal(id: string): Promise<void>;
 }
 
@@ -48,11 +50,18 @@ export async function proxyTerminal(
     throw new Error('terminal.connect() requires a WebSocket upgrade request');
   }
 
+  const createOptions: TerminalCreateOptions = { id: terminalId };
+  if (options?.cwd !== undefined) createOptions.cwd = options.cwd;
+  if (options?.shell !== undefined) createOptions.shell = options.shell;
+  if (connectOptions?.cols !== undefined)
+    createOptions.cols = connectOptions.cols;
+  if (connectOptions?.rows !== undefined)
+    createOptions.rows = connectOptions.rows;
+  await stub.createTerminal(createOptions);
+
   const params = new URLSearchParams({ terminalId });
   if (connectOptions?.cols) params.set('cols', String(connectOptions.cols));
   if (connectOptions?.rows) params.set('rows', String(connectOptions.rows));
-  if (options?.shell) params.set('shell', options.shell);
-  if (options?.cwd) params.set('cwd', options.cwd);
 
   const terminalURL = `http://localhost/ws/terminal?${params}`;
   const terminalRequest = new Request(terminalURL, request);
