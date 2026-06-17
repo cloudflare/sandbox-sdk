@@ -4,26 +4,26 @@
  * Validates core sandbox operations work end-to-end through the
  * container-control path. These tests exercise:
  * - Command execution (exec)
- * - Streaming output (execStream)
+ * - Process log streaming
  * - File operations (write, read, list, delete)
  * - Session isolation
  *
  */
 
-import type {
-  ExecEvent,
-  ExecResult,
-  ListFilesResult,
-  ReadFileResult
-} from '@repo/shared';
+import type { ExecResult, ListFilesResult, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import {
+  collectProcessStdout,
+  collectProcessStreamEvents,
+  startProcessViaTestWorker,
+  streamProcessViaTestWorker
+} from './helpers/process-stream';
 
 describe('RPC Container Control', () => {
   let sandbox: TestSandbox | null = null;
@@ -115,47 +115,34 @@ describe('RPC Container Control', () => {
     expect(names).toContain('b.txt');
   });
 
-  test('should stream command output via execStream', async () => {
-    const abortController = new AbortController();
-    const response = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+  test('should stream process output', async () => {
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: 'echo line1 && echo line2 && echo line3'
-      }),
-      signal: abortController.signal
-    });
+      'echo line1 && echo line2 && echo line3'
+    );
+    const response = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
     expect(response.status).toBe(200);
     expect(response.body).toBeTruthy();
 
-    const events: ExecEvent[] = [];
-    for await (const event of parseSSEStream<ExecEvent>(
-      response.body!,
-      abortController.signal
-    )) {
-      events.push(event);
-      if (event.type === 'complete' || event.type === 'error') {
-        break;
-      }
-    }
-
-    // Should have stdout events and a complete event
-    const stdoutEvents = events.filter((e) => e.type === 'stdout');
-    const completeEvents = events.filter((e) => e.type === 'complete');
+    const events = await collectProcessStreamEvents(response);
+    const stdoutEvents = events.filter((event) => event.type === 'stdout');
+    const exitEvents = events.filter((event) => event.type === 'exit');
 
     expect(stdoutEvents.length).toBeGreaterThan(0);
-    expect(completeEvents.length).toBe(1);
+    expect(exitEvents.length).toBe(1);
 
-    // Combine all stdout output
-    const allOutput = stdoutEvents.map((e) => e.data ?? '').join('');
+    const allOutput = collectProcessStdout(events);
     expect(allOutput).toContain('line1');
     expect(allOutput).toContain('line2');
     expect(allOutput).toContain('line3');
 
-    // Complete event should show success
-    const complete = completeEvents[0];
-    expect(complete.exitCode).toBe(0);
+    expect(exitEvents[0].exitCode).toBe(0);
   });
 
   test('should delete a file', async () => {

@@ -1,53 +1,23 @@
-import type { ExecEvent } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import {
+  collectProcessStderr,
+  collectProcessStdout,
+  collectProcessStreamEvents,
+  startProcessViaTestWorker,
+  streamProcessViaTestWorker
+} from './helpers/process-stream';
 
 interface SandboxStateResponse {
   status: 'healthy' | 'stopped' | 'stopped_with_code' | 'stopping';
   lastChange: number;
   exitCode?: number;
 }
-async function collectSSEEvents(
-  response: Response,
-  maxEvents: number = 50
-): Promise<ExecEvent[]> {
-  if (!response.body) {
-    throw new Error('No readable stream in response');
-  }
-
-  const events: ExecEvent[] = [];
-  const abortController = new AbortController();
-
-  try {
-    for await (const event of parseSSEStream<ExecEvent>(
-      response.body,
-      abortController.signal
-    )) {
-      events.push(event);
-      if (event.type === 'complete' || event.type === 'error') {
-        abortController.abort();
-        break;
-      }
-      if (events.length >= maxEvents) {
-        abortController.abort();
-        break;
-      }
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message !== 'Operation was aborted') {
-      throw error;
-    }
-  }
-
-  return events;
-}
-
 /**
  * Streaming Operations Edge Case Tests
  *
@@ -77,76 +47,81 @@ describe('Streaming Operations Edge Cases', () => {
   }, 120000);
 
   test('should handle command failures with non-zero exit code', async () => {
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: 'false' // Always fails with exit code 1
-      })
-    });
+      'false'
+    );
+    const streamResponse = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
-    const events = await collectSSEEvents(streamResponse);
+    const events = await collectProcessStreamEvents(streamResponse);
 
-    const completeEvent = events.find((e) => e.type === 'complete');
-    expect(completeEvent).toBeDefined();
-    expect(completeEvent?.exitCode).not.toBe(0);
+    const exitEvent = events.find((event) => event.type === 'exit');
+    expect(exitEvent).toBeDefined();
+    expect(exitEvent?.exitCode).not.toBe(0);
   }, 90000);
 
   test('should handle nonexistent commands with proper exit code', async () => {
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: 'nonexistentcommand123'
-      })
-    });
+      'nonexistentcommand123'
+    );
+    const streamResponse = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
     expect(streamResponse.status).toBe(200);
 
-    const events = await collectSSEEvents(streamResponse);
+    const events = await collectProcessStreamEvents(streamResponse);
 
-    const completeEvent = events.find((e) => e.type === 'complete');
-    expect(completeEvent).toBeDefined();
-    expect(completeEvent?.exitCode).toBe(127); // Command not found
+    const exitEvent = events.find((event) => event.type === 'exit');
+    expect(exitEvent).toBeDefined();
+    expect(exitEvent?.exitCode).toBe(127); // Command not found
 
-    const stderrEvents = events.filter((e) => e.type === 'stderr');
-    expect(stderrEvents.length).toBeGreaterThan(0);
-    const stderrData = stderrEvents.map((e) => e.data).join('');
+    const stderrData = collectProcessStderr(events);
     expect(stderrData.toLowerCase()).toMatch(/command not found|not found/);
   }, 90000);
 
   test('should handle streaming with multiple output chunks over time', async () => {
     // Tests that streaming correctly delivers output over ~2 seconds
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command:
-          'bash -c \'for i in 1 2 3; do echo "Chunk $i"; sleep 0.5; done; echo "DONE"\''
-      })
-    });
+      'bash -c \'for i in 1 2 3; do echo "Chunk $i"; sleep 0.5; done; echo "DONE"\''
+    );
+    const streamResponse = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
     expect(streamResponse.status).toBe(200);
 
     const startTime = Date.now();
-    const events = await collectSSEEvents(streamResponse, 20);
+    const events = await collectProcessStreamEvents(streamResponse, 20);
     const duration = Date.now() - startTime;
 
     // Should take ~1.5s (3 × 0.5s sleeps)
     expect(duration).toBeGreaterThan(1000);
     expect(duration).toBeLessThan(10000);
 
-    const stdoutEvents = events.filter((e) => e.type === 'stdout');
-    const output = stdoutEvents.map((e) => e.data).join('');
+    const output = collectProcessStdout(events);
 
     expect(output).toContain('Chunk 1');
     expect(output).toContain('Chunk 2');
     expect(output).toContain('Chunk 3');
     expect(output).toContain('DONE');
 
-    const completeEvent = events.find((e) => e.type === 'complete');
-    expect(completeEvent).toBeDefined();
-    expect(completeEvent?.exitCode).toBe(0);
+    const exitEvent = events.find((event) => event.type === 'exit');
+    expect(exitEvent).toBeDefined();
+    expect(exitEvent?.exitCode).toBe(0);
   }, 15000);
 
   test('should stream file contents', async () => {
@@ -214,7 +189,7 @@ describe('Streaming Operations Edge Cases', () => {
 });
 
 describe('Streaming Operations - sleep after', () => {
-  test('should keep sandbox alive during execStream beyond sleepAfter value', async ({
+  test('should keep sandbox alive during process streaming beyond sleepAfter value', async ({
     onTestFinished
   }) => {
     const sandbox = await createTestSandbox({ sleepAfter: '3s' });
@@ -224,30 +199,30 @@ describe('Streaming Operations - sleep after', () => {
     const { workerUrl } = sandbox;
     const headers = sandbox.headers();
 
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: "bash -c 'sleep 5; printf done'"
-      })
-    });
+      "bash -c 'sleep 5; printf done'"
+    );
+    const streamResponse = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
     expect(streamResponse.status).toBe(200);
 
     const startTime = Date.now();
-    const events = await collectSSEEvents(streamResponse, 20);
+    const events = await collectProcessStreamEvents(streamResponse, 20);
     const duration = Date.now() - startTime;
 
     expect(duration).toBeGreaterThan(4500);
 
-    const stdout = events
-      .filter((event) => event.type === 'stdout')
-      .map((event) => event.data)
-      .join('');
-    const completeEvent = events.find((event) => event.type === 'complete');
+    const stdout = collectProcessStdout(events);
+    const exitEvent = events.find((event) => event.type === 'exit');
 
     expect(stdout.trimEnd()).toBe('done');
-    expect(completeEvent?.exitCode).toBe(0);
+    expect(exitEvent?.exitCode).toBe(0);
 
     // Poll until the sandbox reaches a stopped state (sleepAfter is 3s)
     const deadline = Date.now() + 30_000;

@@ -1,12 +1,17 @@
-import type { ExecEvent, ExecResult } from '@repo/shared';
+import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import {
+  collectProcessStdout,
+  collectProcessStreamEvents,
+  startProcessViaTestWorker,
+  streamProcessViaTestWorker
+} from './helpers/process-stream';
 
 /**
  * Environment Variable Tests
@@ -15,7 +20,7 @@ import {
  * - Dockerfile ENV (base level, e.g. SANDBOX_VERSION)
  * - setEnvVars at session level
  * - Per-command env in exec()
- * - Per-command env in execStream()
+ * - Per-process env in startProcess()
  *
  * Override precedence (highest to lowest):
  * 1. Per-command env
@@ -98,34 +103,23 @@ describe('Environment Variables', () => {
     expect(data.stdout.trim()).toBe('command-specific-value');
   }, 30000);
 
-  test('should support per-command env in execStream()', async () => {
-    const response = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+  test('should support per-process env in startProcess()', async () => {
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: 'echo "$STREAM_VAR"',
-        env: { STREAM_VAR: 'stream-env-value' }
-      })
-    });
+      'echo "$STREAM_VAR"',
+      { env: { STREAM_VAR: 'stream-env-value' } }
+    );
+    const response = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
 
     expect(response.status).toBe(200);
 
-    // Collect streamed output
-    const events: ExecEvent[] = [];
-    const abortController = new AbortController();
-    for await (const event of parseSSEStream<ExecEvent>(
-      response.body!,
-      abortController.signal
-    )) {
-      events.push(event);
-      if (event.type === 'complete' || event.type === 'error') break;
-    }
-
-    const stdout = events
-      .filter((e) => e.type === 'stdout')
-      .map((e) => e.data)
-      .join('');
-    expect(stdout.trim()).toBe('stream-env-value');
+    const events = await collectProcessStreamEvents(response);
+    expect(collectProcessStdout(events).trim()).toBe('stream-env-value');
   }, 30000);
 
   test('should override session env with per-command env', async () => {

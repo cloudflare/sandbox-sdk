@@ -630,7 +630,11 @@ console.log('Echo server on port ' + port);
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
         const process = await executor.startProcess(body.command, {
-          processId: body.processId
+          processId: body.processId,
+          env: body.env,
+          cwd: body.cwd,
+          timeout: body.timeout,
+          autoCleanup: body.autoCleanup
         });
         return new Response(JSON.stringify(process), {
           headers: { 'Content-Type': 'application/json' }
@@ -750,22 +754,7 @@ console.log('Echo server on port ' + port);
         if (pathParts[4] === 'stream') {
           const stream = await executor.streamProcessLogs(processId);
 
-          // Convert AsyncIterable to ReadableStream for SSE
-          const readableStream = new ReadableStream({
-            async start(controller) {
-              try {
-                for await (const event of stream) {
-                  const sseData = `data: ${JSON.stringify(event)}\n\n`;
-                  controller.enqueue(new TextEncoder().encode(sseData));
-                }
-                controller.close();
-              } catch (error) {
-                controller.error(error);
-              }
-            }
-          });
-
-          return new Response(readableStream, {
+          return new Response(stream, {
             headers: {
               'Content-Type': 'text/event-stream',
               'Cache-Control': 'no-cache',

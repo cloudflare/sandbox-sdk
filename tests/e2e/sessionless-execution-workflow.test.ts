@@ -1,16 +1,20 @@
-import {
-  type ExecEvent,
-  type ExecResult,
-  type ListFilesResult,
-  type SessionCreateResult
+import type {
+  ExecResult,
+  ListFilesResult,
+  SessionCreateResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   type TestSandbox
 } from './helpers/global-sandbox';
+import {
+  collectProcessStdout,
+  collectProcessStreamEvents,
+  startProcessViaTestWorker,
+  streamProcessViaTestWorker
+} from './helpers/process-stream';
 
 async function executeCommand(
   workerUrl: string,
@@ -25,34 +29,6 @@ async function executeCommand(
 
   expect(response.status).toBe(200);
   return (await response.json()) as ExecResult;
-}
-
-async function collectStreamEvents(response: Response): Promise<ExecEvent[]> {
-  if (!response.body) {
-    throw new Error('No readable stream in response');
-  }
-
-  const events: ExecEvent[] = [];
-  const abortController = new AbortController();
-
-  try {
-    for await (const event of parseSSEStream<ExecEvent>(
-      response.body,
-      abortController.signal
-    )) {
-      events.push(event);
-      if (event.type === 'complete' || event.type === 'error') {
-        abortController.abort();
-        break;
-      }
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message !== 'Operation was aborted') {
-      throw error;
-    }
-  }
-
-  return events;
 }
 
 describe('Sessionless Execution Workflow', () => {
@@ -94,7 +70,7 @@ describe('Sessionless Execution Workflow', () => {
     expect(cwd).not.toBe(testDir);
   }, 90000);
 
-  test('should stream implicit commands without a persistent shell', async () => {
+  test('should stream implicit processes without a persistent shell', async () => {
     const setup = await executeCommand(
       workerUrl,
       headers,
@@ -103,25 +79,24 @@ describe('Sessionless Execution Workflow', () => {
     expect(setup.success).toBe(true);
     expect(setup.stdout).toBe('hidden');
 
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
+    const process = await startProcessViaTestWorker(
+      workerUrl,
       headers,
-      body: JSON.stringify({
-        command: `printf '%s' "\${SESSIONLESS_STREAM_MARKER:-missing}"`
-      })
-    });
+      `printf '%s' "\${SESSIONLESS_STREAM_MARKER:-missing}"`
+    );
+    const streamResponse = await streamProcessViaTestWorker(
+      workerUrl,
+      headers,
+      process.id
+    );
     expect(streamResponse.status).toBe(200);
 
-    const events = await collectStreamEvents(streamResponse);
-    const stdout = events
-      .filter((event) => event.type === 'stdout')
-      .map((event) => event.data ?? '')
-      .join('');
-    const complete = events.find((event) => event.type === 'complete');
+    const events = await collectProcessStreamEvents(streamResponse);
+    const exit = events.find((event) => event.type === 'exit');
     const error = events.find((event) => event.type === 'error');
 
-    expect(stdout).toBe('missing');
-    expect(complete).toBeDefined();
+    expect(collectProcessStdout(events)).toBe('missing');
+    expect(exit).toBeDefined();
     expect(error).toBeUndefined();
   }, 90000);
 
