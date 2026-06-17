@@ -174,35 +174,40 @@ export class Interpreter extends RpcTarget {
       );
     }
 
-    const execution = new Execution(code, context);
     const contextId = context.id;
 
-    await withRetry(() =>
-      this.#rpc.runCodeStream(
+    // Construct the accumulator inside the retry lambda so each attempt starts
+    // fresh. A retryable failure can partially invoke the stream callbacks
+    // before throwing; reusing one Execution across attempts would duplicate
+    // its stdout/stderr/results entries on retry.
+    const execution = await withRetry(async () => {
+      const attempt = new Execution(code, context);
+      await this.#rpc.runCodeStream(
         contextId,
         code,
         options.language,
         {
           onStdout: (output: OutputMessage) => {
-            execution.logs.stdout.push(output.text);
+            attempt.logs.stdout.push(output.text);
             return options.onStdout?.(output);
           },
           onStderr: (output: OutputMessage) => {
-            execution.logs.stderr.push(output.text);
+            attempt.logs.stderr.push(output.text);
             return options.onStderr?.(output);
           },
           onResult: async (result: Result) => {
-            execution.results.push(new ResultImpl(result));
+            attempt.results.push(new ResultImpl(result));
             if (options.onResult) return options.onResult(result);
           },
           onError: (error: ExecutionError) => {
-            execution.error = error;
+            attempt.error = error;
             return options.onError?.(error);
           }
         },
         options.timeout
-      )
-    );
+      );
+      return attempt;
+    });
 
     return execution.toJSON();
   }

@@ -147,6 +147,38 @@ describe('withInterpreter', () => {
       expect(rpc.runCodeStream).toHaveBeenCalledTimes(2);
     });
 
+    it('does not duplicate accumulated output when a retry occurs', async () => {
+      vi.useFakeTimers();
+      const { sandbox, interpreter: rpc } = makeSandbox();
+      // First attempt partially streams output, then throws a retryable
+      // not-ready error; second attempt streams cleanly.
+      rpc.runCodeStream
+        .mockImplementationOnce(
+          async (_ctxId, _code, _lang, callbacks: StreamCallbacks) => {
+            await callbacks.onStdout({ text: 'partial', timestamp: 0 });
+            await callbacks.onResult({ text: 'partial-result' } as Result);
+            throw notReadyError();
+          }
+        )
+        .mockImplementationOnce(
+          async (_ctxId, _code, _lang, callbacks: StreamCallbacks) => {
+            await callbacks.onStdout({ text: 'final', timestamp: 0 });
+            await callbacks.onResult({ text: 'final-result' } as Result);
+          }
+        );
+      const ext = withInterpreter(sandbox);
+
+      const pending = ext.runCode('print(1)', { language: 'python' });
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(rpc.runCodeStream).toHaveBeenCalledTimes(2);
+      // Only the successful attempt's output survives — no carryover.
+      expect(result.logs.stdout).toEqual(['final']);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].text).toBe('final-result');
+    });
+
     it('forwards user callbacks alongside internal accumulation', async () => {
       const { sandbox, interpreter: rpc } = makeSandbox();
       rpc.runCodeStream.mockImplementationOnce(
