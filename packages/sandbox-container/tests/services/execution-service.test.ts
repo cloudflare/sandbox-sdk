@@ -5,7 +5,7 @@ import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 type SessionExec = (

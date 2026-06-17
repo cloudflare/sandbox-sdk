@@ -11,7 +11,7 @@ import {
   ProcessService,
   type ProcessStore
 } from '@sandbox-container/services/process-service.js';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 // Mock the dependencies with proper typing

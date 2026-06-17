@@ -17,7 +17,7 @@ export interface SessionOptions {
   /** Environment variables for the session. Undefined values are skipped. */
   env?: Record<string, string | undefined>;
 
-  /** Legacy isolation flag (ignored - kept for compatibility) */
+  /** Accepted for API compatibility; runtime sessions ignore this option. */
   isolation?: boolean;
 
   /** Command timeout in milliseconds (overrides CONFIG.COMMAND_TIMEOUT_MS) */

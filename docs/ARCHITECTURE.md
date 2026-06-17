@@ -68,7 +68,6 @@ The container runtime bundled into the Docker image.
 | `src/core/container.ts`   | Dependency injection container                  |
 | `src/services/`           | Business logic layer                            |
 | `src/managers/`           | Stateful managers such as process/file managers |
-| `src/session.ts`          | Legacy completion-only persistent shell helper  |
 | `src/handlers/terminal-*` | Terminal WebSocket handling                     |
 
 ## Control Channel Architecture

@@ -1,6 +1,6 @@
 ---
 name: session-execution
-description: Use when working on or reviewing session execution, command handling, shell state, process streaming, or stdout/stderr separation. Relevant for session-manager.ts, session.ts, @repo/sandbox-execution, exec/startProcess, or shell process management. (project)
+description: Use when working on or reviewing session execution, command handling, shell state, process streaming, or stdout/stderr separation. Relevant for session-manager.ts, @repo/sandbox-execution, exec/startProcess, or shell process management. (project)
 ---
 
 # Session Execution
@@ -38,9 +38,9 @@ Streaming belongs to `startProcess()`. Do not add `execStream()` or
   functions, and sourced scripts can persist.
 - stdout and stderr are redirected to command-specific files and read after the
   shell reports completion.
-- The legacy `packages/sandbox-container/src/session.ts` class is now
-  completion-only; it must not expose `execStream()`, `killCommand()`, or
-  running-command tracking.
+- Container-side explicit sessions are managed by `SessionManager` and
+  backed by `@repo/sandbox-execution` `CommandSession`; there is no separate
+  legacy `Session` class.
 
 **Process lifecycle:**
 
@@ -72,7 +72,7 @@ Streaming belongs to `startProcess()`. Do not add `execStream()` or
 - Verify `session.exec()` remains completion-only and does not expose streaming
   or cancellation promises it cannot safely keep.
 - Verify `session.startProcess()` maps lifecycle events through the runtime
-  process path, not legacy `Session` methods.
+  process path, not ad-hoc shell/session methods.
 - Verify terminal creation/destroy use semantic lifecycle APIs and `/ws/terminal`
   remains byte transport only.
 
@@ -108,7 +108,5 @@ session. Before flagging race conditions:
   process lifecycle.
 - `packages/sandbox-container/src/services/session-manager.ts` - Session
   lifecycle, locking, and runtime adapters.
-- `packages/sandbox-container/src/session.ts` - Legacy completion-only shell
-  implementation; not a service streaming/process-control path.
 - `packages/sandbox-container/src/services/terminal-manager.ts` - Terminal
   resource lifecycle.

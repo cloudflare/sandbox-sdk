@@ -12,7 +12,7 @@ import {
   type SecurityService
 } from '@sandbox-container/services/git-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 // Properly typed mock dependencies

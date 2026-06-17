@@ -6,7 +6,6 @@ import {
   SandboxControlAPI
 } from '@sandbox-container/control-plane';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
-import type { Session } from '@sandbox-container/session';
 
 const mockLogger = {
   info: vi.fn(),
@@ -69,6 +68,17 @@ describe('SandboxControlAPI tunnels.ensureTunnelRun', () => {
   });
 });
 
+function mockCreateSessionResult(
+  sessionManager: SessionManager,
+  result: unknown
+): void {
+  (
+    sessionManager.createSession as unknown as {
+      mockResolvedValue(value: unknown): void;
+    }
+  ).mockResolvedValue(result);
+}
+
 describe('SandboxControlAPI utils.createSession', () => {
   let mockSessionManager: SessionManager;
 
@@ -87,9 +97,9 @@ describe('SandboxControlAPI utils.createSession', () => {
 
   it('returns containerPlacementId from CLOUDFLARE_PLACEMENT_ID on success', async () => {
     process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-rpc-123';
-    (mockSessionManager.createSession as any).mockResolvedValue({
+    mockCreateSessionResult(mockSessionManager, {
       success: true,
-      data: {} as Session
+      data: {}
     });
 
     const api = buildApi(mockSessionManager);
@@ -105,9 +115,9 @@ describe('SandboxControlAPI utils.createSession', () => {
 
   it('returns containerPlacementId: null when CLOUDFLARE_PLACEMENT_ID is unset', async () => {
     delete process.env.CLOUDFLARE_PLACEMENT_ID;
-    (mockSessionManager.createSession as any).mockResolvedValue({
+    mockCreateSessionResult(mockSessionManager, {
       success: true,
-      data: {} as Session
+      data: {}
     });
 
     const api = buildApi(mockSessionManager);
@@ -118,7 +128,7 @@ describe('SandboxControlAPI utils.createSession', () => {
 
   it('includes containerPlacementId in error context on SESSION_ALREADY_EXISTS', async () => {
     process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-rpc-already';
-    (mockSessionManager.createSession as any).mockResolvedValue({
+    mockCreateSessionResult(mockSessionManager, {
       success: false,
       error: {
         message: "Session 'sess-3' already exists",
@@ -152,7 +162,7 @@ describe('SandboxControlAPI utils.createSession', () => {
 
   it('does not add containerPlacementId to unrelated error codes', async () => {
     process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-should-not-appear';
-    (mockSessionManager.createSession as any).mockResolvedValue({
+    mockCreateSessionResult(mockSessionManager, {
       success: false,
       error: {
         message: 'Some other failure',

@@ -15,7 +15,7 @@ import {
   FileService,
   type SecurityService
 } from '@sandbox-container/services/file-service';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 // Mock SecurityService with proper typing

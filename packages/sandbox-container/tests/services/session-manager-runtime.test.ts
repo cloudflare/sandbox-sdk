@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { CommandSession } from '@repo/sandbox-execution';
 import { createNoOpLogger, type ExecEvent } from '@repo/shared';
 import { SessionManager } from '../../src/services/session-manager';
-import { Session } from '../../src/session';
 
 describe('SessionManager runtime integration', () => {
   let sessionManager: SessionManager;
@@ -23,7 +22,7 @@ describe('SessionManager runtime integration', () => {
     vi.restoreAllMocks();
   });
 
-  it('stores runtime sessions outside the legacy Session class', async () => {
+  it('stores runtime sessions as managed session objects', async () => {
     const result = await sessionManager.executeInSession(
       'runtime-managed-session',
       'printf "managed"',
@@ -37,23 +36,14 @@ describe('SessionManager runtime integration', () => {
     const session = managerInternals.sessions.get('runtime-managed-session');
 
     expect(session).toBeDefined();
-    expect(session).not.toBeInstanceOf(Session);
+    expect(session).not.toHaveProperty('execStream');
+    expect(session).not.toHaveProperty('pty');
   });
 
-  it('creates runtime sessions without initializing a legacy shell', async () => {
-    const initializeSpy = vi.spyOn(Session.prototype, 'initialize');
-
-    const result = await sessionManager.executeInSession(
-      'runtime-no-legacy-shell-session',
-      'printf "runtime-only"',
-      { cwd: testDir }
-    );
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.stdout).toBe('runtime-only');
-    }
-    expect(initializeSpy).not.toHaveBeenCalled();
+  it('does not keep the legacy Session source module', async () => {
+    expect(
+      await Bun.file(join(import.meta.dir, '../../src/session.ts')).exists()
+    ).toBe(false);
   });
 
   it('creates persistent exec sessions through the execution runtime', async () => {
@@ -199,9 +189,6 @@ printf "done\n"`,
   it('tracks runtime process commands without legacy handles', async () => {
     const sessionId = 'runtime-tracking-session';
     const commandId = 'runtime-tracking-command';
-    expect('getRunningCommandIds' in Session.prototype).toBe(false);
-    expect('killCommand' in Session.prototype).toBe(false);
-
     const streamResult = await sessionManager.executeStreamInSession(
       sessionId,
       'sleep 10',
@@ -281,7 +268,6 @@ printf "done\n"`,
         origin?: 'user' | 'internal';
       };
     }> = [];
-    expect('execStream' in Session.prototype).toBe(false);
     const managedSession = {
       pty: null,
       async initialize(): Promise<void> {},

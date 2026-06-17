@@ -131,9 +131,8 @@ transport for attaching to an existing terminal.
 
 ## Completion-Only Persistent Exec Mechanics
 
-Both the legacy container `Session` implementation and the runtime
-`CommandSession.exec()` use the same core idea for persistent, completion-only
-execution:
+`CommandSession.exec()` uses file-backed capture for persistent,
+completion-only execution:
 
 1. Run the command in the persistent bash shell so state can persist.
 2. Redirect stdout and stderr to command-specific temp files.
@@ -145,35 +144,12 @@ The important design point is that temp-file redirects are synchronous from the
 shell's point of view. Bash waits for the command's redirected output to finish
 before the integration reports command completion.
 
-## Binary Prefix Contract in `session.ts`
-
-`packages/sandbox-container/src/session.ts` still uses a local command log with
-binary prefixes for its completion-only `exec()` implementation:
-
-| Stream | Prefix         | Bytes |
-| ------ | -------------- | ----- |
-| stdout | `\x01\x01\x01` | 3     |
-| stderr | `\x02\x02\x02` | 3     |
-
-The parser strips these prefixes to reconstruct stdout and stderr. This legacy
-class no longer exposes `execStream()`, `killCommand()`, or running-command
-tracking; service-level session execution is runtime-backed through
-`CommandSession`.
-
 ## Completion Signaling
-
-### `packages/sandbox-container/src/session.ts`
-
-The legacy completion-only `Session` writes `<id>.exit.tmp` and atomically
-renames it to `<id>.exit`. TypeScript detects completion with a hybrid
-`fs.watch` plus polling fallback.
-
-### `@repo/sandbox-execution` `CommandSession`
 
 The runtime command session emits framed control messages on stdout and uses
 command-specific result files for bounded stdout/stderr reads. Process streaming
 uses FIFO readers internally, but that machinery is private to the execution
-package and is not exposed as `Session.execStream()`.
+package and is exposed only through `startProcess()` APIs.
 
 ## Error Handling
 
@@ -201,5 +177,4 @@ Different sessions and stateless top-level processes can run concurrently.
 - [`packages/sandbox-execution/src/stateless-command-runner.ts`](../packages/sandbox-execution/src/stateless-command-runner.ts) - Stateless completion-only commands.
 - [`packages/sandbox-execution/src/stateless-process-runner.ts`](../packages/sandbox-execution/src/stateless-process-runner.ts) - Stateless process lifecycle and streaming.
 - [`packages/sandbox-container/src/services/session-manager.ts`](../packages/sandbox-container/src/services/session-manager.ts) - Container session lifecycle, locking, and service event mapping.
-- [`packages/sandbox-container/src/session.ts`](../packages/sandbox-container/src/session.ts) - Legacy completion-only persistent shell implementation.
 - [`packages/sandbox-container/src/services/terminal-manager.ts`](../packages/sandbox-container/src/services/terminal-manager.ts) - Terminal resource lifecycle.

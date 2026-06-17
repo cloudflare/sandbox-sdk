@@ -70,7 +70,6 @@ Specialized non-control channels remain separate:
 - **Managers** (`managers/`) — stateful coordinators such as `ProcessManager`
 - **Execution runtime** (`@repo/sandbox-execution`) — stateless commands, persistent command sessions, and lifecycle-managed processes
 - **Session manager** (`services/session-manager.ts`) — explicit session lifecycle, locking, and runtime adapters
-- **Session** (`session.ts`) — legacy completion-only persistent shell helper
 - **Terminal handler** (`handlers/terminal-ws-handler.ts`) — terminal WebSocket byte transport
 
 Entry point: `packages/sandbox-container/src/index.ts` starts the Bun server on port 3000.

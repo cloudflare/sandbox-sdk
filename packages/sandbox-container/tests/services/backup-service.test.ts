@@ -3,7 +3,7 @@ import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
 import type { ExecutionService } from '@sandbox-container/services/execution-service';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 const mockLogger = {
