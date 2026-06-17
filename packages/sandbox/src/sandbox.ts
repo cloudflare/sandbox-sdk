@@ -678,28 +678,22 @@ export function getSandbox<T extends Sandbox<any>>(
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     exec: (command: string, execOptions?: ExecOptions) =>
-      useDefaultSession
-        ? stub.exec(command, execOptions)
-        : stub.execWithSessionToken(
-            command,
-            DISABLE_SESSION_TOKEN,
-            execOptions
-          ),
+      stub.execWithSessionToken(command, DISABLE_SESSION_TOKEN, execOptions),
     startProcess: (command: string, processOptions?: ProcessOptions) =>
-      useDefaultSession || processOptions?.sessionId !== undefined
+      processOptions?.sessionId !== undefined
         ? stub.startProcess(command, processOptions)
         : stub.startProcess(command, {
             ...processOptions,
             sessionId: DISABLE_SESSION_TOKEN
           }),
     listProcesses: (sessionId?: string) =>
-      useDefaultSession || sessionId !== undefined
-        ? stub.listProcesses(sessionId)
-        : stub.listProcesses(DISABLE_SESSION_TOKEN),
+      sessionId === undefined
+        ? stub.listProcesses()
+        : stub.listProcesses(sessionId),
     getProcess: (id: string, sessionId?: string) =>
-      useDefaultSession || sessionId !== undefined
-        ? stub.getProcess(id, sessionId)
-        : stub.getProcess(id, DISABLE_SESSION_TOKEN),
+      sessionId === undefined
+        ? stub.getProcess(id)
+        : stub.getProcess(id, sessionId),
 
     writeFile: (
       path: string,

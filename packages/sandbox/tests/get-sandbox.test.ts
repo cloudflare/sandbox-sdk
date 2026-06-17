@@ -298,7 +298,48 @@ describe('getSandbox', () => {
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
-    it('routes implicit startProcess through the sessionless token when default sessions are disabled', async () => {
+    it('routes implicit exec through the sessionless token regardless of default-session options', async () => {
+      mockStub.exec = vi.fn().mockResolvedValue({
+        success: true,
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo test',
+        timestamp: new Date().toISOString()
+      });
+      mockStub.execWithSessionToken = vi.fn().mockResolvedValue({
+        success: true,
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo test',
+        timestamp: new Date().toISOString()
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: true
+      });
+
+      await sandbox.exec('echo test', {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000
+      });
+
+      expect(mockStub.exec).not.toHaveBeenCalled();
+      expect(mockStub.execWithSessionToken).toHaveBeenCalledWith(
+        'echo test',
+        DISABLE_SESSION_TOKEN,
+        {
+          env: { TEST_ENV: '1' },
+          cwd: '/workspace/app',
+          timeout: 1000
+        }
+      );
+    });
+
+    it('routes implicit startProcess through the sessionless token regardless of default-session options', async () => {
       mockStub.startProcess = vi.fn().mockResolvedValue({
         success: true,
         processId: 'proc-sessionless',
@@ -308,7 +349,7 @@ describe('getSandbox', () => {
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
+        enableDefaultSession: true
       });
 
       await sandbox.startProcess('sleep 10', {
@@ -325,25 +366,20 @@ describe('getSandbox', () => {
       });
     });
 
-    it('routes implicit process reads through the sessionless token when default sessions are disabled', async () => {
+    it('keeps implicit process reads sandbox-scoped regardless of default-session options', async () => {
       mockStub.listProcesses = vi.fn().mockResolvedValue([]);
       mockStub.getProcess = vi.fn().mockResolvedValue(null);
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-        enableDefaultSession: false
+        enableDefaultSession: true
       });
 
       await sandbox.listProcesses();
       await sandbox.getProcess('proc-sessionless');
 
-      expect(mockStub.listProcesses).toHaveBeenCalledWith(
-        DISABLE_SESSION_TOKEN
-      );
-      expect(mockStub.getProcess).toHaveBeenCalledWith(
-        'proc-sessionless',
-        DISABLE_SESSION_TOKEN
-      );
+      expect(mockStub.listProcesses).toHaveBeenCalledWith();
+      expect(mockStub.getProcess).toHaveBeenCalledWith('proc-sessionless');
     });
 
     it('preserves explicit sessionIds for process reads when default sessions are disabled', async () => {
