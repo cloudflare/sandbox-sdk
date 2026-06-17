@@ -1,7 +1,7 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
 import { ExtensionHost } from '../extensions/extension-host';
-import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
+import { TerminalWebSocketHandler } from '../handlers/terminal-ws-handler';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
@@ -35,7 +35,7 @@ export interface Dependencies {
   executionService: ExecutionService;
 
   // Handlers
-  ptyWsHandler: PtyWebSocketHandler;
+  terminalWsHandler: TerminalWebSocketHandler;
 }
 
 export class Container {
@@ -130,7 +130,10 @@ export class Container {
     const extensionHost = new ExtensionHost(logger);
 
     // Initialize handlers
-    const ptyWsHandler = new PtyWebSocketHandler(terminalManager, logger);
+    const terminalWsHandler = new TerminalWebSocketHandler(
+      terminalManager,
+      logger
+    );
 
     // Store all dependencies
     this.dependencies = {
@@ -152,7 +155,7 @@ export class Container {
       executionService,
 
       // Handlers
-      ptyWsHandler
+      terminalWsHandler
     };
 
     this.initialized = true;

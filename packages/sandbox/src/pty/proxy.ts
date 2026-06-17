@@ -21,7 +21,7 @@ export async function proxyTerminal(
   if (options?.rows) params.set('rows', String(options.rows));
   if (options?.shell) params.set('shell', options.shell);
 
-  const ptyUrl = `http://localhost/ws/pty?${params}`;
+  const ptyUrl = `http://localhost/ws/terminal?${params}`;
   const ptyRequest = new Request(ptyUrl, request);
 
   return stub.fetch(switchPort(ptyRequest, 3000));

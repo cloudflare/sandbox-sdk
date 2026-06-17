@@ -128,9 +128,9 @@ Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. Th
   -> Manager or Session
 ```
 
-The Bun server also keeps `/ws/pty` for terminal sessions. Non-WebSocket HTTP requests that are not preview/proxy traffic are not the SDK control plane.
+The Bun server also keeps `/ws/terminal` for terminal resources. Non-WebSocket HTTP requests that are not preview/proxy traffic are not the SDK control plane.
 
-`core/container.ts` instantiates services and the PTY handler with explicit dependencies. Control-plane methods call these services directly.
+`core/container.ts` instantiates services and the terminal handler with explicit dependencies. Control-plane methods call these services directly.
 
 ## Key Architectural Patterns
 

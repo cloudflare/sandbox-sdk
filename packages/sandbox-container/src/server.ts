@@ -6,7 +6,7 @@ import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
 import { SandboxControlAPI } from './control-plane';
 import { Container } from './core/container';
-import type { PtyWSData } from './handlers/pty-ws-handler';
+import type { TerminalWSData } from './handlers/terminal-ws-handler';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -14,7 +14,7 @@ export type CapnwebWSData = {
   transport?: BunWebSocketTransport<WSData>;
 };
 
-export type WSData = PtyWSData | CapnwebWSData;
+export type WSData = TerminalWSData | CapnwebWSData;
 
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
@@ -82,7 +82,7 @@ async function createApplication(): Promise<{
       if (upgradeHeader?.toLowerCase() === 'websocket') {
         const url = new URL(req.url);
 
-        if (url.pathname === '/ws/pty') {
+        if (url.pathname === '/ws/terminal') {
           const terminalId = url.searchParams.get('terminalId');
           if (!terminalId) {
             return new Response('terminalId query parameter required', {
@@ -96,7 +96,7 @@ async function createApplication(): Promise<{
 
           const upgraded = server.upgrade(req, {
             data: {
-              type: 'pty' as const,
+              type: 'terminal' as const,
               terminalId,
               connectionId: generateConnectionId(),
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
@@ -158,13 +158,13 @@ export async function startServer(): Promise<ServerInstance> {
     websocket: {
       open(ws) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             void app.container
-              .get('ptyWsHandler')
-              .onOpen(ws as ServerWebSocket<PtyWSData>)
+              .get('terminalWsHandler')
+              .onOpen(ws as ServerWebSocket<TerminalWSData>)
               .catch((err) => {
                 logger.error(
-                  'PTY onOpen failed',
+                  'Terminal onOpen failed',
                   err instanceof Error ? err : new Error(String(err))
                 );
                 try {
@@ -194,10 +194,10 @@ export async function startServer(): Promise<ServerInstance> {
       },
       close(ws, code, reason) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             app.container
-              .get('ptyWsHandler')
-              .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
+              .get('terminalWsHandler')
+              .onClose(ws as ServerWebSocket<TerminalWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
             // Forget the peer's control callback. Subsequent tunnel
@@ -214,10 +214,10 @@ export async function startServer(): Promise<ServerInstance> {
       },
       async message(ws, message) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             app.container
-              .get('ptyWsHandler')
-              .onMessage(ws as ServerWebSocket<PtyWSData>, message);
+              .get('terminalWsHandler')
+              .onMessage(ws as ServerWebSocket<TerminalWSData>, message);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchMessage(message);
           }

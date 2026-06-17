@@ -59,7 +59,7 @@ The shared `@repo/shared` `SandboxAPI` interface defines the control API contrac
 Specialized non-control channels remain separate:
 
 - `/rpc` — SDK control channel
-- `/ws/pty` — PTY terminal channel
+- `/ws/terminal` — terminal WebSocket channel
 - preview/proxy forwarding — user service traffic, not SDK control traffic
 
 ## Container Runtime (`packages/sandbox-container/src/`)
@@ -69,7 +69,7 @@ Specialized non-control channels remain separate:
 - **Services** (`services/`) — business logic (`ProcessService`, `FileService`, `PortService`, …)
 - **Managers** (`managers/`) — stateful coordinators such as `ProcessManager`
 - **Session** (`session.ts`) — persistent shell execution implementation
-- **PTY handler** (`handlers/pty-ws-handler.ts`) — terminal WebSocket handling
+- **Terminal handler** (`handlers/terminal-ws-handler.ts`) — terminal WebSocket handling
 
 Entry point: `packages/sandbox-container/src/index.ts` starts the Bun server on port 3000.
 

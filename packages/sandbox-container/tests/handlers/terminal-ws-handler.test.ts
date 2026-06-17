@@ -3,14 +3,14 @@ import type { Disposable } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import {
-  PtyWebSocketHandler,
-  type PtyWSData
-} from '../../src/handlers/pty-ws-handler';
+  TerminalWebSocketHandler,
+  type TerminalWSData
+} from '../../src/handlers/terminal-ws-handler';
 import type { Pty } from '../../src/pty';
 import type { TerminalHandle } from '../../src/services/terminal-manager';
 
 type MockWebSocket = Pick<
-  ServerWebSocket<PtyWSData>,
+  ServerWebSocket<TerminalWSData>,
   'data' | 'send' | 'sendBinary' | 'close'
 >;
 
@@ -21,7 +21,7 @@ type MockPty = Pick<
   closed: boolean;
 };
 
-const createMockWS = (data: PtyWSData): MockWebSocket => ({
+const createMockWS = (data: TerminalWSData): MockWebSocket => ({
   data,
   send: mock(() => 0),
   sendBinary: mock(() => 1),
@@ -48,20 +48,20 @@ function createTerminalManager(mockPty = createMockPty()) {
   };
 }
 
-describe('PtyWebSocketHandler', () => {
+describe('TerminalWebSocketHandler', () => {
   const logger = createNoOpLogger();
 
   it('creates terminals through TerminalManager on connection', async () => {
     const mockPty = createMockPty();
     const terminalManager = createTerminalManager(mockPty);
-    const handler = new PtyWebSocketHandler(terminalManager, logger);
+    const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
-      type: 'pty',
+      type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1'
     });
 
-    await handler.onOpen(ws as ServerWebSocket<PtyWSData>);
+    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
 
     expect(terminalManager.getOrCreateTerminal).toHaveBeenCalledWith({
       id: 'test-terminal',
@@ -79,31 +79,31 @@ describe('PtyWebSocketHandler', () => {
     const terminalManager = {
       getOrCreateTerminal: mock(() => Promise.reject(new Error('Spawn failed')))
     };
-    const handler = new PtyWebSocketHandler(terminalManager, logger);
+    const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
-      type: 'pty',
+      type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1'
     });
 
-    await handler.onOpen(ws as ServerWebSocket<PtyWSData>);
+    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
 
     expect(ws.close).toHaveBeenCalledWith(1011, 'Spawn failed');
   });
 
-  it('forwards binary messages to PTY as input', async () => {
+  it('forwards binary messages to terminal as input', async () => {
     const mockPty = createMockPty();
     const terminalManager = createTerminalManager(mockPty);
-    const handler = new PtyWebSocketHandler(terminalManager, logger);
+    const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
-      type: 'pty',
+      type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1'
     });
 
-    await handler.onOpen(ws as ServerWebSocket<PtyWSData>);
+    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
     handler.onMessage(
-      ws as ServerWebSocket<PtyWSData>,
+      ws as ServerWebSocket<TerminalWSData>,
       new Uint8Array([104, 101, 108, 108, 111]).buffer
     );
 
@@ -113,16 +113,16 @@ describe('PtyWebSocketHandler', () => {
   it('handles resize control messages', async () => {
     const mockPty = createMockPty();
     const terminalManager = createTerminalManager(mockPty);
-    const handler = new PtyWebSocketHandler(terminalManager, logger);
+    const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
-      type: 'pty',
+      type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1'
     });
 
-    await handler.onOpen(ws as ServerWebSocket<PtyWSData>);
+    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
     handler.onMessage(
-      ws as ServerWebSocket<PtyWSData>,
+      ws as ServerWebSocket<TerminalWSData>,
       JSON.stringify({ type: 'resize', cols: 120, rows: 40 })
     );
 
@@ -138,15 +138,19 @@ describe('PtyWebSocketHandler', () => {
       ...createTerminalManager(mockPty),
       destroyTerminal: mock(() => Promise.resolve())
     };
-    const handler = new PtyWebSocketHandler(terminalManager, logger);
+    const handler = new TerminalWebSocketHandler(terminalManager, logger);
     const ws = createMockWS({
-      type: 'pty',
+      type: 'terminal',
       terminalId: 'test-terminal',
       connectionId: 'conn-1'
     });
 
-    await handler.onOpen(ws as ServerWebSocket<PtyWSData>);
-    handler.onClose(ws as ServerWebSocket<PtyWSData>, 1000, 'Normal closure');
+    await handler.onOpen(ws as ServerWebSocket<TerminalWSData>);
+    handler.onClose(
+      ws as ServerWebSocket<TerminalWSData>,
+      1000,
+      'Normal closure'
+    );
 
     expect(mockDispose).toHaveBeenCalled();
     expect(terminalManager.destroyTerminal).not.toHaveBeenCalled();

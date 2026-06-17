@@ -8,8 +8,8 @@ import type { ServerWebSocket } from 'bun';
 import type { Pty } from '../pty';
 import type { TerminalManager } from '../services/terminal-manager';
 
-export interface PtyWSData {
-  type: 'pty';
+export interface TerminalWSData {
+  type: 'terminal';
   terminalId: string;
   connectionId: string;
   cols?: number;
@@ -17,21 +17,21 @@ export interface PtyWSData {
   shell?: string;
 }
 
-interface PtyConnection {
-  ws: ServerWebSocket<PtyWSData>;
+interface TerminalConnection {
+  ws: ServerWebSocket<TerminalWSData>;
   pty: Pty;
   subscription: Disposable;
 }
 
-export class PtyWebSocketHandler {
-  private connections = new Map<string, PtyConnection>();
+export class TerminalWebSocketHandler {
+  private connections = new Map<string, TerminalConnection>();
 
   constructor(
     private terminalManager: Pick<TerminalManager, 'getOrCreateTerminal'>,
     private logger: Logger
   ) {}
 
-  async onOpen(ws: ServerWebSocket<PtyWSData>): Promise<void> {
+  async onOpen(ws: ServerWebSocket<TerminalWSData>): Promise<void> {
     const { terminalId, connectionId, cols, rows, shell } = ws.data;
     // Lifecycle captured in onClose canonical log line
 
@@ -65,7 +65,7 @@ export class PtyWebSocketHandler {
     }
 
     const subscription = pty.onData((data) => {
-      this.sendPtyData(ws, connectionId, data);
+      this.sendTerminalData(ws, connectionId, data);
     });
 
     this.connections.set(connectionId, { ws, pty, subscription });
@@ -74,14 +74,14 @@ export class PtyWebSocketHandler {
   }
 
   onMessage(
-    ws: ServerWebSocket<PtyWSData>,
+    ws: ServerWebSocket<TerminalWSData>,
     message: string | ArrayBuffer | Buffer
   ): void {
     const { connectionId } = ws.data;
     const conn = this.connections.get(connectionId);
 
     if (!conn) {
-      this.logger.warn('pty.message', {
+      this.logger.warn('terminal.message', {
         connectionId,
         outcome: 'unknown_connection'
       });
@@ -95,10 +95,14 @@ export class PtyWebSocketHandler {
     }
   }
 
-  onClose(ws: ServerWebSocket<PtyWSData>, code: number, reason: string): void {
+  onClose(
+    ws: ServerWebSocket<TerminalWSData>,
+    code: number,
+    reason: string
+  ): void {
     const { connectionId, terminalId } = ws.data;
 
-    this.logger.debug('pty.connection', {
+    this.logger.debug('terminal.connection', {
       terminalId,
       connectionId,
       code,
@@ -113,20 +117,20 @@ export class PtyWebSocketHandler {
     }
   }
 
-  onDrain(ws: ServerWebSocket<PtyWSData>): void {
+  onDrain(ws: ServerWebSocket<TerminalWSData>): void {
     const { connectionId } = ws.data;
-    this.logger.debug('pty.drain', { connectionId });
+    this.logger.debug('terminal.drain', { connectionId });
   }
 
-  private sendPtyData(
-    ws: ServerWebSocket<PtyWSData>,
+  private sendTerminalData(
+    ws: ServerWebSocket<TerminalWSData>,
     connectionId: string,
     data: Uint8Array
   ): void {
     const result = ws.sendBinary(data);
 
     if (result === 0) {
-      this.logger.debug('pty.send', { connectionId, outcome: 'dead' });
+      this.logger.debug('terminal.send', { connectionId, outcome: 'dead' });
       const conn = this.connections.get(connectionId);
       if (conn) {
         conn.subscription.dispose();
@@ -137,7 +141,7 @@ export class PtyWebSocketHandler {
 
   private handleControl(
     pty: Pty,
-    ws: ServerWebSocket<PtyWSData>,
+    ws: ServerWebSocket<TerminalWSData>,
     message: string
   ): void {
     try {
@@ -153,14 +157,14 @@ export class PtyWebSocketHandler {
         }
         pty.resize(control.cols, control.rows);
       } else {
-        this.logger.warn('pty.control', {
+        this.logger.warn('terminal.control', {
           connectionId: ws.data.connectionId,
           controlType: control.type,
           outcome: 'unknown_type'
         });
       }
     } catch (err) {
-      this.logger.error('pty.control', err as Error, {
+      this.logger.error('terminal.control', err as Error, {
         connectionId: ws.data.connectionId,
         outcome: 'parse_error'
       });
@@ -172,13 +176,13 @@ export class PtyWebSocketHandler {
   }
 
   private sendStatus(
-    ws: ServerWebSocket<PtyWSData>,
+    ws: ServerWebSocket<TerminalWSData>,
     status: PtyStatusMessage
   ): void {
     try {
       ws.send(JSON.stringify(status));
     } catch (err) {
-      this.logger.error('pty.sendStatus', err as Error);
+      this.logger.error('terminal.sendStatus', err as Error);
     }
   }
 }
