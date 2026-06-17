@@ -75,7 +75,7 @@ import {
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
-  SessionAlreadyExistsError
+  SandboxError
 } from './errors';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
@@ -374,8 +374,23 @@ const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
 // header, preventing the outbound proxy from stalling waiting for a 100 response.
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
-const DEFAULT_SESSION_INIT_MAX_ATTEMPTS = 2;
-const DEFAULT_SESSION_RESTART_SETTLE_MS = 100;
+
+const BACKUP_DEFAULT_TTL_SECONDS = 259200;
+const BACKUP_MAX_NAME_LENGTH = 256;
+const BACKUP_CONTAINER_DIR = '/var/backups';
+const BACKUP_STORAGE_PREFIX = 'backups';
+const BACKUP_ARCHIVE_OBJECT_NAME = 'data.sqsh';
+const BACKUP_METADATA_OBJECT_NAME = 'meta.json';
+const BACKUP_DEFAULT_COMPRESSION = 'lz4';
+const BACKUP_DEFAULT_COMPRESS_THREADS = 8;
+const BACKUP_MULTIPART_MIN_SIZE = 10 * 1024 * 1024;
+const BACKUP_MULTIPART_TARGET_PARTS = 16;
+const BACKUP_MULTIPART_MIN_PART_SIZE = 5 * 1024 * 1024;
+const BACKUP_MULTIPART_MAX_PARTS = 64;
+const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
+const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
+const BACKUP_DOWNLOAD_MAX_PARTS = 64;
+
 
 /**
  * Tagged template literal that shell-escapes every interpolated value.
@@ -904,16 +919,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // container can call back into the DO without us re-binding the session.
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
-  private defaultSession: string | null = null;
-  // Incremented whenever the container stops. Used to invalidate
-  // in-flight default-session initialization that started against a
-  // now-dead container.
-  private containerGeneration = 0;
-  private defaultSessionInit: {
-    sessionId: string;
-    generation: number;
-    promise: Promise<string>;
-  } | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
@@ -1124,8 +1129,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<string>('sandboxName')) ?? null;
       this.normalizeId =
         (await this.ctx.storage.get<boolean>('normalizeId')) ?? false;
-      this.defaultSession =
-        (await this.ctx.storage.get<string>('defaultSession')) ?? null;
       this.keepAliveEnabled =
         (await this.ctx.storage.get<boolean>('keepAliveEnabled')) ?? false;
 
@@ -1232,40 +1235,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       delete this.envVars[key];
     }
     this.envVars = { ...this.envVars, ...toSet };
-
-    if (this.defaultSession) {
-      for (const key of toUnset) {
-        const unsetCommand = `unset ${key}`;
-
-        const result = await this.client.commands.execute(
-          unsetCommand,
-          this.defaultSession,
-          { origin: 'internal' }
-        );
-
-        if (result.exitCode !== 0) {
-          throw new Error(
-            `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
-          );
-        }
-      }
-
-      for (const [key, value] of Object.entries(toSet)) {
-        const exportCommand = `export ${key}=${shellEscape(value)}`;
-
-        const result = await this.client.commands.execute(
-          exportCommand,
-          this.defaultSession,
-          { origin: 'internal' }
-        );
-
-        if (result.exitCode !== 0) {
-          throw new Error(
-            `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
-          );
-        }
-      }
-    }
   }
 
   async setContainerTimeouts(
@@ -2687,16 +2656,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    // Invalidate default-session state before the first await. Bumping
-    // containerGeneration signals any in-flight initializeDefaultSession
-    // that a new container generation begins next; it observes the
-    // mismatch at its post-createSession check and fails. Clearing the
-    // slot means later callers start a new init against the next
-    // container.
-    this.containerGeneration++;
-    this.defaultSession = null;
-    this.defaultSessionInit = null;
-
     await this.currentRuntime.clear();
     await this.clearActivePreviewPorts();
 
@@ -2738,10 +2697,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     this.activeMounts.clear();
 
-    // Persist cleanup to storage so state is clean on next container start.
     // Port tokens are durable authorization and survive container restarts;
     // runtime-scoped preview activation is cleared separately above.
-    await this.ctx.storage.delete('defaultSession');
   }
 
   override onError(error: unknown) {
@@ -3326,131 +3283,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Return the legacy default session id, lazily creating the container session
-   * on first use. This remains only for preview-runtime startup until that
-   * path is replaced with a semantic runtime handshake.
-   */
-  private async ensureDefaultSession(): Promise<string> {
-    const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-    for (
-      let attempt = 1;
-      attempt <= DEFAULT_SESSION_INIT_MAX_ATTEMPTS;
-      attempt++
-    ) {
-      try {
-        return await this.getOrInitializeDefaultSession(sessionId);
-      } catch (error) {
-        if (
-          !this.isDefaultSessionInitContainerRestart(error) ||
-          attempt === DEFAULT_SESSION_INIT_MAX_ATTEMPTS
-        ) {
-          throw error;
-        }
-        // Give the next container generation a short local settle window
-        // before recreating preparatory default-session state.
-        await new Promise((resolve) =>
-          setTimeout(resolve, DEFAULT_SESSION_RESTART_SETTLE_MS)
-        );
-      }
-    }
 
-    throw new Error('Default session initialization failed unexpectedly');
-  }
-
-  private async getOrInitializeDefaultSession(
-    sessionId: string
-  ): Promise<string> {
-    // Fast path: session already initialized in this instance
-    if (this.defaultSession === sessionId) {
-      return this.defaultSession;
-    }
-
-    // The in-flight slot is keyed by (sessionId, generation). A caller
-    // whose sessionId matches the current slot AND runs against the same
-    // container generation awaits that shared promise. sandboxName
-    // changing mid-flight yields a sessionId mismatch; a container stop
-    // advances the generation and an older slot becomes non-joinable.
-    const generation = this.containerGeneration;
-    const pending = this.defaultSessionInit;
-    if (pending?.sessionId === sessionId && pending.generation === generation) {
-      return pending.promise;
-    }
-
-    const promise = this.initializeDefaultSession(sessionId, generation);
-    const init = { sessionId, generation, promise };
-    this.defaultSessionInit = init;
-    try {
-      return await promise;
-    } finally {
-      // Identity guard: only clear the slot if it still holds this
-      // attempt. A newer mismatching caller or an onStop may have
-      // taken the slot.
-      if (this.defaultSessionInit === init) {
-        this.defaultSessionInit = null;
-      }
-    }
-  }
-
-  private isDefaultSessionInitContainerRestart(error: unknown): boolean {
-    return (
-      error instanceof ContainerUnavailableError &&
-      error.context.reason === 'container_replaced'
-    );
-  }
-
-  private async initializeDefaultSession(
-    sessionId: string,
-    generation: number
-  ): Promise<string> {
-    let placementId: string | null | undefined;
-    try {
-      const response = await this.client.utils.createSession({
-        id: sessionId,
-        env: this.envVars || {},
-        cwd: '/workspace'
-      });
-      placementId = response.containerPlacementId;
-    } catch (error: unknown) {
-      // The container can outlive this DO instance, so an existing session
-      // means the container is already in the state we need.
-      if (!(error instanceof SessionAlreadyExistsError)) {
-        throw error;
-      }
-      placementId = error.containerPlacementId;
-      this.logger.debug(
-        'Session exists in container but not in DO state, syncing',
-        { sessionId }
-      );
-    }
-
-    // Generation check before writing state: if onStop ran while the
-    // container RPC was in flight, this init targets a dead container.
-    // Fail the attempt so the next caller starts fresh against the new
-    // container.
-    if (generation !== this.containerGeneration) {
-      throw new ContainerUnavailableError({
-        code: ErrorCode.CONTAINER_UNAVAILABLE,
-        message:
-          'Container restarted while the default session was being initialized.',
-        context: { reason: 'container_replaced', retryable: true },
-        httpStatus: 503,
-        timestamp: new Date().toISOString(),
-        suggestion:
-          'The container restarted while the SDK was preparing the default session. Retry the operation to use the new container.'
-      });
-    }
-
-    // Durable storage is the cross-eviction source of truth for the default
-    // session identity. Update the in-memory cache only after persistence.
-    await this.ctx.storage.put('defaultSession', sessionId);
-    await this.capturePlacementId(placementId);
-    this.defaultSession = sessionId;
-    this.logger.debug('Default session initialized', { sessionId });
-    return sessionId;
-  }
-
-  /**
    * Persist the container's placement ID in DO storage.
    *
    * Called from the session-create handshake so subsequent reads via
@@ -4605,13 +4439,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.validateCustomToken(options.token);
       }
 
-      await this.ensureDefaultSession();
-
-      // onStart() may record runtime identity while ensureDefaultSession()
-      // starts the container. Re-read before falling back to markStarted() so
-      // normal start hooks remain the identity source.
-      let runtime = await this.currentRuntime.get();
-      runtime = runtime ?? (await this.currentRuntime.markStarted());
+      const runtime = await this.ensureRuntimeActiveForPreview();
       await this.currentRuntime.assertActive(runtime);
 
       const token = await this.ctx.storage.transaction(async (txn) => {
@@ -4676,6 +4504,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error: caughtError
       });
     }
+  }
+
+  private async ensureRuntimeActiveForPreview(): Promise<RuntimeIdentity> {
+    await this.startAndWaitForPorts({
+      ports: this.defaultPort,
+      cancellationOptions: {
+        instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+        portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+        waitInterval: this.containerTimeouts.waitIntervalMS
+      }
+    });
+
+    const runtime = await this.currentRuntime.get();
+    return runtime ?? (await this.currentRuntime.markStarted());
   }
 
   /**
@@ -5133,12 +4975,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @returns Result with success status, sessionId, and timestamp
    */
   async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
-    if (this.defaultSession && sessionId === this.defaultSession) {
-      throw new Error(
-        `Cannot delete default session '${sessionId}'. Use sandbox.destroy() to terminate the sandbox.`
-      );
-    }
-
     const response = await this.client.utils.deleteSession(sessionId);
 
     // Map HTTP response to result type

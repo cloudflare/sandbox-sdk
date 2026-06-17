@@ -116,6 +116,10 @@ interface SandboxInternalExec {
   execInternal(command: string): Promise<ExecResult>;
 }
 
+interface SandboxRuntimeStart {
+  ensureRuntimeActiveForPreview(): Promise<unknown>;
+}
+
 const PREVIEW_TEST_PORT = 8080;
 const PREVIEW_TEST_TOKEN = 'token12345678901';
 const PREVIEW_TEST_RUNTIME_ID = 'runtime-1';
@@ -792,148 +796,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.writeFile('/one.txt', 'one');
       await sandbox.writeFile('/two.txt', 'two');
 
-<<<<<<< HEAD
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not share an in-flight init across different session ids', async () => {
-      let resolveFirst!: (value: unknown) => void;
-      let resolveSecond!: (value: unknown) => void;
-      vi.mocked(sandbox.client.utils.createSession)
-        .mockReturnValueOnce(
-          new Promise((resolve) => {
-            resolveFirst = resolve;
-          }) as any
-        )
-        .mockReturnValueOnce(
-          new Promise((resolve) => {
-            resolveSecond = resolve;
-          }) as any
-        );
-
-      const first = sandbox.writeFile('/one.txt', 'one');
-      await sandbox.setSandboxName('renamed');
-      const second = sandbox.writeFile('/two.txt', 'two');
-      const third = sandbox.writeFile('/three.txt', 'three');
-
-      resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
-      resolveSecond({ success: true, id: 'sandbox-renamed', message: 'ok' });
-      await Promise.all([first, second, third]);
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-      const calls = vi.mocked(sandbox.client.files.writeFile).mock.calls;
-      expect(calls[0][2]).toBe('sandbox-default');
-      expect(calls[1][2]).toBe('sandbox-renamed');
-      expect(calls[2][2]).toBe('sandbox-renamed');
-    });
-
-    it('retries default session init once when onStop runs mid-flight', async () => {
-      vi.useFakeTimers();
-      try {
-        let resolveCreate!: (value: unknown) => void;
-        vi.mocked(sandbox.client.utils.createSession)
-          .mockReturnValueOnce(
-            new Promise((resolve) => {
-              resolveCreate = resolve;
-            }) as any
-          )
-          .mockResolvedValueOnce({
-            success: true,
-            id: 'sandbox-default',
-            message: 'ok'
-          } as any);
-
-        const inflight = sandbox.writeFile('/one.txt', 'one');
-        await (sandbox as any).onStop();
-
-        resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
-        await vi.advanceTimersByTimeAsync(100);
-        await inflight;
-
-        expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-        expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
-          'echo one',
-          'sandbox-default',
-          undefined
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('surfaces container unavailable when default session init recovery is exhausted', async () => {
-      vi.useFakeTimers();
-      try {
-        let resolveFirst!: (value: unknown) => void;
-        let resolveSecond!: (value: unknown) => void;
-        vi.mocked(sandbox.client.utils.createSession)
-          .mockReturnValueOnce(
-            new Promise((resolve) => {
-              resolveFirst = resolve;
-            }) as any
-          )
-          .mockReturnValueOnce(
-            new Promise((resolve) => {
-              resolveSecond = resolve;
-            }) as any
-          );
-
-        const inflight = sandbox.exec('echo one');
-        inflight.catch(() => {});
-        await (sandbox as any).onStop();
-        resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
-        await vi.advanceTimersByTimeAsync(100);
-
-        await vi.waitFor(() => {
-          expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-        });
-        await (sandbox as any).onStop();
-        resolveSecond({ success: true, id: 'sandbox-default', message: 'ok' });
-        await vi.advanceTimersByTimeAsync(100);
-
-        await expect(inflight).rejects.toMatchObject({
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: {
-            reason: 'container_replaced',
-            retryable: true
-          }
-        });
-        await expect(inflight).rejects.toBeInstanceOf(
-          ContainerUnavailableError
-        );
-        const echoOneCalls = vi
-          .mocked(sandbox.client.commands.execute)
-          .mock.calls.filter((call) => call[0] === 'echo one');
-        expect(echoOneCalls).toHaveLength(0);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('joins a fresh default session after onStop clears a stale init', async () => {
-      let resolveFirst!: (value: unknown) => void;
-      vi.mocked(sandbox.client.utils.createSession)
-        .mockReturnValueOnce(
-          new Promise((resolve) => {
-            resolveFirst = resolve;
-          }) as any
-        )
-        .mockResolvedValueOnce({
-          success: true,
-          id: 'sandbox-default',
-          message: 'ok'
-        } as any);
-
-      const first = sandbox.writeFile('/one.txt', 'one');
-      await (sandbox as any).onStop();
-      const second = sandbox.writeFile('/two.txt', 'two');
-
-      resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
-      await Promise.all([first, second]);
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
-=======
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
         1,
         '/one.txt',
@@ -948,33 +811,16 @@ describe('Sandbox - Automatic Session Management', () => {
         DISABLE_SESSION_TOKEN,
         { encoding: undefined }
       );
->>>>>>> 75bcf4da (Route direct sandbox APIs sessionlessly)
     });
 
-    it('keeps default shell state independent of top-level exec', async () => {
-      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        sessionId: 'sandbox-default',
-        timestamp: new Date().toISOString()
-      } as never);
-
+    it('does not update legacy default shell state from setEnvVars', async () => {
       (sandbox as unknown as { defaultSession: string }).defaultSession =
         'sandbox-default';
+      vi.mocked(sandbox.client.commands.execute).mockClear();
 
-      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
-        success: true,
-        stdout: 'sessionless',
-        stderr: '',
-        exitCode: 0,
-        command: 'printf sessionless',
-        timestamp: new Date().toISOString()
-      } as never);
+      await sandbox.setEnvVars({ INFRA_TOKEN: 'secret' });
 
-      const result = await sandbox.exec('printf sessionless');
-
-      expect(result.stdout).toBe('sessionless');
-      expect(sandbox.client.utils.deleteSession).not.toHaveBeenCalled();
-      expect(mockCtx.storage.delete).not.toHaveBeenCalledWith('defaultSession');
+      expect(sandbox.client.commands.execute).not.toHaveBeenCalled();
     });
   });
 
@@ -1358,7 +1204,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toContain('localhost');
-      expect(sandbox.client.utils.createSession).toHaveBeenCalled();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -1761,16 +1607,13 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.writeFile('/test.txt', 'content');
       const result = await sandbox.deleteSession('sandbox-default');
 
-      expect(
-        (sandbox as unknown as { defaultSession: string | null }).defaultSession
-      ).toBeNull();
       expect(result.success).toBe(true);
       expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
         'sandbox-default'
       );
     });
 
-    it('should allow deletion of non-default sessions', async () => {
+    it('should allow deletion of explicit sessions', async () => {
       // Mock the deleteSession API response
       vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
         success: true,
@@ -1781,7 +1624,6 @@ describe('Sandbox - Automatic Session Management', () => {
       // Create a custom session
       await sandbox.createSession({ id: 'custom-session' });
 
-      // Should successfully delete non-default session
       const result = await sandbox.deleteSession('custom-session');
       expect(result.success).toBe(true);
       expect(result.sessionId).toBe('custom-session');
@@ -1972,7 +1814,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(deletedKeys).not.toContain('portTokens');
       expect(deletedKeys).toContain('activePreviewPorts');
       expect(deletedKeys).toContain('currentRuntimeIdentity');
-      expect(deletedKeys).toContain('defaultSession');
+      expect(deletedKeys).not.toContain('defaultSession');
     });
 
     it('stop() clears runtime-scoped preview state before signaling the container', async () => {
@@ -2020,7 +1862,7 @@ describe('Sandbox - Automatic Session Management', () => {
       }
     });
 
-    it('exposePort() persists durable auth and current-runtime activation', async () => {
+    it('exposePort() persists durable auth and current-runtime activation without creating a session', async () => {
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         if (key === 'portTokens') {
           return {};
@@ -2041,6 +1883,7 @@ describe('Sandbox - Automatic Session Management', () => {
         name: 'my-api'
       });
 
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(putSpy).toHaveBeenCalledWith('portTokens', {
         '8080': { token: 'friendlytok', name: 'my-api' }
       });
@@ -2172,23 +2015,27 @@ describe('Sandbox - Automatic Session Management', () => {
       const startupGate = new Promise<void>((resolve) => {
         releaseStartup = resolve;
       });
-      const ensureDefaultSessionSpy = vi
+      const ensureRuntimeSpy = vi
         .spyOn(
-          sandbox as unknown as { ensureDefaultSession: () => Promise<string> },
-          'ensureDefaultSession'
+          sandbox as unknown as SandboxRuntimeStart,
+          'ensureRuntimeActiveForPreview'
         )
         .mockImplementation(async () => {
           await startupGate;
-          return 'sandbox-default';
+          return {
+            id: 'runtime-1',
+            scope: (value: { token: string }) => ({
+              ...value,
+              runtimeIdentityID: 'runtime-1'
+            })
+          };
         });
 
       const exposePromise = sandbox.exposePort(9090, {
         hostname: 'example.com',
         token: 'newtoken'
       });
-      await vi.waitFor(() =>
-        expect(ensureDefaultSessionSpy).toHaveBeenCalled()
-      );
+      await vi.waitFor(() => expect(ensureRuntimeSpy).toHaveBeenCalled());
 
       await sandbox.unexposePort(8080);
       expect(storage.get('portTokens')).toEqual({});
