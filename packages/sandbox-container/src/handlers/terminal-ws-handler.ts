@@ -15,6 +15,8 @@ export interface TerminalWSData {
   cols?: number;
   rows?: number;
   shell?: string;
+  cwd?: string;
+  ephemeral?: boolean;
 }
 
 interface TerminalConnection {
@@ -27,18 +29,22 @@ export class TerminalWebSocketHandler {
   private connections = new Map<string, TerminalConnection>();
 
   constructor(
-    private terminalManager: Pick<TerminalManager, 'getOrCreateTerminal'>,
+    private terminalManager: Pick<
+      TerminalManager,
+      'getOrCreateTerminal' | 'destroyTerminal'
+    >,
     private logger: Logger
   ) {}
 
   async onOpen(ws: ServerWebSocket<TerminalWSData>): Promise<void> {
-    const { terminalId, connectionId, cols, rows, shell } = ws.data;
+    const { terminalId, connectionId, cols, rows, shell, cwd } = ws.data;
     // Lifecycle captured in onClose canonical log line
 
     let pty: Pty;
     try {
       const terminal = await this.terminalManager.getOrCreateTerminal({
         id: terminalId,
+        cwd,
         pty: { cols, rows, shell }
       });
       pty = terminal.pty;
@@ -115,11 +121,21 @@ export class TerminalWebSocketHandler {
       conn.subscription.dispose();
       this.connections.delete(connectionId);
     }
+
+    if (ws.data.ephemeral && !this.hasConnectionsForTerminal(terminalId)) {
+      void this.terminalManager.destroyTerminal(terminalId);
+    }
   }
 
   onDrain(ws: ServerWebSocket<TerminalWSData>): void {
     const { connectionId } = ws.data;
     this.logger.debug('terminal.drain', { connectionId });
+  }
+
+  private hasConnectionsForTerminal(terminalId: string): boolean {
+    return [...this.connections.values()].some(
+      (connection) => connection.ws.data.terminalId === terminalId
+    );
   }
 
   private sendTerminalData(

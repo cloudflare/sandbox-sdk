@@ -129,7 +129,7 @@ The body is optional. You can also pass `id` to choose your own (must match `^[a
 
 ### Use a session
 
-Pass the ID via the `Session-Id` header on `exec`, file read/write, or `pty`:
+Pass the ID via the `Session-Id` header on `exec` or file read/write:
 
 ```bash
 curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \

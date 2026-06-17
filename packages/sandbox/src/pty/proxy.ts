@@ -1,28 +1,41 @@
 import { switchPort } from '@cloudflare/containers';
-import type { PtyOptions } from '@repo/shared';
+import type { TerminalOptions } from '@repo/shared';
+
+function resolveTerminal(options?: TerminalOptions): {
+  id: string;
+  ephemeral: boolean;
+} {
+  if (options?.id !== undefined) {
+    if (typeof options.id !== 'string' || options.id.length === 0) {
+      throw new Error('terminal id must be a non-empty string');
+    }
+
+    return { id: options.id, ephemeral: false };
+  }
+
+  return { id: `terminal-${crypto.randomUUID()}`, ephemeral: true };
+}
 
 export async function proxyTerminal(
   stub: { fetch: (request: Request) => Promise<Response> },
-  terminalId: string,
   request: Request,
-  options?: PtyOptions
+  options?: TerminalOptions
 ): Promise<Response> {
-  if (!terminalId || typeof terminalId !== 'string') {
-    throw new Error('terminalId is required for terminal access');
-  }
-
   const upgradeHeader = request.headers.get('Upgrade');
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
     throw new Error('terminal() requires a WebSocket upgrade request');
   }
 
-  const params = new URLSearchParams({ terminalId });
+  const terminal = resolveTerminal(options);
+  const params = new URLSearchParams({ terminalId: terminal.id });
+  if (terminal.ephemeral) params.set('ephemeral', '1');
   if (options?.cols) params.set('cols', String(options.cols));
   if (options?.rows) params.set('rows', String(options.rows));
   if (options?.shell) params.set('shell', options.shell);
+  if (options?.cwd) params.set('cwd', options.cwd);
 
-  const ptyUrl = `http://localhost/ws/terminal?${params}`;
-  const ptyRequest = new Request(ptyUrl, request);
+  const terminalURL = `http://localhost/ws/terminal?${params}`;
+  const terminalRequest = new Request(terminalURL, request);
 
-  return stub.fetch(switchPort(ptyRequest, 3000));
+  return stub.fetch(switchPort(terminalRequest, 3000));
 }

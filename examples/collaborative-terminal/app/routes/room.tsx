@@ -27,7 +27,7 @@ export default function RoomPage({ params }: Route.ComponentProps) {
       const sandboxId = `room-${newRoomId}`;
       addonRef.current?.connect({
         sandboxId,
-        sessionId: sandboxId
+        terminalId: sandboxId
       });
       navigate(`/room/${newRoomId}`, { replace: true });
     },
@@ -132,7 +132,7 @@ export default function RoomPage({ params }: Route.ComponentProps) {
                 >
                   <Terminal
                     sandboxId={room.sessionId}
-                    sessionId={room.sessionId}
+                    terminalId={room.sessionId}
                     onTyping={sendTyping}
                     onAddonReady={(addon) => {
                       addonRef.current = addon;

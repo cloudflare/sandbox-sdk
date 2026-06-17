@@ -4,6 +4,11 @@ export interface PtyOptions {
   shell?: string;
 }
 
+export interface TerminalOptions extends PtyOptions {
+  id?: string;
+  cwd?: string;
+}
+
 export type PtyControlMessage = {
   type: 'resize';
   cols: number;

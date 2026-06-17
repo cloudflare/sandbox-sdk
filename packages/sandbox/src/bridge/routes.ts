@@ -10,9 +10,9 @@ import type {
   ExecutionSession,
   ISandbox,
   MountBucketOptions,
-  PtyOptions,
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions,
+  TerminalOptions,
   TunnelInfo,
   TunnelOptions
 } from '@repo/shared';
@@ -53,17 +53,11 @@ import type {
 
 /**
  * The SDK's getSandbox() proxy exposes methods not declared on ISandbox
- * (terminal, destroy) or declared with a narrower return type (getSession
- * without terminal). This type extends ISandbox with those extra methods
+ * (destroy, tunnels). This type extends ISandbox with those extra methods
  * so call sites get type safety without per-call casts.
  */
 type BridgeSandbox = ISandbox & {
-  terminal(request: Request, options?: PtyOptions): Promise<Response>;
-  getSession(sessionId: string): Promise<
-    ExecutionSession & {
-      terminal(request: Request, options?: PtyOptions): Promise<Response>;
-    }
-  >;
+  getSession(sessionId: string): Promise<ExecutionSession>;
   destroy(): Promise<void>;
   tunnels: {
     get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
@@ -755,7 +749,11 @@ export function createBridgeApp(
     const colsParam = c.req.query('cols');
     const rowsParam = c.req.query('rows');
     const shell = c.req.query('shell');
-    const sessionId = c.req.header('Session-Id') || c.req.query('session');
+    const cwd = c.req.query('cwd');
+    const terminalId =
+      c.req.header('Terminal-Id') ??
+      c.req.query('terminalId') ??
+      c.req.query('terminal');
 
     const cols = colsParam ? Number(colsParam) : 80;
     const rows = rowsParam ? Number(rowsParam) : 24;
@@ -768,19 +766,21 @@ export function createBridgeApp(
       );
     }
 
-    const opts: PtyOptions = { cols, rows };
+    const opts: TerminalOptions = { cols, rows };
     if (shell) {
       opts.shell = shell;
     }
+    if (cwd) {
+      opts.cwd = cwd;
+    }
+    if (terminalId) {
+      const validatedId = validateSessionId(terminalId);
+      if (!validatedId)
+        return errorJson('Invalid terminal ID format', 'invalid_request', 400);
+      opts.id = validatedId;
+    }
 
     try {
-      if (sessionId) {
-        const validatedId = validateSessionId(sessionId);
-        if (!validatedId)
-          return errorJson('Invalid session ID format', 'invalid_request', 400);
-        const sess = await sandbox.getSession(validatedId);
-        return await sess.terminal(c.req.raw, opts);
-      }
       return await sandbox.terminal(c.req.raw, opts);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -51,14 +51,17 @@ app.post('/api/session/:sandboxId/exec', async (c) => {
   });
 });
 
-/** WS /ws/terminal/:sandboxId — xterm WebSocket proxy onto the default session. */
+/** WS /ws/terminal/:sandboxId — xterm WebSocket proxy onto the mounted bucket. */
 app.get('/ws/terminal/:sandboxId', async (c) => {
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
     return c.text('Expected WebSocket upgrade', 426);
   }
-  const sandbox = getSandbox(c.env.Sandbox, c.req.param('sandboxId'));
-  const session = await sandbox.createSession({ cwd: '/mnt/s3' });
-  return session.terminal(c.req.raw);
+  const sandboxId = c.req.param('sandboxId');
+  const sandbox = getSandbox(c.env.Sandbox, sandboxId);
+  return sandbox.terminal(c.req.raw, {
+    id: `s3-terminal-${sandboxId}`,
+    cwd: '/mnt/s3'
+  });
 });
 
 // Catch-all: anything we don't handle falls through to the static-asset

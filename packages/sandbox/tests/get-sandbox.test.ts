@@ -5,6 +5,11 @@ import { getSandbox } from '../src/sandbox';
 
 // Mock the Container module
 vi.mock('@cloudflare/containers', () => ({
+  switchPort: vi.fn((request: Request, port: number) => {
+    const url = new URL(request.url);
+    url.pathname = `/proxy/${port}${url.pathname}`;
+    return new Request(url, request);
+  }),
   Container: class Container {
     ctx: any;
     env: any;
@@ -405,6 +410,63 @@ describe('getSandbox', () => {
       expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
         sessionId: 'my-session'
       });
+    });
+
+    it('routes terminal upgrades with explicit terminal IDs', async () => {
+      let proxiedRequest: Request | undefined;
+      mockStub.fetch = vi.fn(async (request: Request) => {
+        proxiedRequest = request;
+        return new Response(null, { status: 200 });
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+      const request = new Request('https://example.com/terminal', {
+        headers: { Upgrade: 'websocket' }
+      });
+
+      await sandbox.terminal(request, { id: 'terminal-a' });
+
+      expect(mockStub.fetch).toHaveBeenCalledOnce();
+      const url = new URL(proxiedRequest?.url ?? 'http://missing');
+      expect(url.pathname).toBe('/proxy/3000/ws/terminal');
+      expect(url.searchParams.get('terminalId')).toBe('terminal-a');
+    });
+
+    it('generates terminal IDs instead of using default session IDs', async () => {
+      let proxiedRequest: Request | undefined;
+      mockStub.fetch = vi.fn(async (request: Request) => {
+        proxiedRequest = request;
+        return new Response(null, { status: 200 });
+      });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+      const request = new Request('https://example.com/terminal', {
+        headers: { Upgrade: 'websocket' }
+      });
+
+      await sandbox.terminal(request);
+
+      expect(mockStub.fetch).toHaveBeenCalledOnce();
+      const url = new URL(proxiedRequest?.url ?? 'http://missing');
+      expect(url.searchParams.get('terminalId')).toMatch(
+        /^terminal-[0-9a-f-]{36}$/
+      );
+      expect(url.searchParams.get('terminalId')).not.toBe(
+        'sandbox-test-sandbox'
+      );
+    });
+
+    it('does not attach terminal helpers to command sessions', async () => {
+      mockStub.createSession = vi.fn().mockResolvedValue({ id: 'session-a' });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      const session = await sandbox.createSession({ id: 'session-a' });
+
+      expect('terminal' in session).toBe(false);
     });
 
     it('should read properties directly from the stub', () => {

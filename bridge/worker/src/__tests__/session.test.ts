@@ -186,7 +186,7 @@ describe('Session-Id header on file operations', () => {
   });
 });
 
-describe('PTY session precedence', () => {
+describe('PTY terminal ID precedence', () => {
   const MOCK_TERMINAL_RESPONSE = new Response(null, { status: 200 });
 
   beforeEach(() => {
@@ -194,31 +194,25 @@ describe('PTY session precedence', () => {
     mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
   });
 
-  it('header takes priority over query param', async () => {
-    const headerSession = createMockSession('from-header');
-    headerSession.terminal.mockResolvedValue(MOCK_TERMINAL_RESPONSE);
-    mockSandbox.getSession.mockResolvedValue(headerSession);
-
+  it('Terminal-Id header takes priority over query params', async () => {
     const res = await app.request(
-      sandboxUrl('test', 'pty', 'session=from-query'),
+      sandboxUrl('test', 'pty', 'terminalId=from-query'),
       {
         method: 'GET',
-        headers: { Upgrade: 'websocket', 'Session-Id': 'from-header' }
+        headers: { Upgrade: 'websocket', 'Terminal-Id': 'from-header' }
       },
       env
     );
 
     expect(res.status).toBe(200);
-    expect(mockSandbox.getSession).toHaveBeenCalledWith('from-header');
+    expect(mockSandbox.getSession).not.toHaveBeenCalled();
+    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
+    expect(opts.id).toBe('from-header');
   });
 
-  it('uses query param when no header is present', async () => {
-    const querySession = createMockSession('from-query');
-    querySession.terminal.mockResolvedValue(MOCK_TERMINAL_RESPONSE);
-    mockSandbox.getSession.mockResolvedValue(querySession);
-
+  it('uses terminalId query param when no header is present', async () => {
     const res = await app.request(
-      sandboxUrl('test', 'pty', 'session=from-query'),
+      sandboxUrl('test', 'pty', 'terminalId=from-query'),
       {
         method: 'GET',
         headers: { Upgrade: 'websocket' }
@@ -227,7 +221,9 @@ describe('PTY session precedence', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockSandbox.getSession).toHaveBeenCalledWith('from-query');
+    expect(mockSandbox.getSession).not.toHaveBeenCalled();
+    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
+    expect(opts.id).toBe('from-query');
   });
 });
 

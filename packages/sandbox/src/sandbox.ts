@@ -25,7 +25,6 @@ import type {
   Process,
   ProcessOptions,
   ProcessStatus,
-  PtyOptions,
   R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
@@ -33,6 +32,7 @@ import type {
   RestoreBackupResult,
   SandboxOptions,
   SessionOptions,
+  TerminalOptions,
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
@@ -669,11 +669,8 @@ export function getSandbox<T extends Sandbox<any>>(
     });
   }
 
-  const defaultSessionId = `sandbox-${effectiveId}`;
   const useDefaultSession = options?.enableDefaultSession !== false;
 
-  // IMPORTANT: Any method that returns ExecutionSession must be listed here
-  // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     exec: (command: string, execOptions?: ExecOptions) =>
@@ -783,11 +780,11 @@ export function getSandbox<T extends Sandbox<any>>(
           }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
-      return enhanceSession(stub, rpcSession as ExecutionSession);
+      return rpcSession as ExecutionSession;
     },
     getSession: async (sessionId: string): Promise<ExecutionSession> => {
       const rpcSession = await stub.getSession(sessionId);
-      return enhanceSession(stub, rpcSession as ExecutionSession);
+      return rpcSession as ExecutionSession;
     },
     watch: (path: string, options: WatchOptions = {}) =>
       useDefaultSession || options.sessionId !== undefined
@@ -800,8 +797,8 @@ export function getSandbox<T extends Sandbox<any>>(
             ...options,
             sessionId: DISABLE_SESSION_TOKEN
           }),
-    terminal: (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, defaultSessionId, request, opts),
+    terminal: (request: Request, opts?: TerminalOptions) =>
+      proxyTerminal(stub, request, opts),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
@@ -884,17 +881,6 @@ function getConcreteExtensionMethod(
   }
 
   return undefined;
-}
-
-function enhanceSession(
-  stub: { fetch: (request: Request) => Promise<Response> },
-  rpcSession: ExecutionSession
-): ExecutionSession {
-  return {
-    ...rpcSession,
-    terminal: (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, rpcSession.id, request, opts)
-  };
 }
 
 export function connect(stub: {
@@ -3326,6 +3312,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
+  terminal(_request: Request, _options?: TerminalOptions): Promise<Response> {
+    throw new Error(
+      'terminal must be called on the stub returned by getSandbox()'
+    );
+  }
+
   private determinePort(url: URL): number {
     // Direct DO fetch compatibility path used by switchPort()/wsConnect().
     // Public preview URL traffic enters through proxyPreviewRequest() instead.
@@ -5189,10 +5181,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private getSessionWrapper(sessionId: string): ExecutionSession {
-    // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
       id: sessionId,
-      terminal: null as unknown as ExecutionSession['terminal'],
 
       exec: (command, options) =>
         this.execWithSession(command, sessionId, options),

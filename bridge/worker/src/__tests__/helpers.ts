@@ -36,8 +36,7 @@ export function createMockSession(id = 'mock-session') {
       return { id: 'mock-process' };
     }),
     readFileStream: vi.fn(async () => new ReadableStream()),
-    writeFile: vi.fn(async () => {}),
-    terminal: vi.fn(async () => new Response(null, { status: 200 }))
+    writeFile: vi.fn(async () => {})
   };
   return session;
 }

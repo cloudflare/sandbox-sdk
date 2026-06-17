@@ -8,14 +8,14 @@ import '@xterm/xterm/css/xterm.css';
 
 interface TerminalProps {
   sandboxId: string;
-  sessionId: string;
+  terminalId: string;
   onTyping?: () => void;
   onAddonReady?: (addon: SandboxAddon) => void;
 }
 
 export function Terminal({
   sandboxId,
-  sessionId,
+  terminalId,
   onTyping,
   onAddonReady
 }: TerminalProps) {
@@ -59,8 +59,8 @@ export function Terminal({
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
     const sandboxAddon = new SandboxAddon({
-      getWebSocketUrl: ({ origin, sessionId: sid }) =>
-        `${origin}/ws/terminal/${sid}`,
+      getWebSocketUrl: ({ origin, terminalId: id }) =>
+        `${origin}/ws/terminal/${id}`,
       onStateChange: (newState) => setState(newState)
     });
 
@@ -71,7 +71,7 @@ export function Terminal({
     fitAddon.fit();
 
     terminal.onData(() => onTyping?.());
-    sandboxAddon.connect({ sandboxId, sessionId });
+    sandboxAddon.connect({ sandboxId, terminalId });
     onAddonReady?.(sandboxAddon);
 
     const handleResize = () => fitAddon.fit();

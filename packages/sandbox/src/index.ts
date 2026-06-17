@@ -34,6 +34,7 @@ export type {
   RestoreBackupResult,
   SandboxOptions,
   SessionOptions,
+  TerminalOptions,
   TunnelInfo,
   TunnelOptions,
   WaitForLogResult,

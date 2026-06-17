@@ -22,11 +22,11 @@ describe('PTY', () => {
     sandbox = null;
   }, 120000);
 
-  async function connectWebSocket(sessionId?: string): Promise<{
+  async function connectWebSocket(terminalId?: string): Promise<{
     ws: WebSocket;
     output: string[];
   }> {
-    const path = sessionId ? `/terminal/${sessionId}` : '/terminal';
+    const path = terminalId ? `/terminal/${terminalId}` : '/terminal';
     const wsUrl = `${workerUrl.replace(/^http/, 'ws')}${path}?sandboxId=${sandboxId}`;
     const ws = new WebSocket(wsUrl);
     const output: string[] = [];
@@ -117,17 +117,17 @@ describe('PTY', () => {
 
   describe('Connection Lifecycle', () => {
     test('replays buffered output on reconnect', async () => {
-      const sessionId = `pty-reconnect-${Date.now()}`;
+      const terminalId = `pty-reconnect-${Date.now()}`;
       const marker = `reconnect-marker-${Date.now()}`;
 
       // First connection: run command that produces output
-      const { ws: ws1, output: output1 } = await connectWebSocket(sessionId);
+      const { ws: ws1, output: output1 } = await connectWebSocket(terminalId);
       ws1.send(Buffer.from(`echo "${marker}"\n`));
       await waitForOutput(output1, marker);
       cleanup(ws1);
 
       // Second connection: should receive buffered output
-      const { ws: ws2, output: output2 } = await connectWebSocket(sessionId);
+      const { ws: ws2, output: output2 } = await connectWebSocket(terminalId);
 
       // Buffered output is sent before 'ready', so it should already be there
       expect(output2.join('')).toContain(marker);
@@ -136,12 +136,12 @@ describe('PTY', () => {
     }, 30000);
 
     test('broadcasts output to multiple concurrent connections', async () => {
-      const sessionId = `pty-multi-${Date.now()}`;
+      const terminalId = `pty-multi-${Date.now()}`;
       const marker = `multi-marker-${Date.now()}`;
 
-      // Open two connections to the same session
-      const { ws: ws1, output: output1 } = await connectWebSocket(sessionId);
-      const { ws: ws2, output: output2 } = await connectWebSocket(sessionId);
+      // Open two connections to the same terminal
+      const { ws: ws1, output: output1 } = await connectWebSocket(terminalId);
+      const { ws: ws2, output: output2 } = await connectWebSocket(terminalId);
 
       // Clear any buffered output from connection setup
       output1.length = 0;
@@ -162,26 +162,26 @@ describe('PTY', () => {
     }, 30000);
   });
 
-  describe('Session Isolation', () => {
-    test('different sessions have independent PTYs', async () => {
-      const sessionA = `pty-iso-a-${Date.now()}`;
-      const sessionB = `pty-iso-b-${Date.now()}`;
+  describe('Terminal Isolation', () => {
+    test('different terminal IDs have independent PTYs', async () => {
+      const terminalA = `pty-iso-a-${Date.now()}`;
+      const terminalB = `pty-iso-b-${Date.now()}`;
       const markerA = `marker-a-${Date.now()}`;
 
-      // Session A: set environment variable
-      const { ws: wsA, output: outputA } = await connectWebSocket(sessionA);
+      // Terminal A: set environment variable
+      const { ws: wsA, output: outputA } = await connectWebSocket(terminalA);
       wsA.send(Buffer.from(`export PTY_TEST_VAR="${markerA}"\n`));
       wsA.send(Buffer.from(`echo "set:$PTY_TEST_VAR"\n`));
       await waitForOutput(outputA, `set:${markerA}`);
 
-      // Session B: should NOT see session A's variable
-      const { ws: wsB, output: outputB } = await connectWebSocket(sessionB);
+      // Terminal B: should NOT see terminal A's variable
+      const { ws: wsB, output: outputB } = await connectWebSocket(terminalB);
       wsB.send(Buffer.from(`echo "check:$PTY_TEST_VAR"\n`));
 
       // Wait for the echo command to complete
       await waitForOutput(outputB, 'check:');
 
-      // Session B should have empty variable (just "check:" with nothing after)
+      // Terminal B should have empty variable (just "check:" with nothing after)
       const outputBStr = outputB.join('');
       expect(outputBStr).toContain('check:');
       expect(outputBStr).not.toContain(markerA);

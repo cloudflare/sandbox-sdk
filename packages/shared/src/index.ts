@@ -40,7 +40,8 @@ export {
 export type {
   PtyControlMessage,
   PtyOptions,
-  PtyStatusMessage
+  PtyStatusMessage,
+  TerminalOptions
 } from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {

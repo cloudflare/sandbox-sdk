@@ -33,8 +33,7 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
     vi.clearAllMocks();
     mockSandbox.terminal.mockImplementation(async () => MOCK_TERMINAL_RESPONSE);
     mockSandbox.getSession.mockImplementation(async () => ({
-      id: 'mock-session',
-      terminal: vi.fn(async () => MOCK_TERMINAL_RESPONSE)
+      id: 'mock-session'
     }));
   });
 
@@ -99,30 +98,23 @@ describe('GET /v1/sandbox/:id/pty — WebSocket PTY proxy', () => {
     expect(body.code).toBe('exec_transport_error');
   });
 
-  it('uses session.terminal() when session query param is provided', async () => {
-    const sessionTerminal = vi.fn(async () => MOCK_TERMINAL_RESPONSE);
-    mockSandbox.getSession.mockResolvedValue({ id: 'my-session', terminal: sessionTerminal });
-
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'session=my-session&cols=100&rows=50'));
+  it('passes explicit terminal IDs to sandbox.terminal()', async () => {
+    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=my-terminal&cols=100&rows=50'));
     expect(res.status).toBe(200);
 
-    expect(mockSandbox.getSession).toHaveBeenCalledWith('my-session');
-    expect(sessionTerminal).toHaveBeenCalledTimes(1);
-    const [, opts] = sessionTerminal.mock.calls[0] as [Request, Record<string, unknown>];
-    expect(opts).toEqual({ cols: 100, rows: 50 });
-
-    // sandbox.terminal() should NOT have been called
-    expect(mockSandbox.terminal).not.toHaveBeenCalled();
+    expect(mockSandbox.getSession).not.toHaveBeenCalled();
+    expect(mockSandbox.terminal).toHaveBeenCalledTimes(1);
+    const [, opts] = mockSandbox.terminal.mock.calls[0] as [Request, Record<string, unknown>];
+    expect(opts).toEqual({ id: 'my-terminal', cols: 100, rows: 50 });
   });
 
-  it('returns 502 when getSession() throws', async () => {
-    mockSandbox.getSession.mockRejectedValue(new Error('Session not found'));
-
-    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'session=bad-id'));
-    expect(res.status).toBe(502);
+  it('returns 400 for invalid terminal IDs', async () => {
+    const res = await wsUpgradeRequest(sandboxUrl('test', 'pty', 'terminalId=../bad'));
+    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; code: string };
-    expect(body.error).toContain('Session not found');
-    expect(body.code).toBe('exec_transport_error');
+    expect(body.error).toBe('Invalid terminal ID format');
+    expect(body.code).toBe('invalid_request');
+    expect(mockSandbox.terminal).not.toHaveBeenCalled();
   });
 });
 

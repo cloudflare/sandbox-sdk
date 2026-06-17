@@ -8,7 +8,7 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
  */
 export interface ConnectionTarget {
   sandboxId: string;
-  sessionId?: string;
+  terminalId?: string;
 }
 
 /**
@@ -21,13 +21,13 @@ export interface SandboxAddonOptions {
    *
    * @example
    * ```typescript
-   * getWebSocketUrl: ({ origin, sessionId }) =>
-   *   `${origin}/ws/terminal/${sessionId ?? ''}`
+   * getWebSocketUrl: ({ origin, terminalId }) =>
+   *   `${origin}/terminal/${terminalId ?? ''}`
    * ```
    */
   getWebSocketUrl: (params: {
     sandboxId: string;
-    sessionId?: string;
+    terminalId?: string;
     /** WebSocket origin derived from `window.location` (e.g. `wss://example.com`). */
     origin: string;
   }) => string;

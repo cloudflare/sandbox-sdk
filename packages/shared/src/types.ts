@@ -1,4 +1,4 @@
-import type { PtyOptions } from './pty-types';
+import type { TerminalOptions } from './pty-types';
 
 /**
  * Represents a disposable resource with a cleanup function.
@@ -1004,9 +1004,6 @@ export interface ExecutionSession {
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
   restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
-
-  // Terminal access (browser WebSocket passthrough)
-  terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
 // Backup types
@@ -1337,6 +1334,9 @@ export interface ISandbox {
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;
+
+  // Terminal access (browser WebSocket passthrough)
+  terminal(request: Request, options?: TerminalOptions): Promise<Response>;
 }
 
 // Type guards for runtime validation

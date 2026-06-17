@@ -729,7 +729,7 @@ export const OPENAPI_SCHEMA = {
     '/v1/sandbox/{id}/pty': {
       get: {
         operationId: 'ptyTerminal',
-        summary: 'Open a PTY terminal session via WebSocket',
+        summary: 'Open a terminal via WebSocket',
         description:
           'Upgrades the HTTP connection to a WebSocket and proxies it to a PTY shell inside the sandbox.\n\n' +
           '**WebSocket frame protocol:**\n\n' +
@@ -743,13 +743,13 @@ export const OPENAPI_SCHEMA = {
           '- `{"type":"ready"}` — PTY is accepting input\n' +
           '- `{"type":"exit","code":0,"signal":"SIGTERM"}` — PTY exited\n' +
           '- `{"type":"error","message":"..."}` — error occurred\n\n' +
-          'If the client disconnects, the PTY stays alive; reconnecting replays buffered output.',
+          'If the client disconnects, the terminal stays alive; reconnecting with the same terminal ID replays buffered output.',
         'x-codeSamples': [
           {
             lang: 'JavaScript',
             label: 'WebSocket',
             source:
-              'const ws = new WebSocket("wss://$HOST/v1/sandbox/my-sandbox/pty?cols=120&rows=30");\n' +
+              'const ws = new WebSocket("wss://$HOST/v1/sandbox/my-sandbox/pty?terminalId=term-1&cols=120&rows=30");\n' +
               'ws.binaryType = "arraybuffer";\n' +
               'ws.onmessage = (e) => { /* handle binary output or JSON status */ };'
           }
@@ -785,20 +785,28 @@ export const OPENAPI_SCHEMA = {
               'Shell binary to run (e.g. `/bin/bash`). Uses the container default if omitted.'
           },
           {
-            name: 'session',
+            name: 'cwd',
             in: 'query',
             required: false,
             schema: { type: 'string' },
             description:
-              'SDK session ID. If provided, the PTY is scoped to this session.'
+              'Initial working directory for newly created terminal resources.'
           },
           {
-            name: 'Session-Id',
+            name: 'terminalId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
+            description:
+              'Terminal resource ID. A new terminal ID is generated when omitted.'
+          },
+          {
+            name: 'Terminal-Id',
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Terminal resource ID. Takes precedence over the terminalId query parameter.'
           }
         ],
         responses: {
@@ -1168,7 +1176,7 @@ export const OPENAPI_SCHEMA = {
         summary: 'Create an execution session',
         description:
           'Sessions isolate working directory and environment variables across commands. ' +
-          'The returned session ID is used with the `Session-Id` header on exec, file, and PTY endpoints.',
+          'The returned session ID is used with the `Session-Id` header on exec and file endpoints.',
         parameters: [
           {
             name: 'id',

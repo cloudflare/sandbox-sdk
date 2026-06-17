@@ -1150,9 +1150,9 @@ console.log('Echo server on port ' + port);
 
       // PTY: Browser test page for Playwright tests
       if (url.pathname === '/terminal-test') {
-        const sessionId =
-          url.searchParams.get('sessionId') || `browser-test-${Date.now()}`;
-        return new Response(getTerminalTestPage(sandboxId, sessionId), {
+        const terminalId =
+          url.searchParams.get('terminalId') || `browser-test-${Date.now()}`;
+        return new Response(getTerminalTestPage(sandboxId, terminalId), {
           headers: { 'Content-Type': 'text/html' }
         });
       }
@@ -1169,19 +1169,12 @@ console.log('Echo server on port ' + port);
 
         const pathParts = url.pathname.split('/').filter(Boolean);
 
-        if (pathParts.length === 1) {
-          return sandbox.terminal(request, {
-            cols: parseInt(url.searchParams.get('cols') || '80', 10),
-            rows: parseInt(url.searchParams.get('rows') || '24', 10)
-          });
-        } else {
-          const ptySessionId = pathParts[1];
-          const session = await sandbox.getSession(ptySessionId);
-          return session.terminal(request, {
-            cols: parseInt(url.searchParams.get('cols') || '80', 10),
-            rows: parseInt(url.searchParams.get('rows') || '24', 10)
-          });
-        }
+        const terminalId = pathParts.length > 1 ? pathParts[1] : undefined;
+        return sandbox.terminal(request, {
+          id: terminalId,
+          cols: parseInt(url.searchParams.get('cols') || '80', 10),
+          rows: parseInt(url.searchParams.get('rows') || '24', 10)
+        });
       }
 
       return new Response('Not found', { status: 404 });
@@ -1278,7 +1271,7 @@ console.log('Echo server on port ' + port);
   }
 };
 
-function getTerminalTestPage(sandboxId: string, sessionId: string): string {
+function getTerminalTestPage(sandboxId: string, terminalId: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1306,7 +1299,7 @@ function getTerminalTestPage(sandboxId: string, sessionId: string): string {
 
     const statusEl = document.getElementById('status');
     const sandboxId = '${sandboxId}';
-    const sessionId = '${sessionId}';
+    const terminalId = '${terminalId}';
 
     let ws = null;
     let reconnectAttempts = 0;
@@ -1320,7 +1313,7 @@ function getTerminalTestPage(sandboxId: string, sessionId: string): string {
     function connect() {
       updateStatus('connecting');
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/terminal/' + sessionId + '?sandboxId=' + sandboxId;
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?sandboxId=' + sandboxId;
       
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
