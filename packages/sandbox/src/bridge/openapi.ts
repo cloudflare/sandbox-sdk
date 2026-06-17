@@ -371,7 +371,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to an explicit session. If omitted, the operation uses top-level sandbox behavior.'
           }
         ],
         requestBody: {
@@ -588,7 +588,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to an explicit session. If omitted, the operation uses top-level sandbox behavior.'
           }
         ],
         responses: {
@@ -676,7 +676,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to an explicit session. If omitted, the operation uses top-level sandbox behavior.'
           }
         ],
         requestBody: {
@@ -1248,8 +1248,7 @@ export const OPENAPI_SCHEMA = {
       delete: {
         operationId: 'deleteSession',
         summary: 'Delete an execution session',
-        description:
-          'Removes a named session. The default session cannot be deleted.',
+        description: 'Removes an explicit execution session.',
         parameters: [
           {
             name: 'id',
@@ -1290,13 +1289,12 @@ export const OPENAPI_SCHEMA = {
           },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '502': {
-            description:
-              'Session deletion failed (e.g. cannot delete default session).',
+            description: 'Session deletion failed.',
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/ErrorResponse' },
                 example: {
-                  error: 'cannot delete the default session',
+                  error: 'session deletion failed',
                   code: 'session_error'
                 }
               }

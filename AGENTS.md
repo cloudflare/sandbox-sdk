@@ -130,9 +130,9 @@ See the **logging** skill (`.agents/skills/logging/SKILL.md`) for the constructo
 
 ### Session Management
 
-- Sessions isolate execution contexts (working directory, env vars, etc.)
-- Default session is created automatically
-- Multiple sessions per sandbox are supported
+- Top-level `sandbox.exec()` and `sandbox.startProcess()` are stateless.
+- Explicit sessions isolate execution contexts (working directory, env vars, aliases, functions, etc.).
+- Multiple explicit sessions per sandbox are supported.
 
 ### Port Management
 

@@ -5,7 +5,7 @@
  *
  * Flow:
  *   POST /api/session                       → { sandboxId }
- *   WS   /ws/terminal/:sandboxId             → bash on the default session
+ *   WS   /ws/terminal/:sandboxId             → bash in an independent terminal
  *   POST /api/session/:sandboxId/cleanup     → fusermount -u
  *
  * Usage:

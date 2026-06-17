@@ -14,6 +14,7 @@ Mount an AWS S3 bucket as a normal read/write folder inside a Cloudflare Sandbox
 - **Credentials issued by the Worker.** `mount-s3` asks the Worker for credentials whenever it needs them. The Worker calls AWS STS `AssumeRole` and hands back temporary credentials. There is no public credentials endpoint.
 
   > **What's `AssumeRole`?** It's an AWS API call that asks for temporary credentials (an access key, secret, and session token) for a specific IAM role. The credentials expire after a set time — typically minutes to hours — so even if they leak, the window for misuse is small. The caller needs permission to assume that one role, and nothing else.
+
 - **Small surface for secrets.** The only long-lived secret is an IAM user that can do exactly one thing: assume one specific role. That role can only touch one specific bucket.
 
 ## Architecture
@@ -70,13 +71,13 @@ examples/s3-mount/
 
 The Worker's user-facing flow is the browser UI at `/`. The endpoints below back that UI; you can also call them directly if you want to script things.
 
-| Method | Path                                | Purpose |
-|--------|-------------------------------------|---------|
-| `GET`    | `/`                               | Static UI — the Start button + xterm.js terminal |
-| `POST`   | `/api/session`                    | Spin up a fresh sandbox, mount the bucket, return `{ sandboxId, mount }` |
-| `WS`     | `/ws/terminal/:sandboxId`         | WebSocket PTY proxy onto the sandbox's default session |
-| `POST`   | `/api/session/:sandboxId/cleanup` | Best-effort `fusermount -u /mnt/s3` when the session ends |
-| `POST`   | `/api/session/:sandboxId/exec`    | Run an arbitrary shell command in the sandbox (debug only) |
+| Method | Path                              | Purpose                                                                  |
+| ------ | --------------------------------- | ------------------------------------------------------------------------ |
+| `GET`  | `/`                               | Static UI — the Start button + xterm.js terminal                         |
+| `POST` | `/api/session`                    | Spin up a fresh sandbox, mount the bucket, return `{ sandboxId, mount }` |
+| `WS`   | `/ws/terminal/:sandboxId`         | WebSocket proxy to an independent sandbox terminal                       |
+| `POST` | `/api/session/:sandboxId/cleanup` | Best-effort `fusermount -u /mnt/s3` when the session ends                |
+| `POST` | `/api/session/:sandboxId/exec`    | Run an arbitrary shell command in the sandbox (debug only)               |
 
 > ⚠️ These routes are unauthenticated in this example. Add your own auth layer before exposing publicly.
 >
@@ -87,8 +88,8 @@ The Worker's user-facing flow is the browser UI at `/`. The endpoints below back
 Before deploying, you need three things in AWS:
 
 1. **An S3 bucket** — the bucket you want to mount.
-2. **An IAM role** (the *container role*) — scoped to that one bucket. This is what the container actually uses to read and write S3.
-3. **An IAM user** (the *broker user*) — its only permission is to call `sts:AssumeRole` on the role above. Its access key lives in the Worker as a secret.
+2. **An IAM role** (the _container role_) — scoped to that one bucket. This is what the container actually uses to read and write S3.
+3. **An IAM user** (the _broker user_) — its only permission is to call `sts:AssumeRole` on the role above. Its access key lives in the Worker as a secret.
 
 The `./scripts/setup` script creates all of these for you. The sections below explain each piece and show the underlying `aws` CLI commands if you'd rather create them by hand (or adapt them to Terraform / CDK / etc.).
 
@@ -222,7 +223,6 @@ Click **Start**. The page does the rest:
 3. When you `exit` the shell (or close the tab), the page calls `POST /api/session/:sandboxId/cleanup` to unmount the bucket. The next click on Start spins up a brand-new sandbox.
 
 If you'd rather drive the bucket from your own code, point a PTY client at `/ws/terminal/...` (see `scripts/test` for a small Bun example) or call `/api/session/:sandboxId/exec` for one-off commands.
-
 
 ## Credential rotation
 

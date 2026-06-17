@@ -375,7 +375,7 @@ Response:
 { "id": "sess_abc123" }
 ```
 
-Pass the returned session ID via the `Session-Id` header on subsequent `/exec` and file operations to scope them to the session.
+Pass the returned session ID via the `Session-Id` header on subsequent `/exec` and file operations when those operations should use the session's persistent context.
 
 ---
 
@@ -397,13 +397,13 @@ Returns 204 No Content on success.
 The bridge supports the Sandbox SDK session mechanism through the `Session-Id` request header. Sessions separate command execution contexts, such as working directory and environment variables, within one sandbox. For user-facing applications, use one sandbox ID per user or account workspace.
 
 - **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
-- **Use a session**: Pass `Session-Id: <session-id>` on `/exec` and file operation requests.
+- **Use a session**: Pass `Session-Id: <session-id>` on `/exec` and file operation requests that should use persistent session state.
 - **Delete a session**: `DELETE /v1/sandbox/:id/session/:sid` — tears down the session.
-- **Default session**: When no `Session-Id` header is provided, requests use the sandbox's default session.
+- **Omit a session**: `/exec` uses top-level sandbox process semantics when no `Session-Id` header is provided. Create and pass an explicit session when commands need shared cwd/env state.
 
 ### Session limitations
 
-- **Custom sessions don't survive container sleep.** Only the default session persists across container restarts. Custom sessions are ephemeral — if the container sleeps and restarts, custom sessions are lost.
+- **Sessions don't survive container sleep.** If the container sleeps and restarts, explicit sessions must be recreated.
 - **`destroy()` kills in-flight operations immediately.** Deleting a sandbox via `DELETE /v1/sandbox/:id` calls `sandbox.destroy()`, which terminates all running commands and sessions without waiting for completion.
 - **Deleted sandbox IDs can be reused.** After destroying a sandbox, the same ID can be used again — it gets a fresh container.
 

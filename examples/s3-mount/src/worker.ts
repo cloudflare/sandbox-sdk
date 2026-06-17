@@ -42,7 +42,7 @@ app.post('/api/session/:sandboxId/cleanup', async (c) => {
 app.post('/api/session/:sandboxId/exec', async (c) => {
   const sandbox = getSandbox(c.env.Sandbox, c.req.param('sandboxId'));
   const { cmd } = await c.req.json<{ cmd: string }>();
-  // Subshell so a failing command doesn't poison the default session.
+  // Keep debug commands self-contained; top-level exec does not preserve shell state.
   const result = await sandbox.exec(`(${cmd})`);
   return c.json({
     stdout: result.stdout,

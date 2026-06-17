@@ -427,13 +427,13 @@ export interface SandboxOptions {
   keepAlive?: boolean;
 
   /**
-   * When true (the default), implicit operations automatically create and reuse
-   * a persistent default shell session. Set to false to run implicit top-level
-   * operations sessionlessly, where each command spawns a fresh process with no
-   * shared shell state. Explicit per-call session IDs continue to work normally
-   * when this is false.
+   * Legacy compatibility option for implicit non-command operations that still
+   * use SDK-managed session context. Top-level `exec()` and `startProcess()` are
+   * stateless regardless of this option; create an explicit session when you
+   * need persistent shell state.
    *
-   * Default: true
+   * @deprecated Top-level execution is stateless. Prefer explicit sessions for
+   * persistent state instead of relying on SDK-managed default sessions.
    */
   enableDefaultSession?: boolean;
 
@@ -727,8 +727,8 @@ export interface WatchOptions {
   exclude?: string[];
 
   /**
-   * Session to run the watch in.
-   * If omitted, the default session is used.
+   * Session to run the watch in. Provide this when watch behavior should be
+   * scoped to an explicit session context.
    */
   sessionId?: string;
 }
