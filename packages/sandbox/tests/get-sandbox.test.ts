@@ -401,6 +401,75 @@ describe('getSandbox', () => {
       );
     });
 
+    it('routes implicit file operations through the sessionless token regardless of default-session options', async () => {
+      mockStub.writeFile = vi.fn().mockResolvedValue({});
+      mockStub.readFile = vi.fn().mockResolvedValue({});
+      mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
+      mockStub.mkdir = vi.fn().mockResolvedValue({});
+      mockStub.deleteFile = vi.fn().mockResolvedValue({});
+      mockStub.renameFile = vi.fn().mockResolvedValue({});
+      mockStub.moveFile = vi.fn().mockResolvedValue({});
+      mockStub.listFiles = vi.fn().mockResolvedValue({ files: [] });
+      mockStub.exists = vi.fn().mockResolvedValue({ exists: true });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+        enableDefaultSession: true
+      });
+
+      await sandbox.writeFile('/workspace/file.txt', 'content', {
+        encoding: 'utf8'
+      });
+      await sandbox.readFile('/workspace/file.txt', { encoding: 'utf8' });
+      await sandbox.readFileStream('/workspace/file.txt');
+      await sandbox.mkdir('/workspace/dir', { recursive: true });
+      await sandbox.deleteFile('/workspace/file.txt');
+      await sandbox.renameFile('/workspace/old.txt', '/workspace/new.txt');
+      await sandbox.moveFile('/workspace/src.txt', '/workspace/dest.txt');
+      await sandbox.listFiles('/workspace', { includeHidden: true });
+      await sandbox.exists('/workspace/file.txt');
+
+      expect(mockStub.writeFile).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        'content',
+        { encoding: 'utf8', sessionId: DISABLE_SESSION_TOKEN }
+      );
+      expect(mockStub.readFile).toHaveBeenCalledWith('/workspace/file.txt', {
+        encoding: 'utf8',
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+      expect(mockStub.readFileStream).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        { sessionId: DISABLE_SESSION_TOKEN }
+      );
+      expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
+        recursive: true,
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+      expect(mockStub.deleteFile).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        DISABLE_SESSION_TOKEN
+      );
+      expect(mockStub.renameFile).toHaveBeenCalledWith(
+        '/workspace/old.txt',
+        '/workspace/new.txt',
+        DISABLE_SESSION_TOKEN
+      );
+      expect(mockStub.moveFile).toHaveBeenCalledWith(
+        '/workspace/src.txt',
+        '/workspace/dest.txt',
+        DISABLE_SESSION_TOKEN
+      );
+      expect(mockStub.listFiles).toHaveBeenCalledWith('/workspace', {
+        includeHidden: true,
+        sessionId: DISABLE_SESSION_TOKEN
+      });
+      expect(mockStub.exists).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        DISABLE_SESSION_TOKEN
+      );
+    });
+
     it('routes implicit watch through the sessionless token when default sessions are disabled', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
 

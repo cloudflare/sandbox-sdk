@@ -700,22 +700,20 @@ export function getSandbox<T extends Sandbox<any>>(
       content: string | ReadableStream<Uint8Array>,
       fileOptions: { encoding?: string; sessionId?: string } = {}
     ) =>
-      useDefaultSession || fileOptions.sessionId !== undefined
-        ? stub.writeFile(path, content, fileOptions)
-        : stub.writeFile(path, content, {
-            ...fileOptions,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
+      stub.writeFile(path, content, {
+        ...fileOptions,
+        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     readFile: (
       path: string,
       fileOptions:
         | { encoding: 'none'; sessionId?: string }
         | { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string } = {}
     ) => {
-      const options =
-        useDefaultSession || fileOptions.sessionId !== undefined
-          ? fileOptions
-          : { ...fileOptions, sessionId: DISABLE_SESSION_TOKEN };
+      const options = {
+        ...fileOptions,
+        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+      };
 
       if (options.encoding === 'none') {
         return stub.readFile(path, options);
@@ -724,42 +722,39 @@ export function getSandbox<T extends Sandbox<any>>(
       return stub.readFile(path, options);
     },
     readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
-      useDefaultSession || fileOptions.sessionId !== undefined
-        ? stub.readFileStream(path, fileOptions)
-        : stub.readFileStream(path, { sessionId: DISABLE_SESSION_TOKEN }),
+      stub.readFileStream(path, {
+        ...fileOptions,
+        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     mkdir: (
       path: string,
       mkdirOptions: { recursive?: boolean; sessionId?: string } = {}
     ) =>
-      useDefaultSession || mkdirOptions.sessionId !== undefined
-        ? stub.mkdir(path, mkdirOptions)
-        : stub.mkdir(path, {
-            ...mkdirOptions,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
-    deleteFile: (path: string) =>
-      useDefaultSession
-        ? stub.deleteFile(path)
-        : stub.deleteFile(path, DISABLE_SESSION_TOKEN),
-    renameFile: (oldPath: string, newPath: string) =>
-      useDefaultSession
-        ? stub.renameFile(oldPath, newPath)
-        : stub.renameFile(oldPath, newPath, DISABLE_SESSION_TOKEN),
-    moveFile: (sourcePath: string, destinationPath: string) =>
-      useDefaultSession
-        ? stub.moveFile(sourcePath, destinationPath)
-        : stub.moveFile(sourcePath, destinationPath, DISABLE_SESSION_TOKEN),
+      stub.mkdir(path, {
+        ...mkdirOptions,
+        sessionId: mkdirOptions.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
+    deleteFile: (path: string, sessionId?: string) =>
+      stub.deleteFile(path, sessionId ?? DISABLE_SESSION_TOKEN),
+    renameFile: (oldPath: string, newPath: string, sessionId?: string) =>
+      stub.renameFile(oldPath, newPath, sessionId ?? DISABLE_SESSION_TOKEN),
+    moveFile: (
+      sourcePath: string,
+      destinationPath: string,
+      sessionId?: string
+    ) =>
+      stub.moveFile(
+        sourcePath,
+        destinationPath,
+        sessionId ?? DISABLE_SESSION_TOKEN
+      ),
     listFiles: (path: string, listOptions?: ListFilesOptions) =>
-      useDefaultSession || listOptions?.sessionId !== undefined
-        ? stub.listFiles(path, listOptions)
-        : stub.listFiles(path, {
-            ...listOptions,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
+      stub.listFiles(path, {
+        ...listOptions,
+        sessionId: listOptions?.sessionId ?? DISABLE_SESSION_TOKEN
+      }),
     exists: (path: string, sessionId?: string) =>
-      useDefaultSession || sessionId !== undefined
-        ? stub.exists(path, sessionId)
-        : stub.exists(path, DISABLE_SESSION_TOKEN),
+      stub.exists(path, sessionId ?? DISABLE_SESSION_TOKEN),
     gitCheckout: (
       repoUrl: string,
       gitOptions?: {
