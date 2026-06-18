@@ -15,10 +15,10 @@
  */
 
 import {
+  Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
-  proxyToSandbox,
-  Sandbox as BaseSandbox
+  proxyToSandbox
 } from '@cloudflare/sandbox';
 import {
   type CodeContext,
