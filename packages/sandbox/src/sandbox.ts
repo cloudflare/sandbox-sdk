@@ -4178,7 +4178,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ) {
     const execution = await this.resolveExecution(options?.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.git.checkout(repoUrl, session, {
+    return this.client.git.checkout(repoUrl, {
+      ...(session !== undefined && { sessionId: session }),
       branch: options?.branch,
       targetDir: options?.targetDir,
       depth: options?.depth,

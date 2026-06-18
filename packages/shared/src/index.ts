@@ -81,6 +81,7 @@ export type {
   ExtensionPackage,
   ExtensionRegistration,
   FileSessionOptions,
+  GitCheckoutOptions,
   MkdirOptions,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,

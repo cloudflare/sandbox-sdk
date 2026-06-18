@@ -168,16 +168,18 @@ export interface SandboxPortsAPI {
   watchPort(request: PortWatchRequest): Promise<ReadableStream<Uint8Array>>;
 }
 
+export interface GitCheckoutOptions {
+  sessionId?: string;
+  branch?: string;
+  targetDir?: string;
+  depth?: number;
+  timeoutMs?: number;
+}
+
 export interface SandboxGitAPI {
   checkout(
     repoUrl: string,
-    sessionId: string | undefined,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      depth?: number;
-      timeoutMs?: number;
-    }
+    options?: GitCheckoutOptions
   ): Promise<GitCheckoutResult>;
 }
 

@@ -825,7 +825,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
         'https://github.com/test/repo.git',
-        undefined,
         {
           branch: 'main',
           targetDir: undefined,
@@ -1156,8 +1155,8 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
       expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
         'https://github.com/test/repo.git',
-        'test-session',
         {
+          sessionId: 'test-session',
           branch: undefined,
           targetDir: undefined,
           depth: 1,

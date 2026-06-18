@@ -9,6 +9,7 @@ import type {
   FileEncoding,
   FileInfo,
   FileSessionOptions,
+  GitCheckoutOptions,
   ListFilesOptions,
   Logger,
   MkdirOptions,
@@ -684,23 +685,8 @@ class GitRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async checkout(
-    repoUrl: string,
-    sessionId: string | undefined,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      depth?: number;
-      timeoutMs?: number;
-    }
-  ) {
-    const result = await this.#svc.cloneRepository(repoUrl, {
-      branch: options?.branch,
-      targetDir: options?.targetDir,
-      depth: options?.depth,
-      timeoutMs: options?.timeoutMs,
-      sessionId
-    });
+  async checkout(repoUrl: string, options: GitCheckoutOptions = {}) {
+    const result = await this.#svc.cloneRepository(repoUrl, options);
     const data = extractData<{ path: string; branch: string }>(result);
     return {
       success: true,
