@@ -467,7 +467,7 @@ describe('Local Backup & Restore', () => {
       expect(sandbox.client.files.writeFileStream).toHaveBeenCalledWith(
         expect.stringContaining('/var/backups/'),
         expect.any(ReadableStream),
-        expect.any(String) // session ID
+        expect.objectContaining({ sessionId: expect.any(String) })
       );
 
       // Verify unsquashfs was called

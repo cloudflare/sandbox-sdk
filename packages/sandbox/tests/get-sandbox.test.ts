@@ -419,27 +419,102 @@ describe('getSandbox', () => {
       expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
         recursive: true
       });
-      expect(mockStub.deleteFile).toHaveBeenCalledWith(
-        '/workspace/file.txt',
-        undefined
-      );
+      expect(mockStub.deleteFile).toHaveBeenCalledWith('/workspace/file.txt');
       expect(mockStub.renameFile).toHaveBeenCalledWith(
         '/workspace/old.txt',
-        '/workspace/new.txt',
-        undefined
+        '/workspace/new.txt'
       );
       expect(mockStub.moveFile).toHaveBeenCalledWith(
         '/workspace/src.txt',
-        '/workspace/dest.txt',
-        undefined
+        '/workspace/dest.txt'
       );
       expect(mockStub.listFiles).toHaveBeenCalledWith('/workspace', {
         includeHidden: true
       });
-      expect(mockStub.exists).toHaveBeenCalledWith(
+      expect(mockStub.exists).toHaveBeenCalledWith('/workspace/file.txt');
+    });
+
+    it('passes explicit session IDs through file operation options', async () => {
+      mockStub.writeFile = vi.fn().mockResolvedValue({});
+      mockStub.readFile = vi.fn().mockResolvedValue({});
+      mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
+      mockStub.mkdir = vi.fn().mockResolvedValue({});
+      mockStub.deleteFile = vi.fn().mockResolvedValue({});
+      mockStub.renameFile = vi.fn().mockResolvedValue({});
+      mockStub.moveFile = vi.fn().mockResolvedValue({});
+      mockStub.listFiles = vi.fn().mockResolvedValue({ files: [] });
+      mockStub.exists = vi.fn().mockResolvedValue({ exists: true });
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      await sandbox.writeFile('/workspace/file.txt', 'content', {
+        sessionId: 'my-session',
+        encoding: 'utf8'
+      });
+      await sandbox.readFile('/workspace/file.txt', {
+        sessionId: 'my-session',
+        encoding: 'utf8'
+      });
+      await sandbox.readFileStream('/workspace/file.txt', {
+        sessionId: 'my-session'
+      });
+      await sandbox.mkdir('/workspace/dir', {
+        sessionId: 'my-session',
+        recursive: true
+      });
+      await sandbox.deleteFile('/workspace/file.txt', {
+        sessionId: 'my-session'
+      });
+      await sandbox.renameFile('/workspace/old.txt', '/workspace/new.txt', {
+        sessionId: 'my-session'
+      });
+      await sandbox.moveFile('/workspace/src.txt', '/workspace/dest.txt', {
+        sessionId: 'my-session'
+      });
+      await sandbox.listFiles('/workspace', {
+        sessionId: 'my-session',
+        includeHidden: true
+      });
+      await sandbox.exists('/workspace/file.txt', { sessionId: 'my-session' });
+
+      expect(mockStub.writeFile).toHaveBeenCalledWith(
         '/workspace/file.txt',
-        undefined
+        'content',
+        { sessionId: 'my-session', encoding: 'utf8' }
       );
+      expect(mockStub.readFile).toHaveBeenCalledWith('/workspace/file.txt', {
+        sessionId: 'my-session',
+        encoding: 'utf8'
+      });
+      expect(mockStub.readFileStream).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        { sessionId: 'my-session' }
+      );
+      expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
+        sessionId: 'my-session',
+        recursive: true
+      });
+      expect(mockStub.deleteFile).toHaveBeenCalledWith('/workspace/file.txt', {
+        sessionId: 'my-session'
+      });
+      expect(mockStub.renameFile).toHaveBeenCalledWith(
+        '/workspace/old.txt',
+        '/workspace/new.txt',
+        { sessionId: 'my-session' }
+      );
+      expect(mockStub.moveFile).toHaveBeenCalledWith(
+        '/workspace/src.txt',
+        '/workspace/dest.txt',
+        { sessionId: 'my-session' }
+      );
+      expect(mockStub.listFiles).toHaveBeenCalledWith('/workspace', {
+        sessionId: 'my-session',
+        includeHidden: true
+      });
+      expect(mockStub.exists).toHaveBeenCalledWith('/workspace/file.txt', {
+        sessionId: 'my-session'
+      });
     });
 
     it('routes implicit watch and change checks without session IDs', async () => {

@@ -74,31 +74,48 @@ export interface SandboxCommandsAPI {
   }>;
 }
 
+export interface FileSessionOptions {
+  sessionId?: string;
+}
+
+export interface ReadFileStreamOptions extends FileSessionOptions {}
+
+export interface ReadFileBinaryOptions extends FileSessionOptions {
+  encoding: 'none';
+}
+
+export interface ReadFileOptions extends FileSessionOptions {
+  encoding?: Exclude<FileEncoding, 'none'>;
+}
+
+export interface WriteFileOptions extends FileSessionOptions {
+  encoding?: string;
+  permissions?: string;
+}
+
+export interface MkdirOptions extends FileSessionOptions {
+  recursive?: boolean;
+}
+
 export interface SandboxFilesAPI {
   readFile(
     path: string,
-    sessionId: string | undefined,
-    options: { encoding: 'none' }
+    options: ReadFileBinaryOptions
   ): Promise<ReadFileStreamResult>;
-  readFile(
-    path: string,
-    sessionId: string | undefined,
-    options?: { encoding?: Exclude<FileEncoding, 'none'> }
-  ): Promise<ReadFileResult>;
+  readFile(path: string, options?: ReadFileOptions): Promise<ReadFileResult>;
   readFileStream(
     path: string,
-    sessionId: string | undefined
+    options?: ReadFileStreamOptions
   ): Promise<ReadableStream<Uint8Array>>;
   writeFile(
     path: string,
     content: string,
-    sessionId: string | undefined,
-    options?: { encoding?: string; permissions?: string }
+    options?: WriteFileOptions
   ): Promise<WriteFileResult>;
   writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    sessionId: string | undefined
+    options?: FileSessionOptions
   ): Promise<{
     success: boolean;
     path: string;
@@ -107,32 +124,21 @@ export interface SandboxFilesAPI {
   }>;
   deleteFile(
     path: string,
-    sessionId: string | undefined
+    options?: FileSessionOptions
   ): Promise<DeleteFileResult>;
   renameFile(
     oldPath: string,
     newPath: string,
-    sessionId: string | undefined
+    options?: FileSessionOptions
   ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId: string | undefined
+    options?: FileSessionOptions
   ): Promise<MoveFileResult>;
-  mkdir(
-    path: string,
-    sessionId: string | undefined,
-    options?: { recursive?: boolean }
-  ): Promise<MkdirResult>;
-  listFiles(
-    path: string,
-    sessionId: string | undefined,
-    options?: ListFilesOptions
-  ): Promise<ListFilesResult>;
-  exists(
-    path: string,
-    sessionId: string | undefined
-  ): Promise<FileExistsResult>;
+  mkdir(path: string, options?: MkdirOptions): Promise<MkdirResult>;
+  listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string, options?: FileSessionOptions): Promise<FileExistsResult>;
 }
 
 export interface ProcessStartOptions {

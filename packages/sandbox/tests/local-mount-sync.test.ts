@@ -198,7 +198,7 @@ describe('LocalMountSyncManager', () => {
       await manager.start();
 
       // Should create mount directory
-      expect(fileClient.mkdir).toHaveBeenCalledWith('/mnt/data', undefined, {
+      expect(fileClient.mkdir).toHaveBeenCalledWith('/mnt/data', {
         recursive: true
       });
 
@@ -214,22 +214,18 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file1.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/dir/file2.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
       // Should create parent directories for nested files
-      expect(fileClient.mkdir).toHaveBeenCalledWith(
-        '/mnt/data/dir',
-        undefined,
-        { recursive: true }
-      );
+      expect(fileClient.mkdir).toHaveBeenCalledWith('/mnt/data/dir', {
+        recursive: true
+      });
 
       await manager.stop();
     });
@@ -319,7 +315,6 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/new-file.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
@@ -395,10 +390,7 @@ describe('LocalMountSyncManager', () => {
       await vi.advanceTimersByTimeAsync(1000);
 
       // Should detect deletion
-      expect(fileClient.deleteFile).toHaveBeenCalledWith(
-        '/mnt/data/file.txt',
-        undefined
-      );
+      expect(fileClient.deleteFile).toHaveBeenCalledWith('/mnt/data/file.txt');
 
       await manager.stop();
     });
@@ -469,7 +461,6 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
@@ -505,7 +496,6 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
@@ -581,7 +571,6 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
@@ -631,7 +620,6 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/photo.jpg',
         expect.any(String),
-        undefined,
         { encoding: 'base64' }
       );
 
@@ -678,11 +666,9 @@ describe('LocalMountSyncManager', () => {
       await flush();
 
       // Should read the file from container (base64)
-      expect(fileClient.readFile).toHaveBeenCalledWith(
-        '/mnt/data/hello.txt',
-        undefined,
-        { encoding: 'base64' }
-      );
+      expect(fileClient.readFile).toHaveBeenCalledWith('/mnt/data/hello.txt', {
+        encoding: 'base64'
+      });
 
       // Should upload to R2
       expect(bucket.put).toHaveBeenCalledWith(
@@ -732,7 +718,6 @@ describe('LocalMountSyncManager', () => {
 
       expect(fileClient.readFile).toHaveBeenCalledWith(
         '/mnt/data/existing.txt',
-        undefined,
         { encoding: 'base64' }
       );
       expect(bucket.put).toHaveBeenCalledWith(

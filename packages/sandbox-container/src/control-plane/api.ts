@@ -8,13 +8,20 @@ import type {
   ExtensionHealth,
   FileEncoding,
   FileInfo,
+  FileSessionOptions,
   ListFilesOptions,
   Logger,
+  MkdirOptions,
   ProcessStartOptions,
+  ReadFileBinaryOptions,
+  ReadFileOptions,
+  ReadFileStreamOptions,
   SandboxAPI,
   StopTunnelRunRequest,
   StopTunnelRunResult,
-  WatchRequest
+  TunnelInfo,
+  WatchRequest,
+  WriteFileOptions
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { RpcTarget } from 'capnweb';
@@ -206,8 +213,7 @@ class FilesRPCAPI extends RpcTarget {
 
   async readFile(
     path: string,
-    sessionId: string | undefined,
-    options: { encoding: 'none' }
+    options: ReadFileBinaryOptions
   ): Promise<{
     success: true;
     content: ReadableStream<Uint8Array>;
@@ -218,8 +224,7 @@ class FilesRPCAPI extends RpcTarget {
   }>;
   async readFile(
     path: string,
-    sessionId: string | undefined,
-    options?: { encoding?: Exclude<FileEncoding, 'none'> }
+    options?: ReadFileOptions
   ): Promise<{
     success: true;
     content: string;
@@ -232,10 +237,11 @@ class FilesRPCAPI extends RpcTarget {
   }>;
   async readFile(
     path: string,
-    sessionId: string | undefined,
-    options?: { encoding?: FileEncoding }
+    options: { encoding?: FileEncoding; sessionId?: string } = {}
   ) {
-    if (options?.encoding === 'none') {
+    const { sessionId, ...readOptions } = options;
+
+    if (options.encoding === 'none') {
       const result = await this.#svc.readFileBinaryStream(path, sessionId);
       const { content, size, mimeType } = extractData<{
         content: ReadableStream<Uint8Array>;
@@ -251,7 +257,7 @@ class FilesRPCAPI extends RpcTarget {
         timestamp: new Date().toISOString()
       };
     }
-    const result = await this.#svc.readFile(path, options, sessionId);
+    const result = await this.#svc.readFile(path, readOptions, sessionId);
     const content = extractData<string>(result);
     const metadata = (
       result as {
@@ -267,7 +273,7 @@ class FilesRPCAPI extends RpcTarget {
       success: true,
       content,
       path,
-      encoding: (metadata?.encoding ?? (options?.encoding || 'utf-8')) as
+      encoding: (metadata?.encoding ?? (options.encoding || 'utf-8')) as
         | 'utf-8'
         | 'base64',
       isBinary: metadata?.isBinary,
@@ -279,18 +285,23 @@ class FilesRPCAPI extends RpcTarget {
 
   async readFileStream(
     path: string,
-    sessionId: string | undefined
+    options: ReadFileStreamOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.#svc.readFileStreamOperation(path, sessionId);
+    return this.#svc.readFileStreamOperation(path, options.sessionId);
   }
 
   async writeFile(
     path: string,
     content: string,
-    sessionId: string | undefined,
-    options?: { encoding?: string; permissions?: string }
+    options: WriteFileOptions = {}
   ) {
-    const result = await this.#svc.writeFile(path, content, options, sessionId);
+    const { sessionId, ...writeOptions } = options;
+    const result = await this.#svc.writeFile(
+      path,
+      content,
+      writeOptions,
+      sessionId
+    );
     throwIfError(result);
     return {
       success: true,
@@ -303,9 +314,13 @@ class FilesRPCAPI extends RpcTarget {
   async writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    sessionId: string | undefined
+    options: FileSessionOptions = {}
   ) {
-    const result = await this.#svc.writeFileStream(path, stream, sessionId);
+    const result = await this.#svc.writeFileStream(
+      path,
+      stream,
+      options.sessionId
+    );
     throwIfError(result);
     const data = (result as { data?: { bytesWritten: number } }).data;
     return {
@@ -316,8 +331,8 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async deleteFile(path: string, sessionId: string | undefined) {
-    const result = await this.#svc.deleteFile(path, sessionId);
+  async deleteFile(path: string, options: FileSessionOptions = {}) {
+    const result = await this.#svc.deleteFile(path, options.sessionId);
     throwIfError(result);
     return { success: true, path, timestamp: new Date().toISOString() };
   }
@@ -325,9 +340,13 @@ class FilesRPCAPI extends RpcTarget {
   async renameFile(
     oldPath: string,
     newPath: string,
-    sessionId: string | undefined
+    options: FileSessionOptions = {}
   ) {
-    const result = await this.#svc.renameFile(oldPath, newPath, sessionId);
+    const result = await this.#svc.renameFile(
+      oldPath,
+      newPath,
+      options.sessionId
+    );
     throwIfError(result);
     return {
       success: true,
@@ -341,12 +360,12 @@ class FilesRPCAPI extends RpcTarget {
   async moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId: string | undefined
+    options: FileSessionOptions = {}
   ) {
     const result = await this.#svc.moveFile(
       sourcePath,
       destinationPath,
-      sessionId
+      options.sessionId
     );
     throwIfError(result);
     return {
@@ -357,25 +376,25 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async mkdir(
-    path: string,
-    sessionId: string | undefined,
-    options?: { recursive?: boolean }
-  ) {
-    const result = await this.#svc.createDirectory(path, options, sessionId);
+  async mkdir(path: string, options: MkdirOptions = {}) {
+    const { sessionId, ...mkdirOptions } = options;
+    const result = await this.#svc.createDirectory(
+      path,
+      mkdirOptions,
+      sessionId
+    );
     throwIfError(result);
     return {
       success: true,
       path,
-      recursive: options?.recursive ?? false,
+      recursive: options.recursive ?? false,
       timestamp: new Date().toISOString()
     };
   }
 
   async listFiles(
     path: string,
-    sessionId: string | undefined,
-    options?: ListFilesOptions
+    options: ListFilesOptions = {}
   ): Promise<{
     success: boolean;
     files: FileInfo[];
@@ -383,7 +402,8 @@ class FilesRPCAPI extends RpcTarget {
     path: string;
     timestamp: string;
   }> {
-    const result = await this.#svc.listFiles(path, options, sessionId);
+    const { sessionId, ...listOptions } = options;
+    const result = await this.#svc.listFiles(path, listOptions, sessionId);
     const files = extractData<FileInfo[]>(result);
     return {
       success: true,
@@ -394,8 +414,8 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async exists(path: string, sessionId: string | undefined) {
-    const result = await this.#svc.exists(path, sessionId);
+  async exists(path: string, options: FileSessionOptions = {}) {
+    const result = await this.#svc.exists(path, options.sessionId);
     const exists = extractData<boolean>(result);
     return { success: true, exists, path, timestamp: new Date().toISOString() };
   }

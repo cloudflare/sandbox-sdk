@@ -913,7 +913,7 @@ describe('Sandbox R2 egress mounts', () => {
     await sandbox.unmountBucket('/mnt/local');
 
     expect(client.utils.createSession).not.toHaveBeenCalled();
-    expect(client.files.mkdir).toHaveBeenCalledWith('/mnt/local', undefined, {
+    expect(client.files.mkdir).toHaveBeenCalledWith('/mnt/local', {
       recursive: true
     });
   });

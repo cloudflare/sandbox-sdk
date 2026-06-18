@@ -80,11 +80,16 @@ export type {
   ExtensionHealth,
   ExtensionPackage,
   ExtensionRegistration,
+  FileSessionOptions,
+  MkdirOptions,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,
   ProcessStartOptions,
   QuickTunnelInfo,
   QuickTunnelRunSnapshot,
+  ReadFileBinaryOptions,
+  ReadFileOptions,
+  ReadFileStreamOptions,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -105,7 +110,8 @@ export type {
   TunnelRunExitEvent,
   TunnelRunIdentity,
   TunnelRunMode,
-  TunnelRunSnapshot
+  TunnelRunSnapshot,
+  WriteFileOptions
 } from './rpc-types.js';
 // RPC interface types (shared between SDK and container)
 export { EXTENSION_TARBALL_REQUIRED } from './rpc-types.js';

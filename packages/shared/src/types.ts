@@ -1250,17 +1250,20 @@ export interface ISandbox {
   writeFile(
     path: string,
     content: string | ReadableStream<Uint8Array>,
-    options?: { encoding?: string }
+    options?: { encoding?: string; sessionId?: string }
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
-    options: { encoding: 'none' }
+    options: { encoding: 'none'; sessionId?: string }
   ): Promise<ReadFileStreamResult>;
   readFile(
     path: string,
-    options?: { encoding?: Exclude<FileEncoding, 'none'> }
+    options?: { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string }
   ): Promise<ReadFileResult>;
-  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  readFileStream(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
     options?: WatchOptions
@@ -1269,15 +1272,29 @@ export interface ISandbox {
     path: string,
     options?: CheckChangesOptions
   ): Promise<CheckChangesResult>;
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
-  deleteFile(path: string): Promise<DeleteFileResult>;
-  renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
+  mkdir(
+    path: string,
+    options?: { recursive?: boolean; sessionId?: string }
+  ): Promise<MkdirResult>;
+  deleteFile(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<DeleteFileResult>;
+  renameFile(
+    oldPath: string,
+    newPath: string,
+    options?: { sessionId?: string }
+  ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
-    destinationPath: string
+    destinationPath: string,
+    options?: { sessionId?: string }
   ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
-  exists(path: string, sessionId?: string): Promise<FileExistsResult>;
+  exists(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(

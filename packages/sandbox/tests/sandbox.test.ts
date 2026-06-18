@@ -1,5 +1,5 @@
 import { Container, getContainer } from '@cloudflare/containers';
-import type { ExecResult } from '@repo/shared';
+import type { ExecResult, ISandbox } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
@@ -437,7 +437,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
-        undefined,
         { encoding: undefined }
       );
     });
@@ -493,7 +492,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
         '/workspace',
-        'explicit-session',
         {
           includeHidden: true,
           sessionId: 'explicit-session'
@@ -501,6 +499,49 @@ describe('Sandbox - Automatic Session Management', () => {
       );
 
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('allows explicit session IDs through the ISandbox file API', async () => {
+      const typedSandbox: ISandbox = sandbox;
+
+      await typedSandbox.writeFile('/typed.txt', 'content', {
+        sessionId: 'typed-session',
+        encoding: 'utf8'
+      });
+      await typedSandbox.readFile('/typed.txt', {
+        sessionId: 'typed-session',
+        encoding: 'utf8'
+      });
+      await typedSandbox.readFile('/typed.bin', {
+        sessionId: 'typed-session',
+        encoding: 'none'
+      });
+      await typedSandbox.readFileStream('/typed.txt', {
+        sessionId: 'typed-session'
+      });
+      await typedSandbox.mkdir('/typed-dir', {
+        sessionId: 'typed-session',
+        recursive: true
+      });
+      await typedSandbox.deleteFile('/typed.txt', {
+        sessionId: 'typed-session'
+      });
+      await typedSandbox.renameFile('/typed-old.txt', '/typed-new.txt', {
+        sessionId: 'typed-session'
+      });
+      await typedSandbox.moveFile('/typed-src.txt', '/typed-dest.txt', {
+        sessionId: 'typed-session'
+      });
+      await typedSandbox.listFiles('/typed-dir', {
+        sessionId: 'typed-session'
+      });
+      await typedSandbox.exists('/typed.txt', { sessionId: 'typed-session' });
+
+      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
+        '/typed.txt',
+        'content',
+        { sessionId: 'typed-session', encoding: 'utf8' }
+      );
     });
 
     it('should reject empty explicit session IDs', async () => {
@@ -541,14 +582,14 @@ describe('Sandbox - Automatic Session Management', () => {
 
       const firstExecSessionId = vi.mocked(sandbox.client.commands.execute).mock
         .calls[0][1];
-      const fileSessionId = vi.mocked(sandbox.client.files.writeFile).mock
+      const fileOptions = vi.mocked(sandbox.client.files.writeFile).mock
         .calls[0][2];
       const secondExecSessionId = vi.mocked(sandbox.client.commands.execute)
         .mock.calls[1][1];
 
       expect(firstExecSessionId).toBe(undefined);
       expect(secondExecSessionId).toBe(undefined);
-      expect(fileSessionId).toBe(undefined);
+      expect(fileOptions).toEqual({ encoding: undefined });
     });
 
     it('starts implicit processes without creating a default session', async () => {
@@ -807,14 +848,12 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
         1,
         '/one.txt',
         'one',
-        undefined,
         { encoding: undefined }
       );
       expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
         2,
         '/two.txt',
         'two',
-        undefined,
         { encoding: undefined }
       );
     });
@@ -1096,8 +1135,7 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
-        'test-session',
-        { encoding: undefined }
+        { sessionId: 'test-session', encoding: undefined }
       );
     });
 
@@ -1147,7 +1185,6 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
-        undefined,
         { encoding: undefined }
       );
     });

@@ -746,21 +746,37 @@ export function getSandbox<T extends Sandbox<any>>(
           sessionId: mkdirOptions.sessionId
         })
       }),
-    deleteFile: (path: string, sessionId?: string) =>
-      stub.deleteFile(path, sessionId),
-    renameFile: (oldPath: string, newPath: string, sessionId?: string) =>
-      stub.renameFile(oldPath, newPath, sessionId),
+    deleteFile: (path: string, options: { sessionId?: string } = {}) =>
+      options.sessionId === undefined
+        ? stub.deleteFile(path)
+        : stub.deleteFile(path, { sessionId: options.sessionId }),
+    renameFile: (
+      oldPath: string,
+      newPath: string,
+      options: { sessionId?: string } = {}
+    ) =>
+      options.sessionId === undefined
+        ? stub.renameFile(oldPath, newPath)
+        : stub.renameFile(oldPath, newPath, { sessionId: options.sessionId }),
     moveFile: (
       sourcePath: string,
       destinationPath: string,
-      sessionId?: string
-    ) => stub.moveFile(sourcePath, destinationPath, sessionId),
+      options: { sessionId?: string } = {}
+    ) =>
+      options.sessionId === undefined
+        ? stub.moveFile(sourcePath, destinationPath)
+        : stub.moveFile(sourcePath, destinationPath, {
+            sessionId: options.sessionId
+          }),
     listFiles: (path: string, listOptions?: ListFilesOptions) =>
       stub.listFiles(path, {
         ...listOptions,
         sessionId: listOptions?.sessionId
       }),
-    exists: (path: string, sessionId?: string) => stub.exists(path, sessionId),
+    exists: (path: string, options: { sessionId?: string } = {}) =>
+      options.sessionId === undefined
+        ? stub.exists(path)
+        : stub.exists(path, { sessionId: options.sessionId }),
     gitCheckout: (
       repoUrl: string,
       gitOptions?: {
@@ -2194,8 +2210,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     await this.client.files.writeFile(
       headerFilePath,
-      S3FS_DISABLE_EXPECT_HEADER_CONFIG,
-      undefined
+      S3FS_DISABLE_EXPECT_HEADER_CONFIG
     );
     await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
   }
@@ -2211,7 +2226,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
 
-    await this.client.files.writeFile(passwordFilePath, content, undefined);
+    await this.client.files.writeFile(passwordFilePath, content);
 
     await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
@@ -4177,7 +4192,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ) {
     const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.mkdir(path, session, {
+    return this.client.files.mkdir(path, {
+      ...(session !== undefined && { sessionId: session }),
       recursive: options.recursive
     });
   }
@@ -4191,34 +4207,49 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const session = this.serializeExecutionContext(execution);
 
     if (content instanceof ReadableStream) {
-      return this.client.files.writeFileStream(path, content, session);
+      return this.client.files.writeFileStream(path, content, {
+        ...(session !== undefined && { sessionId: session })
+      });
     }
 
-    return this.client.files.writeFile(path, content, session, {
+    return this.client.files.writeFile(path, content, {
+      ...(session !== undefined && { sessionId: session }),
       encoding: options.encoding
     });
   }
 
-  async deleteFile(path: string, sessionId?: string) {
-    const execution = await this.resolveExecution(sessionId);
+  async deleteFile(path: string, options: { sessionId?: string } = {}) {
+    const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.deleteFile(path, session);
+    return session === undefined
+      ? this.client.files.deleteFile(path)
+      : this.client.files.deleteFile(path, { sessionId: session });
   }
 
-  async renameFile(oldPath: string, newPath: string, sessionId?: string) {
-    const execution = await this.resolveExecution(sessionId);
+  async renameFile(
+    oldPath: string,
+    newPath: string,
+    options: { sessionId?: string } = {}
+  ) {
+    const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.renameFile(oldPath, newPath, session);
+    return session === undefined
+      ? this.client.files.renameFile(oldPath, newPath)
+      : this.client.files.renameFile(oldPath, newPath, { sessionId: session });
   }
 
   async moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId?: string
+    options: { sessionId?: string } = {}
   ) {
-    const execution = await this.resolveExecution(sessionId);
+    const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.moveFile(sourcePath, destinationPath, session);
+    return session === undefined
+      ? this.client.files.moveFile(sourcePath, destinationPath)
+      : this.client.files.moveFile(sourcePath, destinationPath, {
+          sessionId: session
+        });
   }
 
   /**
@@ -4246,9 +4277,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
     if (options.encoding === 'none') {
-      return this.client.files.readFile(path, session, { encoding: 'none' });
+      return this.client.files.readFile(path, {
+        ...(session !== undefined && { sessionId: session }),
+        encoding: 'none'
+      });
     }
-    return this.client.files.readFile(path, session, {
+    return this.client.files.readFile(path, {
+      ...(session !== undefined && { sessionId: session }),
       encoding: options.encoding
     });
   }
@@ -4265,19 +4300,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<ReadableStream<Uint8Array>> {
     const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.readFileStream(path, session);
+    return this.client.files.readFileStream(path, {
+      ...(session !== undefined && { sessionId: session })
+    });
   }
 
   async listFiles(path: string, options?: ListFilesOptions) {
     const context = await this.resolveExecution(options?.sessionId);
     const session = this.serializeExecutionContext(context);
-    return this.client.files.listFiles(path, session, options);
+    return this.client.files.listFiles(path, {
+      ...options,
+      ...(session !== undefined && { sessionId: session })
+    });
   }
 
-  async exists(path: string, sessionId?: string) {
-    const execution = await this.resolveExecution(sessionId);
+  async exists(path: string, options: { sessionId?: string } = {}) {
+    const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
-    return this.client.files.exists(path, session);
+    return session === undefined
+      ? this.client.files.exists(path)
+      : this.client.files.exists(path, { sessionId: session });
   }
 
   /**
@@ -4981,7 +5023,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       streamProcessLogs: (processId, options) =>
         this.streamProcessLogs(processId, options),
 
-      // File operations - pass sessionId via options or parameter
+      // File operations - pass sessionId via options
       writeFile: (path, content, options) =>
         this.writeFile(path, content, { ...options, sessionId }),
       readFile: ((
@@ -4999,14 +5041,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       checkChanges: (path, options) =>
         this.checkChanges(path, { ...options, sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
-      deleteFile: (path) => this.deleteFile(path, sessionId),
+      deleteFile: (path) => this.deleteFile(path, { sessionId }),
       renameFile: (oldPath, newPath) =>
-        this.renameFile(oldPath, newPath, sessionId),
+        this.renameFile(oldPath, newPath, { sessionId }),
       moveFile: (sourcePath, destPath) =>
-        this.moveFile(sourcePath, destPath, sessionId),
+        this.moveFile(sourcePath, destPath, { sessionId }),
       listFiles: (path, options) =>
-        this.client.files.listFiles(path, sessionId, options),
-      exists: (path) => this.exists(path, sessionId),
+        this.listFiles(path, { ...options, sessionId }),
+      exists: (path) => this.exists(path, { sessionId }),
 
       // Git operations
       gitCheckout: (repoUrl, options) =>

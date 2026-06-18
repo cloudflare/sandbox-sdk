@@ -75,7 +75,7 @@ export class LocalMountSyncManager {
   async start(): Promise<void> {
     this.running = true;
 
-    await this.client.files.mkdir(this.mountPath, undefined, {
+    await this.client.files.mkdir(this.mountPath, {
       recursive: true
     });
 
@@ -219,7 +219,7 @@ export class LocalMountSyncManager {
         this.suppressEcho(containerPath);
 
         try {
-          await this.client.files.deleteFile(containerPath, undefined);
+          await this.client.files.deleteFile(containerPath);
           this.logger.debug('R2 -> Container: deleted file', { key });
         } catch (error) {
           this.logger.error(
@@ -265,7 +265,7 @@ export class LocalMountSyncManager {
     const arrayBuffer = await obj.arrayBuffer();
     const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
 
-    await this.client.files.writeFile(containerPath, base64, undefined, {
+    await this.client.files.writeFile(containerPath, base64, {
       encoding: 'base64'
     });
   }
@@ -276,7 +276,7 @@ export class LocalMountSyncManager {
       containerPath.lastIndexOf('/')
     );
     if (parentDir && parentDir !== this.mountPath) {
-      await this.client.files.mkdir(parentDir, undefined, {
+      await this.client.files.mkdir(parentDir, {
         recursive: true
       });
     }
@@ -399,7 +399,7 @@ export class LocalMountSyncManager {
     containerPath: string,
     r2Key: string
   ): Promise<void> {
-    const result = await this.client.files.readFile(containerPath, undefined, {
+    const result = await this.client.files.readFile(containerPath, {
       encoding: 'base64'
     });
     const bytes = base64ToUint8Array(result.content);
