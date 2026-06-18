@@ -22,7 +22,7 @@ export function Terminal({
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ConnectionState>('disconnected');
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once — parent controls session switching via addon ref
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once — parent controls terminal switching via addon ref
   useEffect(() => {
     if (!containerRef.current) return;
 

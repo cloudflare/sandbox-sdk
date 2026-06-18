@@ -25,14 +25,19 @@ interface Client {
 export class Room extends DurableObject<Env> {
   private clients = new Map<string, Client>();
   private roomId = '';
-  private sessionId = '';
+  private sandboxId = '';
+  private terminalId = '';
 
   private getUsers(): User[] {
     return Array.from(this.clients.values()).map((c) => c.user);
   }
 
   private getRoomInfo(): RoomInfo {
-    return { roomId: this.roomId, sessionId: this.sessionId };
+    return {
+      roomId: this.roomId,
+      sandboxId: this.sandboxId,
+      terminalId: this.terminalId
+    };
   }
 
   private broadcast(message: ServerMessage, excludeUserId?: string): void {
@@ -120,8 +125,8 @@ export class Room extends DurableObject<Env> {
 
     if (!this.roomId) {
       this.roomId = roomId;
-      // The room session ID also identifies the room sandbox workspace.
-      this.sessionId = `room-${roomId}`;
+      this.sandboxId = `room-${roomId}`;
+      this.terminalId = this.sandboxId;
     }
 
     const userId = crypto.randomUUID();

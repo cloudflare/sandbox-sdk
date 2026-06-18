@@ -21,7 +21,7 @@ Browser (xterm.js + SandboxAddon)
     |
     |-- /ws/room/:id ----> Room DO         Presence, user list, typing
     |
-    \-- /ws/terminal/:sessionId
+    \-- /ws/terminal/:terminalId
             |
             v
         Sandbox DO <---> Container PTY    Direct WebSocket passthrough
@@ -57,13 +57,13 @@ The terminal component uses `SandboxAddon` from `@cloudflare/sandbox/xterm` to h
 import { SandboxAddon } from '@cloudflare/sandbox/xterm';
 
 const sandboxAddon = new SandboxAddon({
-  getWebSocketUrl: ({ origin, sessionId }) =>
-    `${origin}/ws/terminal/${sessionId}`,
+  getWebSocketUrl: ({ origin, terminalId }) =>
+    `${origin}/ws/terminal/${terminalId}`,
   onStateChange: (state) => setState(state)
 });
 
 terminal.loadAddon(sandboxAddon);
-sandboxAddon.connect({ sandboxId: sessionId, sessionId });
+sandboxAddon.connect({ sandboxId: roomSandboxId, terminalId: roomTerminalId });
 ```
 
 ## Getting Started

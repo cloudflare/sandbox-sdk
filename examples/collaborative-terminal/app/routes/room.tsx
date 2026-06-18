@@ -131,8 +131,8 @@ export default function RoomPage({ params }: Route.ComponentProps) {
                   }
                 >
                   <Terminal
-                    sandboxId={room.sessionId}
-                    terminalId={room.sessionId}
+                    sandboxId={room.sandboxId}
+                    terminalId={room.terminalId}
                     onTyping={sendTyping}
                     onAddonReady={(addon) => {
                       addonRef.current = addon;
