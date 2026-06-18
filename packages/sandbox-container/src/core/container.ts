@@ -8,7 +8,6 @@ import { BackupService } from '../services/backup-service';
 import { ExecutionService } from '../services/execution-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
-import { InterpreterService } from '../services/interpreter-service';
 import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
@@ -22,7 +21,6 @@ export interface Dependencies {
   fileService: FileService;
   portService: PortService;
   gitService: GitService;
-  interpreterService: InterpreterService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
@@ -121,7 +119,6 @@ export class Container {
       executionService,
       gitLogger
     );
-    const interpreterService = new InterpreterService(logger);
     const backupService = new BackupService(logger, executionService);
     const watchService = new WatchService(logger);
     const tunnelService = new TunnelService(logger, () =>
@@ -139,7 +136,6 @@ export class Container {
       fileService,
       portService,
       gitService,
-      interpreterService,
       backupService,
       watchService,
       tunnelService,

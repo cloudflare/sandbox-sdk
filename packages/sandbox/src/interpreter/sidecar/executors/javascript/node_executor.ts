@@ -6,7 +6,7 @@ import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import * as util from 'node:util';
 import * as vm from 'node:vm';
-import type { RichOutput } from '../../process-pool';
+import type { RichOutput } from '../../pool';
 import { transformForAsyncExecution } from '../shared/code-transformer';
 import { isThenable } from '../shared/thenable';
 
@@ -52,9 +52,9 @@ rl.on('line', async (line: string) => {
     let stdout = '';
     let stderr = '';
 
-    (process.stdout.write as any) = (
+    (process.stdout.write as unknown) = (
       chunk: string | Buffer,
-      encoding?: BufferEncoding,
+      _encoding?: BufferEncoding,
       callback?: () => void
     ) => {
       stdout += chunk.toString();
@@ -62,9 +62,9 @@ rl.on('line', async (line: string) => {
       return true;
     };
 
-    (process.stderr.write as any) = (
+    (process.stderr.write as unknown) = (
       chunk: string | Buffer,
-      encoding?: BufferEncoding,
+      _encoding?: BufferEncoding,
       callback?: () => void
     ) => {
       stderr += chunk.toString();

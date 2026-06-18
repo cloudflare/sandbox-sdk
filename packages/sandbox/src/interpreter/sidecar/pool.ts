@@ -1,17 +1,42 @@
+/**
+ * Interpreter process pool — sidecar edition.
+ *
+ * Adapted from the container binary's former `runtime/process-pool.ts`. It is
+ * intentionally dependency-light (no `@repo/shared`, no container `CONFIG`) so
+ * it bundles cleanly into the standalone interpreter sidecar. Executor binaries
+ * are resolved relative to the provisioned extension directory (`EXT_DIR`)
+ * rather than baked-in container paths.
+ */
+
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import type { Logger } from '@repo/shared';
-import { createLogger } from '@repo/shared';
-import { ErrorCode } from '@repo/shared/errors';
+import { join } from 'node:path';
 import { Mutex, Semaphore } from 'async-mutex';
-import { CONFIG } from '../config';
 
-const JS_EXECUTOR_CANDIDATE_PATHS = [
-  '/container-server/dist/runtime/executors/javascript/node_executor.js',
-  '/container-server/dist/runtime/executors/javascript/node_executor.mjs',
-  '/container-server/runtime/executors/javascript/node_executor.js'
-];
+/** Minimal logger so the pool stays free of host logging dependencies. */
+export interface SidecarLogger {
+  debug: (message: string, meta?: unknown) => void;
+  warn: (message: string, meta?: unknown) => void;
+  error: (message: string, error?: unknown, meta?: unknown) => void;
+}
+
+const noopLogger: SidecarLogger = {
+  debug() {},
+  warn() {},
+  error() {}
+};
+
+const EXT_DIR = process.env.EXT_DIR ?? process.cwd();
+
+const SPAWN_TIMEOUT_MS = parseInt(
+  process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
+  10
+);
+const EXECUTION_TIMEOUT_MS = (() => {
+  const val = parseInt(process.env.INTERPRETER_EXECUTION_TIMEOUT_MS || '0', 10);
+  return val === 0 ? undefined : val;
+})();
 
 function summarizeSpawnOutput(data: string): string {
   return data.replace(/\s+/g, ' ').trim().slice(0, 240);
@@ -137,7 +162,7 @@ export class ProcessPoolManager {
   private pools: Map<InterpreterLanguage, InterpreterProcess[]> = new Map();
   private poolConfigs: Map<InterpreterLanguage, ExecutorPoolConfig> = new Map();
   private cleanupInterval?: NodeJS.Timeout;
-  private logger: Logger;
+  private logger: SidecarLogger;
 
   // Track which executor belongs to which context
   private contextExecutors: Map<string, InterpreterProcess> = new Map();
@@ -155,20 +180,18 @@ export class ProcessPoolManager {
   private javascriptExecutorPath?: string;
 
   // Per-language semaphore enforcing maxProcesses. null = unlimited.
-  // Permits are acquired before spawning and released when a process leaves the pool.
   private spawnLimits: Map<InterpreterLanguage, Semaphore | null> = new Map();
 
-  // One-shot release functions keyed by process ID. Populated on successful
-  // registration, consumed by whichever removal path fires first.
+  // One-shot release functions keyed by process ID.
   private processReleasers: Map<string, () => void> = new Map();
 
   constructor(
     customConfigs: Partial<
       Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
     > = {},
-    logger?: Logger
+    logger: SidecarLogger = noopLogger
   ) {
-    this.logger = logger ?? createLogger({ component: 'executor' });
+    this.logger = logger;
     const executorEntries = Object.entries(DEFAULT_EXECUTOR_CONFIGS) as [
       InterpreterLanguage,
       ExecutorPoolConfig
@@ -182,7 +205,6 @@ export class ProcessPoolManager {
       const config: ExecutorPoolConfig = {
         ...defaultConfig,
         ...userConfig,
-        // Environment variables override user config override defaults
         minSize: envMinSize
           ? parseInt(envMinSize, 10)
           : userConfig.minSize || defaultConfig.minSize,
@@ -233,22 +255,25 @@ export class ProcessPoolManager {
       return this.javascriptExecutorPath;
     }
 
-    const resolved = JS_EXECUTOR_CANDIDATE_PATHS.find((path) =>
-      existsSync(path)
-    );
+    const candidates = [
+      join(EXT_DIR, 'executors/javascript/node_executor.mjs'),
+      join(EXT_DIR, 'executors/javascript/node_executor.js')
+    ];
+    const resolved = candidates.find((path) => existsSync(path));
 
     if (!resolved) {
       throw new Error(
-        `JavaScript executor binary not found. Checked: ${JS_EXECUTOR_CANDIDATE_PATHS.join(', ')}`
+        `JavaScript executor binary not found. Checked: ${candidates.join(', ')}`
       );
     }
 
-    this.logger.debug('Resolved JavaScript executor path', {
-      path: resolved
-    });
-
+    this.logger.debug('Resolved JavaScript executor path', { path: resolved });
     this.javascriptExecutorPath = resolved;
     return resolved;
+  }
+
+  private pythonExecutorPath(): string {
+    return join(EXT_DIR, 'executors/python/ipython_executor.py');
   }
 
   private releaseProcessSlot(processId: string): void {
@@ -267,7 +292,6 @@ export class ProcessPoolManager {
     const mutex = this.poolLocks.get(language)!;
     const semaphore = this.spawnLimits.get(language) ?? null;
 
-    // Acquire a process slot. Check + acquire under mutex to avoid races.
     const release = semaphore
       ? await mutex.runExclusive(async () => {
           if (semaphore.getValue() === 0) {
@@ -292,10 +316,6 @@ export class ProcessPoolManager {
 
     try {
       await mutex.runExclusive(() => {
-        // A process can die between createProcess resolving and this mutex
-        // acquisition (e.g. OOM kill while mutex is contended). Check both
-        // exitCode (normal exit) and signalCode (signal kill) since either
-        // alone leaves the other null.
         if (
           executor.process.exitCode !== null ||
           executor.process.signalCode !== null
@@ -359,7 +379,6 @@ export class ProcessPoolManager {
   ): Promise<ExecutionResult> {
     const totalStartTime = Date.now();
 
-    // Transpile TypeScript to JavaScript using Bun's built-in transpiler
     let codeToExecute = code;
     if (language === 'typescript') {
       try {
@@ -382,7 +401,6 @@ export class ProcessPoolManager {
       }
     }
 
-    // Check if Python is available
     if (language === 'python' && !PYTHON_AVAILABLE) {
       const version = process.env.SANDBOX_VERSION || '<version>';
       return {
@@ -392,13 +410,12 @@ export class ProcessPoolManager {
         executionId: randomUUID(),
         outputs: [],
         error: {
-          type: ErrorCode.PYTHON_NOT_AVAILABLE,
+          type: 'PYTHON_NOT_AVAILABLE',
           message: 'Python interpreter not available in this image variant'
         }
       };
     }
 
-    // Check if a JavaScript runtime is available for JavaScript/TypeScript
     if (
       (language === 'javascript' || language === 'typescript') &&
       !JS_RUNTIME
@@ -410,7 +427,7 @@ export class ProcessPoolManager {
         executionId: randomUUID(),
         outputs: [],
         error: {
-          type: ErrorCode.JAVASCRIPT_NOT_AVAILABLE,
+          type: 'JAVASCRIPT_NOT_AVAILABLE',
           message:
             'JavaScript runtime (Node.js or Bun) not available in this container'
         }
@@ -418,7 +435,6 @@ export class ProcessPoolManager {
     }
 
     if (sessionId) {
-      // Context execution: Get dedicated executor and lock on it
       const contextExecutor = this.contextExecutors.get(sessionId);
 
       if (!contextExecutor || contextExecutor.process.killed) {
@@ -436,7 +452,6 @@ export class ProcessPoolManager {
         );
       }
 
-      // Lock on the executor to serialize execution
       const mutex = this.getExecutorLock(contextExecutor.id);
       return await mutex.runExclusive(() =>
         this.executeInProcess(
@@ -446,22 +461,16 @@ export class ProcessPoolManager {
           timeout
         )
       );
-    } else {
-      // Stateless execution: Borrow executor, execute, return
-      const executor = await this.borrowExecutor(language);
-      try {
-        const mutex = this.getExecutorLock(executor.id);
-        return await mutex.runExclusive(() =>
-          this.executeInProcess(
-            executor,
-            codeToExecute,
-            totalStartTime,
-            timeout
-          )
-        );
-      } finally {
-        await this.returnExecutor(language, executor);
-      }
+    }
+
+    const executor = await this.borrowExecutor(language);
+    try {
+      const mutex = this.getExecutorLock(executor.id);
+      return await mutex.runExclusive(() =>
+        this.executeInProcess(executor, codeToExecute, totalStartTime, timeout)
+      );
+    } finally {
+      await this.returnExecutor(language, executor);
     }
   }
 
@@ -475,7 +484,7 @@ export class ProcessPoolManager {
     const executionId = randomUUID();
 
     const execStartTime = Date.now();
-    const effectiveTimeout = timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
+    const effectiveTimeout = timeout ?? EXECUTION_TIMEOUT_MS;
     const result = await this.executeCode(
       process,
       code,
@@ -507,18 +516,13 @@ export class ProcessPoolManager {
     switch (language) {
       case 'python':
         command = 'python3';
-        args = [
-          '-u',
-          '/container-server/dist/runtime/executors/python/ipython_executor.py'
-        ];
+        args = ['-u', this.pythonExecutorPath()];
         break;
       case 'javascript':
-        // Use detected JS runtime (node or bun)
         command = JS_RUNTIME!;
         args = [this.resolveJavaScriptExecutorPath()];
         break;
       case 'typescript':
-        // TypeScript is transpiled in execute(), so use the same JS executor
         command = JS_RUNTIME!;
         args = [this.resolveJavaScriptExecutorPath()];
         break;
@@ -550,7 +554,6 @@ export class ProcessPoolManager {
 
     this.executorLocks.set(id, new Mutex());
 
-    // Register exit handler for cleanup
     const exitHandler = (
       code: number | null,
       signal: NodeJS.Signals | null
@@ -563,7 +566,6 @@ export class ProcessPoolManager {
         signal
       });
 
-      // Clean up from all tracking structures
       if (sessionId) {
         this.contextExecutors.delete(sessionId);
       }
@@ -595,16 +597,16 @@ export class ProcessPoolManager {
         childProcess.kill();
         this.logger.debug('Interpreter spawn timeout', {
           language,
-          timeoutMs: CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS,
+          timeoutMs: SPAWN_TIMEOUT_MS,
           stdout: readyBuffer,
           stderr: errorBuffer
         });
         reject(
           new Error(
-            `${language} executor failed to start within ${CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS}ms`
+            `${language} executor failed to start within ${SPAWN_TIMEOUT_MS}ms`
           )
         );
-      }, CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS);
+      }, SPAWN_TIMEOUT_MS);
 
       const readyHandler = (data: Buffer) => {
         readyBuffer += data.toString();
@@ -678,19 +680,14 @@ export class ProcessPoolManager {
       let timer: NodeJS.Timeout | undefined;
       let responseBuffer = '';
 
-      // Cleanup function to ensure listener is always removed
       const cleanup = () => {
         if (timer) clearTimeout(timer);
         process.process.stdout?.removeListener('data', responseHandler);
       };
 
-      // Set up timeout ONLY if specified (undefined = unlimited)
       if (timeout !== undefined) {
         timer = setTimeout(() => {
           cleanup();
-          // NOTE: We don't kill the child process here because it's a pooled interpreter
-          // that may be reused. The timeout is enforced, but the interpreter continues.
-          // The executor itself also has its own timeout mechanism for VM execution.
           reject(new Error('Execution timeout'));
         }, timeout);
       }
@@ -710,7 +707,7 @@ export class ProcessPoolManager {
             outputs: response.outputs || [],
             error: response.error || null
           });
-        } catch (e) {
+        } catch {
           // Incomplete JSON, keep buffering
         }
       };
@@ -724,7 +721,6 @@ export class ProcessPoolManager {
     contextId: string,
     language: InterpreterLanguage
   ): Promise<void> {
-    // Check if Python is available before trying to create a context
     if (language === 'python' && !PYTHON_AVAILABLE) {
       const version = process.env.SANDBOX_VERSION || '<version>';
       throw new Error(
@@ -732,7 +728,6 @@ export class ProcessPoolManager {
       );
     }
 
-    // Check if a JavaScript runtime is available before trying to create a context
     if (
       (language === 'javascript' || language === 'typescript') &&
       !JS_RUNTIME
@@ -797,21 +792,15 @@ export class ProcessPoolManager {
       executorId: executor.id
     });
 
-    // Remove from context ownership map
     this.contextExecutors.delete(contextId);
 
-    // Remove exit handler since we're doing manual cleanup
     if (executor.exitHandler) {
       executor.process.removeListener('exit', executor.exitHandler);
     }
 
-    // Clean up executor lock
     this.executorLocks.delete(executor.id);
-
-    // Terminate the executor process immediately
     executor.process.kill();
 
-    // Remove from main pool
     const pool = this.pools.get(language);
     if (pool) {
       const index = pool.indexOf(executor);
@@ -822,7 +811,6 @@ export class ProcessPoolManager {
 
     this.releaseProcessSlot(executor.id);
 
-    // Ensure minimum pool is maintained
     await this.ensureMinimumPool(language);
   }
 
@@ -869,7 +857,6 @@ export class ProcessPoolManager {
       targetCount: config.minSize
     });
 
-    // Use the dedicated method for creating unassigned executors
     for (let i = 0; i < config.minSize; i++) {
       try {
         await this.createUnassignedExecutor(executor);
@@ -899,17 +886,14 @@ export class ProcessPoolManager {
   private cleanupIdleProcesses(): void {
     const now = new Date();
 
-    // Only clean up unassigned executors from availableExecutors pool
     for (const [language, available] of this.availableExecutors.entries()) {
       const config = this.poolConfigs.get(language);
       if (!config) continue;
 
-      // Iterate backwards to safely remove during iteration
       for (let i = available.length - 1; i >= 0; i--) {
         const process = available[i];
         const idleTime = now.getTime() - process.lastUsed.getTime();
 
-        // Keep minimum pool size, clean up idle executors beyond that
         if (
           idleTime > config.idleTimeout &&
           available.length > config.minSize
@@ -920,10 +904,8 @@ export class ProcessPoolManager {
           process.process.kill();
           available.splice(i, 1);
 
-          // Clean up executor lock
           this.executorLocks.delete(process.id);
 
-          // Also remove from main pool
           const pool = this.pools.get(language);
           if (pool) {
             const poolIndex = pool.indexOf(process);
@@ -983,12 +965,10 @@ export class ProcessPoolManager {
     });
   }
 
-  // For testing: get executor assigned to context
   getExecutorForContext(contextId: string): InterpreterProcess | undefined {
     return this.contextExecutors.get(contextId);
   }
 
-  // For testing: get available executors for language
   getAvailableExecutors(language: InterpreterLanguage): InterpreterProcess[] {
     return this.availableExecutors.get(language) || [];
   }
@@ -1012,5 +992,3 @@ export class ProcessPoolManager {
     this.executorLocks.clear();
   }
 }
-
-export const processPool = new ProcessPoolManager();

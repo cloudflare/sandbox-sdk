@@ -1,30 +1,4 @@
 /**
- * How long to wait for an interpreter process to spawn and become ready.
- * If an interpreter doesn't start within this time, something is fundamentally
- * broken (missing dependencies, corrupt install, etc.)
- *
- * Default: 60 seconds
- * Environment variable: INTERPRETER_SPAWN_TIMEOUT_MS
- */
-const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
-  process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
-  10
-);
-
-/**
- * Timeout for interpreter code execution (Python/JS/TS).
- * Users might legitimately run long computations (ML training, data processing, etc.)
- *
- * Default: undefined (unlimited)
- * Set to 0 or omit the environment variable for unlimited execution.
- * Environment variable: INTERPRETER_EXECUTION_TIMEOUT_MS
- */
-const INTERPRETER_EXECUTION_TIMEOUT_MS = (() => {
-  const val = parseInt(process.env.INTERPRETER_EXECUTION_TIMEOUT_MS || '0', 10);
-  return val === 0 ? undefined : val;
-})();
-
-/**
  * Timeout for foreground shell command execution.
  * Users might run long builds, installations, or processes.
  *
@@ -53,8 +27,6 @@ const STREAM_CHUNK_DELAY_MS = 100;
 const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
-  INTERPRETER_SPAWN_TIMEOUT_MS,
-  INTERPRETER_EXECUTION_TIMEOUT_MS,
   COMMAND_TIMEOUT_MS,
   STREAM_CHUNK_DELAY_MS,
   DEFAULT_CWD

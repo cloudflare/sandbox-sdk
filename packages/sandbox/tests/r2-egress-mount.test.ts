@@ -46,10 +46,6 @@ const testOutboundHandlersRegistry = vi.hoisted(
   () => new Map<string, Record<string, TestOutboundHandler>>()
 );
 
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
-
 vi.mock('@cloudflare/containers', () => {
   const outboundByHostRegistry = new Map<string, Record<string, unknown>>();
 

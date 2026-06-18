@@ -1,0 +1,10 @@
+{
+  "extends": "@repo/typescript-config/bun.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["bun", "node"]
+  },
+  "include": ["src/interpreter/sidecar/**/*.ts", "scripts/**/*.ts"]
+}

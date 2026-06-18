@@ -15,7 +15,10 @@
  *
  */
 
-import type { CodeContext, ExecutionResult } from '@repo/shared';
+import type {
+  CodeContext,
+  ExecutionResult
+} from '@cloudflare/sandbox/interpreter';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

@@ -1,3 +1,11 @@
+/**
+ * Public, user-facing types for the code interpreter extension.
+ *
+ * These were previously part of `@repo/shared` and the core SDK surface. They
+ * now live entirely inside the `@cloudflare/sandbox/interpreter` extension so
+ * the core SDK carries no interpreter-specific types.
+ */
+
 // Context Management
 export interface CreateContextOptions {
   /**
@@ -341,7 +349,6 @@ export class ResultImpl implements Result {
   chart?: ChartData;
   data?: any;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw SSE data has dynamic shape
   constructor(raw: any) {
     this.text = raw.text || raw.data?.['text/plain'];
     this.html = raw.html || raw.data?.['text/html'];
@@ -371,3 +378,18 @@ export class ResultImpl implements Result {
     return fmts;
   }
 }
+
+/**
+ * Wire-level execution event emitted by the sidecar over the bridge as a
+ * streaming `evt` frame, mirrored from the container interpreter service.
+ */
+export type InterpreterExecutionEvent =
+  | { type: 'stdout'; text: string }
+  | { type: 'stderr'; text: string }
+  | {
+      type: 'result';
+      metadata: Record<string, unknown>;
+      [key: string]: unknown;
+    }
+  | { type: 'execution_complete'; execution_count: number }
+  | { type: 'error'; ename: string; evalue: string; traceback: string[] };

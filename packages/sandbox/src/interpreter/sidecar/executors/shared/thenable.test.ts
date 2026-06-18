@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isThenable } from '../../src/runtime/executors/shared/thenable';
+import { isThenable } from './thenable';
 
 describe('isThenable', () => {
   it('returns true for Promise', () => {

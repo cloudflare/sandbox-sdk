@@ -7,7 +7,7 @@
  * during process spawning, causing a staircase pattern and timeouts.
  */
 
-import type { CodeContext } from '@repo/shared';
+import type { CodeContext } from '@cloudflare/sandbox/interpreter';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

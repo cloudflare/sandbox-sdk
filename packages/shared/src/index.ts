@@ -13,18 +13,6 @@ export {
   GitLogger,
   sanitizeGitData
 } from './git.js';
-// Export all interpreter types
-export type {
-  ChartData,
-  CodeContext,
-  CreateContextOptions,
-  ExecutionError,
-  ExecutionResult,
-  OutputMessage,
-  Result,
-  RunCodeOptions
-} from './interpreter-types.js';
-export { Execution, ResultImpl } from './interpreter-types.js';
 export type { LogLevelOptions } from './logger/canonical.js';
 // Export canonical event helpers
 export {
@@ -92,7 +80,6 @@ export type {
   SandboxExtensionsAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
-  SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTunnelsAPI,
@@ -120,9 +107,6 @@ export type {
   CheckChangesOptions,
   CheckChangesRequest,
   CheckChangesResult,
-  ContextCreateResult,
-  ContextDeleteResult,
-  ContextListResult,
   DeleteFileResult,
   DirectoryBackup,
   Disposable,
@@ -144,8 +128,6 @@ export type {
   GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
-  // Code interpreter result types
-  InterpreterHealthResult,
   ISandbox,
   ListFilesOptions,
   ListFilesResult,

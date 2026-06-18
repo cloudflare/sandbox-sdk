@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { transformForAsyncExecution } from '../../src/runtime/executors/shared/code-transformer';
+import { transformForAsyncExecution } from './code-transformer';
 
 describe('transformForAsyncExecution', () => {
   describe('empty code handling', () => {

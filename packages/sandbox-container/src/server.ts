@@ -65,7 +65,6 @@ async function createApplication(): Promise<{
     fileService: container.get('fileService'),
     portService: container.get('portService'),
     gitService: container.get('gitService'),
-    interpreterService: container.get('interpreterService'),
     backupService: container.get('backupService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
