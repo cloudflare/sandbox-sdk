@@ -261,8 +261,13 @@ export class ExtensionHost {
     failed: Promise<never>;
     cleanup: () => void;
   }> {
+    // Use a fresh socket path for every (re)spawn. A deterministic path would
+    // race the previous sidecar's leftover socket file on restart: a unix
+    // bind() fails with EADDRINUSE if the path still exists on disk, which a
+    // crashed/SIGKILLed sidecar never unlinks. A unique path sidesteps that.
+    instance.socketPath = this.#socketPathFor(instance.manifest);
     await mkdir(dirname(instance.socketPath), { recursive: true, mode: 0o700 });
-    // Remove a stale socket so the sidecar can bind fresh.
+    // Defensive: a fresh path should never exist, but never inherit a stale one.
     if (existsSync(instance.socketPath)) {
       await rm(instance.socketPath, { force: true });
     }
@@ -449,15 +454,20 @@ export class ExtensionHost {
   }
 
   /**
-   * Short socket path in a private per-host temp directory. The hashed filename
-   * keeps the path under unix socket length limits while the random directory
-   * prevents same-container processes from predicting the bridge path.
+   * Short, unique socket path in a private per-host temp directory. The hashed
+   * id keeps the name readable and the random suffix makes every (re)spawn use
+   * a distinct path — so a restart never collides with a leftover socket file.
+   * Staying flat under the random `#socketDir` also keeps the path well under
+   * the ~104-char unix socket length limit.
    */
   #socketPathFor(manifest: ExtensionManifest): string {
     const hash = createHash('sha1')
       .update(`${manifest.id}@${manifest.version}`)
       .digest('hex')
       .slice(0, 12);
-    return join(this.#socketDir, `${hash}.sock`);
+    return join(
+      this.#socketDir,
+      `${hash}-${randomBytes(4).toString('hex')}.sock`
+    );
   }
 }
