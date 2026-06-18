@@ -106,6 +106,7 @@ export type {
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
+  SessionCreateOptions,
   StopTunnelRunRequest,
   StopTunnelRunResult,
   TunnelInfo,

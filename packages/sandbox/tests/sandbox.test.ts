@@ -1069,6 +1069,20 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
         })
       );
     });
+
+    it('forwards per-session command timeout to the runtime', async () => {
+      await sandbox.createSession({
+        id: 'timeout-session',
+        commandTimeoutMs: 12_345
+      });
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'timeout-session',
+          commandTimeoutMs: 12_345
+        })
+      );
+    });
   });
 
   describe('placement id capture', () => {

@@ -346,10 +346,6 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
 };
 
-type SandboxExecutionContext =
-  | { kind: 'session'; sessionId: string }
-  | { kind: 'sessionless' };
-
 const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
@@ -3307,46 +3303,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('containerPlacementId', containerPlacementId);
   }
 
-  private async resolveExecution(
-    explicitSessionId?: string
-  ): Promise<SandboxExecutionContext> {
-    if (explicitSessionId !== undefined) {
-      this.validateExplicitSessionId(explicitSessionId);
-      return { kind: 'session', sessionId: explicitSessionId };
-    }
-
-    return { kind: 'sessionless' };
-  }
-
   private validateExplicitSessionId(sessionId: string): void {
     if (sessionId.trim().length === 0) {
       throw new Error('sessionId must not be empty or whitespace');
     }
   }
 
-  private serializeExecutionContext(
-    context: SandboxExecutionContext
-  ): string | undefined {
-    return context.kind === 'session' ? context.sessionId : undefined;
-  }
-
   /**
-   * Resolves the session ID to annotate returned Process objects.
+   * Validate an optional explicit session id without creating a session.
    *
-   * Unlike `resolveExecution`, this is synchronous and never creates a
-   * session. Top-level process reads are sandbox-scoped, so they only carry a
-   * public session annotation when the caller provides an explicit session id.
-   * The resolved value is only used to populate `Process.sessionId` on the
-   * returned object — it is never sent to the container API.
+   * Top-level process reads are sandbox-scoped, so they only carry a public
+   * session annotation when the caller provides an explicit session id. The
+   * resolved value is only used to populate `Process.sessionId` on the returned
+   * object — it is never sent to the container API.
    */
-  private getProcessSessionBinding(
+  private validateOptionalSessionId(
     explicitSessionId?: string
   ): string | undefined {
-    if (explicitSessionId === undefined) {
-      return undefined;
+    if (explicitSessionId !== undefined) {
+      this.validateExplicitSessionId(explicitSessionId);
     }
-
-    this.validateExplicitSessionId(explicitSessionId);
     return explicitSessionId;
   }
 
@@ -3942,13 +3918,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const requestedSessionId = options?.sessionId;
-      const execution =
-        requestedSessionId === undefined
-          ? { kind: 'sessionless' as const }
-          : await this.resolveExecution(requestedSessionId);
-      const session = this.serializeExecutionContext(execution);
-      const processSession = this.getProcessSessionBinding(session);
+      const session = this.validateOptionalSessionId(options?.sessionId);
       const executionOptions = this.buildExecutionRequestOptions(session, {
         timeout: options?.timeout,
         env: options?.env,
@@ -3956,9 +3926,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
       const requestOptions = {
         ...executionOptions,
-        ...(requestedSessionId !== undefined && {
-          sessionId: requestedSessionId
-        }),
+        ...(session !== undefined && { sessionId: session }),
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
@@ -3983,7 +3951,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           endTime: undefined,
           exitCode: undefined
         },
-        processSession
+        session
       );
 
       // Call onStart callback if provided
@@ -4065,7 +4033,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(options?: ProcessQueryOptions): Promise<Process[]> {
-    const session = this.getProcessSessionBinding(options?.sessionId);
+    const session = this.validateOptionalSessionId(options?.sessionId);
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -4088,7 +4056,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     id: string,
     options?: ProcessQueryOptions
   ): Promise<Process | null> {
-    const session = this.getProcessSessionBinding(options?.sessionId);
+    const session = this.validateOptionalSessionId(options?.sessionId);
     try {
       const response = await this.client.processes.getProcess(id);
 
@@ -4169,8 +4137,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cloneTimeoutMs?: number;
     }
   ) {
-    const execution = await this.resolveExecution(options?.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options?.sessionId);
     return this.client.git.checkout(repoUrl, {
       ...(session !== undefined && { sessionId: session }),
       branch: options?.branch,
@@ -4184,8 +4151,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return this.client.files.mkdir(path, {
       ...(session !== undefined && { sessionId: session }),
       recursive: options.recursive
@@ -4197,8 +4163,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
 
     if (content instanceof ReadableStream) {
       return this.client.files.writeFileStream(path, content, {
@@ -4213,8 +4178,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async deleteFile(path: string, options: { sessionId?: string } = {}) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return session === undefined
       ? this.client.files.deleteFile(path)
       : this.client.files.deleteFile(path, { sessionId: session });
@@ -4225,8 +4189,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     newPath: string,
     options: { sessionId?: string } = {}
   ) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return session === undefined
       ? this.client.files.renameFile(oldPath, newPath)
       : this.client.files.renameFile(oldPath, newPath, { sessionId: session });
@@ -4237,8 +4200,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     options: { sessionId?: string } = {}
   ) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return session === undefined
       ? this.client.files.moveFile(sourcePath, destinationPath)
       : this.client.files.moveFile(sourcePath, destinationPath, {
@@ -4268,8 +4230,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { encoding?: FileEncoding; sessionId?: string } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     if (options.encoding === 'none') {
       return this.client.files.readFile(path, {
         ...(session !== undefined && { sessionId: session }),
@@ -4292,16 +4253,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return this.client.files.readFileStream(path, {
       ...(session !== undefined && { sessionId: session })
     });
   }
 
   async listFiles(path: string, options?: ListFilesOptions) {
-    const context = await this.resolveExecution(options?.sessionId);
-    const session = this.serializeExecutionContext(context);
+    const session = this.validateOptionalSessionId(options?.sessionId);
     return this.client.files.listFiles(path, {
       ...options,
       ...(session !== undefined && { sessionId: session })
@@ -4309,8 +4268,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exists(path: string, options: { sessionId?: string } = {}) {
-    const execution = await this.resolveExecution(options.sessionId);
-    const session = this.serializeExecutionContext(execution);
+    const session = this.validateOptionalSessionId(options.sessionId);
     return session === undefined
       ? this.client.files.exists(path)
       : this.client.files.exists(path, { sessionId: session });
@@ -4333,8 +4291,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const execution = await this.resolveExecution(options.sessionId);
-    const sessionId = this.serializeExecutionContext(execution);
+    const sessionId = this.validateOptionalSessionId(options.sessionId);
     return this.client.watch.watch({
       path,
       recursive: options.recursive,
@@ -4358,8 +4315,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    const execution = await this.resolveExecution(options.sessionId);
-    const sessionId = this.serializeExecutionContext(execution);
+    const sessionId = this.validateOptionalSessionId(options.sessionId);
     return this.client.watch.checkChanges({
       path,
       recursive: options.recursive,
@@ -4960,8 +4916,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Delete an execution session.
    *
    * Cleans up explicit session resources and removes them from the container.
-   * A legacy runtime-start session, when present, is tied to the sandbox
-   * lifecycle and is cleaned up by sandbox.destroy().
    *
    * @param sessionId - The ID of the session to delete
    * @returns Result with success status, sessionId, and timestamp
@@ -4990,9 +4944,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * `CLOUDFLARE_PLACEMENT_ID` environment variable is not set (for example,
    * in local development).
    *
-   * Returns `undefined` when no handshake has been observed yet on this
-   * sandbox. Call any method that triggers session creation (such as
-   * `exec()`) to populate the value.
+   * Returns `undefined` when no explicit session-create handshake has been
+   * observed yet on this sandbox. Call `createSession()` to populate the value.
    */
   async getContainerPlacementId(): Promise<string | null | undefined> {
     return this.ctx.storage.get<string | null>('containerPlacementId');

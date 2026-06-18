@@ -126,6 +126,24 @@ describe('SandboxControlAPI utils.createSession', () => {
     expect(result.containerPlacementId).toBeNull();
   });
 
+  it('passes commandTimeoutMs through to the session manager', async () => {
+    mockCreateSessionResult(mockSessionManager, {
+      success: true,
+      data: {}
+    });
+
+    const api = buildApi(mockSessionManager);
+    await api.utils.createSession({
+      id: 'sess-timeout',
+      commandTimeoutMs: 12_345
+    });
+
+    expect(mockSessionManager.createSession).toHaveBeenCalledWith({
+      id: 'sess-timeout',
+      commandTimeoutMs: 12_345
+    });
+  });
+
   it('includes containerPlacementId in error context on SESSION_ALREADY_EXISTS', async () => {
     process.env.CLOUDFLARE_PLACEMENT_ID = 'placement-rpc-already';
     mockCreateSessionResult(mockSessionManager, {

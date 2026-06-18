@@ -183,15 +183,18 @@ export interface SandboxGitAPI {
   ): Promise<GitCheckoutResult>;
 }
 
+export interface SessionCreateOptions {
+  id: string;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  commandTimeoutMs?: number;
+}
+
 export interface SandboxUtilsAPI {
   ping(): Promise<string>;
   getVersion(): Promise<string>;
   getCommands(): Promise<string[]>;
-  createSession(options: {
-    id: string;
-    env?: Record<string, string | undefined>;
-    cwd?: string;
-  }): Promise<{
+  createSession(options: SessionCreateOptions): Promise<{
     success: boolean;
     id: string;
     message: string;

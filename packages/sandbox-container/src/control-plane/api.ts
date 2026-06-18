@@ -20,6 +20,7 @@ import type {
   ReadFileOptions,
   ReadFileStreamOptions,
   SandboxAPI,
+  SessionCreateOptions,
   StopTunnelRunRequest,
   StopTunnelRunResult,
   TunnelInfo,
@@ -728,11 +729,7 @@ class UtilsRPCAPI extends RpcTarget {
     return [];
   }
 
-  async createSession(options: {
-    id: string;
-    env?: Record<string, string | undefined>;
-    cwd?: string;
-  }) {
+  async createSession(options: SessionCreateOptions) {
     const result = await this.#mgr.createSession(options);
     if (
       !result.success &&
