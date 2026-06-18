@@ -55,6 +55,7 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
   tunnels: SandboxTunnelsAPI;
+  extensions: SandboxExtensionsAPI;
 }
 
 export interface SandboxCommandsAPI {
@@ -316,6 +317,89 @@ export interface SandboxTunnelsAPI {
   destroyTunnel(id: string): Promise<{ success: true; id: string }>;
   /** List tunnels currently running inside the container. */
   listTunnels(): Promise<TunnelInfo[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Extensions (sidecar host)
+// ---------------------------------------------------------------------------
+
+/**
+ * A file an extension needs on disk before its sidecar can run. Provisioned
+ * idempotently by the container's extension host. `content` is UTF-8 text by
+ * default; set `encoding: 'base64'` for binary assets.
+ */
+export interface ExtensionAsset {
+  /** Path relative to the extension's provisioned directory. */
+  path: string;
+  content: string;
+  encoding?: 'utf8' | 'base64';
+  /** Optional file mode (e.g. 0o755 for executables). */
+  mode?: number;
+}
+
+/**
+ * Declarative description of a sidecar extension. The SDK ships this and the
+ * container's extension host materialises + supervises it.
+ *
+ * Identity is `id` + `version`: re-registering the same pair is a no-op, while
+ * a new version reprovisions. The `command` argv supports the placeholders
+ * `{dir}` (provisioned directory) and `{socket}` (bridge socket path).
+ */
+export interface ExtensionManifest {
+  id: string;
+  version: string;
+  assets?: ExtensionAsset[];
+  /** Argv for the sidecar process. Supports `{dir}` / `{socket}` placeholders. */
+  command: string[];
+  /** Extra env for the sidecar. `EXT_SOCKET`/`EXT_DIR` are always injected. */
+  env?: Record<string, string>;
+  /** Working directory for the sidecar. Defaults to the provisioned directory. */
+  cwd?: string;
+  /** Max time to wait for the sidecar to accept a bridge connection. */
+  readinessTimeoutMs?: number;
+}
+
+/** Health snapshot for a registered extension. */
+export interface ExtensionHealth {
+  id: string;
+  version: string;
+  registered: boolean;
+  running: boolean;
+  pid: number | null;
+  /** Whether a ping round-tripped over the bridge. */
+  responsive: boolean;
+}
+
+/**
+ * Generic control surface for container sidecar extensions. Lets the SDK
+ * register a manifest then invoke arbitrary sidecar methods over the bridge —
+ * the transport-level equivalent of a per-feature RPC sub-API.
+ */
+export interface SandboxExtensionsAPI {
+  /** Register (or re-register) an extension manifest. Does not spawn anything. */
+  register(manifest: ExtensionManifest): Promise<void>;
+  /** Invoke a sidecar method, starting the sidecar on demand. */
+  call(
+    id: string,
+    method: string,
+    args: unknown[],
+    timeoutMs?: number
+  ): Promise<unknown>;
+  /**
+   * Invoke a sidecar method, forwarding streaming events to `onEvent` before
+   * the final result resolves.
+   */
+  callStream(
+    id: string,
+    method: string,
+    args: unknown[],
+    onEvent: (event: string, data: unknown) => void | Promise<void>,
+    timeoutMs?: number
+  ): Promise<unknown>;
+  /** Health snapshot, probing the bridge with a ping when running. */
+  health(id: string): Promise<ExtensionHealth>;
+  /** Stop a sidecar and release its bridge. */
+  stop(id: string): Promise<void>;
 }
 
 /**

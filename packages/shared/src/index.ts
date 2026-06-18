@@ -80,12 +80,16 @@ export type {
 } from './request-types.js';
 // RPC interface types (shared between SDK and container)
 export type {
+  ExtensionAsset,
+  ExtensionHealth,
+  ExtensionManifest,
   NamedTunnelInfo,
   QuickTunnelInfo,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
   SandboxControlCallback,
+  SandboxExtensionsAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
