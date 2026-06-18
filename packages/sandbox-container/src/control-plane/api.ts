@@ -1,4 +1,6 @@
 import type {
+  BackupCreateArchiveOptions,
+  BackupRestoreArchiveOptions,
   CheckChangesRequest,
   CheckChangesResult,
   CommandExecuteOptions,
@@ -784,20 +786,12 @@ class BackupRPCAPI extends RpcTarget {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string | undefined,
-    options?: {
-      excludes?: string[];
-      gitignore?: boolean;
-      compression?: {
-        format?: 'gzip' | 'lz4' | 'zstd';
-        threads?: number;
-      };
-    }
+    options?: BackupCreateArchiveOptions
   ) {
     const result = await this.#svc.createArchive(
       dir,
       archivePath,
-      sessionId,
+      options?.sessionId,
       options?.gitignore ?? false,
       options?.excludes ?? [],
       options?.compression
@@ -815,9 +809,13 @@ class BackupRPCAPI extends RpcTarget {
   async restoreArchive(
     dir: string,
     archivePath: string,
-    sessionId: string | undefined
+    options?: BackupRestoreArchiveOptions
   ) {
-    const result = await this.#svc.restoreArchive(dir, archivePath, sessionId);
+    const result = await this.#svc.restoreArchive(
+      dir,
+      archivePath,
+      options?.sessionId
+    );
     throwIfError(result);
     return { success: true, dir };
   }

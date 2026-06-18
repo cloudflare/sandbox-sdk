@@ -71,6 +71,8 @@ export type {
   WriteFileRequest
 } from './request-types.js';
 export type {
+  BackupCreateArchiveOptions,
+  BackupRestoreArchiveOptions,
   CommandExecuteOptions,
   EnsureNamedTunnelRunRequest,
   EnsureQuickTunnelRunRequest,

@@ -2957,8 +2957,8 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(createArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
-        expect.stringMatching(/^__sandbox_backup_/),
         {
+          sessionId: expect.stringMatching(/^__sandbox_backup_/),
           gitignore: false,
           excludes: [],
           compression: {
@@ -3008,8 +3008,8 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(createArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
-        expect.stringMatching(/^__sandbox_backup_/),
         {
+          sessionId: expect.stringMatching(/^__sandbox_backup_/),
           gitignore: false,
           excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
@@ -3113,7 +3113,7 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
         `/var/backups/${backupId}.sqsh`,
-        expect.stringMatching(/^__sandbox_backup_/)
+        { sessionId: expect.stringMatching(/^__sandbox_backup_/) }
       );
       expect(downloadBackupParallelSpy).toHaveBeenCalledWith(
         `/var/backups/${backupId}.sqsh`,

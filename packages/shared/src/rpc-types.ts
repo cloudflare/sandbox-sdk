@@ -204,21 +204,27 @@ export interface SandboxUtilsAPI {
   listSessions(): Promise<{ sessions: string[] }>;
 }
 
+export interface BackupCreateArchiveOptions {
+  sessionId?: string;
+  excludes?: string[];
+  gitignore?: boolean;
+  compression?: BackupCompressionOptions;
+}
+
+export interface BackupRestoreArchiveOptions {
+  sessionId?: string;
+}
+
 export interface SandboxBackupAPI {
   createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string | undefined,
-    options?: {
-      excludes?: string[];
-      gitignore?: boolean;
-      compression?: BackupCompressionOptions;
-    }
+    options?: BackupCreateArchiveOptions
   ): Promise<CreateBackupResponse>;
   restoreArchive(
     dir: string,
     archivePath: string,
-    sessionId: string | undefined
+    options?: BackupRestoreArchiveOptions
   ): Promise<RestoreBackupResponse>;
   uploadParts(request: {
     archivePath: string;
