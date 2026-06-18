@@ -135,11 +135,20 @@ export interface SandboxFilesAPI {
   ): Promise<FileExistsResult>;
 }
 
+export interface ProcessStartOptions {
+  sessionId?: string;
+  processId?: string;
+  timeoutMs?: number;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  encoding?: string;
+  autoCleanup?: boolean;
+}
+
 export interface SandboxProcessesAPI {
   startProcess(
     command: string,
-    sessionId: string | undefined,
-    options?: { processId?: string; timeoutMs?: number }
+    options?: ProcessStartOptions
   ): Promise<ProcessStartResult>;
   listProcesses(): Promise<ProcessListResult>;
   getProcess(id: string): Promise<ProcessInfoResult>;

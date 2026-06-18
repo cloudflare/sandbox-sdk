@@ -579,9 +579,9 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
-      const startSessionId = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[0][1];
-      expect(startSessionId).toBe(undefined);
+      expect(
+        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
+      ).toEqual(['sleep 10', {}]);
 
       // listProcesses is sandbox-scoped - no sessionId parameter
       const listProcessesCall = vi.mocked(
@@ -594,6 +594,37 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(processes).toHaveLength(1);
       expect(processes[0].id).toBe('proc-1');
       expect(processes[0].sessionId).toBeUndefined();
+    });
+
+    it('forwards process options in one request object', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-options',
+        pid: 1234,
+        command: 'sleep 10',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await sandbox.startProcess('sleep 10', {
+        processId: 'proc-options',
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000,
+        encoding: 'utf8',
+        autoCleanup: false
+      });
+
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
+        'sleep 10',
+        {
+          processId: 'proc-options',
+          env: { TEST_ENV: '1' },
+          cwd: '/workspace/app',
+          timeoutMs: 1000,
+          encoding: 'utf8',
+          autoCleanup: false
+        }
+      );
     });
 
     it('does not annotate process reads with an existing default session', async () => {
@@ -675,8 +706,8 @@ describe('Sandbox - Automatic Session Management', () => {
       const fetched = await sandbox.getProcess('proc-none');
 
       expect(
-        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toBe(undefined);
+        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
+      ).toEqual(['sleep 10', {}]);
       expect(
         vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
       ).toEqual([]);
@@ -723,17 +754,13 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      const process = await sandbox.startProcess(
-        'sleep 10',
-        undefined,
-        undefined
-      );
+      const process = await sandbox.startProcess('sleep 10');
       const processes = await sandbox.listProcesses(undefined);
       const fetched = await sandbox.getProcess('proc-sessionless', undefined);
 
       expect(
-        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toBe(undefined);
+        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
+      ).toEqual(['sleep 10', {}]);
       expect(process.sessionId).toBeUndefined();
       expect(processes[0].sessionId).toBeUndefined();
       expect(fetched?.sessionId).toBeUndefined();
@@ -1036,12 +1063,24 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
         }
       } as any);
 
-      await session.startProcess('sleep 10');
+      await session.startProcess('sleep 10', {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000,
+        encoding: 'utf8',
+        autoCleanup: false
+      });
 
       expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'sleep 10',
-        'test-session',
-        {}
+        {
+          sessionId: 'test-session',
+          env: { TEST_ENV: '1' },
+          cwd: '/workspace/app',
+          timeoutMs: 1000,
+          encoding: 'utf8',
+          autoCleanup: false
+        }
       );
     });
 

@@ -10,6 +10,7 @@ import type {
   FileInfo,
   ListFilesOptions,
   Logger,
+  ProcessStartOptions,
   SandboxAPI,
   StopTunnelRunRequest,
   StopTunnelRunResult,
@@ -411,15 +412,8 @@ class ProcessesRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async startProcess(
-    command: string,
-    sessionId: string | undefined,
-    options?: { processId?: string; timeoutMs?: number }
-  ) {
-    const result = await this.#svc.startProcess(command, {
-      sessionId,
-      ...options
-    });
+  async startProcess(command: string, options: ProcessStartOptions = {}) {
+    const result = await this.#svc.startProcess(command, options);
     const proc = extractData<ProcessRecord>(result);
     return {
       success: true,

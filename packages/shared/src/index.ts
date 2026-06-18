@@ -82,6 +82,7 @@ export type {
   ExtensionRegistration,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,
+  ProcessStartOptions,
   QuickTunnelInfo,
   QuickTunnelRunSnapshot,
   SandboxAPI,

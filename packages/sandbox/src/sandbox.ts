@@ -3922,12 +3922,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Background process management
   async startProcess(
     command: string,
-    options?: ProcessOptions,
-    sessionId?: string
+    options?: ProcessOptions
   ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const requestedSessionId = sessionId ?? options?.sessionId;
+      const requestedSessionId = options?.sessionId;
       const execution =
         requestedSessionId === undefined
           ? { kind: 'sessionless' as const }
@@ -3941,6 +3940,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
       const requestOptions = {
         ...executionOptions,
+        ...(requestedSessionId !== undefined && {
+          sessionId: requestedSessionId
+        }),
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
@@ -3952,7 +3954,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const response = await this.client.processes.startProcess(
         command,
-        session,
         requestOptions
       );
 
@@ -4970,7 +4971,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Process management
       startProcess: (command, options) =>
-        this.startProcess(command, options, sessionId),
+        this.startProcess(command, { ...options, sessionId }),
       listProcesses: () => this.listProcesses(sessionId),
       getProcess: (id) => this.getProcess(id, sessionId),
       killProcess: (id, signal) => this.killProcess(id, signal),
