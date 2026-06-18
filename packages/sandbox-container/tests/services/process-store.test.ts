@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ProcessRecord } from '@sandbox-container/core/types';
 import { ProcessStore } from '@sandbox-container/services/process-store.js';
+
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
 
 const mockLogger = {
   info: vi.fn(),
@@ -122,7 +123,7 @@ describe('ProcessStore', () => {
           stdout: '',
           stderr: '',
           commandHandle: {
-            sessionId: DISABLE_SESSION_TOKEN,
+            sessionId: LEGACY_SESSIONLESS_SESSION_ID,
             commandId: 'proc-legacy'
           }
         })

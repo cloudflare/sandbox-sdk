@@ -55,7 +55,7 @@ export interface SandboxAPI {
 export interface SandboxCommandsAPI {
   execute(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
@@ -75,62 +75,68 @@ export interface SandboxCommandsAPI {
 export interface SandboxFilesAPI {
   readFile(
     path: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options: { encoding: 'none' }
   ): Promise<ReadFileStreamResult>;
   readFile(
     path: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
   readFileStream(
     path: string,
-    sessionId: string
+    sessionId: string | undefined
   ): Promise<ReadableStream<Uint8Array>>;
   writeFile(
     path: string,
     content: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: { encoding?: string; permissions?: string }
   ): Promise<WriteFileResult>;
   writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    sessionId: string
+    sessionId: string | undefined
   ): Promise<{
     success: boolean;
     path: string;
     bytesWritten: number;
     timestamp: string;
   }>;
-  deleteFile(path: string, sessionId: string): Promise<DeleteFileResult>;
+  deleteFile(
+    path: string,
+    sessionId: string | undefined
+  ): Promise<DeleteFileResult>;
   renameFile(
     oldPath: string,
     newPath: string,
-    sessionId: string
+    sessionId: string | undefined
   ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId: string
+    sessionId: string | undefined
   ): Promise<MoveFileResult>;
   mkdir(
     path: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: { recursive?: boolean }
   ): Promise<MkdirResult>;
   listFiles(
     path: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: ListFilesOptions
   ): Promise<ListFilesResult>;
-  exists(path: string, sessionId: string): Promise<FileExistsResult>;
+  exists(
+    path: string,
+    sessionId: string | undefined
+  ): Promise<FileExistsResult>;
 }
 
 export interface SandboxProcessesAPI {
   startProcess(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: { processId?: string; timeoutMs?: number }
   ): Promise<ProcessStartResult>;
   listProcesses(): Promise<ProcessListResult>;
@@ -148,7 +154,7 @@ export interface SandboxPortsAPI {
 export interface SandboxGitAPI {
   checkout(
     repoUrl: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       branch?: string;
       targetDir?: string;
@@ -183,7 +189,7 @@ export interface SandboxBackupAPI {
   createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       excludes?: string[];
       gitignore?: boolean;
@@ -193,7 +199,7 @@ export interface SandboxBackupAPI {
   restoreArchive(
     dir: string,
     archivePath: string,
-    sessionId: string
+    sessionId: string | undefined
   ): Promise<RestoreBackupResponse>;
   uploadParts(request: {
     archivePath: string;

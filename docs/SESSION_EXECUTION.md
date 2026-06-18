@@ -35,7 +35,7 @@ Top-level calls do not create or reuse hidden sessions.
 
 ```text
 sandbox.exec(command)
-  -> ProcessService.executeCommand(..., DISABLE_SESSION_TOKEN)
+  -> ProcessService.executeCommand(..., sessionId omitted)
   -> ExecutionService.executeSessionless(...)
   -> StatelessCommandRunner.exec(...)
 ```
@@ -48,7 +48,7 @@ For streaming/lifecycle:
 
 ```text
 sandbox.startProcess(command)
-  -> ProcessService.startProcess(..., DISABLE_SESSION_TOKEN)
+  -> ProcessService.startProcess(..., sessionId omitted)
   -> ExecutionService.startSessionlessProcessStream(...)
   -> StatelessProcessRunner.start(...)
 ```

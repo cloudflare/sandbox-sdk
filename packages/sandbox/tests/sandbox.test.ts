@@ -1,6 +1,5 @@
 import { Container, getContainer } from '@cloudflare/containers';
 import type { ExecResult } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
@@ -383,7 +382,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         undefined
       );
     });
@@ -404,7 +403,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         undefined
       );
     });
@@ -430,7 +429,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'printf infra',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         {
           env: { INFRA_TOKEN: 'secret' },
           origin: 'internal'
@@ -447,7 +446,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         { encoding: undefined }
       );
     });
@@ -461,7 +460,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo $OPTION',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         {
           timeoutMs: 5000,
           env: { OPTION: 'value' },
@@ -483,7 +482,7 @@ describe('Sandbox - Automatic Session Management', () => {
         include: undefined,
         exclude: undefined,
         since: 'watch-1:0',
-        sessionId: DISABLE_SESSION_TOKEN
+        sessionId: undefined
       });
     });
 
@@ -524,7 +523,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should not expose the sessionless token on exec results', async () => {
+    it('should not expose session IDs on exec results', async () => {
       vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
         success: true,
         stdout: 'sessionless',
@@ -536,12 +535,12 @@ describe('Sandbox - Automatic Session Management', () => {
 
       const result = await sandbox.execWithSessionToken(
         'printf sessionless',
-        DISABLE_SESSION_TOKEN
+        undefined
       );
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'printf sessionless',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         undefined
       );
       expect(result.sessionId).toBeUndefined();
@@ -561,9 +560,9 @@ describe('Sandbox - Automatic Session Management', () => {
       const secondExecSessionId = vi.mocked(sandbox.client.commands.execute)
         .mock.calls[1][1];
 
-      expect(firstExecSessionId).toBe(DISABLE_SESSION_TOKEN);
-      expect(secondExecSessionId).toBe(DISABLE_SESSION_TOKEN);
-      expect(fileSessionId).toBe(DISABLE_SESSION_TOKEN);
+      expect(firstExecSessionId).toBe(undefined);
+      expect(secondExecSessionId).toBe(undefined);
+      expect(fileSessionId).toBe(undefined);
     });
 
     it('starts implicit processes without creating a default session', async () => {
@@ -596,7 +595,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       const startSessionId = vi.mocked(sandbox.client.processes.startProcess)
         .mock.calls[0][1];
-      expect(startSessionId).toBe(DISABLE_SESSION_TOKEN);
+      expect(startSessionId).toBe(undefined);
 
       // listProcesses is sandbox-scoped - no sessionId parameter
       const listProcessesCall = vi.mocked(
@@ -691,7 +690,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toBe(DISABLE_SESSION_TOKEN);
+      ).toBe(undefined);
       expect(
         vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
       ).toEqual([]);
@@ -705,7 +704,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
-    it('should not expose the sessionless token on process objects', async () => {
+    it('should not expose session IDs on process objects', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-sessionless',
@@ -741,17 +740,14 @@ describe('Sandbox - Automatic Session Management', () => {
       const process = await sandbox.startProcess(
         'sleep 10',
         undefined,
-        DISABLE_SESSION_TOKEN
+        undefined
       );
-      const processes = await sandbox.listProcesses(DISABLE_SESSION_TOKEN);
-      const fetched = await sandbox.getProcess(
-        'proc-sessionless',
-        DISABLE_SESSION_TOKEN
-      );
+      const processes = await sandbox.listProcesses(undefined);
+      const fetched = await sandbox.getProcess('proc-sessionless', undefined);
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0][1]
-      ).toBe(DISABLE_SESSION_TOKEN);
+      ).toBe(undefined);
       expect(process.sessionId).toBeUndefined();
       expect(processes[0].sessionId).toBeUndefined();
       expect(fetched?.sessionId).toBeUndefined();
@@ -775,7 +771,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
         'https://github.com/test/repo.git',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         {
           branch: 'main',
           targetDir: undefined,
@@ -798,14 +794,14 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
         1,
         '/one.txt',
         'one',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         { encoding: undefined }
       );
       expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
         2,
         '/two.txt',
         'two',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         { encoding: undefined }
       );
     });
@@ -839,13 +835,6 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
   });
 
   describe('explicit session creation', () => {
-    it('should reject the internal sentinel as a session ID', async () => {
-      await expect(
-        sandbox.createSession({ id: DISABLE_SESSION_TOKEN })
-      ).rejects.toThrow('reserved for internal use');
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-    });
-
     it('should create isolated execution session', async () => {
       vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
         success: true,
@@ -942,9 +931,9 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       const implicitSessionId2 = vi.mocked(sandbox.client.commands.execute).mock
         .calls[2][1];
 
-      expect(implicitSessionId1).toBe(DISABLE_SESSION_TOKEN);
+      expect(implicitSessionId1).toBe(undefined);
       expect(explicitSessionId).toBe('explicit-session');
-      expect(implicitSessionId2).toBe(DISABLE_SESSION_TOKEN);
+      expect(implicitSessionId2).toBe(undefined);
     });
 
     it('should generate session ID if not provided', async () => {
@@ -1136,7 +1125,7 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         { encoding: undefined }
       );
     });

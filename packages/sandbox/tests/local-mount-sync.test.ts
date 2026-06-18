@@ -192,18 +192,15 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
       await manager.start();
 
       // Should create mount directory
-      expect(fileClient.mkdir).toHaveBeenCalledWith(
-        '/mnt/data',
-        'test-session',
-        { recursive: true }
-      );
+      expect(fileClient.mkdir).toHaveBeenCalledWith('/mnt/data', undefined, {
+        recursive: true
+      });
 
       // Should list all R2 objects
       expect(bucket.list).toHaveBeenCalled();
@@ -217,20 +214,20 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file1.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/dir/file2.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
       // Should create parent directories for nested files
       expect(fileClient.mkdir).toHaveBeenCalledWith(
         '/mnt/data/dir',
-        'test-session',
+        undefined,
         { recursive: true }
       );
 
@@ -249,7 +246,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -273,7 +269,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -282,8 +277,7 @@ describe('LocalMountSyncManager', () => {
       // Watch should be called for bidirectional sync
       expect(watchClient.watch).toHaveBeenCalledWith({
         path: '/mnt/data',
-        recursive: true,
-        sessionId: 'test-session'
+        recursive: true
       });
 
       await manager.stop();
@@ -304,7 +298,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
       });
@@ -326,7 +319,7 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/new-file.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -348,7 +341,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
       });
@@ -387,7 +379,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
       });
@@ -406,7 +397,7 @@ describe('LocalMountSyncManager', () => {
       // Should detect deletion
       expect(fileClient.deleteFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
-        'test-session'
+        undefined
       );
 
       await manager.stop();
@@ -427,7 +418,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
       });
@@ -465,7 +455,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/data/',
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -480,7 +469,7 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -502,7 +491,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/some/prefix/',
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -517,7 +505,7 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -541,7 +529,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/some/prefix/',
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -583,7 +570,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/',
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -595,7 +581,7 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/file.txt',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -616,7 +602,6 @@ describe('LocalMountSyncManager', () => {
             prefix: 'data/',
             readOnly: true,
             client,
-            sessionId: 'test-session',
             logger
           })
       ).toThrow(/Prefix must start with/);
@@ -637,7 +622,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/uploads',
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger
       });
 
@@ -647,7 +631,7 @@ describe('LocalMountSyncManager', () => {
       expect(fileClient.writeFile).toHaveBeenCalledWith(
         '/mnt/data/photo.jpg',
         expect.any(String),
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -676,7 +660,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -697,7 +680,7 @@ describe('LocalMountSyncManager', () => {
       // Should read the file from container (base64)
       expect(fileClient.readFile).toHaveBeenCalledWith(
         '/mnt/data/hello.txt',
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
 
@@ -731,7 +714,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -750,7 +732,7 @@ describe('LocalMountSyncManager', () => {
 
       expect(fileClient.readFile).toHaveBeenCalledWith(
         '/mnt/data/existing.txt',
-        'test-session',
+        undefined,
         { encoding: 'base64' }
       );
       expect(bucket.put).toHaveBeenCalledWith(
@@ -779,7 +761,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -822,7 +803,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -877,7 +857,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -918,7 +897,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -959,7 +937,6 @@ describe('LocalMountSyncManager', () => {
         prefix: '/uploads/',
         readOnly: false,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
       });
@@ -1000,7 +977,6 @@ describe('LocalMountSyncManager', () => {
         prefix: undefined,
         readOnly: true,
         client,
-        sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
       });

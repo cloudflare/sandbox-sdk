@@ -1,5 +1,4 @@
 import { getContainer } from '@cloudflare/containers';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
@@ -914,11 +913,9 @@ describe('Sandbox R2 egress mounts', () => {
     await sandbox.unmountBucket('/mnt/local');
 
     expect(client.utils.createSession).not.toHaveBeenCalled();
-    expect(client.files.mkdir).toHaveBeenCalledWith(
-      '/mnt/local',
-      DISABLE_SESSION_TOKEN,
-      { recursive: true }
-    );
+    expect(client.files.mkdir).toHaveBeenCalledWith('/mnt/local', undefined, {
+      recursive: true
+    });
   });
 
   describe('handler prefix translation', () => {

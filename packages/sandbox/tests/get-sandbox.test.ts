@@ -1,4 +1,3 @@
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../src/errors';
 import { getSandbox } from '../src/sandbox';
@@ -298,7 +297,7 @@ describe('getSandbox', () => {
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
-    it('routes implicit exec through the sessionless token', async () => {
+    it('routes implicit exec without a session ID', async () => {
       mockStub.exec = vi.fn().mockResolvedValue({
         success: true,
         stdout: '',
@@ -328,7 +327,7 @@ describe('getSandbox', () => {
       expect(mockStub.exec).not.toHaveBeenCalled();
       expect(mockStub.execWithSessionToken).toHaveBeenCalledWith(
         'echo test',
-        DISABLE_SESSION_TOKEN,
+        undefined,
         {
           env: { TEST_ENV: '1' },
           cwd: '/workspace/app',
@@ -337,7 +336,7 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit startProcess through the sessionless token', async () => {
+    it('routes implicit startProcess without a session ID', async () => {
       mockStub.startProcess = vi.fn().mockResolvedValue({
         success: true,
         processId: 'proc-sessionless',
@@ -357,8 +356,7 @@ describe('getSandbox', () => {
       expect(mockStub.startProcess).toHaveBeenCalledWith('sleep 10', {
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
-        timeout: 1000,
-        sessionId: DISABLE_SESSION_TOKEN
+        timeout: 1000
       });
     });
 
@@ -393,7 +391,7 @@ describe('getSandbox', () => {
       );
     });
 
-    it('routes implicit file operations through the sessionless token', async () => {
+    it('routes implicit file operations without session IDs', async () => {
       mockStub.writeFile = vi.fn().mockResolvedValue({});
       mockStub.readFile = vi.fn().mockResolvedValue({});
       mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
@@ -422,45 +420,42 @@ describe('getSandbox', () => {
       expect(mockStub.writeFile).toHaveBeenCalledWith(
         '/workspace/file.txt',
         'content',
-        { encoding: 'utf8', sessionId: DISABLE_SESSION_TOKEN }
+        { encoding: 'utf8' }
       );
       expect(mockStub.readFile).toHaveBeenCalledWith('/workspace/file.txt', {
-        encoding: 'utf8',
-        sessionId: DISABLE_SESSION_TOKEN
+        encoding: 'utf8'
       });
       expect(mockStub.readFileStream).toHaveBeenCalledWith(
         '/workspace/file.txt',
-        { sessionId: DISABLE_SESSION_TOKEN }
+        {}
       );
       expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
-        recursive: true,
-        sessionId: DISABLE_SESSION_TOKEN
+        recursive: true
       });
       expect(mockStub.deleteFile).toHaveBeenCalledWith(
         '/workspace/file.txt',
-        DISABLE_SESSION_TOKEN
+        undefined
       );
       expect(mockStub.renameFile).toHaveBeenCalledWith(
         '/workspace/old.txt',
         '/workspace/new.txt',
-        DISABLE_SESSION_TOKEN
+        undefined
       );
       expect(mockStub.moveFile).toHaveBeenCalledWith(
         '/workspace/src.txt',
         '/workspace/dest.txt',
-        DISABLE_SESSION_TOKEN
+        undefined
       );
       expect(mockStub.listFiles).toHaveBeenCalledWith('/workspace', {
-        includeHidden: true,
-        sessionId: DISABLE_SESSION_TOKEN
+        includeHidden: true
       });
       expect(mockStub.exists).toHaveBeenCalledWith(
         '/workspace/file.txt',
-        DISABLE_SESSION_TOKEN
+        undefined
       );
     });
 
-    it('routes implicit watch and change checks through the sessionless token', async () => {
+    it('routes implicit watch and change checks without session IDs', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
       mockStub.checkChanges = vi
         .fn()
@@ -473,16 +468,14 @@ describe('getSandbox', () => {
       await sandbox.checkChanges('/workspace', { since: 'watch-1:0' });
 
       expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
-        recursive: false,
-        sessionId: DISABLE_SESSION_TOKEN
+        recursive: false
       });
       expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
-        since: 'watch-1:0',
-        sessionId: DISABLE_SESSION_TOKEN
+        since: 'watch-1:0'
       });
     });
 
-    it('routes implicit git checkout through the sessionless token', async () => {
+    it('routes implicit git checkout without a session ID', async () => {
       mockStub.gitCheckout = vi.fn().mockResolvedValue({
         success: true,
         stdout: 'Cloned',
@@ -508,8 +501,7 @@ describe('getSandbox', () => {
           branch: 'main',
           targetDir: '/workspace/repo',
           depth: 1,
-          cloneTimeoutMs: 90_000,
-          sessionId: DISABLE_SESSION_TOKEN
+          cloneTimeoutMs: 90_000
         }
       );
     });

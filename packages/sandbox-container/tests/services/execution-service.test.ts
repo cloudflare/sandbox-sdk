@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import { StatelessProcessRunner } from '@repo/sandbox-execution';
 import type { Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
+
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
 
 type SessionExec = (
   command: string,
@@ -368,7 +369,7 @@ describe('ExecutionService', () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.message).toContain('sessionless execution');
-      expect(result.error.message).not.toContain(DISABLE_SESSION_TOKEN);
+      expect(result.error.message).not.toContain(LEGACY_SESSIONLESS_SESSION_ID);
     }
   });
 

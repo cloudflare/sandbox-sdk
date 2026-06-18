@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   ProcessRecord,
   ServiceResult
@@ -13,6 +12,8 @@ import {
 } from '@sandbox-container/services/process-service.js';
 import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
+
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
 
 type TestProcessCommandHandle = NonNullable<ProcessRecord['commandHandle']>;
 
@@ -302,7 +303,7 @@ describe('ProcessService', () => {
       );
 
       const result = await processService.startProcess('sleep 10', {
-        sessionId: DISABLE_SESSION_TOKEN
+        sessionId: LEGACY_SESSIONLESS_SESSION_ID
       });
 
       expect(result.success).toBe(true);

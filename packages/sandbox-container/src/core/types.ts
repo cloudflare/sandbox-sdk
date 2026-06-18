@@ -1,4 +1,4 @@
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
 
 export type ValidationResult<T = unknown> =
   | {
@@ -71,7 +71,7 @@ export type ExecutionTarget =
   | { kind: 'session'; sessionId: string };
 
 export function resolveExecutionTarget(sessionId?: string): ExecutionTarget {
-  if (sessionId === undefined || sessionId === DISABLE_SESSION_TOKEN) {
+  if (sessionId === undefined || sessionId === LEGACY_SESSIONLESS_SESSION_ID) {
     return { kind: 'sessionless' };
   }
 

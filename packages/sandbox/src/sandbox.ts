@@ -55,7 +55,6 @@ import {
   getSuggestion,
   type OperationInterruptedContext
 } from '@repo/shared/errors';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import {
   type BackupRestoreTestFault,
   BackupService
@@ -344,7 +343,7 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   destroyTerminal: (id: string) => Promise<void>;
   execWithSessionToken: (
     command: string,
-    sessionId: string,
+    sessionId?: string,
     options?: ExecOptions
   ) => Promise<ExecResult>;
 };
@@ -691,14 +690,9 @@ export function getSandbox<T extends Sandbox<any>>(
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     exec: (command: string, execOptions?: ExecOptions) =>
-      stub.execWithSessionToken(command, DISABLE_SESSION_TOKEN, execOptions),
+      stub.execWithSessionToken(command, undefined, execOptions),
     startProcess: (command: string, processOptions?: ProcessOptions) =>
-      processOptions?.sessionId !== undefined
-        ? stub.startProcess(command, processOptions)
-        : stub.startProcess(command, {
-            ...processOptions,
-            sessionId: DISABLE_SESSION_TOKEN
-          }),
+      stub.startProcess(command, processOptions),
     listProcesses: (sessionId?: string) =>
       sessionId === undefined
         ? stub.listProcesses()
@@ -715,7 +709,9 @@ export function getSandbox<T extends Sandbox<any>>(
     ) =>
       stub.writeFile(path, content, {
         ...fileOptions,
-        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+        ...(fileOptions.sessionId !== undefined && {
+          sessionId: fileOptions.sessionId
+        })
       }),
     readFile: (
       path: string,
@@ -725,7 +721,9 @@ export function getSandbox<T extends Sandbox<any>>(
     ) => {
       const options = {
         ...fileOptions,
-        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+        ...(fileOptions.sessionId !== undefined && {
+          sessionId: fileOptions.sessionId
+        })
       };
 
       if (options.encoding === 'none') {
@@ -737,7 +735,9 @@ export function getSandbox<T extends Sandbox<any>>(
     readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
       stub.readFileStream(path, {
         ...fileOptions,
-        sessionId: fileOptions.sessionId ?? DISABLE_SESSION_TOKEN
+        ...(fileOptions.sessionId !== undefined && {
+          sessionId: fileOptions.sessionId
+        })
       }),
     mkdir: (
       path: string,
@@ -745,29 +745,25 @@ export function getSandbox<T extends Sandbox<any>>(
     ) =>
       stub.mkdir(path, {
         ...mkdirOptions,
-        sessionId: mkdirOptions.sessionId ?? DISABLE_SESSION_TOKEN
+        ...(mkdirOptions.sessionId !== undefined && {
+          sessionId: mkdirOptions.sessionId
+        })
       }),
     deleteFile: (path: string, sessionId?: string) =>
-      stub.deleteFile(path, sessionId ?? DISABLE_SESSION_TOKEN),
+      stub.deleteFile(path, sessionId),
     renameFile: (oldPath: string, newPath: string, sessionId?: string) =>
-      stub.renameFile(oldPath, newPath, sessionId ?? DISABLE_SESSION_TOKEN),
+      stub.renameFile(oldPath, newPath, sessionId),
     moveFile: (
       sourcePath: string,
       destinationPath: string,
       sessionId?: string
-    ) =>
-      stub.moveFile(
-        sourcePath,
-        destinationPath,
-        sessionId ?? DISABLE_SESSION_TOKEN
-      ),
+    ) => stub.moveFile(sourcePath, destinationPath, sessionId),
     listFiles: (path: string, listOptions?: ListFilesOptions) =>
       stub.listFiles(path, {
         ...listOptions,
-        sessionId: listOptions?.sessionId ?? DISABLE_SESSION_TOKEN
+        sessionId: listOptions?.sessionId
       }),
-    exists: (path: string, sessionId?: string) =>
-      stub.exists(path, sessionId ?? DISABLE_SESSION_TOKEN),
+    exists: (path: string, sessionId?: string) => stub.exists(path, sessionId),
     gitCheckout: (
       repoUrl: string,
       gitOptions?: {
@@ -780,7 +776,7 @@ export function getSandbox<T extends Sandbox<any>>(
     ) =>
       stub.gitCheckout(repoUrl, {
         ...gitOptions,
-        sessionId: gitOptions?.sessionId ?? DISABLE_SESSION_TOKEN
+        sessionId: gitOptions?.sessionId
       }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
@@ -793,12 +789,12 @@ export function getSandbox<T extends Sandbox<any>>(
     watch: (path: string, options: WatchOptions = {}) =>
       stub.watch(path, {
         ...options,
-        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN
+        sessionId: options.sessionId
       }),
     checkChanges: (path: string, options: CheckChangesOptions = {}) =>
       stub.checkChanges(path, {
         ...options,
-        sessionId: options.sessionId ?? DISABLE_SESSION_TOKEN
+        sessionId: options.sessionId
       }),
     terminal: (opts?: TerminalOptions) => createSandboxTerminal(stub, opts),
     wsConnect: connect(stub),
@@ -1474,15 +1470,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      const sessionId = DISABLE_SESSION_TOKEN;
-
       const syncManager = new LocalMountSyncManager({
         bucket: r2Binding,
         mountPath,
         prefix: options.prefix,
         readOnly: options.readOnly ?? false,
         client: this.client,
-        sessionId,
         logger: this.logger
       });
 
@@ -2205,7 +2198,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.files.writeFile(
       headerFilePath,
       S3FS_DISABLE_EXPECT_HEADER_CONFIG,
-      DISABLE_SESSION_TOKEN
+      undefined
     );
     await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
   }
@@ -2221,11 +2214,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
 
-    await this.client.files.writeFile(
-      passwordFilePath,
-      content,
-      DISABLE_SESSION_TOKEN
-    );
+    await this.client.files.writeFile(passwordFilePath, content, undefined);
 
     await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
@@ -3310,9 +3299,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<SandboxExecutionContext> {
     if (explicitSessionId !== undefined) {
       this.validateExplicitSessionId(explicitSessionId);
-      if (explicitSessionId === DISABLE_SESSION_TOKEN) {
-        return { kind: 'sessionless' };
-      }
       return { kind: 'session', sessionId: explicitSessionId };
     }
 
@@ -3325,15 +3311,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  private serializeExecutionContext(context: SandboxExecutionContext): string {
-    if (context.kind === 'sessionless') {
-      return DISABLE_SESSION_TOKEN;
-    }
-    return context.sessionId;
-  }
-
-  private getPublicExecutionSessionId(sessionId: string): string | undefined {
-    return sessionId === DISABLE_SESSION_TOKEN ? undefined : sessionId;
+  private serializeExecutionContext(
+    context: SandboxExecutionContext
+  ): string | undefined {
+    return context.kind === 'session' ? context.sessionId : undefined;
   }
 
   /**
@@ -3353,17 +3334,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     this.validateExplicitSessionId(explicitSessionId);
-    if (explicitSessionId === DISABLE_SESSION_TOKEN) {
-      return undefined;
-    }
     return explicitSessionId;
   }
 
   private resolveExecutionEnv(
-    sessionId: string,
+    sessionId: string | undefined,
     env?: Record<string, string | undefined>
   ): Record<string, string | undefined> | undefined {
-    if (sessionId === DISABLE_SESSION_TOKEN) {
+    if (sessionId === undefined) {
       const mergedEnv = filterEnvVars({ ...this.envVars, ...(env ?? {}) });
       return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
     }
@@ -3377,7 +3355,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private buildExecutionRequestOptions(
-    sessionId: string,
+    sessionId: string | undefined,
     options?: {
       timeout?: number;
       env?: Record<string, string | undefined>;
@@ -3412,15 +3390,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    return this.execWithSession(command, DISABLE_SESSION_TOKEN, options);
+    return this.execWithSession(command, undefined, options);
   }
 
   async execWithSessionToken(
     command: string,
-    sessionId: string,
+    sessionId?: string,
     options?: ExecOptions
   ): Promise<ExecResult> {
-    this.validateExplicitSessionId(sessionId);
+    if (sessionId !== undefined) {
+      this.validateExplicitSessionId(sessionId);
+    }
     return this.execWithSession(command, sessionId, options);
   }
 
@@ -3429,7 +3409,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    return this.execWithSession(command, DISABLE_SESSION_TOKEN, {
+    return this.execWithSession(command, undefined, {
       origin: 'internal'
     });
   }
@@ -3440,7 +3420,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async execWithSession(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     options?: ExecOptions
   ): Promise<ExecResult> {
     const startTime = Date.now();
@@ -3460,11 +3440,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
 
       const duration = Date.now() - startTime;
-      const publicSessionId = this.getPublicExecutionSessionId(sessionId);
       const result = this.mapExecuteResponseToExecResult(
         response,
         duration,
-        publicSessionId
+        sessionId
       );
 
       execOutcome = { exitCode: result.exitCode, success: result.success };
@@ -3479,7 +3458,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
-        sessionId: this.getPublicExecutionSessionId(sessionId),
+        sessionId,
         origin: options?.origin ?? 'user',
         error: execError ?? undefined,
         errorMessage: execError?.message
@@ -4919,11 +4898,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
     const sessionId = options?.id || `session-${Date.now()}`;
-    if (sessionId === DISABLE_SESSION_TOKEN) {
-      throw new Error(
-        `Session ID '${DISABLE_SESSION_TOKEN}' is reserved for internal use`
-      );
-    }
 
     const mergedEnv = {
       ...this.envVars,
