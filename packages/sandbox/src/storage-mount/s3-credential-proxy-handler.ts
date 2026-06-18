@@ -19,6 +19,7 @@ import type {
   OutboundHandlerContext
 } from '@cloudflare/containers';
 import type { BucketProvider } from '@repo/shared';
+import { AwsClient } from 'aws4fetch';
 import type { S3CredentialProxyParams } from './types';
 
 const PER_MOUNT_SUFFIX = '.s3-credential-proxy.internal';
@@ -82,7 +83,7 @@ const HEAD_METADATA_PUT_RESPONSE_HEADERS = new Set([
   'x-goog-storage-class'
 ]);
 
-const SIGV4_SKIPPED_FORWARD_HEADERS = new Set([
+const SKIPPED_FORWARD_HEADERS = new Set([
   'connection',
   'expect',
   'host',
@@ -94,18 +95,6 @@ const SIGV4_SKIPPED_FORWARD_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
   'user-agent'
-]);
-
-const SIGV4_UNSIGNABLE_HEADERS = new Set([
-  'authorization',
-  'connection',
-  'content-length',
-  'content-type',
-  'expect',
-  'presigned-expires',
-  'range',
-  'user-agent',
-  'x-amzn-trace-id'
 ]);
 
 export const DUMMY_AUTH_HEADERS = new Set([
@@ -146,13 +135,12 @@ type CredentialProxyDiagnosticEvent = CredentialProxyRequestInfo & {
 };
 
 type SigV4ClientCacheEntry = {
+  client: AwsClient;
   accessKeyId: string;
   secretAccessKey: string;
   endpoint: string;
   provider: BucketProvider | null;
   region: string;
-  date: string;
-  key: ArrayBuffer;
 };
 
 type HeadMetadataCacheEntry = {
@@ -397,7 +385,7 @@ function buildCleanHeaders(original: Headers): Headers {
     // Strip dummy signing headers and the intercepted proxy host; x-amz-content-sha256
     // is stripped here too (it's in DUMMY_AUTH_HEADERS) so it can be re-added below
     // only when the original value is a genuine payload hash (not a dummy signing value).
-    if (!DUMMY_AUTH_HEADERS.has(lower) && lower !== 'host') {
+    if (!DUMMY_AUTH_HEADERS.has(lower) && !SKIPPED_FORWARD_HEADERS.has(lower)) {
       clean.set(k, v);
     }
   }
@@ -518,14 +506,13 @@ async function withCredentialProxyDiagnostics(
   }
 }
 
-async function getSigV4SigningKey(
+function getSigV4Client(
   mountId: string,
   endpoint: string,
   provider: BucketProvider | null,
   credentials: { accessKeyId: string; secretAccessKey: string },
-  region: string,
-  date: string
-): Promise<ArrayBuffer> {
+  region: string
+): AwsClient {
   const cached = sigV4ClientCache.get(mountId);
   if (
     cached &&
@@ -533,30 +520,27 @@ async function getSigV4SigningKey(
     cached.secretAccessKey === credentials.secretAccessKey &&
     cached.endpoint === endpoint &&
     cached.provider === provider &&
-    cached.region === region &&
-    cached.date === date
+    cached.region === region
   ) {
-    return cached.key;
+    return cached.client;
   }
 
-  const enc = new TextEncoder();
-  const kDate = await hmacSHA256(
-    enc.encode(`AWS4${credentials.secretAccessKey}`) as unknown as ArrayBuffer,
-    date
-  );
-  const kRegion = await hmacSHA256(kDate, region);
-  const kService = await hmacSHA256(kRegion, 's3');
-  const key = await hmacSHA256(kService, 'aws4_request');
+  const client = new AwsClient({
+    accessKeyId: credentials.accessKeyId,
+    secretAccessKey: credentials.secretAccessKey,
+    service: 's3',
+    region,
+    retries: 0
+  });
   sigV4ClientCache.set(mountId, {
+    client,
     accessKeyId: credentials.accessKeyId,
     secretAccessKey: credentials.secretAccessKey,
     endpoint,
     provider,
-    region,
-    date,
-    key
+    region
   });
-  return key;
+  return client;
 }
 
 function encodeCanonicalQueryPart(value: string): string {
@@ -780,45 +764,6 @@ function getSigV4ForwardInit(request: Request): RequestInit {
   return { body: readable };
 }
 
-function getSigV4ForwardHeaders(
-  request: Request,
-  dateStr: string,
-  payloadHash: string
-): Headers {
-  const headers = new Headers();
-  for (const [k, v] of request.headers as unknown as Iterable<
-    [string, string]
-  >) {
-    const lower = k.toLowerCase();
-    if (
-      SIGV4_SKIPPED_FORWARD_HEADERS.has(lower) ||
-      DUMMY_AUTH_HEADERS.has(lower)
-    ) {
-      continue;
-    }
-    headers.set(k, v);
-  }
-  headers.set('x-amz-content-sha256', payloadHash);
-  headers.set('x-amz-date', dateStr);
-  return headers;
-}
-
-function getSigV4SignedHeaderEntries(
-  url: URL,
-  headers: Headers
-): [string, string][] {
-  const entries: [string, string][] = [['host', url.host]];
-  for (const [k, v] of headers as unknown as Iterable<[string, string]>) {
-    const lower = k.toLowerCase();
-    if (SIGV4_UNSIGNABLE_HEADERS.has(lower)) {
-      continue;
-    }
-    entries.push([lower, v.trim().replace(/\s+/g, ' ')]);
-  }
-  entries.sort(([left], [right]) => left.localeCompare(right));
-  return entries;
-}
-
 function getGCSHeaders(request: Request): Headers {
   const headers = new Headers();
   for (const [k, v] of request.headers as unknown as Iterable<
@@ -854,64 +799,25 @@ async function signAndForwardSigV4(
   requestInfo: CredentialProxyRequestInfo
 ): Promise<Response> {
   const signingStarted = Date.now();
-  const url = new URL(request.url);
   const region = detectS3Region(provider, endpoint);
   const payload = getSigV4PayloadHash(request.headers);
-  const now = new Date();
-  const dateStr = `${now
-    .toISOString()
-    .replace(/[:-]/g, '')
-    .replace(/\.\d+Z$/, '')}Z`;
-  const dateOnly = dateStr.slice(0, 8);
-  const credentialScope = `${dateOnly}/${region}/s3/aws4_request`;
-  const forwardHeaders = getSigV4ForwardHeaders(request, dateStr, payload.hash);
-  const signedHeaderEntries = getSigV4SignedHeaderEntries(url, forwardHeaders);
-  const signedHeaders = signedHeaderEntries.map(([k]) => k).join(';');
-  const canonicalHeaders = signedHeaderEntries
-    .map(([k, v]) => `${k}:${v}\n`)
-    .join('');
-  const canonicalRequest = [
-    request.method,
-    getCanonicalURI(url),
-    getCanonicalQueryString(url),
-    canonicalHeaders,
-    signedHeaders,
-    payload.hash
-  ].join('\n');
-  const canonicalRequestHash = await sha256Hex(canonicalRequest);
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    dateStr,
-    credentialScope,
-    canonicalRequestHash
-  ].join('\n');
-  const signingKey = await getSigV4SigningKey(
+  const client = getSigV4Client(
     mountId,
     endpoint,
     provider,
     credentials,
-    region,
-    dateOnly
-  );
-  const signature = toHex(await hmacSHA256(signingKey, stringToSign));
-  forwardHeaders.set(
-    'Authorization',
-    `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
+    region
   );
   requestInfo.payloadHashMode = payload.mode;
+  // clientSetupMs captures region detection + client cache lookup + payload hash;
+  // the actual SigV4 signing happens inside client.fetch() and is included in upstreamMs.
   requestInfo.clientSetupMs = Date.now() - signingStarted;
 
   const upstreamStarted = Date.now();
   const forwardInit = getSigV4ForwardInit(request);
   requestInfo.bodyPresent =
     forwardInit?.body !== undefined || request.body !== null;
-  const response = await fetch(
-    new Request(request.url, {
-      method: request.method,
-      headers: forwardHeaders,
-      body: forwardInit.body
-    })
-  );
+  const response = await client.fetch(request, forwardInit);
   requestInfo.upstreamMs = Date.now() - upstreamStarted;
   return response;
 }
