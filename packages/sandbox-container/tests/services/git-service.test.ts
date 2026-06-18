@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import { ErrorCode, type ValidationFailedContext } from '@repo/shared/errors';
-import type {
-  CloneOptions,
-  ServiceResult
+import {
+  type CloneOptions,
+  getExecutionTargetDisplayName,
+  type ServiceResult
 } from '@sandbox-container/core/types';
 import { DEFAULT_GIT_CLONE_TIMEOUT_MS } from '@sandbox-container/managers/git-manager';
 import type { ExecutionService } from '@sandbox-container/services/execution-service';
@@ -70,7 +71,9 @@ describe('GitService', () => {
 
     mocked(mockExecutionService.execute).mockImplementation(
       async (command, options = {}) => {
-        const sessionId = options.sessionId ?? 'default';
+        const sessionId = getExecutionTargetDisplayName(
+          options.target ?? { kind: 'sessionless' }
+        );
         const forwardedOptions =
           options.cwd !== undefined ||
           options.env !== undefined ||
@@ -93,7 +96,7 @@ describe('GitService', () => {
     );
 
     mocked(mockExecutionService.withExecution).mockImplementation(
-      async ({ sessionId }, callback) => {
+      async ({ target }, callback) => {
         try {
           const mockExec = async (
             cmd: string,
@@ -105,7 +108,7 @@ describe('GitService', () => {
             }
           ) => {
             const result = await mockExecutionService.execute(cmd, {
-              sessionId,
+              target,
               cwd: options?.cwd,
               env: options?.env,
               timeoutMs: options?.timeoutMs,
@@ -185,7 +188,7 @@ describe('GitService', () => {
       // Verify SessionManager was called for git clone (cwd is undefined)
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
-        'default',
+        'sessionless',
         "'timeout' '-k' '5' '600' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'",
         { origin: 'internal' }
       );
@@ -193,7 +196,7 @@ describe('GitService', () => {
       // Verify SessionManager was called for getting current branch
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         2,
-        'default',
+        'sessionless',
         "'git' 'branch' '--show-current'",
         { cwd: '/workspace/repo', origin: 'internal' }
       );
@@ -271,7 +274,7 @@ describe('GitService', () => {
       expect(result.success).toBe(true);
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
-        'default',
+        'sessionless',
         "'timeout' '-k' '5' '90' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'",
         { origin: 'internal' }
       );

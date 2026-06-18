@@ -5,15 +5,16 @@ import type {
   ProcessNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
-import type {
-  CommandResult,
-  ExecutionTarget,
-  ProcessCommandHandle,
-  ProcessOptions,
-  ProcessRecord,
-  ProcessStatus,
-  ServiceResult
+import {
+  type CommandResult,
+  type ExecutionTarget,
+  getExecutionTargetDisplayName,
+  type ProcessCommandHandle,
+  type ProcessOptions,
+  type ProcessRecord,
+  type ProcessStatus,
+  resolveExecutionTarget,
+  type ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
 import type { ExecutionService } from './execution-service';
@@ -51,8 +52,9 @@ export class ProcessService {
   ): Promise<ServiceResult<CommandResult>> {
     try {
       // Always use ExecutionService for command execution
+      const target = resolveExecutionTarget(options.sessionId);
       const result = await this.executionService.execute(command, {
-        sessionId: options.sessionId,
+        target,
         cwd: options.cwd,
         timeoutMs: options.timeoutMs,
         env: options.env,
@@ -120,8 +122,9 @@ export class ProcessService {
         undefined,
         options
       );
+      const target = resolveExecutionTarget(options.sessionId);
       const commandHandle: ProcessCommandHandle = {
-        target: this.resolveProcessTarget(options.sessionId),
+        target,
         commandId: processRecordData.id
       };
 
@@ -141,7 +144,7 @@ export class ProcessService {
       const streamResult = await this.executionService.startProcessStream(
         command,
         {
-          sessionId: options.sessionId,
+          target,
           cwd: options.cwd,
           timeoutMs: options.timeoutMs,
           env: options.env,
@@ -290,16 +293,8 @@ export class ProcessService {
     }
   }
 
-  private resolveProcessTarget(sessionId?: string): ExecutionTarget {
-    if (sessionId && sessionId !== DISABLE_SESSION_TOKEN) {
-      return { kind: 'session', sessionId };
-    }
-
-    return { kind: 'sessionless' };
-  }
-
   private getLogSessionId(target: ExecutionTarget): string {
-    return target.kind === 'session' ? target.sessionId : 'sessionless';
+    return getExecutionTargetDisplayName(target);
   }
 
   private async markStartupFailed(

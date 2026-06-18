@@ -104,7 +104,7 @@ describe('ProcessService', () => {
       expect(mockExecutionService.execute).toHaveBeenCalledWith(
         'echo "hello world"',
         {
-          sessionId: undefined,
+          target: { kind: 'sessionless' },
           cwd: '/tmp',
           timeoutMs: undefined,
           env: undefined,
@@ -203,7 +203,7 @@ describe('ProcessService', () => {
       expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
-          sessionId: 'session-123',
+          target: { kind: 'session', sessionId: 'session-123' },
           cwd: '/tmp',
           commandId: expect.any(String),
           onEvent: expect.any(Function)
@@ -267,7 +267,7 @@ describe('ProcessService', () => {
       expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
-          sessionId: undefined
+          target: { kind: 'sessionless' }
         })
       );
     });

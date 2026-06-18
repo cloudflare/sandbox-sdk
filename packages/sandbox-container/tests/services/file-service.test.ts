@@ -9,7 +9,10 @@ import {
 } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
-import type { ServiceResult } from '@sandbox-container/core/types';
+import {
+  getExecutionTargetDisplayName,
+  type ServiceResult
+} from '@sandbox-container/core/types';
 import type { ExecutionService } from '@sandbox-container/services/execution-service';
 import {
   FileService,
@@ -114,7 +117,9 @@ describe('FileService', () => {
 
     mocked(mockExecutionService.execute).mockImplementation(
       async (command, options = {}) => {
-        const sessionId = options.sessionId ?? 'default';
+        const sessionId = getExecutionTargetDisplayName(
+          options.target ?? { kind: 'sessionless' }
+        );
         const forwardedOptions =
           options.cwd !== undefined ||
           options.timeoutMs !== undefined ||
@@ -141,7 +146,7 @@ describe('FileService', () => {
     );
 
     mocked(mockExecutionService.withExecution).mockImplementation(
-      async ({ sessionId }, callback) => {
+      async ({ target }, callback) => {
         try {
           const mockExec = async (
             cmd: string,
@@ -153,7 +158,7 @@ describe('FileService', () => {
             }
           ) => {
             const result = await mockExecutionService.execute(cmd, {
-              sessionId,
+              target,
               cwd: options?.cwd,
               env: options?.env,
               timeoutMs: options?.timeoutMs,
@@ -408,7 +413,7 @@ describe('FileService', () => {
 
       // Verify the MIME fallback shell command was called
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'default',
+        'sessionless',
         "file --mime-type -b '/tmp/test.txt'",
         { origin: 'internal' }
       );
@@ -524,7 +529,7 @@ describe('FileService', () => {
         errors: []
       });
       mocked(mockExecutionService.withExecution).mockImplementation(
-        async ({ sessionId }, callback) => {
+        async ({ target }, callback) => {
           try {
             const mockExec = async (
               cmd: string,
@@ -536,7 +541,7 @@ describe('FileService', () => {
               }
             ) => {
               const result = await mockExecutionService.execute(cmd, {
-                sessionId,
+                target,
                 cwd: options?.cwd,
                 env: options?.env,
                 timeoutMs: options?.timeoutMs,

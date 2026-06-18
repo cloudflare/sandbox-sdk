@@ -1,3 +1,5 @@
+import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
+
 export type ValidationResult<T = unknown> =
   | {
       isValid: true;
@@ -67,6 +69,22 @@ export type ProcessStatus =
 export type ExecutionTarget =
   | { kind: 'sessionless' }
   | { kind: 'session'; sessionId: string };
+
+export function resolveExecutionTarget(sessionId?: string): ExecutionTarget {
+  if (sessionId === undefined || sessionId === DISABLE_SESSION_TOKEN) {
+    return { kind: 'sessionless' };
+  }
+
+  if (sessionId.trim().length === 0) {
+    throw new Error('sessionId must not be empty or whitespace');
+  }
+
+  return { kind: 'session', sessionId };
+}
+
+export function getExecutionTargetDisplayName(target: ExecutionTarget): string {
+  return target.kind === 'session' ? target.sessionId : 'sessionless';
+}
 
 export interface ProcessCommandHandle {
   target: ExecutionTarget;

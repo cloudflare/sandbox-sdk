@@ -1,6 +1,6 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
+import { resolveExecutionTarget } from '../core/types';
 import type { ProcessFilters, ProcessRecord } from './process-service';
 
 /**
@@ -220,10 +220,7 @@ export class ProcessStore {
     }
 
     return {
-      target:
-        legacyHandle.sessionId === DISABLE_SESSION_TOKEN
-          ? { kind: 'sessionless' }
-          : { kind: 'session', sessionId: legacyHandle.sessionId },
+      target: resolveExecutionTarget(legacyHandle.sessionId),
       commandId: legacyHandle.commandId,
       ...(typeof legacyHandle.pid === 'number' ? { pid: legacyHandle.pid } : {})
     };

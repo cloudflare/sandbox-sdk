@@ -60,7 +60,7 @@ describe('ExecutionService', () => {
     } as ServiceResult<RawExecResult>);
 
     const result = await executionService.execute('echo test', {
-      sessionId: 'session-123',
+      target: { kind: 'session', sessionId: 'session-123' },
       cwd: '/workspace/app',
       timeoutMs: 5000,
       env: { TEST_ENV: '1' },
@@ -101,7 +101,7 @@ describe('ExecutionService', () => {
   it('runs sessionless execute without calling SessionManager', async () => {
     const result = await executionService.execute(
       'printf "hello"; printf "warn" >&2; exit 7',
-      { sessionId: DISABLE_SESSION_TOKEN, cwd: process.cwd() }
+      { target: { kind: 'sessionless' }, cwd: process.cwd() }
     );
 
     expect(result.success).toBe(true);
@@ -115,7 +115,7 @@ describe('ExecutionService', () => {
 
   it('terminates timed-out sessionless execution and returns the timeout exit code', async () => {
     const result = await executionService.execute('sleep 1', {
-      sessionId: DISABLE_SESSION_TOKEN,
+      target: { kind: 'sessionless' },
       cwd: process.cwd(),
       timeoutMs: 50
     });
@@ -131,7 +131,7 @@ describe('ExecutionService', () => {
   it('inherits outer env and timeout in sessionless withExecution calls', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 500,
@@ -194,7 +194,7 @@ describe('ExecutionService', () => {
 
     const result = await executionService.withExecution(
       {
-        sessionId: 'session-123',
+        target: { kind: 'session', sessionId: 'session-123' },
         cwd: '/workspace/outer',
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 5000,
@@ -233,7 +233,7 @@ describe('ExecutionService', () => {
   it('lets nested sessionless withExecution options override inherited defaults', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 1000,
@@ -273,7 +273,7 @@ describe('ExecutionService', () => {
     });
 
     const result = await executionService.startProcessStream('sleep 10', {
-      sessionId: 'explicit-session',
+      target: { kind: 'session', sessionId: 'explicit-session' },
       cwd: '/workspace/app',
       timeoutMs: 5000,
       env: { TEST_ENV: '1' },
@@ -311,7 +311,7 @@ describe('ExecutionService', () => {
     const result = await executionService.startProcessStream(
       'printf "hello"; printf "warn" >&2',
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         commandId: 'cmd-1',
         onEvent: async (event) => {
@@ -376,7 +376,7 @@ describe('ExecutionService', () => {
     const events: Array<{ type: string; exitCode?: number }> = [];
 
     const result = await executionService.startProcessStream('sleep 30', {
-      sessionId: DISABLE_SESSION_TOKEN,
+      target: { kind: 'sessionless' },
       cwd: process.cwd(),
       commandId: 'cmd-kill',
       onEvent: async (event) => {

@@ -10,7 +10,6 @@ import type {
   CommandNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import {
   type ExecutionTarget,
   type ProcessCommandHandle,
@@ -38,7 +37,7 @@ type ExecutionCallback<T> = (
 ) => Promise<T>;
 
 export interface ExecutionOptions {
-  sessionId?: string;
+  target?: ExecutionTarget;
   cwd?: string;
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
@@ -72,7 +71,7 @@ export class ExecutionService {
     command: string,
     options: ExecutionOptions = {}
   ): Promise<ServiceResult<RawExecResult>> {
-    const target = this.resolveTarget(options.sessionId);
+    const target = options.target ?? { kind: 'sessionless' };
 
     if (target.kind === 'session') {
       return this.sessionManager.executeInSession(target.sessionId, command, {
@@ -90,7 +89,7 @@ export class ExecutionService {
     command: string,
     options: ProcessStreamStartOptions
   ): Promise<ServiceResult<ProcessStreamStartResult>> {
-    const target = this.resolveTarget(options.sessionId);
+    const target = options.target ?? { kind: 'sessionless' };
 
     if (target.kind === 'session') {
       const result = await this.sessionManager.startProcessStreamInSession(
@@ -126,7 +125,7 @@ export class ExecutionService {
     options: ExecutionOptions,
     fn: ExecutionCallback<T>
   ): Promise<ServiceResult<T>> {
-    const target = this.resolveTarget(options.sessionId);
+    const target = options.target ?? { kind: 'sessionless' };
 
     if (target.kind === 'session') {
       // For session-backed execution, cwd is managed by the session shell and
@@ -217,18 +216,6 @@ export class ExecutionService {
         }
       });
     }
-  }
-
-  private resolveTarget(sessionId?: string): ExecutionTarget {
-    if (sessionId === undefined || sessionId === DISABLE_SESSION_TOKEN) {
-      return { kind: 'sessionless' };
-    }
-
-    if (sessionId.trim().length === 0) {
-      throw new Error('sessionId must not be empty or whitespace');
-    }
-
-    return { kind: 'session', sessionId };
   }
 
   private mergeNestedExecutionOptions(

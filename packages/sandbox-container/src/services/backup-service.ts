@@ -5,8 +5,12 @@ import {
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
 import { ErrorCode, Operation } from '@repo/shared/errors';
-import type { ServiceResult } from '../core/types';
-import { serviceError, serviceSuccess } from '../core/types';
+import {
+  resolveExecutionTarget,
+  type ServiceResult,
+  serviceError,
+  serviceSuccess
+} from '../core/types';
 import type { RawExecResult } from '../session-types';
 import type { ExecutionService } from './execution-service';
 
@@ -121,11 +125,11 @@ export class BackupService {
   ) {}
 
   private async executeInternal(
-    sessionId: string,
+    sessionId: string | undefined,
     command: string
   ): Promise<ServiceResult<RawExecResult>> {
     return this.executionService.execute(command, {
-      sessionId,
+      target: resolveExecutionTarget(sessionId),
       origin: 'internal'
     });
   }
@@ -137,7 +141,7 @@ export class BackupService {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId = 'default',
+    sessionId?: string,
     gitignore = false,
     excludes: string[] = [],
     compression?: BackupCreateCompressionOptions
@@ -368,7 +372,7 @@ export class BackupService {
 
   private async resolveGitignoreExcludePatterns(
     dir: string,
-    sessionId: string,
+    sessionId: string | undefined,
     opLogger: Logger
   ): Promise<string[]> {
     const gitAvailableResult = await this.executeInternal(
@@ -509,7 +513,7 @@ export class BackupService {
   async uploadParts(
     archivePath: string,
     parts: BackupUploadPart[],
-    _sessionId = 'default'
+    _sessionId?: string
   ): Promise<ServiceResult<{ parts: UploadedBackupPart[] }>> {
     if (parts.length === 0) {
       return serviceSuccess({ parts: [] });
@@ -567,7 +571,7 @@ export class BackupService {
   async restoreArchive(
     dir: string,
     archivePath: string,
-    sessionId = 'default'
+    sessionId?: string
   ): Promise<ServiceResult<RestoreArchiveResult>> {
     // Extract backup ID from archive path (e.g., /var/backups/abc123.sqsh -> abc123)
     const backupId = archivePath
@@ -761,7 +765,7 @@ export class BackupService {
   private async unmountSnapshot(
     dir: string,
     backupId: string,
-    sessionId = 'default'
+    sessionId?: string
   ): Promise<ServiceResult<{ success: boolean }>> {
     // Validate inputs before constructing paths used in rm -rf
     if (
