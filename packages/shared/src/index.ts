@@ -71,6 +71,7 @@ export type {
   WriteFileRequest
 } from './request-types.js';
 export type {
+  CommandExecuteOptions,
   EnsureNamedTunnelRunRequest,
   EnsureQuickTunnelRunRequest,
   EnsureTunnelRunRequest,

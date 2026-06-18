@@ -1,6 +1,7 @@
 import type {
   CheckChangesRequest,
   CheckChangesResult,
+  CommandExecuteOptions,
   EnsureTunnelRunRequest,
   EnsureTunnelRunResult,
   ExtensionConnectRequest,
@@ -163,13 +164,7 @@ class CommandsRPCAPI extends RpcTarget {
 
   async execute(
     command: string,
-    sessionId: string | undefined,
-    options?: {
-      timeoutMs?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
+    options?: CommandExecuteOptions
   ): Promise<{
     success: boolean;
     exitCode: number;
@@ -179,7 +174,7 @@ class CommandsRPCAPI extends RpcTarget {
     timestamp: string;
   }> {
     const result = await this.#svc.executeCommand(command, {
-      sessionId,
+      sessionId: options?.sessionId,
       timeoutMs: options?.timeoutMs,
       env: options?.env,
       cwd: options?.cwd,

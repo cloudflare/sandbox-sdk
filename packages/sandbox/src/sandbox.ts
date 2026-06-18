@@ -11,6 +11,7 @@ import type {
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
+  CommandExecuteOptions,
   DirectoryBackup,
   ExecOptions,
   ExecResult,
@@ -341,11 +342,7 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   ) => Promise<unknown>;
   createTerminal: (options: TerminalCreateOptions) => Promise<void>;
   destroyTerminal: (id: string) => Promise<void>;
-  execWithSessionToken: (
-    command: string,
-    sessionId?: string,
-    options?: ExecOptions
-  ) => Promise<ExecResult>;
+  exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
 };
 
 type SandboxExecutionContext =
@@ -690,7 +687,7 @@ export function getSandbox<T extends Sandbox<any>>(
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     exec: (command: string, execOptions?: ExecOptions) =>
-      stub.execWithSessionToken(command, undefined, execOptions),
+      stub.exec(command, execOptions),
     startProcess: (command: string, processOptions?: ProcessOptions) =>
       stub.startProcess(command, processOptions),
     listProcesses: (sessionId?: string) =>
@@ -2291,7 +2288,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // of the mount.
     //
     // The whole script runs inside a `( ... )` subshell. When a caller supplies
-    // an explicit sessionId, execWithSession dispatches into that session's
+    // an explicit sessionId, executeCommand dispatches into that session's
     // long-lived bash shell; a bare top-level `exit N` would terminate the
     // session. The subshell scopes exits so only the subshell exits, and its
     // status becomes the command's exit code as the caller expects.
@@ -2318,7 +2315,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const exec = sessionId
       ? (cmd: string) =>
-          this.execWithSession(cmd, sessionId, { origin: 'internal' })
+          this.executeCommand(cmd, sessionId, { origin: 'internal' })
       : (cmd: string) => this.execInternal(cmd);
 
     const result = await exec(script);
@@ -3362,14 +3359,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cwd?: string;
       origin?: 'user' | 'internal';
     }
-  ):
-    | {
-        timeoutMs?: number;
-        env?: Record<string, string | undefined>;
-        cwd?: string;
-        origin?: 'user' | 'internal';
-      }
-    | undefined {
+  ): CommandExecuteOptions | undefined {
     const env = this.resolveExecutionEnv(sessionId, options?.env);
 
     if (
@@ -3390,18 +3380,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    return this.execWithSession(command, undefined, options);
-  }
-
-  async execWithSessionToken(
-    command: string,
-    sessionId?: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    if (sessionId !== undefined) {
-      this.validateExplicitSessionId(sessionId);
-    }
-    return this.execWithSession(command, sessionId, options);
+    return this.executeCommand(command, undefined, options);
   }
 
   /**
@@ -3409,16 +3388,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * tagged with origin: 'internal' so logging demotes it to debug level.
    */
   private async execInternal(command: string): Promise<ExecResult> {
-    return this.execWithSession(command, undefined, {
+    return this.executeCommand(command, undefined, {
       origin: 'internal'
     });
   }
 
   /**
-   * Internal session-aware exec implementation
-   * Used by both public exec() and session wrappers
+   * Internal command execution implementation used by public exec() and
+   * explicit session wrappers.
    */
-  private async execWithSession(
+  private async executeCommand(
     command: string,
     sessionId: string | undefined,
     options?: ExecOptions
@@ -3428,16 +3407,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let execError: Error | undefined;
 
     try {
-      const commandOptions = this.buildExecutionRequestOptions(
+      const executionOptions = this.buildExecutionRequestOptions(
         sessionId,
         options
       );
+      const commandOptions: CommandExecuteOptions | undefined =
+        sessionId === undefined
+          ? executionOptions
+          : { ...(executionOptions ?? {}), sessionId };
 
-      const response = await this.client.commands.execute(
-        command,
-        sessionId,
-        commandOptions
-      );
+      const response = commandOptions
+        ? await this.client.commands.execute(command, commandOptions)
+        : await this.client.commands.execute(command);
 
       const duration = Date.now() - startTime;
       const result = this.mapExecuteResponseToExecResult(
@@ -4985,7 +4966,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: sessionId,
 
       exec: (command, options) =>
-        this.execWithSession(command, sessionId, options),
+        this.executeCommand(command, sessionId, options),
 
       // Process management
       startProcess: (command, options) =>
@@ -5037,11 +5018,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           for (const key of toUnset) {
             const unsetCommand = `unset ${key}`;
 
-            const result = await this.client.commands.execute(
-              unsetCommand,
+            const result = await this.client.commands.execute(unsetCommand, {
               sessionId,
-              { origin: 'internal' }
-            );
+              origin: 'internal'
+            });
 
             if (result.exitCode !== 0) {
               throw new Error(
@@ -5053,11 +5033,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           for (const [key, value] of Object.entries(toSet)) {
             const exportCommand = `export ${key}=${shellEscape(value)}`;
 
-            const result = await this.client.commands.execute(
-              exportCommand,
+            const result = await this.client.commands.execute(exportCommand, {
               sessionId,
-              { origin: 'internal' }
-            );
+              origin: 'internal'
+            });
 
             if (result.exitCode !== 0) {
               throw new Error(

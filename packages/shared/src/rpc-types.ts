@@ -52,16 +52,18 @@ export interface SandboxAPI {
   extensions: SandboxExtensionsAPI;
 }
 
+export interface CommandExecuteOptions {
+  sessionId?: string;
+  timeoutMs?: number;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  origin?: 'user' | 'internal';
+}
+
 export interface SandboxCommandsAPI {
   execute(
     command: string,
-    sessionId: string | undefined,
-    options?: {
-      timeoutMs?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
+    options?: CommandExecuteOptions
   ): Promise<{
     success: boolean;
     exitCode: number;

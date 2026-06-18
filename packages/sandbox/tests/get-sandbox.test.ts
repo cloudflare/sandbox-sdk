@@ -297,7 +297,7 @@ describe('getSandbox', () => {
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
-    it('routes implicit exec without a session ID', async () => {
+    it('routes implicit exec through direct sandbox exec', async () => {
       mockStub.exec = vi.fn().mockResolvedValue({
         success: true,
         stdout: '',
@@ -306,15 +306,6 @@ describe('getSandbox', () => {
         command: 'echo test',
         timestamp: new Date().toISOString()
       });
-      mockStub.execWithSessionToken = vi.fn().mockResolvedValue({
-        success: true,
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        command: 'echo test',
-        timestamp: new Date().toISOString()
-      });
-
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
@@ -324,16 +315,12 @@ describe('getSandbox', () => {
         timeout: 1000
       });
 
-      expect(mockStub.exec).not.toHaveBeenCalled();
-      expect(mockStub.execWithSessionToken).toHaveBeenCalledWith(
-        'echo test',
-        undefined,
-        {
-          env: { TEST_ENV: '1' },
-          cwd: '/workspace/app',
-          timeout: 1000
-        }
-      );
+      expect(mockStub.exec).toHaveBeenCalledWith('echo test', {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000
+      });
+      expect('execWithSessionToken' in mockStub).toBe(false);
     });
 
     it('routes implicit startProcess without a session ID', async () => {
