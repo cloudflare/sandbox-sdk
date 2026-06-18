@@ -11,5 +11,10 @@
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/interpreter/sidecar", "scripts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/interpreter/sidecar",
+    "src/interpreter/build.ts"
+  ]
 }
