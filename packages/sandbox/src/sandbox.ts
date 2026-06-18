@@ -3514,8 +3514,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       exitCode: data.exitCode,
       sessionId,
 
-      kill: async (signal?: string) => {
-        await this.killProcess(data.id, signal);
+      kill: async () => {
+        await this.killProcess(data.id);
       },
 
       getStatus: async () => {
@@ -4117,8 +4117,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async killProcess(id: string, signal?: string): Promise<void> {
-    // Note: signal parameter is not currently supported by process control.
+  async killProcess(id: string): Promise<void> {
     await this.client.processes.killProcess(id);
   }
 
@@ -5011,7 +5010,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.startProcess(command, { ...options, sessionId }),
       listProcesses: () => this.listProcesses({ sessionId }),
       getProcess: (id) => this.getProcess(id, { sessionId }),
-      killProcess: (id, signal) => this.killProcess(id, signal),
+      killProcess: (id) => this.killProcess(id),
       killAllProcesses: () => this.killAllProcesses(),
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
       getProcessLogs: (id) => this.getProcessLogs(id),

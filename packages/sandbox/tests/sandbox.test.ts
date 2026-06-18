@@ -1,5 +1,5 @@
 import { Container, getContainer } from '@cloudflare/containers';
-import type { ExecResult, ISandbox } from '@repo/shared';
+import type { ExecResult, ISandbox, Process } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
@@ -551,6 +551,19 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       await typedSandbox.exists('/typed.txt', { sessionId: 'typed-session' });
 
+      const assertProcessControlTypes = async (
+        typedProcess: Process,
+        typedAPI: ISandbox
+      ) => {
+        await typedProcess.kill();
+        await typedAPI.killProcess('typed-proc');
+        // @ts-expect-error process kill does not accept a signal argument
+        await typedProcess.kill('SIGTERM');
+        // @ts-expect-error sandbox killProcess does not accept a signal argument
+        await typedAPI.killProcess('typed-proc', 'SIGTERM');
+      };
+
+      expect(assertProcessControlTypes).toBeTypeOf('function');
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/typed.txt',
         'content',

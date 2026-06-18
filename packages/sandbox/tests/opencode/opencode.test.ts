@@ -208,7 +208,7 @@ describe('createOpencode', () => {
 
     await result.server.close();
 
-    expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(mockProcess.kill).toHaveBeenCalledWith();
   });
 
   it('should throw OpencodeStartupError when server fails to start', async () => {

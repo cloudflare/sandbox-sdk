@@ -301,7 +301,7 @@ export interface Process {
   /**
    * Kill the process
    */
-  kill(signal?: string): Promise<void>;
+  kill(): Promise<void>;
 
   /**
    * Get current process status (refreshed)
@@ -932,7 +932,7 @@ export interface ExecutionSession {
     id: string,
     options?: ProcessQueryOptions
   ): Promise<Process | null>;
-  killProcess(id: string, signal?: string): Promise<void>;
+  killProcess(id: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(
@@ -1244,7 +1244,7 @@ export interface ISandbox {
     id: string,
     options?: ProcessQueryOptions
   ): Promise<Process | null>;
-  killProcess(id: string, signal?: string): Promise<void>;
+  killProcess(id: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 
   // Streaming operations
