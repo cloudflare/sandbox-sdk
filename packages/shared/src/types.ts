@@ -190,11 +190,18 @@ export interface PortWatchEvent {
 }
 
 // Background process types
+export interface ProcessQueryOptions {
+  /**
+   * Optional session ID used to bind returned process handles to an explicit session.
+   */
+  sessionId?: string;
+}
+
 export interface ProcessOptions extends BaseExecOptions {
   /**
    * Optional session ID to run the background process in.
    *
-   * When omitted, the sandbox's default execution policy applies.
+   * When omitted, the process starts without persistent session state.
    */
   sessionId?: string;
 
@@ -920,8 +927,11 @@ export interface ExecutionSession {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(sessionId?: string): Promise<Process[]>;
-  getProcess(id: string, sessionId?: string): Promise<Process | null>;
+  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
+  getProcess(
+    id: string,
+    options?: ProcessQueryOptions
+  ): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
@@ -1229,8 +1239,11 @@ export interface ISandbox {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(sessionId?: string): Promise<Process[]>;
-  getProcess(id: string, sessionId?: string): Promise<Process | null>;
+  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
+  getProcess(
+    id: string,
+    options?: ProcessQueryOptions
+  ): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 

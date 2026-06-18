@@ -25,6 +25,7 @@ import type {
   PortWatchEvent,
   Process,
   ProcessOptions,
+  ProcessQueryOptions,
   ProcessStatus,
   R2BindingMountBucketOptions,
   ReadFileResult,
@@ -690,14 +691,14 @@ export function getSandbox<T extends Sandbox<any>>(
       stub.exec(command, execOptions),
     startProcess: (command: string, processOptions?: ProcessOptions) =>
       stub.startProcess(command, processOptions),
-    listProcesses: (sessionId?: string) =>
-      sessionId === undefined
+    listProcesses: (options?: ProcessQueryOptions) =>
+      options?.sessionId === undefined
         ? stub.listProcesses()
-        : stub.listProcesses(sessionId),
-    getProcess: (id: string, sessionId?: string) =>
-      sessionId === undefined
+        : stub.listProcesses({ sessionId: options.sessionId }),
+    getProcess: (id: string, options?: ProcessQueryOptions) =>
+      options?.sessionId === undefined
         ? stub.getProcess(id)
-        : stub.getProcess(id, sessionId),
+        : stub.getProcess(id, { sessionId: options.sessionId }),
 
     writeFile: (
       path: string,
@@ -4063,8 +4064,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = this.getProcessSessionBinding(sessionId);
+  async listProcesses(options?: ProcessQueryOptions): Promise<Process[]> {
+    const session = this.getProcessSessionBinding(options?.sessionId);
     const response = await this.client.processes.listProcesses();
 
     return response.processes.map((processData) =>
@@ -4083,8 +4084,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = this.getProcessSessionBinding(sessionId);
+  async getProcess(
+    id: string,
+    options?: ProcessQueryOptions
+  ): Promise<Process | null> {
+    const session = this.getProcessSessionBinding(options?.sessionId);
     try {
       const response = await this.client.processes.getProcess(id);
 
@@ -4113,33 +4117,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async killProcess(
-    id: string,
-    signal?: string,
-    sessionId?: string
-  ): Promise<void> {
+  async killProcess(id: string, signal?: string): Promise<void> {
     // Note: signal parameter is not currently supported by process control.
-    // sessionId is intentionally unused — kill targets a process by ID which
-    // is sandbox-scoped, not session-scoped.
     await this.client.processes.killProcess(id);
   }
 
-  async killAllProcesses(sessionId?: string): Promise<number> {
-    // sessionId is intentionally unused — the kill-all operation is
-    // sandbox-scoped and affects all processes regardless of session.
+  async killAllProcesses(): Promise<number> {
     const response = await this.client.processes.killAllProcesses();
     return response.cleanedCount;
   }
 
-  async cleanupCompletedProcesses(sessionId?: string): Promise<number> {
-    // sessionId is intentionally unused — cleanup is sandbox-scoped.
+  async cleanupCompletedProcesses(): Promise<number> {
     // Not yet implemented - requires container endpoint
     return 0;
   }
 
   async getProcessLogs(
-    id: string,
-    sessionId?: string
+    id: string
   ): Promise<{ stdout: string; stderr: string; processId: string }> {
     const response = await this.client.processes.getProcessLogs(id);
     return {
@@ -5015,8 +5009,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Process management
       startProcess: (command, options) =>
         this.startProcess(command, { ...options, sessionId }),
-      listProcesses: () => this.listProcesses(sessionId),
-      getProcess: (id) => this.getProcess(id, sessionId),
+      listProcesses: () => this.listProcesses({ sessionId }),
+      getProcess: (id) => this.getProcess(id, { sessionId }),
       killProcess: (id, signal) => this.killProcess(id, signal),
       killAllProcesses: () => this.killAllProcesses(),
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),

@@ -501,9 +501,23 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
-    it('allows explicit session IDs through the ISandbox file API', async () => {
+    it('allows explicit session IDs through typed ISandbox APIs', async () => {
       const typedSandbox: ISandbox = sandbox;
+      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
+        success: true,
+        processes: [],
+        timestamp: new Date().toISOString()
+      } as any);
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: null,
+        timestamp: new Date().toISOString()
+      } as any);
 
+      await typedSandbox.listProcesses({ sessionId: 'typed-session' });
+      await typedSandbox.getProcess('typed-proc', {
+        sessionId: 'typed-session'
+      });
       await typedSandbox.writeFile('/typed.txt', 'content', {
         sessionId: 'typed-session',
         encoding: 'utf8'
@@ -549,7 +563,7 @@ describe('Sandbox - Automatic Session Management', () => {
         sandbox.listFiles('/workspace', { sessionId: '' })
       ).rejects.toThrow('sessionId must not be empty or whitespace');
 
-      await expect(sandbox.listProcesses('')).rejects.toThrow(
+      await expect(sandbox.listProcesses({ sessionId: '' })).rejects.toThrow(
         'sessionId must not be empty or whitespace'
       );
     });
@@ -635,6 +649,47 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(processes).toHaveLength(1);
       expect(processes[0].id).toBe('proc-1');
       expect(processes[0].sessionId).toBeUndefined();
+    });
+
+    it('uses process read options for session annotations', async () => {
+      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
+        success: true,
+        processes: [
+          {
+            id: 'proc-session',
+            pid: 1234,
+            command: 'sleep 10',
+            status: 'running',
+            startTime: new Date().toISOString()
+          }
+        ],
+        timestamp: new Date().toISOString()
+      } as any);
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-session',
+          pid: 1234,
+          command: 'sleep 10',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      const listed = await sandbox.listProcesses({
+        sessionId: 'process-session'
+      });
+      const fetched = await sandbox.getProcess('proc-session', {
+        sessionId: 'process-session'
+      });
+
+      expect(sandbox.client.processes.listProcesses).toHaveBeenCalledWith();
+      expect(sandbox.client.processes.getProcess).toHaveBeenCalledWith(
+        'proc-session'
+      );
+      expect(listed[0].sessionId).toBe('process-session');
+      expect(fetched?.sessionId).toBe('process-session');
     });
 
     it('forwards process options in one request object', async () => {
@@ -796,8 +851,8 @@ describe('Sandbox - Automatic Session Management', () => {
       } as any);
 
       const process = await sandbox.startProcess('sleep 10');
-      const processes = await sandbox.listProcesses(undefined);
-      const fetched = await sandbox.getProcess('proc-sessionless', undefined);
+      const processes = await sandbox.listProcesses();
+      const fetched = await sandbox.getProcess('proc-sessionless');
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]

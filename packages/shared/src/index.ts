@@ -176,6 +176,7 @@ export type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessOptions,
+  ProcessQueryOptions,
   // Process management result types
   ProcessStartResult,
   ProcessStatus,

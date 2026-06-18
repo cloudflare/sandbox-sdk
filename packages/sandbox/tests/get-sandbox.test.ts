@@ -368,14 +368,17 @@ describe('getSandbox', () => {
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
-      await sandbox.listProcesses('explicit-session');
-      await sandbox.getProcess('proc-explicit', 'explicit-session');
+      await sandbox.listProcesses({ sessionId: 'explicit-session' });
+      await sandbox.getProcess('proc-explicit', {
+        sessionId: 'explicit-session'
+      });
 
-      expect(mockStub.listProcesses).toHaveBeenCalledWith('explicit-session');
-      expect(mockStub.getProcess).toHaveBeenCalledWith(
-        'proc-explicit',
-        'explicit-session'
-      );
+      expect(mockStub.listProcesses).toHaveBeenCalledWith({
+        sessionId: 'explicit-session'
+      });
+      expect(mockStub.getProcess).toHaveBeenCalledWith('proc-explicit', {
+        sessionId: 'explicit-session'
+      });
     });
 
     it('routes implicit file operations without session IDs', async () => {
