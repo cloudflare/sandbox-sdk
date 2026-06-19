@@ -5,9 +5,8 @@
  * JSON frames over a unix domain socket. Each frame is a 4-byte big-endian
  * unsigned length followed by that many bytes of UTF-8 JSON.
  *
- * This mirrors the stdio framing the interpreter process pool already uses,
- * generalised into a reusable request/response/event protocol so any sidecar
- * can speak it.
+ * The framing is deliberately minimal — a length prefix plus JSON — so any
+ * sidecar can implement the request/response/event protocol in a few lines.
  */
 
 /** Request sent host -> sidecar to invoke a method. */
@@ -80,9 +79,8 @@ export class FrameDecoder {
         break;
       }
       const json = this.#buffer.subarray(HEADER_BYTES, HEADER_BYTES + length);
-      // Advance past this frame before parsing so a single malformed frame is
-      // skipped (length-prefixing keeps us aligned) rather than wedging the
-      // decoder or discarding sibling frames already decoded in this batch.
+      // Consume this frame's bytes, then parse. A malformed frame throws below,
+      // which the bridge treats as a fatal protocol error and tears down.
       this.#buffer = this.#buffer.subarray(HEADER_BYTES + length);
       try {
         const frame = JSON.parse(json.toString('utf8'));

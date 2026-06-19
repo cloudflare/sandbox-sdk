@@ -12,9 +12,6 @@
  *   (lazily) and bridge to the sidecar over `sandbox.client.extensions` (the
  *   low-level {@link Extensions} client). Stream by passing `{ onEvent }` to
  *   `call`.
- *
- * Transport note: extensions are RPC-only. They require the `rpc` transport;
- * the route-based HTTP transport throws a clear error.
  */
 
 import { RpcTarget } from 'cloudflare:workers';

@@ -10,7 +10,6 @@ import type { ExtensionManifest } from '../../src/extensions/types';
 /**
  * End-to-end validation of the extension framework: provision an asset, spawn a
  * real sidecar process, and round-trip calls/events over the unix-socket bridge.
- * Proves the mechanics the interpreter extraction will rely on.
  */
 describe('ExtensionHost', () => {
   let host: ExtensionHost | null = null;

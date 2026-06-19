@@ -4,8 +4,8 @@ import type { ExtensionManifest } from './types';
  * Reference echo sidecar used to validate the extension framework end-to-end.
  *
  * The source is shipped inline so it is written to disk as a provisioned asset
- * rather than compiled into the container binary — exactly how a real
- * extracted extension (e.g. the interpreter) keeps its runtime out of core.
+ * rather than compiled into the container binary, mirroring how a sidecar
+ * extension keeps its runtime out of the core image.
  *
  * It is self-contained plain JS (no imports) so it runs identically under Bun
  * or Node: it opens a unix socket server on `EXT_SOCKET`, speaks the framed

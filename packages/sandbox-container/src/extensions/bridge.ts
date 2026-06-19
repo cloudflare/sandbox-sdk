@@ -9,9 +9,9 @@ interface PendingCall {
   onEvent?: ExtensionEventHandler;
   timer?: ReturnType<typeof setTimeout>;
   // Tail of the (sequential) event-delivery chain. The final response is not
-  // settled until this resolves, so streamed events are fully delivered (and
-  // ordered) before the caller's `call` promise resolves — matching the
-  // interpreter's await-each-callback contract and preventing dropped events.
+  // settled until this resolves, so streamed events are fully delivered before
+  // the caller's `call` promise resolves: each handler is awaited in turn, so
+  // no event is dropped or reordered (even when a handler is async).
   events: Promise<void>;
 }
 
@@ -125,7 +125,7 @@ export class ExtensionBridge {
 
     if (frame.t === 'evt') {
       // Deliver events sequentially and remember the tail so the final
-      // response waits for them (await-each-callback, no dropped events).
+      // response waits for them — no event is dropped or reordered.
       const onEvent = pending.onEvent;
       if (onEvent) {
         pending.events = pending.events.then(() =>

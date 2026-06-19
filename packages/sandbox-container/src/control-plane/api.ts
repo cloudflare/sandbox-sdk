@@ -1141,12 +1141,11 @@ class TunnelsRPCAPI extends RpcTarget {
 // ===========================================================================
 
 /**
- * Level 2 dynamic capnweb surface for sidecar extensions.
+ * Dynamic capnweb surface for sidecar extensions.
  *
  * The SDK registers an extension manifest, then issues `call` / `callStream`
- * which the host forwards to the sidecar over a unix socket. This is the
- * generic equivalent of the hand-written `InterpreterRPCAPI`: any extension
- * can expose methods without adding a bespoke RPC class.
+ * which the host forwards to the sidecar over a unix socket, letting an
+ * extension expose methods without a bespoke per-extension RPC class.
  */
 class ExtensionsRPCAPI extends RpcTarget {
   #host: ExtensionHost;
