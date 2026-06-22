@@ -2,10 +2,14 @@
  * `SandboxControlCallbackImpl` — capnweb `RpcTarget` the DO exposes as
  * `localMain` on the container-control session. The container reaches
  * it via `session.getRemoteMain<SandboxControlCallback>()` to push
- * control-plane events back to the DO.
+ * tunnel-run events back to the DO.
  */
 
-import type { Logger, SandboxControlCallback } from '@repo/shared';
+import type {
+  Logger,
+  SandboxControlCallback,
+  TunnelRunExitEvent
+} from '@repo/shared';
 import { RpcTarget } from 'capnweb';
 import type { TunnelExitHandler } from './rpc-target';
 
@@ -16,11 +20,9 @@ export class SandboxControlCallbackImpl
   constructor(
     /**
      * Accessor (not a direct reference) so eviction can swap the handler
-     * without re-binding the capnweb session. Returns `null` if the handler hasn't been constructed
-     * yet — the callback no-ops in that case, which is fine because
-     * the container only reaches us via a live session and a live
-     * session implies a sandbox that is about to construct (or has
-     * just constructed) its handler on the next access.
+     * while keeping the capnweb session bound. Returns `null` if the
+     * handler has not been constructed yet; callback methods no-op in
+     * that window.
      */
     private readonly getHandler: () => TunnelExitHandler | null,
     private readonly logger: Logger
@@ -28,22 +30,18 @@ export class SandboxControlCallbackImpl
     super();
   }
 
-  async onTunnelExit(
-    id: string,
-    port: number,
-    exitCode: number | null,
-    tunnelRunId?: string
-  ): Promise<void> {
+  async onTunnelRunExit(event: TunnelRunExitEvent): Promise<void> {
     const handler = this.getHandler();
     if (!handler) {
-      this.logger.debug('onTunnelExit: no handler bound; ignoring', {
-        id,
-        port,
-        exitCode,
-        tunnelRunId
+      this.logger.debug('onTunnelRunExit: no handler bound; ignoring', {
+        tunnelId: event.tunnelId,
+        runId: event.runId,
+        mode: event.mode,
+        port: event.port,
+        exitCode: event.exitCode
       });
       return;
     }
-    await handler(id, port, exitCode, tunnelRunId);
+    await handler(event.tunnelId, event.port, event.exitCode, event.runId);
   }
 }

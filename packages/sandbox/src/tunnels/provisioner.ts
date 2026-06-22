@@ -1,8 +1,11 @@
 import type {
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
   NamedTunnelInfo,
   QuickTunnelInfo,
   SandboxTunnelsAPI
 } from '@repo/shared';
+import { RPCTransportError } from '../errors';
 import {
   createTunnel,
   findTunnelByName,
@@ -58,6 +61,10 @@ function isTunnelAlreadyRunningError(error: unknown): boolean {
   return hasErrorCode(error, 'TUNNEL_ALREADY_RUNNING');
 }
 
+// Replays use the same request so container runId idempotency can resolve
+// an ambiguous transport failure.
+const TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS = 1;
+
 export class TunnelProvisioner {
   readonly #host: TunnelProvisionerHost;
   #zoneNamePromise: Promise<string> | null = null;
@@ -75,11 +82,22 @@ export class TunnelProvisioner {
     for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
       const id = `quick-${shortId()}`;
       try {
-        return (await this.#host.client.tunnels.runQuickTunnel(
-          id,
-          port,
-          tunnelRunId
-        )) as QuickTunnelInfo;
+        const result = await this.#ensureTunnelRun({
+          mode: 'quick',
+          tunnelId: id,
+          runId: tunnelRunId,
+          port
+        });
+        if (result.run.mode !== 'quick') {
+          throw new Error('Container returned a non-quick tunnel run');
+        }
+        return {
+          id: result.run.tunnelId,
+          port: result.run.port,
+          url: result.run.url,
+          hostname: result.run.hostname,
+          createdAt: result.run.startedAt
+        };
       } catch (err) {
         if (!isTunnelAlreadyRunningError(err)) throw err;
         lastError = err;
@@ -181,20 +199,43 @@ export class TunnelProvisioner {
     };
   }
 
-  async runNamedTunnel(
+  async startNamedTunnelRun(
     prepared: PreparedNamedTunnel,
     tunnelRunId: string
   ): Promise<void> {
-    await this.#host.client.tunnels.runNamedTunnel(
-      prepared.tunnelId,
-      prepared.tunnelToken,
-      prepared.info.port,
-      tunnelRunId
-    );
+    const result = await this.#ensureTunnelRun({
+      mode: 'named',
+      tunnelId: prepared.tunnelId,
+      runId: tunnelRunId,
+      port: prepared.info.port,
+      cloudflaredToken: prepared.tunnelToken
+    });
+    if (result.run.mode !== 'named') {
+      throw new Error('Container returned a non-named tunnel run');
+    }
   }
 
   clearCachedZoneName(): void {
     this.#zoneNamePromise = null;
+  }
+
+  async #ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult> {
+    let replays = 0;
+    while (true) {
+      try {
+        return await this.#host.client.tunnels.ensureTunnelRun(request);
+      } catch (error) {
+        if (
+          !(error instanceof RPCTransportError) ||
+          replays >= TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS
+        ) {
+          throw error;
+        }
+        replays += 1;
+      }
+    }
   }
 
   async #getZoneName(config: {

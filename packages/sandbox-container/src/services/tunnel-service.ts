@@ -1,16 +1,22 @@
 /**
- * TunnelService - container-side orchestration for cloudflared tunnels.
+ * TunnelService - container-side orchestration for cloudflared tunnel runs.
  *
- * Owns the in-memory registry of tunnels running inside this container and
- * delegates the actual subprocess supervision to `TunnelManager`. Cloudflare
- * API calls happen in the SDK; the container only receives the local port and,
- * for named tunnels, an opaque token.
- *
- * The SDK mints all tunnel ids and passes them in so the SDK can store the
- * id without waiting for the create round-trip to resolve.
+ * Owns the runtime-local registry of tunnel runs inside this container and
+ * delegates subprocess supervision to `TunnelManager`. Cloudflare API calls
+ * happen in the SDK; the container receives DO-issued tunnel/run identities,
+ * the local port, and for named tunnels an opaque token.
  */
 
-import type { Logger, SandboxControlCallback, TunnelInfo } from '@repo/shared';
+import type {
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
+  Logger,
+  SandboxControlCallback,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
+  TunnelRunExitEvent,
+  TunnelRunSnapshot
+} from '@repo/shared';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
 import {
@@ -18,22 +24,55 @@ import {
   TunnelManager
 } from '../managers/tunnel-manager';
 
-export interface RunTunnelOptions {
-  /** Override the readiness timeout. Forwarded to TunnelManager. */
-  readyTimeoutMs?: number;
-  /** Override the SIGTERM→SIGKILL grace period. Forwarded to TunnelManager. */
-  stopGraceMs?: number;
-  /** Runtime-local run identity included in exit callbacks. */
-  tunnelRunId?: string;
+interface TunnelRecord {
+  manager: TunnelManager;
+  request: EnsureTunnelRunRequest;
+  run: TunnelRunSnapshot;
 }
 
-interface TunnelRecord {
-  info: TunnelInfo;
-  manager: TunnelManager;
+function tunnelRunExitEvent(
+  request: EnsureTunnelRunRequest,
+  exitCode: number | null
+): TunnelRunExitEvent {
+  return {
+    tunnelId: request.tunnelId,
+    runId: request.runId,
+    mode: request.mode,
+    port: request.port,
+    exitCode
+  };
+}
+
+function tunnelRunRequestsMatch(
+  left: EnsureTunnelRunRequest,
+  right: EnsureTunnelRunRequest
+): boolean {
+  if (
+    left.mode !== right.mode ||
+    left.tunnelId !== right.tunnelId ||
+    left.runId !== right.runId ||
+    left.port !== right.port ||
+    left.readyTimeoutMs !== right.readyTimeoutMs ||
+    left.stopGraceMs !== right.stopGraceMs
+  ) {
+    return false;
+  }
+
+  if (left.mode === 'named' || right.mode === 'named') {
+    return (
+      left.mode === 'named' &&
+      right.mode === 'named' &&
+      left.cloudflaredToken === right.cloudflaredToken
+    );
+  }
+
+  return true;
 }
 
 export class TunnelService {
-  private readonly tunnels = new Map<string, TunnelRecord>();
+  private readonly runs = new Map<string, TunnelRecord>();
+  private readonly runsByTunnelId = new Map<string, TunnelRecord>();
+  private readonly runsByPort = new Map<number, TunnelRecord>();
 
   /**
    * @param logger Child logger for tunnel-service log lines.
@@ -48,35 +87,57 @@ export class TunnelService {
       null
   ) {}
 
-  async runQuickTunnel(
-    id: string,
-    port: number,
-    options?: RunTunnelOptions
-  ): Promise<ServiceResult<TunnelInfo>> {
-    if (this.tunnels.has(id)) {
+  async ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<ServiceResult<EnsureTunnelRunResult>> {
+    const existingRun = this.runs.get(request.runId);
+    if (existingRun) {
+      if (!tunnelRunRequestsMatch(existingRun.request, request)) {
+        return serviceError({
+          message: `Tunnel run ${request.runId} is already running with different parameters`,
+          code: 'TUNNEL_RUN_CONFLICT',
+          details: { tunnelId: request.tunnelId, runId: request.runId }
+        });
+      }
+      return serviceSuccess({ run: existingRun.run, started: false });
+    }
+
+    const existingTunnel = this.runsByTunnelId.get(request.tunnelId);
+    if (existingTunnel) {
       return serviceError({
-        message: `Tunnel ${id} is already running`,
-        code: 'TUNNEL_ALREADY_RUNNING',
-        details: { tunnelId: id }
+        message: `Tunnel ${request.tunnelId} already has an active run`,
+        code: 'TUNNEL_RUN_CONFLICT',
+        details: { tunnelId: request.tunnelId, runId: request.runId }
+      });
+    }
+
+    const existingPort = this.runsByPort.get(request.port);
+    if (existingPort) {
+      return serviceError({
+        message: `Port ${request.port} already has an active tunnel run`,
+        code: 'TUNNEL_RUN_CONFLICT',
+        details: {
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          port: request.port,
+          activeRunId: existingPort.run.runId
+        }
       });
     }
 
     const manager = new TunnelManager({
-      port,
+      port: request.port,
+      token: request.mode === 'named' ? request.cloudflaredToken : undefined,
       logger: this.logger,
-      readyTimeoutMs: options?.readyTimeoutMs,
-      stopGraceMs: options?.stopGraceMs,
+      readyTimeoutMs: request.readyTimeoutMs,
+      stopGraceMs: request.stopGraceMs,
       onExit: (code) => {
-        // Drop our in-memory registry first so list() / destroyAll()
-        // don't see a phantom record while we await the DO callback.
-        this.tunnels.delete(id);
+        this.#deleteRun(request.tunnelId, request.runId, request.port);
         const cb = this.getControlCallback();
         if (!cb) return;
-        // Fire-and-forget the DO notification. Errors are swallowed
-        // so a misbehaving DO can't crash the manager's exit handler.
-        cb.onTunnelExit(id, port, code, options?.tunnelRunId).catch((err) => {
-          this.logger.warn('onTunnelExit RPC failed', {
-            id,
+        cb.onTunnelRunExit(tunnelRunExitEvent(request, code)).catch((err) => {
+          this.logger.warn('onTunnelRunExit RPC failed', {
+            id: request.tunnelId,
             error: err instanceof Error ? err.message : String(err)
           });
         });
@@ -85,141 +146,132 @@ export class TunnelService {
 
     try {
       const { url } = await manager.start();
-      if (!url) {
-        // Should not happen: quick mode always parses a trycloudflare URL
-        // before resolving. Defensive guard so the type narrowing is clear.
-        throw new Error('Quick tunnel did not produce a public URL');
-      }
-      const hostname = new URL(url).hostname;
-      const info: TunnelInfo = {
-        id,
-        port,
-        url,
-        hostname,
-        createdAt: new Date().toISOString()
-      };
-      this.tunnels.set(id, { info, manager });
-      this.logger.info('Quick tunnel running', { id, port, url });
-      return serviceSuccess(info);
+      const run = this.#createSnapshot(request, url);
+      const record: TunnelRecord = { manager, request, run };
+      this.runs.set(request.runId, record);
+      this.runsByTunnelId.set(request.tunnelId, record);
+      this.runsByPort.set(request.port, record);
+      this.logger.info('Tunnel run ready', {
+        mode: request.mode,
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        port: request.port
+      });
+      return serviceSuccess({ run, started: true });
     } catch (err) {
       await manager.stop().catch(() => {});
       if (err instanceof CloudflaredNotFoundError) {
         return serviceError({
           message: err.message,
           code: 'CLOUDFLARED_NOT_FOUND',
-          details: { tunnelId: id, port, binary: err.binary }
+          details: {
+            tunnelId: request.tunnelId,
+            runId: request.runId,
+            port: request.port,
+            binary: err.binary
+          }
         });
       }
       const message = err instanceof Error ? err.message : String(err);
       return serviceError({
-        message: `Failed to run quick tunnel: ${message}`,
+        message: `Failed to run tunnel: ${message}`,
         code: 'TUNNEL_START_ERROR',
-        details: { tunnelId: id, port }
+        details: {
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          port: request.port
+        }
       });
     }
   }
 
-  /**
-   * Run a named cloudflared tunnel backed by a Cloudflare-issued `--token`.
-   *
-   * The SDK is the source of truth for the hostname this tunnel maps to:
-   * the container only knows the local port and the opaque token. The
-   * returned `TunnelInfo` therefore carries empty `url`/`hostname` fields,
-   * which the SDK enriches with the values from the Cloudflare API before
-   * returning to user code.
-   *
-   * The `token` is never logged or persisted in the returned record.
-   */
-  async runNamedTunnel(
-    id: string,
-    token: string,
-    port: number,
-    options?: RunTunnelOptions
-  ): Promise<ServiceResult<TunnelInfo>> {
-    if (this.tunnels.has(id)) {
-      return serviceError({
-        message: `Tunnel ${id} is already running`,
-        code: 'TUNNEL_ALREADY_RUNNING',
-        details: { tunnelId: id }
-      });
-    }
-
-    const manager = new TunnelManager({
-      port,
-      token,
-      logger: this.logger,
-      readyTimeoutMs: options?.readyTimeoutMs,
-      stopGraceMs: options?.stopGraceMs,
-      onExit: (code) => {
-        this.tunnels.delete(id);
-        const cb = this.getControlCallback();
-        if (!cb) return;
-        cb.onTunnelExit(id, port, code, options?.tunnelRunId).catch((err) => {
-          this.logger.warn('onTunnelExit RPC failed', {
-            id,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        });
-      }
-    });
-
-    try {
-      await manager.start();
-      const info: TunnelInfo = {
-        id,
-        port,
-        // The SDK fills these in from the Cloudflare API. The container
-        // does not know the hostname for a token-driven tunnel.
-        url: '',
-        hostname: '',
-        createdAt: new Date().toISOString()
-      };
-      this.tunnels.set(id, { info, manager });
-      this.logger.info('Named tunnel running', { id, port });
-      return serviceSuccess(info);
-    } catch (err) {
-      await manager.stop().catch(() => {});
-      if (err instanceof CloudflaredNotFoundError) {
-        return serviceError({
-          message: err.message,
-          code: 'CLOUDFLARED_NOT_FOUND',
-          details: { tunnelId: id, port, binary: err.binary }
-        });
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      return serviceError({
-        message: `Failed to run named tunnel: ${message}`,
-        code: 'TUNNEL_START_ERROR',
-        details: { tunnelId: id, port }
-      });
-    }
+  getTunnelRun(runId: string): TunnelRunSnapshot | null {
+    const run = this.runs.get(runId)?.run;
+    return run ? { ...run } : null;
   }
 
-  async destroyTunnel(id: string): Promise<ServiceResult<void>> {
-    const record = this.tunnels.get(id);
+  listTunnelRuns(): TunnelRunSnapshot[] {
+    return Array.from(this.runs.values()).map((record) => ({
+      ...record.run
+    }));
+  }
+
+  async stopTunnelRun(
+    request: StopTunnelRunRequest
+  ): Promise<ServiceResult<StopTunnelRunResult>> {
+    const record = request.runId
+      ? this.runs.get(request.runId)
+      : request.tunnelId
+        ? this.runsByTunnelId.get(request.tunnelId)
+        : undefined;
+
     if (!record) {
-      return serviceError({
-        message: `Tunnel ${id} is not running`,
-        code: 'TUNNEL_NOT_FOUND',
-        details: { tunnelId: id }
-      });
+      return serviceSuccess({ matched: false, stopped: false });
     }
+    if (request.tunnelId && record.run.tunnelId !== request.tunnelId) {
+      return serviceSuccess({ matched: false, stopped: false });
+    }
+    if (request.runId && record.run.runId !== request.runId) {
+      return serviceSuccess({ matched: false, stopped: false });
+    }
+
     try {
       await record.manager.stop();
     } finally {
-      this.tunnels.delete(id);
+      this.#deleteRun(record.run.tunnelId, record.run.runId, record.run.port);
     }
-    this.logger.info('Tunnel destroyed', { id });
-    return { success: true };
+    this.logger.info('Tunnel run stopped', {
+      tunnelId: record.run.tunnelId,
+      runId: record.run.runId,
+      port: record.run.port
+    });
+    return serviceSuccess({ matched: true, stopped: true });
   }
 
-  list(): TunnelInfo[] {
-    return Array.from(this.tunnels.values()).map((r) => r.info);
-  }
-
-  /** Stop every tunnel. Called on container shutdown. */
+  /** Stop every runtime-local tunnel run. Called on container shutdown. */
   async destroyAll(): Promise<void> {
-    const ids = Array.from(this.tunnels.keys());
-    await Promise.all(ids.map((id) => this.destroyTunnel(id)));
+    const runs = Array.from(this.runs.values());
+    await Promise.all(
+      runs.map((record) =>
+        this.stopTunnelRun({
+          tunnelId: record.run.tunnelId,
+          runId: record.run.runId
+        })
+      )
+    );
+  }
+
+  #createSnapshot(
+    request: EnsureTunnelRunRequest,
+    url: string | undefined
+  ): TunnelRunSnapshot {
+    const startedAt = new Date().toISOString();
+    if (request.mode === 'quick') {
+      if (!url) {
+        throw new Error('Quick tunnel did not produce a public URL');
+      }
+      return {
+        mode: 'quick',
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        port: request.port,
+        url,
+        hostname: new URL(url).hostname,
+        startedAt
+      };
+    }
+    return {
+      mode: 'named',
+      tunnelId: request.tunnelId,
+      runId: request.runId,
+      port: request.port,
+      startedAt
+    };
+  }
+
+  #deleteRun(tunnelId: string, runId: string, port: number): void {
+    this.runs.delete(runId);
+    this.runsByTunnelId.delete(tunnelId);
+    this.runsByPort.delete(port);
   }
 }

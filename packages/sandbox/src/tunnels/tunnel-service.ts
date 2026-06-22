@@ -398,7 +398,7 @@ export class TunnelService implements TunnelsHandler {
     );
 
     const tunnelRunId = createTunnelRunId();
-    await this.#provisioner.runNamedTunnel(prepared, tunnelRunId);
+    await this.#provisioner.startNamedTunnelRun(prepared, tunnelRunId);
     lifecycle = await this.#lifecycle.requireRuntime(
       lifecycle,
       'process_ready',
@@ -456,8 +456,8 @@ export class TunnelService implements TunnelsHandler {
 
         // Clear storage first. Same ordering as portTokens (sandbox.ts):
         // a hypothetical reader that observes storage between the put
-        // below and the destroyTunnel RPC sees a cache miss — the right
-        // answer, since the tunnel is on its way out. The port lock
+        // below sees a cache miss — the right answer, since the tunnel
+        // is on its way out. The port lock
         // means no in-process get(port) is racing with us, but Workers
         // / external readers do not share this in-memory lock.
         await this.#host.storage.transaction(async (txn) => {
@@ -474,11 +474,16 @@ export class TunnelService implements TunnelsHandler {
           }
         });
 
-        // Stop cloudflared inside the container. This is best-effort for
-        // named tunnels: destroy() is also responsible for Cloudflare-side
-        // cleanup, which must still run if the container already stopped.
+        // Stop cloudflared inside the container when metadata identifies
+        // the exact runtime run. Unscoped records are treated as stale
+        // durable state; named Cloudflare resources are cleaned below.
         try {
-          await this.#host.client.tunnels.destroyTunnel(existing.id);
+          if (metaBefore?.tunnelRunId) {
+            await this.#host.client.tunnels.stopTunnelRun({
+              tunnelId: existing.id,
+              runId: metaBefore.tunnelRunId
+            });
+          }
         } catch (error) {
           if (isTunnelNotFoundError(error)) {
             // Container already forgot — fall through to CF cleanup.

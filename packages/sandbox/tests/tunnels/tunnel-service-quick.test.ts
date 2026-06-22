@@ -6,11 +6,17 @@
  * lightweight in-memory `ctx.storage` shim.
  */
 
-import type { TunnelInfo } from '@repo/shared';
+import type {
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
+  TunnelInfo
+} from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
-import { ErrorCode } from '../../src/errors';
+import { ErrorCode, RPCTransportError } from '../../src/errors';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
@@ -25,11 +31,12 @@ import {
   makeStorage as makeRawStorage
 } from './helpers';
 
-type RunQuickTunnelMock = Mock<
-  (id: string, port: number, tunnelRunId?: string) => Promise<TunnelInfo>
+type EnsureTunnelRunMock = Mock<
+  (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
 >;
-type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
-type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
+type StopTunnelRunMock = Mock<
+  (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
+>;
 type StorageGetMock = Mock<(key: string) => Promise<unknown>>;
 type StoragePutMock = Mock<(key: string, next: unknown) => Promise<unknown>>;
 type StorageTransactionMock = Mock<
@@ -37,26 +44,37 @@ type StorageTransactionMock = Mock<
 >;
 type LogMock = Mock<(message: string, ...context: unknown[]) => void>;
 
+function createDisposedRPCError(): RPCTransportError {
+  return new RPCTransportError({
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message: 'RPC session was shut down by disposing the main stub',
+    httpStatus: 503,
+    context: {
+      kind: 'session_disposed',
+      originalMessage: 'RPC session was shut down by disposing the main stub',
+      errorName: 'Error'
+    },
+    timestamp: '2026-06-22T12:00:00.000Z'
+  });
+}
+
 interface MockTunnelsClient {
-  runQuickTunnel: RunQuickTunnelMock;
-  destroyTunnel: DestroyTunnelMock;
-  listTunnels: ListTunnelsMock;
+  ensureTunnelRun: EnsureTunnelRunMock;
+  stopTunnelRun: StopTunnelRunMock;
 }
 
 function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   return {
     client: {
       tunnels: {
-        runQuickTunnel:
+        ensureTunnelRun:
           vi.fn<
-            (
-              id: string,
-              port: number,
-              tunnelRunId?: string
-            ) => Promise<TunnelInfo>
+            (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
           >(),
-        destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
-        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
+        stopTunnelRun:
+          vi.fn<
+            (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
+          >()
       }
     }
   };
@@ -75,6 +93,46 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
     createdAt: '2026-05-13T00:00:00.000Z',
     ...overrides
   };
+}
+
+function ensureQuickResult(
+  request: EnsureTunnelRunRequest,
+  info: TunnelInfo
+): EnsureTunnelRunResult {
+  if (request.mode !== 'quick') {
+    throw new Error('Expected a quick tunnel run request');
+  }
+  if (info.name) {
+    throw new Error('Expected a quick tunnel record');
+  }
+  return {
+    started: true,
+    run: {
+      mode: 'quick',
+      tunnelId: info.id,
+      runId: request.runId,
+      port: info.port,
+      url: info.url,
+      hostname: info.hostname,
+      startedAt: info.createdAt
+    }
+  };
+}
+
+function mockEnsureQuick(
+  tunnels: MockTunnelsClient,
+  create: (
+    tunnelId: string,
+    port: number,
+    runId: string
+  ) => TunnelInfo | Promise<TunnelInfo>
+): void {
+  tunnels.ensureTunnelRun.mockImplementation(async (request) =>
+    ensureQuickResult(
+      request,
+      await create(request.tunnelId, request.port, request.runId)
+    )
+  );
 }
 
 type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
@@ -102,38 +160,77 @@ describe('tunnel service > get', () => {
     warn.mockRestore();
   });
 
-  it('mints a `quick-<8 hex>` id and forwards it to the RPC client on cache miss', async () => {
+  it('mints quick tunnel and run ids, then constructs the public record from the run snapshot', async () => {
     const { client, storage, handler } = makeHandler();
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
-    );
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
+      started: true,
+      run: {
+        ...request,
+        url: 'https://stub.trycloudflare.com',
+        hostname: 'stub.trycloudflare.com',
+        startedAt: '2026-05-13T00:00:00.000Z'
+      }
+    }));
 
     const info = await handler.get(8080);
 
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
-    const [id, port, tunnelRunId] = client.tunnels.runQuickTunnel.mock.calls[0];
-    expect(port).toBe(8080);
-    expect(id).toMatch(/^quick-[0-9a-f]{8}$/);
-    expect(tunnelRunId).toEqual(expect.any(String));
-    expect(info.id).toBe(id);
-    expect(info.name).toBeUndefined();
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    const [request] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(request.mode).toBe('quick');
+    expect(request.port).toBe(8080);
+    expect(request.tunnelId).toMatch(/^quick-[0-9a-f]{8}$/);
+    expect(request.runId).toEqual(expect.any(String));
+    expect(info).toEqual({
+      id: request.tunnelId,
+      port: 8080,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
 
-    // Storage is written: the tunnels map under the port key, and the
-    // sidecar meta map (carrying the options hash) keyed by port too.
     expect(storage.put).toHaveBeenCalledTimes(2);
     const putCalls = (storage.put as StoragePutMock).mock.calls;
     const tunnelsPut = putCalls.find(([key]) => key === 'tunnels');
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
     expect(metaPut?.[1]).toEqual({
-      '8080': { optionsHash: 'v1:quick', tunnelRunId }
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: request.runId }
+    });
+  });
+
+  it('replays the same quick run request when the first call loses RPC transport', async () => {
+    const { client, handler } = makeHandler();
+    client.tunnels.ensureTunnelRun
+      .mockRejectedValueOnce(createDisposedRPCError())
+      .mockImplementationOnce(async (request) => ({
+        started: false,
+        run: {
+          ...request,
+          url: 'https://stub.trycloudflare.com',
+          hostname: 'stub.trycloudflare.com',
+          startedAt: '2026-05-13T00:00:00.000Z'
+        }
+      }));
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
+    const second = client.tunnels.ensureTunnelRun.mock.calls[1][0];
+    expect(second).toEqual(first);
+    expect(info).toEqual({
+      id: first.tunnelId,
+      port: 8080,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
     });
   });
 
   it('records runtime and sandbox lifetime ownership for quick tunnels', async () => {
     const { client, storage, handler } = makeHandler(makeFences());
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     await handler.get(8080);
@@ -147,11 +244,6 @@ describe('tunnel service > get', () => {
   });
 
   it('retries with a fresh id when the container reports TUNNEL_ALREADY_RUNNING', async () => {
-    // shortId() picks a 32-bit random id, so collisions are vanishingly
-    // rare — but when they do happen, the container rejects the second
-    // spawn with TUNNEL_ALREADY_RUNNING. Without a retry, the user-facing
-    // get() call rejects with a confusing error for a transient event the
-    // SDK can recover from on its own.
     const { client, handler } = makeHandler();
     let attempts = 0;
     const collision = Object.assign(
@@ -161,19 +253,16 @@ describe('tunnel service > get', () => {
         errorResponse: { code: 'TUNNEL_ALREADY_RUNNING' }
       }
     );
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => {
-        attempts += 1;
-        if (attempts === 1) throw collision;
-        return makeRecord({ id, port });
-      }
-    );
+    mockEnsureQuick(client.tunnels, async (id, port) => {
+      attempts += 1;
+      if (attempts === 1) throw collision;
+      return makeRecord({ id, port });
+    });
 
     const info = await handler.get(8080);
     expect(attempts).toBe(2);
-    // Two distinct ids — the retry must mint a fresh one, not reuse.
-    const firstId = client.tunnels.runQuickTunnel.mock.calls[0][0];
-    const secondId = client.tunnels.runQuickTunnel.mock.calls[1][0];
+    const firstId = client.tunnels.ensureTunnelRun.mock.calls[0][0].tunnelId;
+    const secondId = client.tunnels.ensureTunnelRun.mock.calls[1][0].tunnelId;
     expect(firstId).not.toBe(secondId);
     expect(info.id).toBe(secondId);
   });
@@ -198,9 +287,7 @@ describe('tunnel service > get', () => {
     const info = await handler.get(8080);
 
     expect(info).toEqual(record);
-    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
-    expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
     expect(storage.put).not.toHaveBeenCalled();
   });
 
@@ -216,12 +303,12 @@ describe('tunnel service > get', () => {
       storage: makeStorage({ '8080': stale }),
       ...makeFences()
     });
-    client.tunnels.runQuickTunnel.mockResolvedValue(fresh);
+    mockEnsureQuick(client.tunnels, async () => fresh);
 
     const info = await handler.get(8080);
 
     expect(info).toEqual(fresh);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     await expect(storage.get('tunnels')).resolves.toEqual({ '8080': fresh });
   });
 
@@ -239,13 +326,13 @@ describe('tunnel service > get', () => {
       },
       currentLifetime: makeFences().currentLifetime
     } as unknown as Partial<TunnelsHost>);
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     await handler.get(8080);
 
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     expect(markStarted).not.toHaveBeenCalled();
     const meta =
       await storage.get<Record<string, Record<string, unknown>>>(
@@ -262,8 +349,8 @@ describe('tunnel service > get', () => {
       },
       currentLifetime: makeFences().currentLifetime
     } as unknown as Partial<TunnelsHost>);
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     let caught: unknown;
@@ -306,14 +393,18 @@ describe('tunnel service > get', () => {
         }
       })
     );
-    client.tunnels.runQuickTunnel
-      .mockResolvedValueOnce(makeRecord({ id: 'quick-first000first' }))
-      .mockResolvedValueOnce(second);
+    client.tunnels.ensureTunnelRun
+      .mockImplementationOnce(async (request) =>
+        ensureQuickResult(request, makeRecord({ id: 'quick-first000first' }))
+      )
+      .mockImplementationOnce(async (request) =>
+        ensureQuickResult(request, second)
+      );
 
     const info = await handler.get(8080);
 
     expect(info).toEqual(second);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
   });
 
   it('surfaces sandbox lifetime changes as non-retryable operation interruptions', async () => {
@@ -326,8 +417,8 @@ describe('tunnel service > get', () => {
         }
       })
     );
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     await expect(handler.get(8080)).rejects.toMatchObject({
@@ -359,8 +450,8 @@ describe('tunnel service > get', () => {
         }
       })
     );
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     await expect(handler.get(8080)).rejects.toMatchObject({
@@ -401,12 +492,12 @@ describe('tunnel service > get', () => {
         }
       })
     });
-    client.tunnels.runQuickTunnel.mockResolvedValue(fresh);
+    mockEnsureQuick(client.tunnels, async () => fresh);
 
     const info = await handler.get(8080);
 
     expect(info).toEqual(fresh);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
   it('after storage is cleared (simulating container restart), behaves like cache miss', async () => {
@@ -424,65 +515,62 @@ describe('tunnel service > get', () => {
     // Simulate the onStart() clear.
     await storage.delete('tunnels');
 
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) =>
-        makeRecord({
-          id,
-          port,
-          url: 'https://fresh.trycloudflare.com',
-          hostname: 'fresh.trycloudflare.com'
-        })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({
+        id,
+        port,
+        url: 'https://fresh.trycloudflare.com',
+        hostname: 'fresh.trycloudflare.com'
+      })
     );
 
     const info = await handler.get(8080);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
-    const [id] = client.tunnels.runQuickTunnel.mock.calls[0];
-    expect(id).not.toBe(record.id); // fresh id
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    const [{ tunnelId }] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(tunnelId).not.toBe(record.id);
     expect(info.url).toBe('https://fresh.trycloudflare.com');
   });
 
   it('coalesces concurrent get() calls for the same port', async () => {
     const { client, handler } = makeHandler();
     let resolveRun: (info: TunnelInfo) => void = () => {};
-    client.tunnels.runQuickTunnel.mockImplementation(
-      (id: string, port: number) =>
-        new Promise<TunnelInfo>((resolve) => {
-          resolveRun = () => resolve(makeRecord({ id, port }));
+    client.tunnels.ensureTunnelRun.mockImplementation(
+      (request: EnsureTunnelRunRequest) =>
+        new Promise<EnsureTunnelRunResult>((resolve) => {
+          resolveRun = (info) => resolve(ensureQuickResult(request, info));
         })
     );
 
     const a = handler.get(8080);
     const b = handler.get(8080);
-    // Wait until runQuickTunnel is invoked so we know the work promise
-    // is past the storage-read await and ready to resolve.
     for (let i = 0; i < 50; i++) {
-      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      if (client.tunnels.ensureTunnelRun.mock.calls.length > 0) break;
       await new Promise((r) => setTimeout(r, 1));
     }
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     resolveRun(makeRecord({ id: 'ignored', port: 8080 }));
     const [resolvedA, resolvedB] = await Promise.all([a, b]);
 
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     expect(resolvedA).toEqual(resolvedB);
   });
 
   it('does not coalesce different ports', async () => {
     const { client, handler } = makeHandler();
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     const [a, b] = await Promise.all([handler.get(8080), handler.get(8081)]);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
     expect(a.port).toBe(8080);
     expect(b.port).toBe(8081);
   });
 
   it('writes through storage.transaction() so concurrent miss-path writes do not clobber each other', async () => {
     const { client, storage, handler } = makeHandler();
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     await Promise.all([handler.get(8080), handler.get(8081)]);
@@ -501,16 +589,18 @@ describe('tunnel service > get', () => {
 
   it('clears the inflight slot when the spawn fails', async () => {
     const { client, handler } = makeHandler();
-    client.tunnels.runQuickTunnel.mockRejectedValueOnce(new Error('boom'));
+    client.tunnels.ensureTunnelRun.mockRejectedValueOnce(new Error('boom'));
 
     await expect(handler.get(8080)).rejects.toThrow('boom');
 
-    // Subsequent calls retry rather than re-resolving the failed promise.
-    client.tunnels.runQuickTunnel.mockImplementationOnce(
-      async (id: string, port: number) => makeRecord({ id, port })
+    client.tunnels.ensureTunnelRun.mockImplementationOnce(async (request) =>
+      ensureQuickResult(
+        request,
+        makeRecord({ id: request.tunnelId, port: request.port })
+      )
     );
     const info = await handler.get(8080);
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
     expect(info.port).toBe(8080);
   });
 
@@ -522,7 +612,7 @@ describe('tunnel service > get', () => {
       SandboxSecurityError
     );
     await expect(handler.get(1.5)).rejects.toBeInstanceOf(SandboxSecurityError);
-    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 
   it('rejects the reserved control-plane port 3000', async () => {
@@ -531,12 +621,12 @@ describe('tunnel service > get', () => {
     await expect(handler.get(3000)).rejects.toBeInstanceOf(
       SandboxSecurityError
     );
-    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 });
 
 describe('tunnel service > destroy', () => {
-  it('clears storage and calls destroyTunnel(id) for a known port', async () => {
+  it('clears storage without a container RPC for an unscoped known port', async () => {
     const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
@@ -547,15 +637,10 @@ describe('tunnel service > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: record.id
-    });
-
     await handler.destroy(8080);
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
-    // Storage entry is removed before the RPC. Both keys (info + meta)
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
+    // Storage entry is removed. Both keys (info + meta)
     // are cleared.
     const putCalls = (storage.put as StoragePutMock).mock.calls;
     expect(putCalls).toHaveLength(2);
@@ -563,6 +648,33 @@ describe('tunnel service > destroy', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({});
     expect(metaPut?.[1]).toEqual({});
+  });
+
+  it('stops the exact runtime run when tunnel metadata has a run id', async () => {
+    const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-quick-1' }
+    });
+    const { tunnels: handler } = createTunnelsHandle({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandle
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    client.tunnels.stopTunnelRun.mockResolvedValue({
+      matched: true,
+      stopped: true
+    });
+
+    await handler.destroy(8080);
+
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
+      tunnelId: record.id,
+      runId: 'run-quick-1'
+    });
   });
 
   it('wraps the read-modify-write in storage.transaction()', async () => {
@@ -576,11 +688,6 @@ describe('tunnel service > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: record.id
-    });
-
     await handler.destroy(8080);
 
     expect(
@@ -599,21 +706,16 @@ describe('tunnel service > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: record.id
-    });
-
     await handler.destroy(record);
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(record.id);
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
   });
 
   it('is a no-op success on unknown port', async () => {
     const { client, storage, handler } = makeHandler();
 
     await expect(handler.destroy(9999)).resolves.toBeUndefined();
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     expect(storage.put).not.toHaveBeenCalled();
     expect(storage.delete).not.toHaveBeenCalled();
   });
@@ -639,7 +741,11 @@ describe('tunnel service > destroy', () => {
         code: 'TUNNEL_NOT_FOUND'
       }
     );
-    client.tunnels.destroyTunnel.mockRejectedValue(notFound);
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-gone' }
+    });
+    (storage.put as StoragePutMock).mockClear();
+    client.tunnels.stopTunnelRun.mockRejectedValue(notFound);
 
     await expect(handler.destroy(8080)).resolves.toBeUndefined();
     // Storage is still cleared (both info + meta).
@@ -664,7 +770,10 @@ describe('tunnel service > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockRejectedValue(
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-real' }
+    });
+    client.tunnels.stopTunnelRun.mockRejectedValue(
       new Error('rpc transport failure: original was TUNNEL_NOT_FOUND')
     );
 
@@ -684,7 +793,11 @@ describe('tunnel service > destroy', () => {
       storage,
       logger: makeLogger()
     });
-    client.tunnels.destroyTunnel.mockRejectedValue(new Error('boom'));
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-err' }
+    });
+    (storage.put as StoragePutMock).mockClear();
+    client.tunnels.stopTunnelRun.mockRejectedValue(new Error('boom'));
 
     await expect(handler.destroy(8080)).rejects.toThrow('boom');
     const putCalls = (storage.put as StoragePutMock).mock.calls;
@@ -717,7 +830,6 @@ describe('tunnel service > list', () => {
     const tunnels = await handler.list();
     expect(tunnels).toEqual(expect.arrayContaining([a, b]));
     expect(tunnels).toHaveLength(2);
-    expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
   });
 
   it('returns an empty array when storage is empty', async () => {
@@ -757,25 +869,19 @@ describe('tunnel service > per-port serialization', () => {
   it('queues destroy(port) behind an in-flight get(port) so the destroy sees the new record', async () => {
     const { client, storage, handler } = makeHandler();
     let resolveSpawn: (info: TunnelInfo) => void = () => {};
-    client.tunnels.runQuickTunnel.mockImplementation(
-      (id: string, port: number) =>
-        new Promise<TunnelInfo>((resolve) => {
-          resolveSpawn = () => resolve(makeRecord({ id, port }));
+    client.tunnels.ensureTunnelRun.mockImplementation(
+      (request: EnsureTunnelRunRequest) =>
+        new Promise<EnsureTunnelRunResult>((resolve) => {
+          resolveSpawn = (info) => resolve(ensureQuickResult(request, info));
         })
     );
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: ''
-    });
 
-    // Kick off get() but don't await yet — it's blocked on runQuickTunnel.
     const getPromise = handler.get(8080);
-    // Wait until the spawn is in flight so we know get() holds the lock.
     for (let i = 0; i < 50; i++) {
-      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      if (client.tunnels.ensureTunnelRun.mock.calls.length > 0) break;
       await new Promise((r) => setTimeout(r, 1));
     }
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
 
     // Now race a destroy(8080) against the unfinished get(). Without
     // serialization, the destroy would observe an empty map and return
@@ -784,17 +890,18 @@ describe('tunnel service > per-port serialization', () => {
     const destroyPromise = handler.destroy(8080);
     // Give the destroy a tick to attempt entering the critical section.
     await new Promise((r) => setTimeout(r, 5));
-    // The destroy must NOT have called destroyTunnel yet (no record to destroy).
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    // The destroy must NOT have stopped a run yet.
 
     // Let get() complete.
     resolveSpawn(makeRecord({ id: 'unused', port: 8080 }));
     const info = await getPromise;
     await destroyPromise;
 
-    // The destroy ran *after* the get wrote, so it tore down the right tunnel.
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(1);
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(info.id);
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
+      tunnelId: info.id,
+      runId: expect.any(String)
+    });
     // Storage is empty at the end — the get's write and the destroy's
     // clear both happened, in that order.
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
@@ -813,37 +920,38 @@ describe('tunnel service > per-port serialization', () => {
       logger: makeLogger()
     });
     let resolveDestroy: () => void = () => {};
-    client.tunnels.destroyTunnel.mockImplementation(
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-pre' }
+    });
+    client.tunnels.stopTunnelRun.mockImplementation(
       () =>
-        new Promise<{ success: true; id: string }>((resolve) => {
-          resolveDestroy = () => resolve({ success: true, id: record.id });
+        new Promise<{ matched: boolean; stopped: boolean }>((resolve) => {
+          resolveDestroy = () => resolve({ matched: true, stopped: true });
         })
     );
-    client.tunnels.runQuickTunnel.mockImplementation(
-      async (id: string, port: number) => makeRecord({ id, port })
+    mockEnsureQuick(client.tunnels, async (id, port) =>
+      makeRecord({ id, port })
     );
 
     const destroyPromise = handler.destroy(8080);
-    // Wait until the destroy is in flight (has called destroyTunnel).
+    // Wait until the destroy is in flight.
     for (let i = 0; i < 50; i++) {
-      if (client.tunnels.destroyTunnel.mock.calls.length > 0) break;
+      if (client.tunnels.stopTunnelRun.mock.calls.length > 0) break;
       await new Promise((r) => setTimeout(r, 1));
     }
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledTimes(1);
 
     // get() must wait — if it ran now it would see the empty map and
     // try to spawn while destroy() is still tearing down the old one.
     const getPromise = handler.get(8080);
     await new Promise((r) => setTimeout(r, 5));
-    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
 
     resolveDestroy();
     await destroyPromise;
     const info = await getPromise;
 
-    // After the destroy completes, get() spawned a fresh tunnel — not
-    // resurrected the old record.
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     expect(info.id).not.toBe(record.id);
   });
 });
@@ -866,7 +974,7 @@ describe('tunnel service > handleTunnelExit', () => {
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(final ?? {}).toEqual({});
     // No container RPCs were issued — the exit hook is pure storage.
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     // `tunnels.list()` reflects the cleared storage.
     await expect(tunnels.list()).resolves.toEqual([]);
   });
@@ -1044,17 +1152,16 @@ describe('tunnel service > handleTunnelExit', () => {
   it('runs under the port lock — waits for a concurrent get(port) to complete', async () => {
     const { client, storage, tunnels, handleTunnelExit } = makeHandler();
     let resolveSpawn: (info: TunnelInfo) => void = () => {};
-    client.tunnels.runQuickTunnel.mockImplementation(
-      (id: string, port: number) =>
-        new Promise<TunnelInfo>((resolve) => {
-          resolveSpawn = () => resolve(makeRecord({ id, port }));
+    client.tunnels.ensureTunnelRun.mockImplementation(
+      (request: EnsureTunnelRunRequest) =>
+        new Promise<EnsureTunnelRunResult>((resolve) => {
+          resolveSpawn = (info) => resolve(ensureQuickResult(request, info));
         })
     );
 
-    // Kick off a slow get(8080). Holds the port lock past the spawn.
     const getPromise = tunnels.get(8080);
     for (let i = 0; i < 50; i++) {
-      if (client.tunnels.runQuickTunnel.mock.calls.length > 0) break;
+      if (client.tunnels.ensureTunnelRun.mock.calls.length > 0) break;
       await new Promise((r) => setTimeout(r, 1));
     }
 

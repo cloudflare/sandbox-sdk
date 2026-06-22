@@ -267,34 +267,80 @@ export interface TunnelOptions {
   name?: string;
 }
 
+export type TunnelRunMode = 'quick' | 'named';
+
+export interface TunnelRunIdentity {
+  tunnelId: string;
+  runId: string;
+}
+
+export interface EnsureQuickTunnelRunRequest extends TunnelRunIdentity {
+  mode: 'quick';
+  port: number;
+  readyTimeoutMs?: number;
+  stopGraceMs?: number;
+}
+
+export interface EnsureNamedTunnelRunRequest extends TunnelRunIdentity {
+  mode: 'named';
+  port: number;
+  cloudflaredToken: string;
+  readyTimeoutMs?: number;
+  stopGraceMs?: number;
+}
+
+export type EnsureTunnelRunRequest =
+  | EnsureQuickTunnelRunRequest
+  | EnsureNamedTunnelRunRequest;
+
+export interface QuickTunnelRunSnapshot extends TunnelRunIdentity {
+  mode: 'quick';
+  port: number;
+  url: string;
+  hostname: string;
+  startedAt: string;
+}
+
+export interface NamedTunnelRunSnapshot extends TunnelRunIdentity {
+  mode: 'named';
+  port: number;
+  startedAt: string;
+}
+
+export type TunnelRunSnapshot = QuickTunnelRunSnapshot | NamedTunnelRunSnapshot;
+
+export interface EnsureTunnelRunResult {
+  run: TunnelRunSnapshot;
+  started: boolean;
+}
+
+export interface StopTunnelRunRequest {
+  tunnelId?: string;
+  runId?: string;
+}
+
+export interface StopTunnelRunResult {
+  matched: boolean;
+  stopped: boolean;
+}
+
+export interface TunnelRunExitEvent extends TunnelRunIdentity {
+  mode: TunnelRunMode;
+  port: number;
+  exitCode: number | null;
+}
+
 export interface SandboxTunnelsAPI {
-  /** Spawn `cloudflared tunnel --url`. No credentials required. */
-  runQuickTunnel(
-    id: string,
-    port: number,
-    tunnelRunId?: string
-  ): Promise<TunnelInfo>;
-  /**
-   * Spawn `cloudflared tunnel run --token <token> --url http://localhost:<port>`.
-   *
-   * The SDK is the source of truth for the hostname this tunnel binds to;
-   * the container only sees the opaque token and the local port. The
-   * returned `TunnelInfo` carries empty `url`/`hostname` fields — the SDK
-   * enriches them with the values from the Cloudflare API before handing
-   * the record to user code.
-   *
-   * The token must never be logged, persisted, or echoed back to callers.
-   */
-  runNamedTunnel(
-    id: string,
-    token: string,
-    port: number,
-    tunnelRunId?: string
-  ): Promise<TunnelInfo>;
-  /** Stop the cloudflared process for the given tunnel id. */
-  destroyTunnel(id: string): Promise<{ success: true; id: string }>;
-  /** List tunnels currently running inside the container. */
-  listTunnels(): Promise<TunnelInfo[]>;
+  /** Ensure a runtime-local cloudflared process for a DO-issued run id. */
+  ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult>;
+  /** Stop the matching runtime-local cloudflared process. */
+  stopTunnelRun(request: StopTunnelRunRequest): Promise<StopTunnelRunResult>;
+  /** Return a runtime-local tunnel-run snapshot by run id. */
+  getTunnelRun(runId: string): Promise<TunnelRunSnapshot | null>;
+  /** List runtime-local tunnel-run snapshots. */
+  listTunnelRuns(): Promise<TunnelRunSnapshot[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -426,16 +472,6 @@ export interface SandboxExtensionsAPI {
  * future container→DO events.
  */
 export interface SandboxControlCallback {
-  /**
-   * Called by the container when a `cloudflared` process exits for any
-   * reason — SIGTERM from `destroyTunnel`, container-initiated SIGKILL,
-   * network failure, segfault. `exitCode` is `null` if the process was
-   * signalled rather than exited cleanly.
-   */
-  onTunnelExit(
-    id: string,
-    port: number,
-    exitCode: number | null,
-    tunnelRunId?: string
-  ): Promise<void>;
+  /** Called by the container when a runtime-local tunnel run exits. */
+  onTunnelRunExit(event: TunnelRunExitEvent): Promise<void>;
 }

@@ -11,10 +11,10 @@ function makeService(storage: TunnelsStorage): TunnelService {
   return new TunnelService({
     client: {
       tunnels: {
-        runQuickTunnel: vi.fn(),
-        runNamedTunnel: vi.fn(),
-        destroyTunnel: vi.fn(),
-        listTunnels: vi.fn()
+        ensureTunnelRun: vi.fn(),
+        stopTunnelRun: vi.fn(),
+        getTunnelRun: vi.fn(),
+        listTunnelRuns: vi.fn()
       }
     },
     storage,
@@ -90,10 +90,10 @@ describe('TunnelService', () => {
       const handle = createTunnelsHandle({
         client: {
           tunnels: {
-            runQuickTunnel: vi.fn(),
-            runNamedTunnel: vi.fn(),
-            destroyTunnel: vi.fn(),
-            listTunnels: vi.fn()
+            ensureTunnelRun: vi.fn(),
+            stopTunnelRun: vi.fn(),
+            getTunnelRun: vi.fn(),
+            listTunnelRuns: vi.fn()
           }
         },
         storage,

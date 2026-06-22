@@ -2443,13 +2443,18 @@ describe('Sandbox - Automatic Session Management', () => {
         createdAt: '2026-06-18T00:00:00.000Z',
         updatedAt: '2026-06-18T00:00:00.000Z'
       });
-      vi.mocked(sandbox.client.tunnels.runQuickTunnel).mockImplementation(
-        async (id: string, port: number) => ({
-          id,
-          port,
-          url: 'https://stub.trycloudflare.com',
-          hostname: 'stub.trycloudflare.com',
-          createdAt: '2026-06-18T00:00:00.000Z'
+      vi.mocked(sandbox.client.tunnels.ensureTunnelRun).mockImplementation(
+        async (request) => ({
+          started: true,
+          run: {
+            mode: 'quick',
+            tunnelId: request.tunnelId,
+            runId: request.runId,
+            port: request.port,
+            url: 'https://stub.trycloudflare.com',
+            hostname: 'stub.trycloudflare.com',
+            startedAt: '2026-06-18T00:00:00.000Z'
+          }
         })
       );
 

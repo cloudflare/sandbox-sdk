@@ -14,11 +14,17 @@
  * storage shim is the keyed one defined here.
  */
 
-import type { TunnelInfo } from '@repo/shared';
+import type {
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
+  TunnelInfo
+} from '@repo/shared';
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
-import { ErrorCode } from '../../src/errors';
+import { ErrorCode, RPCTransportError } from '../../src/errors';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
@@ -27,19 +33,12 @@ import {
 } from '../../src/tunnels/rpc-target';
 import { makeFences, makeLogger, makeStorage } from './helpers';
 
-type RunQuickTunnelMock = Mock<
-  (id: string, port: number, tunnelRunId?: string) => Promise<TunnelInfo>
+type EnsureTunnelRunMock = Mock<
+  (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
 >;
-type RunNamedTunnelMock = Mock<
-  (
-    id: string,
-    token: string,
-    port: number,
-    tunnelRunId?: string
-  ) => Promise<unknown>
+type StopTunnelRunMock = Mock<
+  (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
 >;
-type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
-type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
 type FetcherMock = Mock<
   (input: string | URL, init?: RequestInit) => Promise<Response>
 >;
@@ -47,36 +46,37 @@ type StorageGetMock = Mock<(key: string) => Promise<unknown>>;
 type StoragePutMock = Mock<(key: string, next: unknown) => Promise<unknown>>;
 type LogMock = Mock<(message: string, ...context: unknown[]) => void>;
 
+function createDisposedRPCError(): RPCTransportError {
+  return new RPCTransportError({
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message: 'RPC session was shut down by disposing the main stub',
+    httpStatus: 503,
+    context: {
+      kind: 'session_disposed',
+      originalMessage: 'RPC session was shut down by disposing the main stub',
+      errorName: 'Error'
+    },
+    timestamp: '2026-06-22T12:00:00.000Z'
+  });
+}
+
 interface MockTunnelsClient {
-  runQuickTunnel: RunQuickTunnelMock;
-  runNamedTunnel: RunNamedTunnelMock;
-  destroyTunnel: DestroyTunnelMock;
-  listTunnels: ListTunnelsMock;
+  ensureTunnelRun: EnsureTunnelRunMock;
+  stopTunnelRun: StopTunnelRunMock;
 }
 
 function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   return {
     client: {
       tunnels: {
-        runQuickTunnel:
+        ensureTunnelRun:
           vi.fn<
-            (
-              id: string,
-              port: number,
-              tunnelRunId?: string
-            ) => Promise<TunnelInfo>
+            (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
           >(),
-        runNamedTunnel:
+        stopTunnelRun:
           vi.fn<
-            (
-              id: string,
-              token: string,
-              port: number,
-              tunnelRunId?: string
-            ) => Promise<unknown>
-          >(),
-        destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
-        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
+            (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
+          >()
       }
     }
   };
@@ -197,21 +197,55 @@ function makeFakeCloudflare(opts: {
 
 type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
 
-/** Tunnel UUID the container returns from `runNamedTunnel` in these tests. */
 const NAMED_TUNNEL_ID = '11111111-2222-3333-4444-555555555555';
 
-/** Stub the container's named-tunnel spawn with the canonical wire shape. */
-function mockNamedSpawn(
-  client: { tunnels: MockTunnelsClient },
-  port = 8080
-): void {
-  client.tunnels.runNamedTunnel.mockResolvedValue({
-    id: NAMED_TUNNEL_ID,
-    port,
-    url: '',
-    hostname: '',
-    createdAt: '2026-05-13T00:00:00.000Z'
-  });
+function namedRunResult(
+  request: EnsureTunnelRunRequest
+): EnsureTunnelRunResult {
+  if (request.mode !== 'named') {
+    throw new Error('Expected a named tunnel run request');
+  }
+  return {
+    started: true,
+    run: {
+      mode: 'named',
+      tunnelId: request.tunnelId,
+      runId: request.runId,
+      port: request.port,
+      startedAt: '2026-05-13T00:00:00.000Z'
+    }
+  };
+}
+
+function quickRunResult(
+  request: EnsureTunnelRunRequest
+): EnsureTunnelRunResult {
+  if (request.mode !== 'quick') {
+    throw new Error('Expected a quick tunnel run request');
+  }
+  const hostname = 'quick.trycloudflare.com';
+  return {
+    started: true,
+    run: {
+      mode: 'quick',
+      tunnelId: request.tunnelId,
+      runId: request.runId,
+      port: request.port,
+      url: `https://${hostname}`,
+      hostname,
+      startedAt: '2026-05-13T00:00:00.000Z'
+    }
+  };
+}
+
+function mockTunnelRun(client: { tunnels: MockTunnelsClient }): void {
+  client.tunnels.ensureTunnelRun.mockImplementation(async (request) =>
+    request.mode === 'named' ? namedRunResult(request) : quickRunResult(request)
+  );
+}
+
+function mockNamedSpawn(client: { tunnels: MockTunnelsClient }): void {
+  mockTunnelRun(client);
 }
 
 function makeHandler(opts?: {
@@ -226,6 +260,7 @@ function makeHandler(opts?: {
   fences?: Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
 }) {
   const { client } = makeClient();
+  mockTunnelRun(client);
   const storage = makeStorage();
   const logger = makeLogger();
   const namedTunnelConfig = {
@@ -264,13 +299,7 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
+    mockNamedSpawn(client);
 
     const info = await tunnels.get(8080, { name: 'api' });
 
@@ -281,13 +310,41 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
     expect(info.url).toBe('https://api.example.com');
     expect(typeof info.createdAt).toBe('string');
 
-    // runNamedTunnel was called with the opaque token from the create
-    // response. The token must not leak into the returned info.
-    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
-    const [, token, port] = client.tunnels.runNamedTunnel.mock.calls[0];
-    expect(token).toBe('OPAQUE_TOKEN');
-    expect(port).toBe(8080);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    const [request] = client.tunnels.ensureTunnelRun.mock.calls[0];
+    expect(request).toMatchObject({
+      mode: 'named',
+      tunnelId: NAMED_TUNNEL_ID,
+      port: 8080,
+      cloudflaredToken: 'OPAQUE_TOKEN'
+    });
+    expect(request.runId).toEqual(expect.any(String));
     expect(JSON.stringify(info)).not.toContain('OPAQUE_TOKEN');
+  });
+
+  it('replays the same named run request when the first call loses RPC transport', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    client.tunnels.ensureTunnelRun
+      .mockRejectedValueOnce(createDisposedRPCError())
+      .mockImplementationOnce(async (request) => namedRunResult(request));
+
+    const info = await tunnels.get(8080, { name: 'api' });
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
+    const second = client.tunnels.ensureTunnelRun.mock.calls[1][0];
+    expect(second).toEqual(first);
+    expect(info).toMatchObject({
+      id: NAMED_TUNNEL_ID,
+      port: 8080,
+      name: 'api',
+      hostname: 'api.example.com',
+      url: 'https://api.example.com'
+    });
   });
 
   it('bounds runtime-replacement recovery and never commits a partial record', async () => {
@@ -355,7 +412,7 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
         admitted: 'unknown'
       })
     });
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
     expect(await storage.get('tunnels')).toBeUndefined();
     expect(await storage.get('tunnels:meta')).toBeUndefined();
   });
@@ -389,13 +446,6 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
       sandboxId: 'sb-xyz',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 9090,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     await tunnels.get(9090, { name: 'web' });
 
@@ -423,13 +473,6 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
       sandboxId: 'sb-dns',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     await tunnels.get(8080, { name: 'api' });
 
@@ -456,23 +499,16 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
     const { tunnels, client } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     const first = await tunnels.get(8080, { name: 'api' });
     cf.fetcher.mockClear();
-    client.tunnels.runNamedTunnel.mockClear();
+    client.tunnels.ensureTunnelRun.mockClear();
 
     const second = await tunnels.get(8080, { name: 'api' });
     expect(second).toEqual(first);
     // No CF API calls, no container RPC.
     expect(cf.fetcher).not.toHaveBeenCalled();
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 
   it('respawns an unscoped named record instead of returning it as current', async () => {
@@ -520,18 +556,11 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
         zoneId: 'zone-id'
       }
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: 'kept-tun-id',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     const info = await tunnels.get(8080, { name: 'api' });
 
     expect(info.id).toBe('kept-tun-id');
-    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     const meta =
       await storage.get<Record<string, Record<string, unknown>>>(
         'tunnels:meta'
@@ -542,15 +571,8 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
 
   it('quick → named on same port throws', async () => {
     const cf = makeFakeCloudflare({});
-    const { tunnels, client } = makeHandler({
+    const { tunnels } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch
-    });
-    client.tunnels.runQuickTunnel.mockResolvedValue({
-      id: 'quick-abcd1234',
-      port: 8080,
-      url: 'https://stub.trycloudflare.com',
-      hostname: 'stub.trycloudflare.com',
-      createdAt: '2026-05-13T00:00:00.000Z'
     });
 
     await tunnels.get(8080);
@@ -562,15 +584,8 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
 
   it('named → named with different name on same port throws', async () => {
     const cf = makeFakeCloudflare({});
-    const { tunnels, client } = makeHandler({
+    const { tunnels } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch
-    });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
     });
 
     await tunnels.get(8080, { name: 'api' });
@@ -580,13 +595,8 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
   });
 
   it('re-provisions when CLOUDFLARE_ZONE_ID changes between calls (no stale URL)', async () => {
-    // First call resolves zoneId='zone-old' (zone name example-old.com).
-    // Then the resolver flips to zoneId='zone-new' (zone name
-    // example-new.com), simulating a Worker redeploy with a different
-    // CLOUDFLARE_ZONE_ID. The next get(port, { name }) must NOT return
-    // the cached info pointing at the old zone — the URL would resolve
-    // to nothing live. It must re-provision against the new zone.
     const { client } = makeClient();
+    mockTunnelRun(client);
     const storage = makeStorage();
     const logger = makeLogger();
     let zoneState = { zoneId: 'zone-old', zoneName: 'example-old.com' };
@@ -629,13 +639,6 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
       }),
       fetcher: fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockImplementation(async (id: string) => ({
-      id,
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    }));
 
     const first = await built.tunnels.get(8080, { name: 'api' });
     expect(first.hostname).toBe('api.example-old.com');
@@ -653,19 +656,11 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
     const { tunnels, client } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runQuickTunnel.mockResolvedValue({
-      id: 'quick-abcd1234',
-      port: 8080,
-      url: 'https://stub.trycloudflare.com',
-      hostname: 'stub.trycloudflare.com',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     const a = await tunnels.get(8080);
     const b = await tunnels.get(8080, {});
     expect(b).toEqual(a);
-    // Only one container call.
-    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
   it('treats legacy unversioned hashes as equivalent to v1: hashes on cache hit', async () => {
@@ -701,7 +696,7 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
     const info = await tunnels.get(8080, { name: 'api' });
     expect(info.hostname).toBe('api.example.com');
     // Cache hit: no container call, no CF API calls.
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
     expect(cf.fetcher).not.toHaveBeenCalled();
   });
 });
@@ -721,13 +716,6 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
     const { tunnels, client } = makeHandler({
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
-    });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: 'reused-tun-id',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
     });
 
     const info = await tunnels.get(8080, { name: 'api' });
@@ -761,13 +749,6 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
         updatedAt: '2026-05-13T00:00:00.000Z'
       }
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     await tunnels.get(8080, { name: 'api' });
 
@@ -800,19 +781,12 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
       /already exists|owned/i
     );
     // Container was never told to spawn cloudflared.
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 
   it('leaves CF resources in place when cloudflared fails to become ready', async () => {
@@ -821,7 +795,7 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockRejectedValue(
+    client.tunnels.ensureTunnelRun.mockRejectedValue(
       new Error('cloudflared not ready')
     );
 
@@ -876,6 +850,7 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
       ]
     });
     const { client } = makeClient();
+    mockTunnelRun(client);
     const storage = makeStorage();
     await (storage.put as StoragePutMock)('tunnels', {
       '8080': {
@@ -920,23 +895,19 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
         assertCurrent: vi.fn(async () => {})
       }
     } as unknown as Parameters<typeof createTunnelsHandle>[0]);
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: 'kept-tun-id',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     const info = await tunnels.get(8080, { name: 'api' });
 
     expect(info.id).toBe('kept-tun-id');
     expect(info.hostname).toBe('api.example.com');
-    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledWith(
-      'kept-tun-id',
-      'REUSED_TOKEN',
-      8080,
-      expect.any(String)
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'named',
+        tunnelId: 'kept-tun-id',
+        cloudflaredToken: 'REUSED_TOKEN',
+        port: 8080,
+        runId: expect.any(String)
+      })
     );
   });
 
@@ -961,7 +932,7 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
     await expect(tunnels.get(8080, { name: 'web' })).rejects.toThrow(
       /destroy/i
     );
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
     expect(cf.fetcher).not.toHaveBeenCalled();
   });
 
@@ -1011,18 +982,10 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
         needsRespawn: true
       }
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: 'kept-tun-id',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     const info = await tunnels.get(8080, { name: 'api' });
 
-    // cloudflared was respawned with the reused tunnel id.
-    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
     expect(info.id).toBe('kept-tun-id');
     expect(info.hostname).toBe('api.example.com');
     // No POST /cfd_tunnel — reuse path only.
@@ -1051,7 +1014,7 @@ describe('tunnel service > get(port, { name }) — synchronous validation', () =
       tunnels.get(8080, { name: 'BAD.NAME' })
     ).rejects.toBeInstanceOf(SandboxSecurityError);
     expect(cf.fetcher).not.toHaveBeenCalled();
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 
   it('rejects invalid port without any work', async () => {
@@ -1062,7 +1025,7 @@ describe('tunnel service > get(port, { name }) — synchronous validation', () =
 
     await expect(tunnels.get(3000, { name: 'api' })).rejects.toThrow(/port/i);
     expect(cf.fetcher).not.toHaveBeenCalled();
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 
   it('propagates the credentials resolver error verbatim', async () => {
@@ -1075,7 +1038,7 @@ describe('tunnel service > get(port, { name }) — synchronous validation', () =
       /CLOUDFLARE_API_TOKEN/
     );
     expect(cf.fetcher).not.toHaveBeenCalled();
-    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
   });
 });
 
@@ -1124,13 +1087,6 @@ describe('tunnel service > zone name caching', () => {
       sandboxId: 'sb1',
       fetcher: fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
 
     // First call observes the 500 and rejects.
     await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
@@ -1150,26 +1106,14 @@ describe('tunnel service > destroy() for named tunnels', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: '11111111-2222-3333-4444-555555555555'
-    });
-
     await tunnels.get(8080, { name: 'api' });
     cf.fetcher.mockClear();
     await tunnels.destroy(8080);
 
-    // Container was told to stop the cloudflared process.
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(
-      '11111111-2222-3333-4444-555555555555'
-    );
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
+      tunnelId: '11111111-2222-3333-4444-555555555555',
+      runId: expect.any(String)
+    });
 
     // CF API: one DELETE on the dns_records and one DELETE on the tunnel.
     const deletes = cf.fetcher.mock.calls.filter(
@@ -1207,9 +1151,9 @@ describe('tunnel service > destroy() for named tunnels', () => {
         zoneId: 'zone-A'
       }
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: 'tunnel-uuid-stored'
+    client.tunnels.stopTunnelRun.mockResolvedValue({
+      matched: true,
+      stopped: true
     });
     const fetcher = vi.fn<typeof fetch>(
       async () =>
@@ -1270,10 +1214,6 @@ describe('tunnel service > destroy() for named tunnels', () => {
         needsRespawn: true
       }
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: 'tunnel-uuid-hidden'
-    });
     const built = createTunnelsHandle({
       client: client as unknown as Parameters<
         typeof createTunnelsHandle
@@ -1291,9 +1231,7 @@ describe('tunnel service > destroy() for named tunnels', () => {
 
     await built.tunnels.destroy(8080);
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(
-      'tunnel-uuid-hidden'
-    );
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     const deletes = cf.fetcher.mock.calls.filter(
       ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
     );
@@ -1328,7 +1266,7 @@ describe('tunnel service > destroy() for named tunnels', () => {
         zoneId: 'zone-id'
       }
     });
-    client.tunnels.destroyTunnel.mockRejectedValue(
+    client.tunnels.stopTunnelRun.mockRejectedValue(
       new Error('container already stopped')
     );
     const built = createTunnelsHandle({
@@ -1361,24 +1299,20 @@ describe('tunnel service > destroy() for named tunnels', () => {
     const { tunnels, client } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runQuickTunnel.mockResolvedValue({
-      id: 'quick-abcd1234',
-      port: 8080,
-      url: 'https://stub.trycloudflare.com',
-      hostname: 'stub.trycloudflare.com',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: 'quick-abcd1234'
+    client.tunnels.stopTunnelRun.mockResolvedValue({
+      matched: true,
+      stopped: true
     });
 
-    await tunnels.get(8080);
+    const info = await tunnels.get(8080);
     cf.fetcher.mockClear();
     await tunnels.destroy(8080);
 
     expect(cf.fetcher).not.toHaveBeenCalled();
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith('quick-abcd1234');
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
+      tunnelId: info.id,
+      runId: expect.any(String)
+    });
   });
 
   it('best-effort: a CF DELETE failure is logged but does not throw', async () => {
@@ -1389,16 +1323,9 @@ describe('tunnel service > destroy() for named tunnels', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: '11111111-2222-3333-4444-555555555555'
+    client.tunnels.stopTunnelRun.mockResolvedValue({
+      matched: true,
+      stopped: true
     });
 
     await tunnels.get(8080, { name: 'api' });
@@ -1439,6 +1366,7 @@ describe('tunnel service > destroy() for named tunnels', () => {
     // tunnelId and the dnsRecordId so an operator can clean up by hand.
     const cf = makeFakeCloudflare({});
     const { client } = makeClient();
+    mockTunnelRun(client);
     const storage = makeStorage();
     const logger = makeLogger();
     let configShouldFail = false;
@@ -1457,16 +1385,9 @@ describe('tunnel service > destroy() for named tunnels', () => {
       },
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValue({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: '11111111-2222-3333-4444-555555555555'
+    client.tunnels.stopTunnelRun.mockResolvedValue({
+      matched: true,
+      stopped: true
     });
 
     await built.tunnels.get(8080, { name: 'api' });
@@ -1507,38 +1428,18 @@ describe('tunnel service > destroyAll()', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel.mockResolvedValueOnce({
-      id: '11111111-2222-3333-4444-555555555555',
-      port: 8080,
-      url: '',
-      hostname: '',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.runQuickTunnel.mockResolvedValueOnce({
-      id: 'quick-abcd1234',
-      port: 9090,
-      url: 'https://stub.trycloudflare.com',
-      hostname: 'stub.trycloudflare.com',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: 'irrelevant'
-    });
-
     await tunnels.get(8080, { name: 'api' });
-    await tunnels.get(9090);
+    const quick = await tunnels.get(9090);
     cf.fetcher.mockClear();
 
     await destroyAll();
 
-    // Container told to stop BOTH tunnels.
-    const destroyedIds = client.tunnels.destroyTunnel.mock.calls.map(
-      (c) => c[0]
+    const stoppedIds = client.tunnels.stopTunnelRun.mock.calls.map(
+      ([request]) => request.tunnelId
     );
-    expect(destroyedIds.sort()).toEqual([
+    expect(stoppedIds.sort()).toEqual([
       '11111111-2222-3333-4444-555555555555',
-      'quick-abcd1234'
+      quick.id
     ]);
 
     // Named tunnel's CF resources removed; quick tunnel makes no CF calls.
@@ -1572,16 +1473,9 @@ describe('tunnel service > destroyAll()', () => {
         needsRespawn: true
       }
     });
-    client.tunnels.destroyTunnel.mockResolvedValue({
-      success: true,
-      id: 'tunnel-uuid-hidden'
-    });
-
     await expect(destroyAll()).resolves.toBeUndefined();
 
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(
-      'tunnel-uuid-hidden'
-    );
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     const deletes = cf.fetcher.mock.calls.filter(
       ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
     );
@@ -1617,7 +1511,7 @@ describe('tunnel service > destroyAll()', () => {
 
     await expect(destroyAll()).resolves.toBeUndefined();
 
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     const deletes = cf.fetcher.mock.calls.filter(
       ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
     );
@@ -1661,7 +1555,7 @@ describe('tunnel service > destroyAll()', () => {
 
     await expect(built.destroyAll()).resolves.toBeUndefined();
 
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     expect(cf.fetcher).not.toHaveBeenCalled();
     expect(await storage.get('tunnels:cleanup')).toEqual(
       expect.objectContaining({
@@ -1686,7 +1580,7 @@ describe('tunnel service > destroyAll()', () => {
       fetcher: cf.fetcher as unknown as typeof fetch
     });
     await expect(destroyAll()).resolves.toBeUndefined();
-    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
     expect(cf.fetcher).not.toHaveBeenCalled();
   });
 
@@ -1696,31 +1590,14 @@ describe('tunnel service > destroyAll()', () => {
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.runNamedTunnel
-      .mockResolvedValueOnce({
-        id: 'tun-1',
-        port: 8080,
-        url: '',
-        hostname: '',
-        createdAt: '2026-05-13T00:00:00.000Z'
-      })
-      .mockResolvedValueOnce({
-        id: 'tun-2',
-        port: 8081,
-        url: '',
-        hostname: '',
-        createdAt: '2026-05-13T00:00:00.000Z'
-      });
     await tunnels.get(8080, { name: 'api' });
     await tunnels.get(8081, { name: 'web' });
 
-    // First destroy throws; second should still happen.
-    client.tunnels.destroyTunnel
+    client.tunnels.stopTunnelRun
       .mockRejectedValueOnce(new Error('container broken'))
-      .mockResolvedValueOnce({ success: true, id: 'tun-2' });
+      .mockResolvedValueOnce({ matched: true, stopped: true });
 
-    // destroyAll resolves even when individual destroys reject.
     await expect(destroyAll()).resolves.toBeUndefined();
-    expect(client.tunnels.destroyTunnel).toHaveBeenCalledTimes(2);
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledTimes(2);
   });
 });

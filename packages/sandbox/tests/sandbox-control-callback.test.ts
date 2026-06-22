@@ -2,9 +2,9 @@
  * SandboxControlCallbackImpl unit tests.
  *
  * The class is the capnweb-facing RpcTarget the DO exposes via
- * `localMain`. It does almost nothing on its own — just routes
- * `onTunnelExit` through to the `TunnelExitHandler` it was given.
- * TunnelService owns the exit reconciliation behavior.
+ * `localMain`. It routes tunnel-run exit notifications through to the
+ * `TunnelExitHandler` it was given. TunnelService owns the exit
+ * reconciliation behavior.
  */
 
 import type { Logger } from '@repo/shared';
@@ -24,52 +24,84 @@ function makeLogger(): Logger {
 }
 
 describe('SandboxControlCallbackImpl', () => {
-  it('routes onTunnelExit through to the bound handler', async () => {
+  it('routes onTunnelRunExit events through to the bound handler', async () => {
     const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
     const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
 
-    await cb.onTunnelExit('quick-a', 8080, 0, 'run-a');
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-a',
+      runId: 'run-a',
+      mode: 'quick',
+      port: 8080,
+      exitCode: 0
+    });
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith('quick-a', 8080, 0, 'run-a');
   });
 
-  it('passes through a null exitCode (signalled process)', async () => {
+  it('passes through a null exitCode', async () => {
     const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
     const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
 
-    await cb.onTunnelExit('quick-b', 8081, null);
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-b',
+      runId: 'run-b',
+      mode: 'quick',
+      port: 8081,
+      exitCode: null
+    });
 
-    expect(handler).toHaveBeenCalledWith('quick-b', 8081, null, undefined);
+    expect(handler).toHaveBeenCalledWith('quick-b', 8081, null, 'run-b');
   });
 
   it('is a no-op when the accessor returns null', async () => {
     const cb = new SandboxControlCallbackImpl(() => null, makeLogger());
 
-    // Must not throw — the accessor returning null models a callback
-    // arriving before the lazy getter has built the tunnel subsystem.
-    await expect(cb.onTunnelExit('quick-c', 8082, 0)).resolves.toBeUndefined();
+    await expect(
+      cb.onTunnelRunExit({
+        tunnelId: 'quick-c',
+        runId: 'run-c',
+        mode: 'quick',
+        port: 8082,
+        exitCode: 0
+      })
+    ).resolves.toBeUndefined();
   });
 
-  it('reads the handler accessor every call (does not cache)', async () => {
+  it('reads the handler accessor every call', async () => {
     let current: TunnelExitHandler | null = null;
     const cb = new SandboxControlCallbackImpl(() => current, makeLogger());
 
-    // First call: no handler bound. No-op.
-    await cb.onTunnelExit('quick-d', 8083, 0);
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-d',
+      runId: 'run-d-1',
+      mode: 'quick',
+      port: 8083,
+      exitCode: 0
+    });
 
-    // Bind a handler, fire again. Must invoke the newly bound handler.
     const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
     current = handler;
-    await cb.onTunnelExit('quick-d', 8083, 0);
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-d',
+      runId: 'run-d-2',
+      mode: 'quick',
+      port: 8083,
+      exitCode: 0
+    });
     expect(handler).toHaveBeenCalledTimes(1);
 
-    // Swap to a different handler (simulating a transport rebind).
     const newer = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
     current = newer;
-    await cb.onTunnelExit('quick-d', 8083, 0);
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-d',
+      runId: 'run-d-3',
+      mode: 'quick',
+      port: 8083,
+      exitCode: 0
+    });
     expect(newer).toHaveBeenCalledTimes(1);
-    // The original handler was not called again.
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -79,8 +111,14 @@ describe('SandboxControlCallbackImpl', () => {
       .mockRejectedValue(new Error('storage boom'));
     const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
 
-    await expect(cb.onTunnelExit('quick-e', 8084, 0)).rejects.toThrow(
-      'storage boom'
-    );
+    await expect(
+      cb.onTunnelRunExit({
+        tunnelId: 'quick-e',
+        runId: 'run-e',
+        mode: 'quick',
+        port: 8084,
+        exitCode: 0
+      })
+    ).rejects.toThrow('storage boom');
   });
 });
