@@ -27,7 +27,7 @@ function buildApi(sessionManager: SessionManager): SandboxControlAPI {
 }
 
 describe('SandboxControlAPI tunnels.ensureTunnelRun', () => {
-  it('exposes runtime-run methods only', () => {
+  it('exposes the runtime-run control methods only', () => {
     const api = new SandboxControlAPI({
       tunnelService: {},
       logger: mockLogger
@@ -35,8 +35,6 @@ describe('SandboxControlAPI tunnels.ensureTunnelRun', () => {
 
     expect('ensureTunnelRun' in api.tunnels).toBe(true);
     expect('stopTunnelRun' in api.tunnels).toBe(true);
-    expect('getTunnelRun' in api.tunnels).toBe(true);
-    expect('listTunnelRuns' in api.tunnels).toBe(true);
     expect('runQuickTunnel' in api.tunnels).toBe(false);
     expect('runNamedTunnel' in api.tunnels).toBe(false);
     expect('destroyTunnel' in api.tunnels).toBe(false);

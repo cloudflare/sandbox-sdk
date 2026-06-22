@@ -12,9 +12,7 @@ function makeService(storage: TunnelsStorage): TunnelService {
     client: {
       tunnels: {
         ensureTunnelRun: vi.fn(),
-        stopTunnelRun: vi.fn(),
-        getTunnelRun: vi.fn(),
-        listTunnelRuns: vi.fn()
+        stopTunnelRun: vi.fn()
       }
     },
     storage,
@@ -91,9 +89,7 @@ describe('TunnelService', () => {
         client: {
           tunnels: {
             ensureTunnelRun: vi.fn(),
-            stopTunnelRun: vi.fn(),
-            getTunnelRun: vi.fn(),
-            listTunnelRuns: vi.fn()
+            stopTunnelRun: vi.fn()
           }
         },
         storage,
@@ -129,5 +125,29 @@ describe('TunnelService', () => {
         needsRespawn: true
       }
     });
+  });
+
+  it('clears cleanup records with tunnel state after sandbox destroy', async () => {
+    const storage = makeStorage({
+      tunnels: { '8080': quickTunnel() },
+      'tunnels:meta': { '8080': { optionsHash: 'v1:quick' } },
+      'tunnels:cleanup': {
+        '9090': {
+          tunnelId: 'named-tunnel-id',
+          port: 9090,
+          name: 'app',
+          hostname: 'app.example.com',
+          phase: 'claimed',
+          updatedAt: '2026-06-22T00:00:00.000Z'
+        }
+      }
+    });
+    const service = makeService(storage);
+
+    await service.clearDurableStateAfterDestroy();
+
+    await expect(storage.get('tunnels')).resolves.toBeUndefined();
+    await expect(storage.get('tunnels:meta')).resolves.toBeUndefined();
+    await expect(storage.get('tunnels:cleanup')).resolves.toBeUndefined();
   });
 });

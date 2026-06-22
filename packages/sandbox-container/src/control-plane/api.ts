@@ -12,7 +12,6 @@ import type {
   SandboxAPI,
   StopTunnelRunRequest,
   StopTunnelRunResult,
-  TunnelRunSnapshot,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -960,14 +959,6 @@ class TunnelsRPCAPI extends RpcTarget {
   ): Promise<StopTunnelRunResult> {
     const result = await this.#svc.stopTunnelRun(request);
     return extractData<StopTunnelRunResult>(result);
-  }
-
-  async getTunnelRun(runId: string): Promise<TunnelRunSnapshot | null> {
-    return this.#svc.getTunnelRun(runId);
-  }
-
-  async listTunnelRuns(): Promise<TunnelRunSnapshot[]> {
-    return this.#svc.listTunnelRuns();
   }
 }
 

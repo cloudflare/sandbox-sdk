@@ -34,14 +34,17 @@ import {
   createNamedTunnelCleanupEntry,
   effectiveOptionsHash,
   META_STORAGE_KEY,
-  markNamedTunnelNeedsRespawn,
+  markCleanupDNSReady,
+  markCleanupTunnelReady,
+  namedRespawnMeta,
   namedTunnelInfoFromMeta,
   optionsHashesEqual,
-  readCleanupMap,
   readMap,
   readMetaMap,
+  readPortState,
   STORAGE_KEY,
-  tunnelConfigChanged
+  tunnelConfigChanged,
+  updatePortState
 } from './storage';
 
 export type { TunnelsStorage, TunnelsStorageTxn } from './storage';
@@ -243,11 +246,9 @@ export class TunnelService implements TunnelsHandler {
     options: TunnelOptions | undefined,
     requestedHash: string
   ): Promise<TunnelGetResult> {
-    const portKey = port.toString();
-    const map = await readMap(this.#host.storage);
-    const meta = await readMetaMap(this.#host.storage);
-    const existing = map[portKey];
-    const metaEntry = meta[portKey];
+    const state = await readPortState(this.#host.storage, port);
+    const existing = state.info;
+    const metaEntry = state.meta;
 
     if (existing) {
       this.#assertSameOptions(
@@ -317,16 +318,14 @@ export class TunnelService implements TunnelsHandler {
   }
 
   async #resumePortCleanup(port: number): Promise<void> {
-    const portKey = port.toString();
-    const cleanup = await readCleanupMap(this.#host.storage);
-    const entry = cleanup[portKey];
+    const entry = (await readPortState(this.#host.storage, port)).cleanup;
     if (!entry) return;
 
     if (
       !(await resumeNamedTunnelCleanupEntry(
         this.#host,
         this.#host.storage,
-        portKey,
+        port.toString(),
         entry
       ))
     ) {
@@ -340,11 +339,17 @@ export class TunnelService implements TunnelsHandler {
     port: number,
     next: (entry: TunnelCleanupEntry | undefined) => TunnelCleanupEntry
   ): Promise<void> {
-    await this.#host.storage.transaction(async (txn) => {
-      const cleanup = await readCleanupMap(txn);
-      cleanup[port.toString()] = next(cleanup[port.toString()]);
-      await txn.put(CLEANUP_STORAGE_KEY, cleanup);
-    });
+    await updatePortState(this.#host.storage, port, (state) => ({
+      cleanup: next(state.cleanup)
+    }));
+  }
+
+  #requireCleanupEntry(
+    port: number,
+    entry: TunnelCleanupEntry | undefined
+  ): TunnelCleanupEntry {
+    if (entry) return entry;
+    throw new Error(`Missing named tunnel cleanup intent for port ${port}`);
   }
 
   /** Provision a fresh quick tunnel and persist it. Caller holds the per-port lock. */
@@ -361,12 +366,9 @@ export class TunnelService implements TunnelsHandler {
       true
     );
     await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
-    await this.#host.storage.transaction(async (txn) => {
-      const nextMap = await readMap(txn);
-      nextMap[port.toString()] = spawned;
-      await txn.put(STORAGE_KEY, nextMap);
-      const nextMeta = await readMetaMap(txn);
-      nextMeta[port.toString()] = {
+    await updatePortState(this.#host.storage, port, () => ({
+      info: spawned,
+      meta: {
         optionsHash: 'v1:quick',
         ...(lifecycle.runtime && {
           runtimeIdentityID: lifecycle.runtime.id
@@ -375,9 +377,8 @@ export class TunnelService implements TunnelsHandler {
           sandboxLifetimeID: lifecycle.lifetime.id
         }),
         tunnelRunId
-      };
-      await txn.put(META_STORAGE_KEY, nextMeta);
-    });
+      }
+    }));
     await this.#lifecycle.assertActive(lifecycle, 'committing', true);
     return spawned;
   }
@@ -393,40 +394,28 @@ export class TunnelService implements TunnelsHandler {
     const prepared = await this.#provisioner.prepareNamedTunnel(port, name, {
       onIntentReady: (entry) => this.#updatePortCleanup(port, () => entry),
       onTunnelReady: (tunnelId) =>
-        this.#updatePortCleanup(port, (entry) => ({
-          ...(entry ?? {
-            port,
-            name,
-            hostname: name,
-            phase: 'planned'
-          }),
-          tunnelId,
-          phase: 'tunnel_ready',
-          updatedAt: new Date().toISOString()
-        })),
+        this.#updatePortCleanup(port, (entry) =>
+          markCleanupTunnelReady(
+            this.#requireCleanupEntry(port, entry),
+            tunnelId
+          )
+        ),
       onDNSReady: (dnsRecordId) =>
-        this.#updatePortCleanup(port, (entry) => ({
-          ...(entry ?? {
-            port,
-            name,
-            hostname: name,
-            phase: 'tunnel_ready'
-          }),
-          dnsRecordId,
-          phase: 'claimed',
-          updatedAt: new Date().toISOString()
-        }))
+        this.#updatePortCleanup(port, (entry) =>
+          markCleanupDNSReady(
+            this.#requireCleanupEntry(port, entry),
+            dnsRecordId
+          )
+        )
     });
     const cleanupEntry = createNamedTunnelCleanupEntry(
       prepared.info,
       prepared.meta
     );
     if (cleanupEntry) {
-      await this.#host.storage.transaction(async (txn) => {
-        const cleanup = await readCleanupMap(txn);
-        cleanup[port.toString()] = cleanupEntry;
-        await txn.put(CLEANUP_STORAGE_KEY, cleanup);
-      });
+      await updatePortState(this.#host.storage, port, () => ({
+        cleanup: cleanupEntry
+      }));
     }
     await this.#lifecycle.assertActive(
       lifecycle,
@@ -443,12 +432,9 @@ export class TunnelService implements TunnelsHandler {
     );
     await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
 
-    await this.#host.storage.transaction(async (txn) => {
-      const nextMap = await readMap(txn);
-      nextMap[port.toString()] = prepared.info;
-      await txn.put(STORAGE_KEY, nextMap);
-      const nextMeta = await readMetaMap(txn);
-      nextMeta[port.toString()] = {
+    await updatePortState(this.#host.storage, port, () => ({
+      info: prepared.info,
+      meta: {
         ...prepared.meta,
         ...(lifecycle.runtime && {
           runtimeIdentityID: lifecycle.runtime.id
@@ -457,12 +443,9 @@ export class TunnelService implements TunnelsHandler {
           sandboxLifetimeID: lifecycle.lifetime.id
         }),
         tunnelRunId
-      };
-      await txn.put(META_STORAGE_KEY, nextMeta);
-      const cleanup = await readCleanupMap(txn);
-      delete cleanup[port.toString()];
-      await txn.put(CLEANUP_STORAGE_KEY, cleanup);
-    });
+      },
+      cleanup: undefined
+    }));
     await this.#lifecycle.assertActive(lifecycle, 'committing', true);
     return prepared.info;
   }
@@ -476,20 +459,16 @@ export class TunnelService implements TunnelsHandler {
     try {
       await this.#withPortLock(port, async () => {
         const portKey = port.toString();
-        const map = await readMap(this.#host.storage);
-        const metaBefore = (await readMetaMap(this.#host.storage))[portKey];
+        const current = await readPortState(this.#host.storage, port);
         const existing =
-          map[portKey] ?? namedTunnelInfoFromMeta(port, metaBefore);
+          current.info ?? namedTunnelInfoFromMeta(port, current.meta);
         if (!existing) {
-          const retainedCleanup = (await readCleanupMap(this.#host.storage))[
-            portKey
-          ];
-          if (retainedCleanup) {
+          if (current.cleanup) {
             await resumeNamedTunnelCleanupEntry(
               this.#host,
               this.#host.storage,
               portKey,
-              retainedCleanup,
+              current.cleanup,
               {
                 logPrefix: 'tunnel.destroy',
                 credentialsUnavailableMessage:
@@ -502,43 +481,26 @@ export class TunnelService implements TunnelsHandler {
         tunnelId = existing.id;
         const cleanupEntry = createNamedTunnelCleanupEntry(
           existing,
-          metaBefore
+          current.meta
         );
 
-        // Clear storage first. Same ordering as portTokens (sandbox.ts):
-        // a hypothetical reader that observes storage between the put
-        // below sees a cache miss — the right answer, since the tunnel
-        // is on its way out. The port lock
-        // means no in-process get(port) is racing with us, but Workers
-        // / external readers do not share this in-memory lock.
-        await this.#host.storage.transaction(async (txn) => {
-          const current = await readMap(txn);
-          delete current[port.toString()];
-          await txn.put(STORAGE_KEY, current);
-          const currentMeta = await readMetaMap(txn);
-          delete currentMeta[port.toString()];
-          await txn.put(META_STORAGE_KEY, currentMeta);
-          if (cleanupEntry) {
-            const cleanup = await readCleanupMap(txn);
-            cleanup[port.toString()] = cleanupEntry;
-            await txn.put(CLEANUP_STORAGE_KEY, cleanup);
-          }
-        });
+        await updatePortState(this.#host.storage, port, () => ({
+          info: undefined,
+          meta: undefined,
+          ...(cleanupEntry && { cleanup: cleanupEntry })
+        }));
 
-        // Stop cloudflared inside the container when metadata identifies
-        // the exact runtime run. Unscoped records are treated as stale
-        // durable state; named Cloudflare resources are cleaned below.
         try {
-          if (metaBefore?.tunnelRunId) {
+          if (current.meta?.tunnelRunId) {
             await this.#host.client.tunnels.stopTunnelRun({
               tunnelId: existing.id,
-              runId: metaBefore.tunnelRunId
+              runId: current.meta.tunnelRunId
             });
           }
         } catch (error) {
           if (isTunnelNotFoundError(error)) {
             // Container already forgot — fall through to CF cleanup.
-          } else if (metaBefore?.dnsRecordId) {
+          } else if (current.meta?.dnsRecordId) {
             this.#host.logger.warn(
               'tunnel.destroy: container tunnel cleanup failed',
               {
@@ -552,10 +514,9 @@ export class TunnelService implements TunnelsHandler {
           }
         }
 
-        // Quick tunnels have no Cloudflare-side resources to delete.
-        if (!metaBefore?.dnsRecordId || !existing.name) return;
-
-        if (!cleanupEntry) return;
+        if (!current.meta?.dnsRecordId || !existing.name || !cleanupEntry) {
+          return;
+        }
         const cleaned = await cleanupNamedTunnelResources(
           this.#host,
           cleanupEntry,
@@ -567,11 +528,9 @@ export class TunnelService implements TunnelsHandler {
         );
         if (!cleaned) return;
 
-        await this.#host.storage.transaction(async (txn) => {
-          const cleanup = await readCleanupMap(txn);
-          delete cleanup[port.toString()];
-          await txn.put(CLEANUP_STORAGE_KEY, cleanup);
-        });
+        await updatePortState(this.#host.storage, port, () => ({
+          cleanup: undefined
+        }));
       });
       outcome = 'success';
     } catch (error) {
@@ -608,39 +567,18 @@ export class TunnelService implements TunnelsHandler {
     let caughtError: Error | undefined;
     try {
       await this.#withPortLock(port, async () => {
-        await this.#host.storage.transaction(async (txn) => {
-          const map = await readMap(txn);
-          const existing = map[port.toString()];
-          const meta = await readMetaMap(txn);
-          const metaEntry = meta[port.toString()];
-          // Defensive: only act if storage still references this exact
-          // tunnel id. Exit callbacks for superseded tunnel processes
-          // are ignored so current records stay intact.
-          if (existing?.id !== id) return;
-          if (metaEntry?.tunnelRunId && tunnelRunId !== metaEntry.tunnelRunId) {
-            return;
+        await updatePortState(this.#host.storage, port, (state) => {
+          const existing = state.info;
+          const meta = state.meta;
+          if (existing?.id !== id) return undefined;
+          if (meta?.tunnelRunId && tunnelRunId !== meta.tunnelRunId) {
+            return undefined;
           }
 
-          if (existing.name) {
-            // Named tunnel. The Cloudflare-side tunnel and DNS record
-            // are still live; preserving meta (especially `dnsRecordId`,
-            // `accountId`, `zoneId`) is what lets `get(port, { name })`
-            // respawn the process and `destroy(port)` clean resources up
-            // later. Hide the public record so list() only returns
-            // tunnels with a current cloudflared process. Respawn is
-            // driven by the next explicit get(port, { name }) call so
-            // persistent cloudflared failures do not loop in the
-            // background.
-            await markNamedTunnelNeedsRespawn(txn, port.toString(), existing);
-            return;
-          }
-
-          // Quick tunnel: the `*.trycloudflare.com` URL died with the
-          // process and cannot be recovered. Drop both entries.
-          delete map[port.toString()];
-          await txn.put(STORAGE_KEY, map);
-          delete meta[port.toString()];
-          await txn.put(META_STORAGE_KEY, meta);
+          return {
+            info: undefined,
+            meta: existing.name ? namedRespawnMeta(existing, meta) : undefined
+          };
         });
       });
       outcome = 'success';
@@ -699,7 +637,10 @@ export class TunnelService implements TunnelsHandler {
   }
 
   async clearDurableStateAfterDestroy(): Promise<void> {
-    await this.#host.storage.delete(STORAGE_KEY);
-    await this.#host.storage.delete(META_STORAGE_KEY);
+    await Promise.all([
+      this.#host.storage.delete(STORAGE_KEY),
+      this.#host.storage.delete(META_STORAGE_KEY),
+      this.#host.storage.delete(CLEANUP_STORAGE_KEY)
+    ]);
   }
 }

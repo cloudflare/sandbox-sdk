@@ -274,6 +274,8 @@ export interface TunnelRunIdentity {
   runId: string;
 }
 
+export type TunnelRunRef = TunnelRunIdentity;
+
 export interface EnsureQuickTunnelRunRequest extends TunnelRunIdentity {
   mode: 'quick';
   port: number;
@@ -314,13 +316,9 @@ export interface EnsureTunnelRunResult {
   started: boolean;
 }
 
-export interface StopTunnelRunRequest {
-  tunnelId?: string;
-  runId?: string;
-}
+export type StopTunnelRunRequest = TunnelRunRef;
 
 export interface StopTunnelRunResult {
-  matched: boolean;
   stopped: boolean;
 }
 
@@ -337,10 +335,6 @@ export interface SandboxTunnelsAPI {
   ): Promise<EnsureTunnelRunResult>;
   /** Stop the matching runtime-local cloudflared process. */
   stopTunnelRun(request: StopTunnelRunRequest): Promise<StopTunnelRunResult>;
-  /** Return a runtime-local tunnel-run snapshot by run id. */
-  getTunnelRun(runId: string): Promise<TunnelRunSnapshot | null>;
-  /** List runtime-local tunnel-run snapshots. */
-  listTunnelRuns(): Promise<TunnelRunSnapshot[]>;
 }
 
 // ---------------------------------------------------------------------------

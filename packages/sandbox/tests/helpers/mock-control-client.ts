@@ -59,9 +59,7 @@ export function createMockControlClient(): Sandbox['client'] {
     },
     tunnels: {
       ensureTunnelRun: vi.fn(),
-      stopTunnelRun: vi.fn(),
-      getTunnelRun: vi.fn(),
-      listTunnelRuns: vi.fn()
+      stopTunnelRun: vi.fn()
     },
     setRetryTimeoutMs: vi.fn(),
     isWebSocketConnected: vi.fn(),

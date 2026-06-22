@@ -320,40 +320,24 @@ describe('TunnelService > ensureTunnelRun', () => {
 });
 
 describe('TunnelService > runtime run registry', () => {
-  it('returns active run snapshots by run id and list order', async () => {
-    const service = new TunnelService(mockLogger);
-    await withFakeCloudflared(QUICK_BANNER, () =>
-      service.ensureTunnelRun(quickRequest())
-    );
-    await withFakeCloudflared(QUICK_BANNER, () =>
-      service.ensureTunnelRun(
-        quickRequest({ tunnelId: 'quick-2', runId: 'run-2', port: 8081 })
-      )
-    );
-
-    expect(service.getTunnelRun('run-1')?.tunnelId).toBe('quick-1');
-    expect(service.listTunnelRuns().map((run) => run.runId)).toEqual([
-      'run-1',
-      'run-2'
-    ]);
-  });
-
   it('stops the exact active run by run id', async () => {
     const service = new TunnelService(mockLogger);
     await withFakeCloudflared(QUICK_BANNER, () =>
       service.ensureTunnelRun(quickRequest())
     );
 
-    const stop = service.stopTunnelRun({ runId: 'run-1' });
+    const stop = service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' });
     await new Promise((r) => setTimeout(r, 5));
     fakeProcs[0].resolveExit(0);
     const result = await stop;
 
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data).toEqual({ matched: true, stopped: true });
+    expect(result.data).toEqual({ stopped: true });
     expect(fakeProcs[0].kill).toHaveBeenCalledWith('SIGTERM');
-    expect(service.getTunnelRun('run-1')).toBeNull();
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
   });
 
   it('does not stop a run when the tunnel id does not match', async () => {
@@ -369,9 +353,16 @@ describe('TunnelService > runtime run registry', () => {
 
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data).toEqual({ matched: false, stopped: false });
+    expect(result.data).toEqual({ stopped: false });
     expect(fakeProcs[0].kill).not.toHaveBeenCalled();
-    expect(service.getTunnelRun('run-1')).not.toBeNull();
+
+    const stop = service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' });
+    await new Promise((r) => setTimeout(r, 5));
+    fakeProcs[0].resolveExit(0);
+    await expect(stop).resolves.toEqual({
+      success: true,
+      data: { stopped: true }
+    });
   });
 
   it('destroyAll stops every runtime run', async () => {
@@ -390,7 +381,12 @@ describe('TunnelService > runtime run registry', () => {
     for (const proc of fakeProcs) proc.resolveExit(0);
     await destroyAll;
 
-    expect(service.listTunnelRuns()).toEqual([]);
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-2', runId: 'run-2' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
     for (const proc of fakeProcs) {
       expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
     }
@@ -418,7 +414,9 @@ describe('TunnelService > exit callback', () => {
       port: 8080,
       exitCode: 2
     });
-    expect(service.getTunnelRun('run-1')).toBeNull();
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
   });
 
   it('skips the callback when the accessor returns null', async () => {
@@ -435,7 +433,9 @@ describe('TunnelService > exit callback', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(nullCalls).toBeGreaterThanOrEqual(1);
-    expect(service.getTunnelRun('run-1')).toBeNull();
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
   });
 
   it('logs callback errors without retaining the exited run', async () => {
@@ -453,6 +453,8 @@ describe('TunnelService > exit callback', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(onTunnelRunExit).toHaveBeenCalledTimes(1);
-    expect(service.getTunnelRun('run-1')).toBeNull();
+    await expect(
+      service.stopTunnelRun({ tunnelId: 'quick-1', runId: 'run-1' })
+    ).resolves.toEqual({ success: true, data: { stopped: false } });
   });
 });

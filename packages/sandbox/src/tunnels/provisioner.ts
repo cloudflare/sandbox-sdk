@@ -48,28 +48,8 @@ export interface NamedTunnelPreparationHooks {
   onDNSReady?: (dnsRecordId: string) => Promise<void>;
 }
 
-/** 8-char hex id derived from `crypto.getRandomValues`. Unique per sandbox. */
-function shortId(): string {
-  const buf = new Uint8Array(4);
-  crypto.getRandomValues(buf);
-  return Array.from(buf)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const e = error as {
-    code?: unknown;
-    errorResponse?: { code?: unknown };
-  };
-  if (e.code === code) return true;
-  if (e.errorResponse?.code === code) return true;
-  return false;
-}
-
-function isTunnelAlreadyRunningError(error: unknown): boolean {
-  return hasErrorCode(error, 'TUNNEL_ALREADY_RUNNING');
+function createQuickTunnelId(): string {
+  return `quick-${crypto.randomUUID()}`;
 }
 
 // Replays use the same request so container runId idempotency can resolve
@@ -88,33 +68,22 @@ export class TunnelProvisioner {
     port: number,
     tunnelRunId: string
   ): Promise<QuickTunnelInfo> {
-    const MAX_ID_RETRIES = 3;
-    let lastError: unknown;
-    for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
-      const id = `quick-${shortId()}`;
-      try {
-        const result = await this.#ensureTunnelRun({
-          mode: 'quick',
-          tunnelId: id,
-          runId: tunnelRunId,
-          port
-        });
-        if (result.run.mode !== 'quick') {
-          throw new Error('Container returned a non-quick tunnel run');
-        }
-        return {
-          id: result.run.tunnelId,
-          port: result.run.port,
-          url: result.run.url,
-          hostname: result.run.hostname,
-          createdAt: result.run.startedAt
-        };
-      } catch (err) {
-        if (!isTunnelAlreadyRunningError(err)) throw err;
-        lastError = err;
-      }
+    const result = await this.#ensureTunnelRun({
+      mode: 'quick',
+      tunnelId: createQuickTunnelId(),
+      runId: tunnelRunId,
+      port
+    });
+    if (result.run.mode !== 'quick') {
+      throw new Error('Container returned a non-quick tunnel run');
     }
-    throw lastError ?? new Error('Failed to mint a unique quick-tunnel id');
+    return {
+      id: result.run.tunnelId,
+      port: result.run.port,
+      url: result.run.url,
+      hostname: result.run.hostname,
+      createdAt: result.run.startedAt
+    };
   }
 
   async prepareNamedTunnel(

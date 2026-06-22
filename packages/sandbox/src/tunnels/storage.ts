@@ -101,6 +101,88 @@ export async function readCleanupMap(
   return (await storage.get<TunnelCleanupMap>(CLEANUP_STORAGE_KEY)) ?? {};
 }
 
+export interface TunnelPortState {
+  info?: TunnelInfo;
+  meta?: TunnelMetaEntry;
+  cleanup?: TunnelCleanupEntry;
+}
+
+export async function readPortState(
+  storage: TunnelsStorageTxn,
+  port: number
+): Promise<TunnelPortState> {
+  const portKey = port.toString();
+  const [map, meta, cleanup] = await Promise.all([
+    readMap(storage),
+    readMetaMap(storage),
+    readCleanupMap(storage)
+  ]);
+  return {
+    info: map[portKey],
+    meta: meta[portKey],
+    cleanup: cleanup[portKey]
+  };
+}
+
+function setOptionalMapValue<T>(
+  map: Record<string, T>,
+  key: string,
+  value: T | undefined
+): void {
+  if (value === undefined) {
+    delete map[key];
+    return;
+  }
+  map[key] = value;
+}
+
+export interface TunnelPortStatePatch {
+  info?: TunnelInfo;
+  meta?: TunnelMetaEntry;
+  cleanup?: TunnelCleanupEntry;
+}
+
+export async function updatePortState(
+  storage: TunnelsStorage,
+  port: number,
+  updater: (
+    state: Readonly<TunnelPortState>
+  ) =>
+    | TunnelPortStatePatch
+    | undefined
+    | Promise<TunnelPortStatePatch | undefined>
+): Promise<void> {
+  await storage.transaction(async (txn) => {
+    const portKey = port.toString();
+    const [map, meta, cleanup] = await Promise.all([
+      readMap(txn),
+      readMetaMap(txn),
+      readCleanupMap(txn)
+    ]);
+    const state: TunnelPortState = {
+      info: map[portKey],
+      meta: meta[portKey],
+      cleanup: cleanup[portKey]
+    };
+    const patch = await updater(state);
+
+    const writes: Array<Promise<void>> = [];
+    if (patch && 'info' in patch && patch.info !== state.info) {
+      setOptionalMapValue(map, portKey, patch.info);
+      writes.push(txn.put(STORAGE_KEY, map));
+    }
+    if (patch && 'meta' in patch && patch.meta !== state.meta) {
+      setOptionalMapValue(meta, portKey, patch.meta);
+      writes.push(txn.put(META_STORAGE_KEY, meta));
+    }
+    if (patch && 'cleanup' in patch && patch.cleanup !== state.cleanup) {
+      setOptionalMapValue(cleanup, portKey, patch.cleanup);
+      writes.push(txn.put(CLEANUP_STORAGE_KEY, cleanup));
+    }
+    await Promise.all(writes);
+  });
+}
+
 /**
  * Stable hash of `options`. Empty/undefined options collapse to the same
  * hash so `get(port)`, `get(port, {})`, and `get(port, { name: undefined })`
@@ -203,9 +285,11 @@ export function namedRespawnMeta(
   existing?: TunnelMetaEntry
 ): TunnelMetaEntry {
   return {
-    ...existing,
     optionsHash:
       existing?.optionsHash ?? computeOptionsHash({ name: info.name }),
+    dnsRecordId: existing?.dnsRecordId,
+    accountId: existing?.accountId,
+    zoneId: existing?.zoneId,
     tunnelId: info.id,
     name: info.name,
     hostname: info.hostname,
@@ -213,16 +297,26 @@ export function namedRespawnMeta(
   };
 }
 
-export async function markNamedTunnelNeedsRespawn(
-  storage: TunnelsStorageTxn,
-  portKey: string,
-  info: NamedTunnelInfo
-): Promise<void> {
-  const map = await readMap(storage);
-  delete map[portKey];
-  await storage.put(STORAGE_KEY, map);
+export function markCleanupTunnelReady(
+  entry: TunnelCleanupEntry,
+  tunnelId: string
+): TunnelCleanupEntry {
+  return {
+    ...entry,
+    tunnelId,
+    phase: 'tunnel_ready',
+    updatedAt: new Date().toISOString()
+  };
+}
 
-  const meta = await readMetaMap(storage);
-  meta[portKey] = namedRespawnMeta(info, meta[portKey]);
-  await storage.put(META_STORAGE_KEY, meta);
+export function markCleanupDNSReady(
+  entry: TunnelCleanupEntry,
+  dnsRecordId: string
+): TunnelCleanupEntry {
+  return {
+    ...entry,
+    dnsRecordId,
+    phase: 'claimed',
+    updatedAt: new Date().toISOString()
+  };
 }

@@ -185,34 +185,13 @@ export class TunnelService {
     }
   }
 
-  getTunnelRun(runId: string): TunnelRunSnapshot | null {
-    const run = this.runs.get(runId)?.run;
-    return run ? { ...run } : null;
-  }
-
-  listTunnelRuns(): TunnelRunSnapshot[] {
-    return Array.from(this.runs.values()).map((record) => ({
-      ...record.run
-    }));
-  }
-
   async stopTunnelRun(
     request: StopTunnelRunRequest
   ): Promise<ServiceResult<StopTunnelRunResult>> {
-    const record = request.runId
-      ? this.runs.get(request.runId)
-      : request.tunnelId
-        ? this.runsByTunnelId.get(request.tunnelId)
-        : undefined;
+    const record = this.runs.get(request.runId);
 
-    if (!record) {
-      return serviceSuccess({ matched: false, stopped: false });
-    }
-    if (request.tunnelId && record.run.tunnelId !== request.tunnelId) {
-      return serviceSuccess({ matched: false, stopped: false });
-    }
-    if (request.runId && record.run.runId !== request.runId) {
-      return serviceSuccess({ matched: false, stopped: false });
+    if (!record || record.run.tunnelId !== request.tunnelId) {
+      return serviceSuccess({ stopped: false });
     }
 
     try {
@@ -225,7 +204,7 @@ export class TunnelService {
       runId: record.run.runId,
       port: record.run.port
     });
-    return serviceSuccess({ matched: true, stopped: true });
+    return serviceSuccess({ stopped: true });
   }
 
   /** Stop every runtime-local tunnel run. Called on container shutdown. */
