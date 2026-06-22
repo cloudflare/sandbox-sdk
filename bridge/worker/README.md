@@ -89,8 +89,8 @@ This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. E
 | --------------------------- | ------------------------------------- | ------------------------------------------------ |
 | _(create session)_          | `POST /v1/sandbox`                    | Generate a new sandbox ID                        |
 | `_exec_internal()`          | `POST /v1/sandbox/:id/exec`           | Run a command; returns stdout/stderr/exit_code   |
-| `read()`                    | `POST /v1/sandbox/:id/read`           | Read a file from the workspace                   |
-| `write()`                   | `POST /v1/sandbox/:id/write`          | Write a file into the workspace                  |
+| `read()`                    | `GET /v1/sandbox/:id/file/*`          | Read a file from the workspace                   |
+| `write()`                   | `PUT /v1/sandbox/:id/file/*`          | Write a file into the workspace                  |
 | `running()`                 | `GET /v1/sandbox/:id/running`         | Check sandbox liveness                           |
 | `resolve_exposed_port()`    | `POST /v1/sandbox/:id/tunnel/:port`   | Create or reuse a tunnel for a port              |
 | _(delete tunnel)_           | `DELETE /v1/sandbox/:id/tunnel/:port` | Delete the tunnel for a port                     |
@@ -147,28 +147,27 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
 
 ---
 
-#### `POST /v1/sandbox/:id/read`
+#### `GET /v1/sandbox/:id/file/:path`
 
-Read a file from the sandbox filesystem. Returns raw bytes (`application/octet-stream`).
+Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` as an absolute path without the leading slash (e.g. `workspace/main.py` for `/workspace/main.py`). Must resolve within `/workspace`. Returns raw bytes (`application/octet-stream`).
+
 
 ```sh
-curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/read \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/workspace/main.py"}'
+curl -X GET http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
 ---
 
-#### `POST /v1/sandbox/:id/write`
+#### `PUT /v1/sandbox/:id/file/:path`
 
-Write a file into the sandbox filesystem.
+Write a file into the sandbox filesystem. The file path is given in the URL after `/file/`, and the file contents are sent as the raw request body.
 
 ```sh
-curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/write \
+curl -X PUT http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -F "path=/workspace/main.py" \
-  -F "file=@main.py"
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @main.py
 ```
 
 ---
@@ -506,7 +505,7 @@ wrangler secret put SANDBOX_API_KEY
 
 ### Workspace containment
 
-All file operations (`/read`, `/write`) and the `cwd` parameter on `/exec` are validated to resolve within `/workspace`. Paths are POSIX-normalised (`.` and `..` segments resolved) before the prefix check, preventing traversal attacks such as `/workspace/../../etc/passwd`.
+All file operations (`/file/*`) and the `cwd` parameter on `/exec` are validated to resolve within `/workspace`. Paths are POSIX-normalised (`.` and `..` segments resolved) before the prefix check, preventing traversal attacks such as `/workspace/../../etc/passwd`.
 
 The `/persist` and `/hydrate` endpoints always operate on `/workspace` — there is no configurable root parameter. Exclude entries on `/persist` are validated against path traversal and shell-quoted before interpolation into commands.
 
@@ -523,6 +522,6 @@ The container image creates a dedicated `sandbox` user. `/workspace` is owned by
 ### Known limitations
 
 - **Exec runs arbitrary commands.** The `/exec` endpoint does not restrict which programs can be run. The non-root user and filesystem permissions are the primary constraints. Tools like `curl` remain available and could be used to exfiltrate data from the workspace or probe the network.
-- **Symlink escape.** Path validation happens at the HTTP layer by normalising path strings. It cannot resolve symlinks, which exist only inside the container. A caller could use `/exec` to create a symlink from `/workspace/link` to a file outside the workspace, then `/read` that symlink. The non-root user mitigates the impact (sensitive root-owned files are inaccessible), but world-readable files like `/etc/passwd` could still be read this way.
+- **Symlink escape.** Path validation happens at the HTTP layer by normalising path strings. It cannot resolve symlinks, which exist only inside the container. A caller could use `/exec` to create a symlink from `/workspace/link` to a file outside the workspace, then read that symlink via `/file/*`. The non-root user mitigates the impact (sensitive root-owned files are inaccessible), but world-readable files like `/etc/passwd` could still be read this way.
 - **`USER` directive scope.** The `USER sandbox` directive in the Dockerfile sets the default user for the container entrypoint. Whether `sandbox.exec()` inherits this user depends on the Cloudflare Sandbox runtime behaviour. Verify after deployment that commands run as `sandbox` (e.g. `exec ["whoami"]`).
 - **No network restrictions.** There are no egress network controls within the container. If your threat model requires it, consider restricting outbound access at the container or platform level.

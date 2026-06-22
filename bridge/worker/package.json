@@ -17,13 +17,13 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.7",
     "@cloudflare/sandbox": "*",
-    "@cloudflare/vitest-pool-workers": "^0.16.11",
+    "@cloudflare/vitest-pool-workers": "^0.16.17",
     "@cloudflare/workers-types": "^4.20251126.0",
     "@types/node": "^24.10.1",
-    "hono": "^4.12.18",
+    "hono": "^4.12.26",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.76.0"
+    "wrangler": "^4.102.0"
   },
   "cloudflare": {
     "bindings": {

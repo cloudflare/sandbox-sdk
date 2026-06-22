@@ -19,11 +19,11 @@
     "isbot": "^5.1.31",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router": "^7.15.0"
+    "react-router": "^7.15.1"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
-    "@cloudflare/vite-plugin": "^1.37.2",
+    "@cloudflare/vite-plugin": "^1.42.0",
     "@react-router/dev": "^7.15.0",
     "@tailwindcss/vite": "^4.1.17",
     "@types/node": "^24.10.1",
@@ -31,8 +31,8 @@
     "@types/react-dom": "^19.2.3",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
-    "vite": "^7.3.2",
+    "vite": "^7.3.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "wrangler": "^4.76.0"
+    "wrangler": "^4.102.0"
   }
 }

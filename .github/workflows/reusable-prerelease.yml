@@ -225,6 +225,8 @@ jobs:
             --version "${{ needs.version.outputs.version }}" \
             "${alias_args[@]}" \
             --docker-hub
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Publish Docker images to CF Registry Library
         continue-on-error: true
@@ -239,6 +241,8 @@ jobs:
             --version "${{ needs.version.outputs.version }}" \
             "${alias_args[@]}" \
             --cf-library
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Warn if library publish failed
         if: steps.library-publish.outcome == 'failure'

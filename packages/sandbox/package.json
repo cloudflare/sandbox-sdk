@@ -11,14 +11,14 @@
     "@cloudflare/containers": "^0.3.5",
     "aws4fetch": "^1.0.20",
     "capnweb": "^0.8.0",
-    "hono": "^4.12.18"
+    "hono": "^4.12.26"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
     "@opencode-ai/sdk": "^1.1.40",
     "@repo/shared": "*",
     "@xterm/xterm": "^6.0.0",
-    "wrangler": "^4.76.0"
+    "wrangler": "^4.102.0"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
