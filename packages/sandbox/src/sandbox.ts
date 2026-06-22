@@ -135,14 +135,14 @@ import type {
   R2BindingMountInfo,
   S3CredentialProxyParams
 } from './storage-mount/types';
-import { resolveAccountId, resolveZoneId } from './tunnels/credentials';
-import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
+import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
 import {
-  createTunnelsHandler,
-  pruneTunnelsForRestart,
+  createTunnelsHandle,
   type TunnelExitHandler,
+  type TunnelsHandle,
   type TunnelsHandler
-} from './tunnels/tunnels-handler';
+} from './tunnels/rpc-target';
+import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import { SDK_VERSION } from './version';
 
 type ExecuteResponse = Awaited<
@@ -935,19 +935,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: ContainerControlClient;
 
   private sandboxName: string | null = null;
-  // Tunnels namespace handler. Lazily constructed on first access via the
-  // `tunnels` getter; holds an in-memory map of tunnels created through
-  // this Sandbox instance. The sibling `tunnelExitHandler` is the
-  // control-plane exit hook invoked by the capnweb session's
-  // SandboxControlCallback when the container reports cloudflared has
-  // died; both fields are reset together when tunnel state is rebound.
+  // Tunnels subsystem handle. Lazily constructed on first access via the
+  // `tunnels` getter or when sandbox lifecycle hooks need tunnel cleanup.
+  // The public `tunnelsHandler` stays narrow while `tunnelServiceHandle`
+  // carries internal runtime/destroy callbacks.
+  private tunnelServiceHandle: TunnelsHandle | null = null;
   private tunnelsHandler: TunnelsHandler | null = null;
   private tunnelExitHandler: TunnelExitHandler | null = null;
-  // destroyAll iterates the stored tunnel map and tears each one down on
-  // sandbox.destroy(). Stored separately so the public `tunnels` getter
-  // stays narrow (users don't see destroyAll).
-  private destroyAllTunnels: (() => Promise<void>) | null = null;
-  private resumeTunnelCleanup: (() => Promise<void>) | null = null;
   // capnweb localMain exposed to the container side of the RPC
   // session. Constructed once in the constructor (the lazy accessor
   // keeps it pointing at the current `tunnelExitHandler`), so the
@@ -975,22 +969,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private r2AccessKeyId: string | null = null;
   private r2SecretAccessKey: string | null = null;
-
-  /**
-   * Lazily-resolved Cloudflare account id for named-tunnel provisioning.
-   * Resolved on first access via `tunnels/credentials.ts` and cached for
-   * the lifetime of this DO instance. See the credentials helper for
-   * the precedence chain.
-   */
-  private tunnelAccountIdPromise: Promise<string> | null = null;
-
-  /**
-   * Lazily-resolved Cloudflare zone id for named-tunnel provisioning.
-   * Falls back to the single zone the token can see under the resolved
-   * account id when `CLOUDFLARE_ZONE_ID` is not set. Cached for the
-   * lifetime of this DO instance.
-   */
-  private tunnelZoneIdPromise: Promise<string> | null = null;
+  private namedTunnelConfigResolver: NamedTunnelConfigResolver;
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -1028,8 +1007,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Dispatch method for tunnel operations.
    * Called by the client-side proxy created in getSandbox() to provide
-   * the `sandbox.tunnels` API without relying on RPC pipelining
-   * through property getters which is broken when using vite-plugin.
+   * the `sandbox.tunnels` API without relying on RPC pipelining through
+   * property getters, which vite-plugin does not currently support. This
+   * local method dispatch uses standard function application, so new
+   * Workers RPC pipelining traits on `TunnelsRpcTarget` also need an
+   * explicit path here before the proxy can expose them.
    */
   async callTunnels(method: string, args: unknown[]): Promise<unknown> {
     if (!['get', 'list', 'destroy'].includes(method)) {
@@ -1153,6 +1135,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.ctx.container?.running === true
     );
     this.currentLifetime = new CurrentSandboxLifetime(this.ctx.storage);
+    this.namedTunnelConfigResolver = new NamedTunnelConfigResolver({
+      getEnv: () => this.env
+    });
     this.backupService = new BackupService({
       ctx: this.ctx,
       getEnv: () => this.env,
@@ -2577,17 +2562,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // hold records from a prior lifetime under the same DO id.
       try {
         this.ensureTunnelsBuilt();
-        await this.destroyAllTunnels?.();
+        await this.tunnelServiceHandle?.destroyAll();
       } catch (error) {
         this.logger.warn('Failed to tear down tunnels during destroy()', {
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      // destroyAll clears storage per port, but defensively wipe both
-      // keys here too so any leftover record from a partial failure
-      // doesn't ghost-revive on the next sandbox under the same DO id.
-      await this.ctx.storage.delete('tunnels');
-      await this.ctx.storage.delete('tunnels:meta');
+      await this.tunnelServiceHandle?.clearDurableStateAfterDestroy();
 
       // Disconnect the control client after all cleanup commands complete.
       this.client.disconnect();
@@ -2622,19 +2603,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     });
 
-    // Reconcile tunnel storage with the fresh container. Quick tunnels
-    // are unrecoverable (their `*.trycloudflare.com` URLs died with the
-    // `cloudflared` process); named tunnels survive on Cloudflare's
-    // side and can be respawned by reusing the existing tunnel + DNS
-    // record. `pruneTunnelsForRestart` drops quick entries and marks
-    // named entries `needsRespawn`, preserving the metadata the SDK
-    // needs to clean those up on `destroy()`. Done inside onStart's
-    // blockConcurrencyWhile gate so any get() that arrived during the
-    // startup window sees the reconciled cache by the time it runs.
+    // Reconcile tunnel storage with the fresh container inside
+    // onStart's blockConcurrencyWhile gate so any get() that arrived
+    // during startup sees tunnel state for the current runtime.
     try {
-      await pruneTunnelsForRestart(this.ctx.storage);
       this.ensureTunnelsBuilt();
-      await this.resumeTunnelCleanup?.();
+      await this.tunnelServiceHandle?.onRuntimeStart();
     } catch (error) {
       this.logger.error(
         'Failed to reconcile tunnel storage after container start',
@@ -2772,7 +2746,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.clearActivePreviewPorts();
 
     try {
-      await pruneTunnelsForRestart(this.ctx.storage);
+      this.ensureTunnelsBuilt();
+      await this.tunnelServiceHandle?.onRuntimeStop();
     } catch (error) {
       this.logger.error(
         'Failed to reconcile tunnel storage after container stop',
@@ -4982,8 +4957,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * - `tunnels.get(port)` — idempotent. Returns the cached tunnel for
    *   `port` if one exists in DO storage, otherwise spawns a fresh
    *   cloudflared process and persists the record.
-   * - `tunnels.list()` — records currently known to this sandbox, from
-   *   DO storage.
+   * - `tunnels.list()` — returns tunnels currently usable through this
+   *   sandbox runtime.
    * - `tunnels.destroy(portOrInfo)` — tear down by port number or by
    *   the record returned from `get()`.
    *
@@ -5000,93 +4975,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Lazily construct both the public tunnels handler and its sibling
-   * exit-handler callback. Called from the `tunnels` getter on first
-   * access.
+   * Lazily construct the tunnel subsystem handle. Called from the
+   * `tunnels` getter on first access and from sandbox lifecycle hooks
+   * when tunnel reconciliation or cleanup is needed.
    */
   private ensureTunnelsBuilt(): void {
     if (this.tunnelsHandler) return;
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: this.client,
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime,
-      getNamedTunnelConfig: async () => {
-        const envObj = this.env as Record<string, unknown>;
-        const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');
-        if (!token) {
-          throw new Error(
-            'Named tunnels require CLOUDFLARE_API_TOKEN. ' +
-              'Set it as a secret in your wrangler.jsonc.'
-          );
-        }
-        // Account id falls back to the token's single account via
-        // `/user/tokens/verify`; zone id falls back to the token's single
-        // zone in that account via `GET /zones`. Both throw clearly on
-        // ambiguity so callers know to set the env var explicitly.
-        const accountId = await this.getTunnelAccountId();
-        const zoneId = await this.getTunnelZoneId(token, accountId);
-        return { token, accountId, zoneId };
-      }
+      getNamedTunnelConfig: () => this.namedTunnelConfigResolver.getConfig()
     });
+    this.tunnelServiceHandle = built;
     this.tunnelsHandler = built.tunnels;
     this.tunnelExitHandler = built.handleTunnelExit;
-    this.destroyAllTunnels = built.destroyAll;
-    this.resumeTunnelCleanup = built.resumeCleanup;
-  }
-
-  /**
-   * Resolve the Cloudflare account id used for named-tunnel provisioning.
-   *
-   * Memoised for the lifetime of this DO instance. The first call may hit
-   * `GET /user/tokens/verify` to derive the account id from the configured
-   * `CLOUDFLARE_API_TOKEN`; subsequent calls return the cached promise.
-   *
-   * Only successful resolutions are cached: a rejected lookup clears the
-   * slot so the next caller retries. Otherwise a transient failure on
-   * first use would permanently poison every later named-tunnel `get()`
-   * on this DO instance.
-   */
-  private getTunnelAccountId(): Promise<string> {
-    if (!this.tunnelAccountIdPromise) {
-      const pending = resolveAccountId(this.env as Record<string, unknown>, {
-        overrideKey: 'CLOUDFLARE_TUNNEL_ACCOUNT_ID'
-      });
-      this.tunnelAccountIdPromise = pending;
-      pending.catch(() => {
-        if (this.tunnelAccountIdPromise === pending) {
-          this.tunnelAccountIdPromise = null;
-        }
-      });
-    }
-    return this.tunnelAccountIdPromise;
-  }
-
-  /**
-   * Resolve the Cloudflare zone id used for named-tunnel provisioning.
-   *
-   * Memoised for the lifetime of this DO instance. Falls back to the
-   * single zone the token can see under `accountId` via `GET /zones`
-   * when `CLOUDFLARE_ZONE_ID` is not set. Failed lookups clear the cache
-   * so the next caller retries — see `getTunnelAccountId` for the
-   * rationale.
-   */
-  private getTunnelZoneId(token: string, accountId: string): Promise<string> {
-    if (!this.tunnelZoneIdPromise) {
-      const pending = resolveZoneId(this.env as Record<string, unknown>, {
-        token,
-        accountId
-      });
-      this.tunnelZoneIdPromise = pending;
-      pending.catch(() => {
-        if (this.tunnelZoneIdPromise === pending) {
-          this.tunnelZoneIdPromise = null;
-        }
-      });
-    }
-    return this.tunnelZoneIdPromise;
   }
 
   /**

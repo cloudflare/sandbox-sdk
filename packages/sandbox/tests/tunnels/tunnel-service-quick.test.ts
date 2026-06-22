@@ -1,35 +1,29 @@
 /**
- * SDK tunnels handler unit tests.
+ * SDK tunnel service unit tests.
  *
  * Exercises validation, id minting, DO-storage caching, inflight
  * coalescing, and log-event paths against a mocked RPC client and a
  * lightweight in-memory `ctx.storage` shim.
  */
 
-import type { Logger, TunnelInfo } from '@repo/shared';
+import type { TunnelInfo } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
-import { ErrorCode } from '../src/errors';
-import { SandboxLifetimeChangedError } from '../src/sandbox-lifetime';
-import { SandboxSecurityError } from '../src/security';
+import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
+import { ErrorCode } from '../../src/errors';
+import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
+import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandler,
+  createTunnelsHandle,
   pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
-} from '../src/tunnels/tunnels-handler';
-
-function makeLogger(): Logger {
-  const log: Logger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    child: vi.fn(() => log)
-  } as unknown as Logger;
-  return log;
-}
+} from '../../src/tunnels/rpc-target';
+import {
+  makeFences,
+  makeLogger,
+  makeStorage as makeRawStorage
+} from './helpers';
 
 type RunQuickTunnelMock = Mock<
   (id: string, port: number) => Promise<TunnelInfo>
@@ -62,39 +56,8 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
   };
 }
 
-/**
- * Minimal in-memory shim covering only the storage subset the handler
- * uses. `transaction()` serializes closures via a chained promise so
- * concurrent read-modify-write callers observe a consistent map —
- * mirrors the real DO's optimistic-concurrency contract from the
- * caller's perspective.
- */
 function makeStorage(initial?: Record<string, TunnelInfo>): TunnelsStorage {
-  // Real DO storage is key/value; older tests only touched one key
-  // ('tunnels') so the shim used a single variable. Named tunnels add a
-  // sibling 'tunnels:meta' key, so the shim is now a true keyed map. The
-  // legacy `initial` argument continues to seed only the 'tunnels' key.
-  const data = new Map<string, unknown>();
-  if (initial) data.set('tunnels', { ...initial });
-  let txQueue: Promise<unknown> = Promise.resolve();
-  const storage = {
-    get: vi.fn(async (key: string) => data.get(key)),
-    put: vi.fn(async (key: string, next: unknown) => {
-      // Deep-clone-ish (JSON) so callers can't observe mutations across
-      // writes. Matches the structured-clone semantics of real DO storage.
-      data.set(key, JSON.parse(JSON.stringify(next)));
-    }),
-    delete: vi.fn(async (key: string) => data.delete(key)),
-    transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
-      const next = txQueue.then(() => closure(storage));
-      // Swallow rejection on the chain so a failed closure doesn't
-      // poison subsequent transactions; the original promise still
-      // rejects to the caller.
-      txQueue = next.catch(() => undefined);
-      return next;
-    })
-  } as unknown as TunnelsStorage;
-  return storage;
+  return makeRawStorage(initial ? { tunnels: { ...initial } } : {});
 }
 
 function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
@@ -108,40 +71,14 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   };
 }
 
-type TunnelsHost = Parameters<typeof createTunnelsHandler>[0];
-
-/**
- * Pass-through runtime/lifetime fences. Both default to a single stable
- * identity that always asserts active; tests override only the hook whose
- * behavior they exercise.
- */
-function makeFences(
-  overrides: {
-    currentRuntime?: Record<string, unknown>;
-    currentLifetime?: Record<string, unknown>;
-  } = {}
-): Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'> {
-  return {
-    currentRuntime: {
-      get: vi.fn(async () => ({ id: 'runtime-1' })),
-      markStarted: vi.fn(async () => ({ id: 'runtime-1' })),
-      assertActive: vi.fn(async () => {}),
-      ...overrides.currentRuntime
-    },
-    currentLifetime: {
-      getOrCreate: vi.fn(async () => ({ id: 'lifetime-1' })),
-      assertCurrent: vi.fn(async () => {}),
-      ...overrides.currentLifetime
-    }
-  } as unknown as Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
-}
+type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
 
 function makeHandler(extra: Partial<TunnelsHost> = {}) {
   const { client } = makeClient();
   const { storage: providedStorage, ...rest } = extra;
   const storage =
     (providedStorage as TunnelsStorage | undefined) ?? makeStorage();
-  const { tunnels, handleTunnelExit } = createTunnelsHandler({
+  const { tunnels, handleTunnelExit } = createTunnelsHandle({
     client: client as unknown as TunnelsHost['client'],
     storage,
     logger: makeLogger(),
@@ -150,7 +87,7 @@ function makeHandler(extra: Partial<TunnelsHost> = {}) {
   return { client, storage, handler: tunnels, tunnels, handleTunnelExit };
 }
 
-describe('tunnels handler > get', () => {
+describe('tunnel service > get', () => {
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -238,9 +175,9 @@ describe('tunnels handler > get', () => {
     const record = makeRecord({ id: 'quick-cached0000cached', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -382,9 +319,9 @@ describe('tunnels handler > get', () => {
     const record = makeRecord({ id: 'quick-stale00000000stale', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -504,14 +441,14 @@ describe('tunnels handler > get', () => {
   });
 });
 
-describe('tunnels handler > destroy', () => {
+describe('tunnel service > destroy', () => {
   it('clears storage and calls destroyTunnel(id) for a known port', async () => {
     const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -538,9 +475,9 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-tx0000tx0000tx', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -561,9 +498,9 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-info0000info00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -591,9 +528,9 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-gone0000gone00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -626,9 +563,9 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-real0000real00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -646,9 +583,9 @@ describe('tunnels handler > destroy', () => {
     const record = makeRecord({ id: 'quick-err000000err000', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -664,7 +601,7 @@ describe('tunnels handler > destroy', () => {
   });
 });
 
-describe('tunnels handler > list', () => {
+describe('tunnel service > list', () => {
   it('returns the values from storage (no container round-trip)', async () => {
     const a = makeRecord({ id: 'quick-aaaa1111aaaa1111', port: 8080 });
     const b = makeRecord({
@@ -675,9 +612,9 @@ describe('tunnels handler > list', () => {
     });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': a, '8081': b });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -722,7 +659,7 @@ describe('tunnels handler > list', () => {
   });
 });
 
-describe('tunnels handler > per-port serialization', () => {
+describe('tunnel service > per-port serialization', () => {
   it('queues destroy(port) behind an in-flight get(port) so the destroy sees the new record', async () => {
     const { client, storage, handler } = makeHandler();
     let resolveSpawn: (info: TunnelInfo) => void = () => {};
@@ -774,9 +711,9 @@ describe('tunnels handler > per-port serialization', () => {
     const record = makeRecord({ id: 'quick-pre000pre000pre0', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels: handler } = createTunnelsHandler({
+    const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -817,14 +754,14 @@ describe('tunnels handler > per-port serialization', () => {
   });
 });
 
-describe('tunnels handler > handleTunnelExit', () => {
+describe('tunnel service > handleTunnelExit', () => {
   it('clears the matching port from storage when the stored id matches', async () => {
     const record = makeRecord({ id: 'quick-exit0000exit0000', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
-    const { tunnels, handleTunnelExit } = createTunnelsHandler({
+    const { tunnels, handleTunnelExit } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -869,9 +806,9 @@ describe('tunnels handler > handleTunnelExit', () => {
         zoneId: 'zone-A'
       }
     });
-    const { handleTunnelExit } = createTunnelsHandler({
+    const { handleTunnelExit } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -928,9 +865,9 @@ describe('tunnels handler > handleTunnelExit', () => {
     const newer = makeRecord({ id: 'quick-newer000newer00', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': newer });
-    const { handleTunnelExit } = createTunnelsHandler({
+    const { handleTunnelExit } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -947,9 +884,9 @@ describe('tunnels handler > handleTunnelExit', () => {
   it('is a no-op when storage is empty (already destroyed)', async () => {
     const { client } = makeClient();
     const storage = makeStorage();
-    const { handleTunnelExit } = createTunnelsHandler({
+    const { handleTunnelExit } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger()
@@ -1019,9 +956,9 @@ describe('tunnels handler > handleTunnelExit', () => {
       transaction: vi.fn().mockRejectedValue(new Error('boom'))
     } as unknown as TunnelsStorage;
     const { client } = makeClient();
-    const { handleTunnelExit } = createTunnelsHandler({
+    const { handleTunnelExit } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage: failingStorage,
       logger

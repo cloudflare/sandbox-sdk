@@ -7,7 +7,7 @@
 
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { RpcTarget } from 'capnweb';
-import type { TunnelExitHandler } from './tunnels-handler';
+import type { TunnelExitHandler } from './rpc-target';
 
 export class SandboxControlCallbackImpl
   extends RpcTarget

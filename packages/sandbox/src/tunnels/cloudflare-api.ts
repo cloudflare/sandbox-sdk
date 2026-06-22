@@ -52,7 +52,7 @@ interface RequestOptions {
   /**
    * Per-request timeout in milliseconds. Defaults to `DEFAULT_TIMEOUT_MS`.
    * Without a timeout a hung Cloudflare call wedges the per-port lock in
-   * `tunnels-handler.ts` indefinitely, which then blocks every subsequent
+   * `rpc-target.ts` indefinitely, which then blocks every subsequent
    * `get(port)` / `destroy(port)` on that port. The shared
    * `#zoneNamePromise` makes the impact span every port for named
    * tunnels.

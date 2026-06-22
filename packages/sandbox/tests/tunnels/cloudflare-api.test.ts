@@ -593,9 +593,8 @@ describe('cloudflare-api > request timeout', () => {
   it('translates a TimeoutError from fetch into a labelled timeout error', async () => {
     // The wrapper attaches `signal: AbortSignal.timeout(...)` to every
     // request and translates the resulting `TimeoutError` into a clear
-    // message. Simulate that by rejecting the fetch synchronously with
-    // a TimeoutError-shaped error so the assertion runs instantly
-    // instead of waiting on the real 10s timer.
+    // message. A synchronous TimeoutError-shaped rejection keeps the
+    // assertion focused on translation behavior without a real timer.
     const fetcher = vi.fn<typeof fetch>(async () => {
       const err = new Error('signal timed out');
       err.name = 'TimeoutError';

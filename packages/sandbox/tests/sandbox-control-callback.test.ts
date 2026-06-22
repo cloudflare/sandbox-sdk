@@ -4,13 +4,13 @@
  * The class is the capnweb-facing RpcTarget the DO exposes via
  * `localMain`. It does almost nothing on its own — just routes
  * `onTunnelExit` through to the `TunnelExitHandler` it was given.
- * Most of the interesting behaviour lives in `tunnels-handler.ts`.
+ * TunnelService owns the exit reconciliation behavior.
  */
 
 import type { Logger } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
+import type { TunnelExitHandler } from '../src/tunnels/rpc-target';
 import { SandboxControlCallbackImpl } from '../src/tunnels/sandbox-control-callback';
-import type { TunnelExitHandler } from '../src/tunnels/tunnels-handler';
 
 function makeLogger(): Logger {
   const log: Logger = {
@@ -47,7 +47,7 @@ describe('SandboxControlCallbackImpl', () => {
     const cb = new SandboxControlCallbackImpl(() => null, makeLogger());
 
     // Must not throw — the accessor returning null models a callback
-    // arriving before the lazy getter has built the tunnels handler.
+    // arriving before the lazy getter has built the tunnel subsystem.
     await expect(cb.onTunnelExit('quick-c', 8082, 0)).resolves.toBeUndefined();
   });
 

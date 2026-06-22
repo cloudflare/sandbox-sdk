@@ -1,7 +1,7 @@
 /**
- * Named-tunnel behavior tests for the SDK tunnels handler.
+ * Named-tunnel behavior tests for the SDK tunnel service.
  *
- * Sibling to `tunnels-handler.test.ts` (which covers the quick-tunnel
+ * Sibling to `tunnel-service-quick.test.ts` (which covers the quick-tunnel
  * surface). This file exercises:
  *   - the `get(port, { name })` flow end-to-end (tag/DNS/run/store)
  *   - options-hash idempotency and the divergence guard
@@ -14,27 +14,18 @@
  * storage shim is the keyed one defined here.
  */
 
-import type { Logger, TunnelInfo } from '@repo/shared';
+import type { TunnelInfo } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
-import { ErrorCode } from '../src/errors';
-import { SandboxSecurityError } from '../src/security';
+import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
+import { ErrorCode } from '../../src/errors';
+import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
+import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandler,
+  createTunnelsHandle,
   type TunnelsStorage
-} from '../src/tunnels/tunnels-handler';
-
-function makeLogger(): Logger {
-  const log: Logger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    child: vi.fn(() => log)
-  } as unknown as Logger;
-  return log;
-}
+} from '../../src/tunnels/rpc-target';
+import { makeFences, makeLogger, makeStorage } from './helpers';
 
 type RunQuickTunnelMock = Mock<
   (id: string, port: number) => Promise<TunnelInfo>
@@ -73,24 +64,6 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
       }
     }
   };
-}
-
-function makeStorage(): TunnelsStorage {
-  const data = new Map<string, unknown>();
-  let txQueue: Promise<unknown> = Promise.resolve();
-  const storage = {
-    get: vi.fn(async (key: string) => data.get(key)),
-    put: vi.fn(async (key: string, next: unknown) => {
-      data.set(key, JSON.parse(JSON.stringify(next)));
-    }),
-    delete: vi.fn(async (key: string) => data.delete(key)),
-    transaction: vi.fn((closure: (txn: unknown) => Promise<unknown>) => {
-      const next = txQueue.then(() => closure(storage));
-      txQueue = next.catch(() => undefined);
-      return next;
-    })
-  } as unknown as TunnelsStorage;
-  return storage;
 }
 
 interface FakeCloudflare {
@@ -206,7 +179,7 @@ function makeFakeCloudflare(opts: {
   return { fetcher, routes };
 }
 
-type TunnelsHost = Parameters<typeof createTunnelsHandler>[0];
+type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
 
 /** Tunnel UUID the container returns from `runNamedTunnel` in these tests. */
 const NAMED_TUNNEL_ID = '11111111-2222-3333-4444-555555555555';
@@ -223,32 +196,6 @@ function mockNamedSpawn(
     hostname: '',
     createdAt: '2026-05-13T00:00:00.000Z'
   });
-}
-
-/**
- * Pass-through runtime/lifetime fences. Both default to a single stable
- * identity that always asserts active; tests override only the hook whose
- * behavior they exercise.
- */
-function makeFences(
-  overrides: {
-    currentRuntime?: Record<string, unknown>;
-    currentLifetime?: Record<string, unknown>;
-  } = {}
-): Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'> {
-  return {
-    currentRuntime: {
-      get: vi.fn(async () => ({ id: 'runtime-1' })),
-      markStarted: vi.fn(async () => ({ id: 'runtime-1' })),
-      assertActive: vi.fn(async () => {}),
-      ...overrides.currentRuntime
-    },
-    currentLifetime: {
-      getOrCreate: vi.fn(async () => ({ id: 'lifetime-1' })),
-      assertCurrent: vi.fn(async () => {}),
-      ...overrides.currentLifetime
-    }
-  } as unknown as Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
 }
 
 function makeHandler(opts?: {
@@ -270,7 +217,7 @@ function makeHandler(opts?: {
     accountId: opts?.config?.accountId ?? 'ACCT',
     zoneId: opts?.config?.zoneId ?? 'zone-id'
   };
-  const built = createTunnelsHandler({
+  const built = createTunnelsHandle({
     client: client as unknown as TunnelsHost['client'],
     storage,
     logger,
@@ -294,7 +241,7 @@ function makeHandler(opts?: {
   };
 }
 
-describe('tunnels handler > get(port, { name }) — named tunnel happy path', () => {
+describe('tunnel service > get(port, { name }) — named tunnel happy path', () => {
   it('provisions a fresh named tunnel end-to-end', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -339,7 +286,7 @@ describe('tunnels handler > get(port, { name }) — named tunnel happy path', ()
         currentRuntime: {
           assertActive: vi.fn(async () => {
             assertCalls += 1;
-            if (assertCalls % 2 === 0) {
+            if (assertCalls % 3 === 0) {
               throw new RuntimeIdentityInactiveError();
             }
           })
@@ -360,6 +307,39 @@ describe('tunnels handler > get(port, { name }) — named tunnel happy path', ()
         maxRecoveryAttempts: 2
       })
     });
+    expect(await storage.get('tunnels')).toBeUndefined();
+    expect(await storage.get('tunnels:meta')).toBeUndefined();
+  });
+
+  it('does not spawn or commit when lifetime changes during Cloudflare setup', async () => {
+    const cf = makeFakeCloudflare({});
+    let assertCalls = 0;
+    const { client, storage, tunnels } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch,
+      fences: makeFences({
+        currentLifetime: {
+          assertCurrent: vi.fn(async () => {
+            assertCalls += 1;
+            if (assertCalls === 1) {
+              throw new SandboxLifetimeChangedError();
+            }
+          })
+        }
+      })
+    });
+    mockNamedSpawn(client);
+
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: expect.objectContaining({
+        reason: 'sandbox_lifetime_changed',
+        operation: 'tunnel.get',
+        retryable: false,
+        admitted: 'unknown'
+      })
+    });
+    expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
     expect(await storage.get('tunnels')).toBeUndefined();
     expect(await storage.get('tunnels:meta')).toBeUndefined();
   });
@@ -454,7 +434,7 @@ describe('tunnels handler > get(port, { name }) — named tunnel happy path', ()
   });
 });
 
-describe('tunnels handler > get(port, options) — idempotency / hash guard', () => {
+describe('tunnel service > get(port, options) — idempotency / hash guard', () => {
   it('returns the cached record on identical second call (no work performed)', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -554,9 +534,9 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
       }
       throw new Error(`Unhandled ${method} ${url}`);
     });
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger,
@@ -609,10 +589,9 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
 
   it('treats legacy unversioned hashes as equivalent to v1: hashes on cache hit', async () => {
     // Forward compat: an existing deploy may have stored optionsHash
-    // 'quick' or 'named:foo' (no version prefix). After the format
-    // bumps to 'v1:quick' / 'v1:named:foo', the cache-hit comparison
-    // must treat the two as the same to avoid flipping every live
-    // tunnel into the "different options" error path on upgrade.
+    // 'quick' or 'named:foo' (no version prefix). The cache-hit
+    // comparison treats those as equivalent to the v1-prefixed form so
+    // live tunnels keep matching across the format bump.
     const cf = makeFakeCloudflare({});
     const { tunnels, client, storage } = makeHandler({
       sandboxId: 'sb1',
@@ -646,7 +625,7 @@ describe('tunnels handler > get(port, options) — idempotency / hash guard', ()
   });
 });
 
-describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
+describe('tunnel service > get(port, { name }) — retry / reuse', () => {
   it('reuses a tunnel left behind from a previous failed attempt', async () => {
     const cf = makeFakeCloudflare({
       existingTunnels: [
@@ -783,7 +762,7 @@ describe('tunnels handler > get(port, { name }) — retry / reuse', () => {
   });
 });
 
-describe('tunnels handler > restart respawn via needsRespawn flag', () => {
+describe('tunnel service > restart respawn via needsRespawn flag', () => {
   it('respawns a named cache hit owned by an old runtime', async () => {
     const cf = makeFakeCloudflare({
       existingTunnels: [
@@ -826,9 +805,9 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
         sandboxLifetimeID: 'lifetime-1'
       }
     });
-    const { tunnels } = createTunnelsHandler({
+    const { tunnels } = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger(),
@@ -848,7 +827,7 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
         getOrCreate: vi.fn(async () => ({ id: 'lifetime-1' })),
         assertCurrent: vi.fn(async () => {})
       }
-    } as unknown as Parameters<typeof createTunnelsHandler>[0]);
+    } as unknown as Parameters<typeof createTunnelsHandle>[0]);
     client.tunnels.runNamedTunnel.mockResolvedValue({
       id: 'kept-tun-id',
       port: 8080,
@@ -968,7 +947,7 @@ describe('tunnels handler > restart respawn via needsRespawn flag', () => {
   });
 });
 
-describe('tunnels handler > get(port, { name }) — synchronous validation', () => {
+describe('tunnel service > get(port, { name }) — synchronous validation', () => {
   it('rejects invalid name format without any work', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -1007,7 +986,7 @@ describe('tunnels handler > get(port, { name }) — synchronous validation', () 
   });
 });
 
-describe('tunnels handler > zone name caching', () => {
+describe('tunnel service > zone name caching', () => {
   it('retries getZoneName after a transient failure (cache cleared on rejection)', async () => {
     // First /zones/<id> call rejects; second succeeds. Without the
     // failure-clearing logic the rejection would be cached and every
@@ -1071,7 +1050,7 @@ describe('tunnels handler > zone name caching', () => {
   });
 });
 
-describe('tunnels handler > destroy() for named tunnels', () => {
+describe('tunnel service > destroy() for named tunnels', () => {
   it('stops cloudflared, deletes the DNS record, and deletes the tunnel', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -1146,9 +1125,9 @@ describe('tunnels handler > destroy() for named tunnels', () => {
           headers: { 'content-type': 'application/json' }
         })
     );
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger(),
@@ -1202,9 +1181,9 @@ describe('tunnels handler > destroy() for named tunnels', () => {
       success: true,
       id: 'tunnel-uuid-hidden'
     });
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger(),
@@ -1259,9 +1238,9 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     client.tunnels.destroyTunnel.mockRejectedValue(
       new Error('container already stopped')
     );
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger: makeLogger(),
@@ -1370,9 +1349,9 @@ describe('tunnels handler > destroy() for named tunnels', () => {
     const storage = makeStorage();
     const logger = makeLogger();
     let configShouldFail = false;
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger,
@@ -1428,7 +1407,7 @@ describe('tunnels handler > destroy() for named tunnels', () => {
   });
 });
 
-describe('tunnels handler > destroyAll()', () => {
+describe('tunnel service > destroyAll()', () => {
   it('tears down every stored tunnel — container, DNS, and CF tunnel resource', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client, destroyAll } = makeHandler({
@@ -1535,9 +1514,9 @@ describe('tunnels handler > destroyAll()', () => {
         updatedAt: '2026-05-13T00:00:00.000Z'
       }
     });
-    const built = createTunnelsHandler({
+    const built = createTunnelsHandle({
       client: client as unknown as Parameters<
-        typeof createTunnelsHandler
+        typeof createTunnelsHandle
       >[0]['client'],
       storage,
       logger,
