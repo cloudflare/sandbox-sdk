@@ -48,15 +48,19 @@ export interface TunnelMetaEntry {
 
 export type TunnelMetaMap = Record<string, TunnelMetaEntry>;
 
+export type TunnelCleanupPhase = 'planned' | 'tunnel_ready' | 'claimed';
+
 export interface TunnelCleanupEntry {
-  tunnelId: string;
+  tunnelId?: string;
   port: number;
   name: string;
   hostname: string;
+  tunnelName?: string;
+  sandboxId?: string;
   dnsRecordId?: string;
   accountId?: string;
   zoneId?: string;
-  phase: 'claimed';
+  phase: TunnelCleanupPhase;
   updatedAt: string;
 }
 
@@ -168,6 +172,28 @@ export function createNamedTunnelCleanupEntry(
     accountId: meta.accountId,
     zoneId: meta.zoneId,
     phase: 'claimed',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function createNamedTunnelResourceIntent(args: {
+  port: number;
+  name: string;
+  hostname: string;
+  tunnelName: string;
+  sandboxId: string;
+  accountId: string;
+  zoneId: string;
+}): TunnelCleanupEntry {
+  return {
+    port: args.port,
+    name: args.name,
+    hostname: args.hostname,
+    tunnelName: args.tunnelName,
+    sandboxId: args.sandboxId,
+    accountId: args.accountId,
+    zoneId: args.zoneId,
+    phase: 'planned',
     updatedAt: new Date().toISOString()
   };
 }

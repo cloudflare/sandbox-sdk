@@ -421,15 +421,59 @@ interface DNSRecordEntry {
   proxied?: boolean;
 }
 
+async function listCNAMERecords(args: {
+  token: string;
+  zoneId: string;
+  hostname: string;
+  fetcher: Fetcher;
+}): Promise<DNSRecordEntry[]> {
+  const listUrl =
+    `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records` +
+    `?type=CNAME&name=${encodeURIComponent(args.hostname)}`;
+  return (
+    (await cfRequest<DNSRecordEntry[]>(listUrl, args.token, args.fetcher)) ?? []
+  );
+}
+
+export interface FindCNAMEArgs extends BaseArgs {
+  zoneId: string;
+  hostname: string;
+  cnameTarget: string;
+}
+
+export interface FoundCNAMEResult {
+  recordId: string;
+}
+
+export async function findCNAME(
+  args: FindCNAMEArgs
+): Promise<FoundCNAMEResult | null> {
+  const fetcher = args.fetcher ?? fetch;
+  const records = await listCNAMERecords({
+    token: args.token,
+    zoneId: args.zoneId,
+    hostname: args.hostname,
+    fetcher
+  });
+  const existing = records.find(
+    (r) =>
+      r.type === 'CNAME' &&
+      r.name === args.hostname &&
+      r.content === args.cnameTarget
+  );
+  return existing ? { recordId: existing.id } : null;
+}
+
 export async function upsertCNAME(
   args: UpsertCNAMEArgs
 ): Promise<UpsertCNAMEResult> {
   const fetcher = args.fetcher ?? fetch;
-  const listUrl =
-    `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records` +
-    `?type=CNAME&name=${encodeURIComponent(args.hostname)}`;
-  const records =
-    (await cfRequest<DNSRecordEntry[]>(listUrl, args.token, fetcher)) ?? [];
+  const records = await listCNAMERecords({
+    token: args.token,
+    zoneId: args.zoneId,
+    hostname: args.hostname,
+    fetcher
+  });
 
   const existing = records.find(
     (r) => r.type === 'CNAME' && r.name === args.hostname

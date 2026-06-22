@@ -765,7 +765,55 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
     expect(await storage.get('tunnels:cleanup')).toEqual({});
   });
 
-  it('throws when a DNS record exists pointing at different content', async () => {
+  it('writes named resource intent before creating a Cloudflare tunnel', async () => {
+    const cf = makeFakeCloudflare({});
+    const { client } = makeClient();
+    mockNamedSpawn(client);
+    const storage = makeStorage();
+    const logger = makeLogger();
+    const fetcher = vi.fn<
+      (input: string | URL, init?: RequestInit) => Promise<Response>
+    >(async (input, init) => {
+      const url = String(input);
+      if (
+        (init?.method ?? 'GET').toUpperCase() === 'POST' &&
+        new URL(url).pathname.endsWith('/cfd_tunnel')
+      ) {
+        await expect(storage.get('tunnels:cleanup')).resolves.toEqual({
+          '8080': expect.objectContaining({
+            port: 8080,
+            name: 'api',
+            hostname: 'api.example.com',
+            tunnelName: 'sandbox-sb1-api',
+            sandboxId: 'sb1',
+            accountId: 'ACCT',
+            zoneId: 'zone-id',
+            phase: 'planned'
+          })
+        });
+      }
+      return cf.fetcher(input, init);
+    });
+
+    const { tunnels } = createTunnelsHandle({
+      client: client as unknown as TunnelsHost['client'],
+      storage,
+      logger,
+      sandboxId: 'sb1',
+      getNamedTunnelConfig: async () => ({
+        token: 'TOK',
+        accountId: 'ACCT',
+        zoneId: 'zone-id'
+      }),
+      fetcher: fetcher as unknown as typeof fetch
+    });
+
+    await tunnels.get(8080, { name: 'api' });
+
+    expect(fetcher).toHaveBeenCalled();
+  });
+
+  it('records cleanup authority when DNS upsert fails after tunnel create', async () => {
     const cf = makeFakeCloudflare({
       existingDns: [
         {
@@ -777,7 +825,7 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
         }
       ]
     });
-    const { tunnels, client } = makeHandler({
+    const { tunnels, client, storage, resumeCleanup } = makeHandler({
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
@@ -785,8 +833,34 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
     await expect(tunnels.get(8080, { name: 'api' })).rejects.toThrow(
       /already exists|owned/i
     );
-    // Container was never told to spawn cloudflared.
     expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
+    await expect(storage.get('tunnels:cleanup')).resolves.toEqual({
+      '8080': expect.objectContaining({
+        tunnelId: NAMED_TUNNEL_ID,
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        tunnelName: 'sandbox-sb1-api',
+        sandboxId: 'sb1',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        phase: 'tunnel_ready'
+      })
+    });
+
+    await resumeCleanup();
+
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(
+      targets.some((t) => t.includes(`/cfd_tunnel/${NAMED_TUNNEL_ID}`))
+    ).toBe(true);
+    expect(targets.some((t) => t.includes('/dns_records/foreign-dns'))).toBe(
+      false
+    );
+    await expect(storage.get('tunnels:cleanup')).resolves.toEqual({});
   });
 
   it('leaves CF resources in place when cloudflared fails to become ready', async () => {
@@ -1100,6 +1174,42 @@ describe('tunnel service > zone name caching', () => {
 });
 
 describe('tunnel service > destroy() for named tunnels', () => {
+  it('resumes retained cleanup when the public tunnel record is gone', async () => {
+    const cf = makeFakeCloudflare({});
+    const { tunnels, client, storage } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    await storage.put('tunnels:cleanup', {
+      '8080': {
+        tunnelId: 'tunnel-uuid-retained',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        dnsRecordId: 'dns-record-retained',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        phase: 'claimed',
+        updatedAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+
+    await tunnels.destroy(8080);
+
+    expect(client.tunnels.stopTunnelRun).not.toHaveBeenCalled();
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(
+      targets.some((t) => t.includes('/dns_records/dns-record-retained'))
+    ).toBe(true);
+    expect(
+      targets.some((t) => t.includes('/cfd_tunnel/tunnel-uuid-retained'))
+    ).toBe(true);
+    await expect(storage.get('tunnels:cleanup')).resolves.toEqual({});
+  });
+
   it('stops cloudflared, deletes the DNS record, and deletes the tunnel', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -1487,6 +1597,123 @@ describe('tunnel service > destroyAll()', () => {
       targets.some((t) => t.includes('/cfd_tunnel/tunnel-uuid-hidden'))
     ).toBe(true);
     await expect(storage.get('tunnels:meta')).resolves.toEqual({});
+  });
+
+  it('retains discovered resource ids when planned cleanup partially fails', async () => {
+    const cf = makeFakeCloudflare({
+      existingTunnels: [
+        {
+          id: 'tunnel-uuid-planned',
+          name: 'sandbox-sb1-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb1', createdBy: 'sandbox-sdk' }
+        }
+      ],
+      existingDns: [
+        {
+          id: 'dns-record-planned',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'tunnel-uuid-planned.cfargotunnel.com',
+          comment: 'sandbox-sb1'
+        }
+      ]
+    });
+    const fetcher = vi.fn<
+      (input: string | URL, init?: RequestInit) => Promise<Response>
+    >(async (input, init) => {
+      const url = String(input);
+      if (
+        (init?.method ?? 'GET').toUpperCase() === 'DELETE' &&
+        url.includes('/dns_records/dns-record-planned')
+      ) {
+        return new Response(
+          JSON.stringify({ success: false, errors: [{ code: 9999 }] }),
+          { status: 500 }
+        );
+      }
+      return cf.fetcher(input, init);
+    });
+    const { storage, resumeCleanup } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: fetcher as unknown as typeof fetch
+    });
+    await storage.put('tunnels:cleanup', {
+      '8080': {
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        tunnelName: 'sandbox-sb1-api',
+        sandboxId: 'sb1',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        phase: 'planned',
+        updatedAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+
+    await resumeCleanup();
+
+    await expect(storage.get('tunnels:cleanup')).resolves.toEqual({
+      '8080': expect.objectContaining({
+        tunnelId: 'tunnel-uuid-planned',
+        dnsRecordId: 'dns-record-planned',
+        phase: 'claimed'
+      })
+    });
+  });
+
+  it('resumes planned cleanup by discovering named resources', async () => {
+    const cf = makeFakeCloudflare({
+      existingTunnels: [
+        {
+          id: 'tunnel-uuid-planned',
+          name: 'sandbox-sb1-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb1', createdBy: 'sandbox-sdk' }
+        }
+      ],
+      existingDns: [
+        {
+          id: 'dns-record-planned',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'tunnel-uuid-planned.cfargotunnel.com',
+          comment: 'sandbox-sb1'
+        }
+      ]
+    });
+    const { storage, resumeCleanup } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    await storage.put('tunnels:cleanup', {
+      '8080': {
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        tunnelName: 'sandbox-sb1-api',
+        sandboxId: 'sb1',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        phase: 'planned',
+        updatedAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+
+    await resumeCleanup();
+
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(
+      targets.some((t) => t.includes('/dns_records/dns-record-planned'))
+    ).toBe(true);
+    expect(
+      targets.some((t) => t.includes('/cfd_tunnel/tunnel-uuid-planned'))
+    ).toBe(true);
+    expect(await storage.get('tunnels:cleanup')).toEqual({});
   });
 
   it('resumes retained named tunnel cleanup records', async () => {

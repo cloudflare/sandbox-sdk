@@ -27,7 +27,7 @@ import {
 import { TunnelOperationLifecycle } from './lifecycle';
 import { TunnelProvisioner } from './provisioner';
 import { pruneTunnelsForRestart } from './restart';
-import type { TunnelsStorage } from './storage';
+import type { TunnelCleanupEntry, TunnelsStorage } from './storage';
 import {
   CLEANUP_STORAGE_KEY,
   computeOptionsHash,
@@ -336,6 +336,17 @@ export class TunnelService implements TunnelsHandler {
     }
   }
 
+  async #updatePortCleanup(
+    port: number,
+    next: (entry: TunnelCleanupEntry | undefined) => TunnelCleanupEntry
+  ): Promise<void> {
+    await this.#host.storage.transaction(async (txn) => {
+      const cleanup = await readCleanupMap(txn);
+      cleanup[port.toString()] = next(cleanup[port.toString()]);
+      await txn.put(CLEANUP_STORAGE_KEY, cleanup);
+    });
+  }
+
   /** Provision a fresh quick tunnel and persist it. Caller holds the per-port lock. */
   async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
     let lifecycle = await this.#lifecycle.capture();
@@ -379,7 +390,33 @@ export class TunnelService implements TunnelsHandler {
 
     await this.#resumePortCleanup(port);
 
-    const prepared = await this.#provisioner.prepareNamedTunnel(port, name);
+    const prepared = await this.#provisioner.prepareNamedTunnel(port, name, {
+      onIntentReady: (entry) => this.#updatePortCleanup(port, () => entry),
+      onTunnelReady: (tunnelId) =>
+        this.#updatePortCleanup(port, (entry) => ({
+          ...(entry ?? {
+            port,
+            name,
+            hostname: name,
+            phase: 'planned'
+          }),
+          tunnelId,
+          phase: 'tunnel_ready',
+          updatedAt: new Date().toISOString()
+        })),
+      onDNSReady: (dnsRecordId) =>
+        this.#updatePortCleanup(port, (entry) => ({
+          ...(entry ?? {
+            port,
+            name,
+            hostname: name,
+            phase: 'tunnel_ready'
+          }),
+          dnsRecordId,
+          phase: 'claimed',
+          updatedAt: new Date().toISOString()
+        }))
+    });
     const cleanupEntry = createNamedTunnelCleanupEntry(
       prepared.info,
       prepared.meta
@@ -438,14 +475,28 @@ export class TunnelService implements TunnelsHandler {
     let tunnelId: string | undefined;
     try {
       await this.#withPortLock(port, async () => {
+        const portKey = port.toString();
         const map = await readMap(this.#host.storage);
-        const metaBefore = (await readMetaMap(this.#host.storage))[
-          port.toString()
-        ];
+        const metaBefore = (await readMetaMap(this.#host.storage))[portKey];
         const existing =
-          map[port.toString()] ?? namedTunnelInfoFromMeta(port, metaBefore);
+          map[portKey] ?? namedTunnelInfoFromMeta(port, metaBefore);
         if (!existing) {
-          // Idempotent — destroying an unknown port resolves successfully.
+          const retainedCleanup = (await readCleanupMap(this.#host.storage))[
+            portKey
+          ];
+          if (retainedCleanup) {
+            await resumeNamedTunnelCleanupEntry(
+              this.#host,
+              this.#host.storage,
+              portKey,
+              retainedCleanup,
+              {
+                logPrefix: 'tunnel.destroy',
+                credentialsUnavailableMessage:
+                  'tunnel.destroy: skipping CF cleanup, credentials unavailable'
+              }
+            );
+          }
           return;
         }
         tunnelId = existing.id;

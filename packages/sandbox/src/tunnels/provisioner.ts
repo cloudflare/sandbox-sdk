@@ -13,7 +13,12 @@ import {
   getZoneName,
   upsertCNAME
 } from './cloudflare-api';
-import { computeOptionsHash, type TunnelMetaEntry } from './storage';
+import {
+  computeOptionsHash,
+  createNamedTunnelResourceIntent,
+  type TunnelCleanupEntry,
+  type TunnelMetaEntry
+} from './storage';
 
 interface TunnelsRPCClient {
   tunnels: SandboxTunnelsAPI;
@@ -35,6 +40,12 @@ export interface PreparedNamedTunnel {
   tunnelToken: string;
   info: NamedTunnelInfo;
   meta: TunnelMetaEntry;
+}
+
+export interface NamedTunnelPreparationHooks {
+  onIntentReady?: (entry: TunnelCleanupEntry) => Promise<void>;
+  onTunnelReady?: (tunnelId: string) => Promise<void>;
+  onDNSReady?: (dnsRecordId: string) => Promise<void>;
 }
 
 /** 8-char hex id derived from `crypto.getRandomValues`. Unique per sandbox. */
@@ -108,7 +119,8 @@ export class TunnelProvisioner {
 
   async prepareNamedTunnel(
     port: number,
-    name: string
+    name: string,
+    hooks: NamedTunnelPreparationHooks = {}
   ): Promise<PreparedNamedTunnel> {
     if (!this.#host.sandboxId) {
       throw new Error(
@@ -129,6 +141,17 @@ export class TunnelProvisioner {
     const hostname = `${name}.${zoneName}`;
     const sandboxId = this.#host.sandboxId;
     const tunnelName = `sandbox-${sandboxId}-${name}`;
+    await hooks.onIntentReady?.(
+      createNamedTunnelResourceIntent({
+        port,
+        name,
+        hostname,
+        tunnelName,
+        sandboxId,
+        accountId: config.accountId,
+        zoneId: config.zoneId
+      })
+    );
 
     let tunnelId: string;
     let tunnelToken: string;
@@ -163,6 +186,7 @@ export class TunnelProvisioner {
       tunnelId = created.id;
       tunnelToken = created.token;
     }
+    await hooks.onTunnelReady?.(tunnelId);
 
     const dnsResult = await upsertCNAME({
       token: config.token,
@@ -173,6 +197,7 @@ export class TunnelProvisioner {
       sandboxId,
       fetcher: this.#host.fetcher
     });
+    await hooks.onDNSReady?.(dnsResult.recordId);
 
     const info: NamedTunnelInfo = {
       id: tunnelId,
