@@ -149,7 +149,8 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
 
 #### `GET /v1/sandbox/:id/file/:path`
 
-Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` (relative to the workspace root). Returns raw bytes (`application/octet-stream`).
+Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` as an absolute path without the leading slash (e.g. `workspace/main.py` for `/workspace/main.py`). Must resolve within `/workspace`. Returns raw bytes (`application/octet-stream`).
+
 
 ```sh
 curl -X GET http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
