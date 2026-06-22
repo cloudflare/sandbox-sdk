@@ -27,12 +27,12 @@
  */
 
 import { SandboxExtension, type SandboxLike } from '../extensions/index.js';
-import sidecarTarball from './sidecar-package.generated.js';
 import type {
   InterpreterContextWire,
   InterpreterSidecarAPI,
   InterpreterSidecarEvent
-} from './sidecar/server.js';
+} from './sidecar-api.js';
+import sidecarTarball from './sidecar-package.tgz';
 import {
   type CodeContext,
   type CreateContextOptions,
@@ -211,7 +211,7 @@ export class Interpreter extends SandboxExtension {
         break;
       }
       case 'result': {
-        const result = new ResultImpl(event as Result);
+        const result = new ResultImpl(event as unknown as Result);
         execution.results.push(result);
         await options.onResult?.(result);
         break;

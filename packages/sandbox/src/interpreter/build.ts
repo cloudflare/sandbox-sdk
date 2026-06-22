@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { gzipSync } from 'node:zlib';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sidecarDir = join(here, 'sidecar');
-const outFile = join(here, 'sidecar-package.generated.ts');
+const outFile = join(here, 'sidecar-package.tgz');
 
 const packageName = '@cloudflare/sandbox-interpreter-sidecar';
 const binName = 'sandbox-interpreter-sidecar';
@@ -77,28 +77,16 @@ const tarball = gzipSync(
       content: pythonExecutorSource,
       mode: 0o755
     }
-  ]),
-  { mtime: new Date(0) }
+  ])
 );
+tarball.writeUInt32LE(0, 4);
 
-const generated = `/**
- * GENERATED FILE — do not edit by hand.
- *
- * Produced by \`src/interpreter/build.ts\`. Holds the interpreter sidecar npm
- * tarball bytes consumed by \`SandboxExtension.sidecar()\`.
- */
-
-const base64 = ${JSON.stringify(Buffer.from(tarball).toString('base64'))};
-
-export default Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-`;
-
-await writeFile(outFile, generated, 'utf8');
+await writeFile(outFile, tarball);
 
 console.log(
   `Wrote ${outFile}\n  version ${version} (${(tarball.length / 1024).toFixed(
     1
-  )} KB sidecar tarball)`
+  )} KB)`
 );
 
 interface TarEntry {

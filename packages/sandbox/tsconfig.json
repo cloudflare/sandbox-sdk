@@ -14,7 +14,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/interpreter/sidecar",
+    "src/interpreter/sidecar/**/*.ts",
     "src/interpreter/build.ts"
   ]
 }

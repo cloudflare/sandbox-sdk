@@ -12,6 +12,9 @@ export default defineConfig({
     'src/xterm/index.ts'
   ],
   external: ['cloudflare:workers', 'hono'],
+  loader: {
+    '.tgz': 'binary'
+  },
   outDir: 'dist',
   dts: {
     sourcemap: true,

@@ -1,31 +1,34 @@
-/**
- * Unit tests for the interpreter extension (`@cloudflare/sandbox/interpreter`).
- *
- * Validates the extraction: the extension drives the generic extension bridge
- * (`sandbox.client.extensions`), registers its sidecar manifest once, and
- * reconstructs streamed execution events into the `Execution` result shape.
- */
-
-import type { ExtensionHealth, SandboxExtensionsAPI } from '@repo/shared';
+import type {
+  ExtensionConnectRequest,
+  SandboxExtensionsAPI
+} from '@repo/shared';
+import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SandboxLike } from '../src/extensions';
 import { Interpreter, withInterpreter } from '../src/interpreter';
+import type { InterpreterSidecarAPI } from '../src/interpreter/sidecar-api';
 
 type ExtensionsApiMock = {
-  register: Mock<SandboxExtensionsAPI['register']>;
-  call: Mock<SandboxExtensionsAPI['call']>;
-  callStream: Mock<SandboxExtensionsAPI['callStream']>;
+  connect: Mock<SandboxExtensionsAPI['connect']>;
   health: Mock<SandboxExtensionsAPI['health']>;
   stop: Mock<SandboxExtensionsAPI['stop']>;
 };
 
 function makeSandbox(): { sandbox: SandboxLike; api: ExtensionsApiMock } {
   const api: ExtensionsApiMock = {
-    register: vi.fn(async () => {}),
-    call: vi.fn(async () => undefined),
-    callStream: vi.fn(async () => undefined),
-    health: vi.fn(async () => ({}) as ExtensionHealth),
+    connect: vi.fn(async () => ({}) as unknown),
+    health: vi.fn(async (packageHash: string) => ({
+      packageHash,
+      id: 'cloudflare-sandbox-interpreter-sidecar',
+      version: '0.0.0-test',
+      provisioned: true,
+      running: true,
+      responsive: true,
+      pid: 123,
+      bin: 'sandbox-interpreter-sidecar',
+      readinessTimeoutMs: 30_000
+    })),
     stop: vi.fn(async () => {})
   };
   return {
@@ -44,6 +47,12 @@ const RAW_CONTEXT = {
   lastUsed: '2024-01-01T00:00:00.000Z'
 };
 
+function tarballRequired(): Error {
+  const error = new Error('need tarball');
+  error.name = EXTENSION_TARBALL_REQUIRED;
+  return error;
+}
+
 describe('withInterpreter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -52,24 +61,35 @@ describe('withInterpreter', () => {
   it('does not touch the bridge during construction (lazy)', () => {
     const { sandbox, api } = makeSandbox();
     withInterpreter(sandbox);
-    expect(api.register).not.toHaveBeenCalled();
-    expect(api.call).not.toHaveBeenCalled();
+    expect(api.connect).not.toHaveBeenCalled();
   });
 
-  it('creates a context, registering the sidecar manifest once', async () => {
+  it('creates a context through the sidecar, shipping the tarball on demand', async () => {
     const { sandbox, api } = makeSandbox();
-    api.call.mockResolvedValue(RAW_CONTEXT);
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      runCode: vi.fn(async () => {})
+    };
+    api.connect
+      .mockRejectedValueOnce(tarballRequired())
+      .mockResolvedValue(stub);
     const ext = withInterpreter(sandbox);
 
     const context = await ext.createCodeContext({ language: 'python' });
 
-    expect(api.register).toHaveBeenCalledTimes(1);
-    expect(api.register).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'interpreter' })
-    );
-    expect(api.call).toHaveBeenCalledWith('interpreter', 'createContext', [
-      { language: 'python', cwd: undefined }
-    ]);
+    expect(api.connect).toHaveBeenCalledTimes(2);
+    const first = api.connect.mock.calls[0][0] as ExtensionConnectRequest;
+    const second = api.connect.mock.calls[1][0] as ExtensionConnectRequest;
+    expect(first.packageHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.tarball).toBeUndefined();
+    expect(second.packageHash).toBe(first.packageHash);
+    expect(second.tarball).toBeInstanceOf(Uint8Array);
+    expect(stub.createContext).toHaveBeenCalledWith({
+      language: 'python',
+      cwd: undefined
+    });
     expect(context.id).toBe('ctx-1');
     expect(context.createdAt).toBeInstanceOf(Date);
   });
@@ -83,24 +103,22 @@ describe('withInterpreter', () => {
         language: 'ruby' as unknown as 'python'
       })
     ).rejects.toThrow(/Unsupported language/);
-    expect(api.call).not.toHaveBeenCalled();
+    expect(api.connect).not.toHaveBeenCalled();
   });
 
-  it('runs code and reconstructs streamed events into an Execution', async () => {
+  it('runs code and reconstructs streamed callback events into an Execution', async () => {
     const { sandbox, api } = makeSandbox();
-    api.callStream.mockImplementation(async (_id, _method, _args, onEvent) => {
-      await onEvent('stdout', { type: 'stdout', text: 'hello\n' });
-      await onEvent('result', {
-        type: 'result',
-        text: '42',
-        metadata: {}
-      });
-      await onEvent('execution_complete', {
-        type: 'execution_complete',
-        execution_count: 1
-      });
-      return undefined;
-    });
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
+        await onEvent({ type: 'stdout', text: 'hello\n' });
+        await onEvent({ type: 'result', text: '42', metadata: {} });
+        await onEvent({ type: 'execution_complete', execution_count: 1 });
+      })
+    };
+    api.connect.mockResolvedValue(stub);
 
     const ext = withInterpreter(sandbox);
     const context = {
@@ -113,10 +131,10 @@ describe('withInterpreter', () => {
 
     const execution = await ext.runCode('print("hello")', { context });
 
-    expect(api.callStream).toHaveBeenCalledWith(
-      'interpreter',
-      'runCode',
-      ['ctx-1', 'print("hello")', undefined],
+    expect(stub.runCode).toHaveBeenCalledWith(
+      'ctx-1',
+      'print("hello")',
+      undefined,
       expect.any(Function)
     );
     expect(execution.logs.stdout).toEqual(['hello\n']);
@@ -127,15 +145,20 @@ describe('withInterpreter', () => {
 
   it('surfaces error events on the Execution', async () => {
     const { sandbox, api } = makeSandbox();
-    api.callStream.mockImplementation(async (_id, _method, _args, onEvent) => {
-      await onEvent('error', {
-        type: 'error',
-        ename: 'ValueError',
-        evalue: 'boom',
-        traceback: ['line 1']
-      });
-      return undefined;
-    });
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
+        await onEvent({
+          type: 'error',
+          ename: 'ValueError',
+          evalue: 'boom',
+          traceback: ['line 1']
+        });
+      })
+    };
+    api.connect.mockResolvedValue(stub);
 
     const ext = withInterpreter(sandbox);
     const context = {
@@ -155,12 +178,15 @@ describe('withInterpreter', () => {
     });
   });
 
-  it('lists and deletes contexts through the bridge', async () => {
+  it('lists and deletes contexts through the sidecar', async () => {
     const { sandbox, api } = makeSandbox();
-    api.call.mockImplementation(async (_id, method) => {
-      if (method === 'listContexts') return [RAW_CONTEXT];
-      return undefined;
-    });
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => [RAW_CONTEXT]),
+      deleteContext: vi.fn(async () => {}),
+      runCode: vi.fn(async () => {})
+    };
+    api.connect.mockResolvedValue(stub);
 
     const ext = withInterpreter(sandbox);
 
@@ -169,9 +195,7 @@ describe('withInterpreter', () => {
     expect(contexts[0].createdAt).toBeInstanceOf(Date);
 
     await ext.deleteCodeContext('ctx-1');
-    expect(api.call).toHaveBeenCalledWith('interpreter', 'deleteContext', [
-      'ctx-1'
-    ]);
+    expect(stub.deleteContext).toHaveBeenCalledWith('ctx-1');
   });
 
   it('returns an Interpreter instance from the factory', () => {
