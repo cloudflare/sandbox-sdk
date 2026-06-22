@@ -1,30 +1,45 @@
 ---
 name: extensions
-description: Use when authoring or reviewing a Cloudflare Sandbox SDK extension — an opt-in capability attached to a Sandbox subclass via `withX(this)` and shipped as a `@cloudflare/sandbox/<name>` subpath. Covers the single `SandboxExtension` base class, the SDK-only vs container-sidecar split (driven by an optional manifest), the sidecar bridge/host internals, RPC-safety rules, calling extensions from a Worker, streaming, subpath wiring, and testing. Load it for tasks like "extract X into `withX()`", "add a sidecar extension", or reviewing extension code. (project)
+description: Use when authoring or reviewing a Cloudflare Sandbox SDK extension — an opt-in capability attached to a Sandbox subclass via `withX(this)` and shipped as a `@cloudflare/sandbox/<name>` subpath. Covers the single `SandboxExtension` base class, the SDK-only vs container-sidecar split (driven by an optional npm-tarball `ExtensionPackage`), the capnweb sidecar host internals, RPC-safety rules, calling extensions from a Worker, streaming via typed callbacks, subpath wiring, and testing. Load it for tasks like "extract X into `withX()`", "add a sidecar extension", or reviewing extension code. (project)
 ---
 
 # Sandbox SDK Extensions
 
 An **extension** adds a capability to a user's `Sandbox` subclass. It is opt-in,
-attached as a class field via a `withX(this)` factory, and talks to the container
-over the **capnweb RPC control channel** — never an exposed port, never HTTP.
+attached as a class field via a `withX(this)` factory, and talks to the
+container over the **capnweb RPC control channel** — never an exposed port,
+never HTTP.
 
 There is exactly **one** way to build one: subclass **`SandboxExtension`** from
 `@cloudflare/sandbox/extensions`. Do not hand-roll `RpcTarget` classes, do not
 invent new patterns. Two flavors share that single base:
 
-- **SDK-only** — orchestrates existing container control sub-APIs (`commands`,
-  `files`, `git`, `processes`, `interpreter`, …). No manifest.
-- **Sidecar** — ships a process that runs inside the container and speaks a
-  structured protocol the control sub-APIs can't express. Opt in by passing an
-  `ExtensionManifest` to `super()`.
+- **SDK-only** — orchestrates existing container control sub-APIs
+  (`commands`, `files`, `git`, `processes`, `interpreter`, …). No sidecar.
+- **Sidecar** — ships an npm-style tarball that the container provisions and
+  spawns. The sidecar speaks capnweb back over a unix socket; the SDK
+  obtains a typed remote stub via `this.sidecar<T>()`.
 
-The flavor is decided by **whether you pass a manifest** — nothing else.
+The flavor is decided by **whether you pass an `ExtensionPackage`** —
+nothing else.
+
+> **Status (this branch):** the framework itself (`@cloudflare/sandbox/extensions`
+>
+> - `@cloudflare/sandbox/sidecar`) is implemented and tested, but **no concrete
+>   sidecar extension ships here yet**. The `Interpreter` / `withInterpreter`
+>   snippets below are **illustrative** — the interpreter extraction lives on a
+>   separate branch and is not present on `feat/extension-framework`. Likewise,
+>   npm distribution of third-party extensions is not wired up: today the only
+>   producer of tarball bytes is the in-repo build pipeline. The wire shape,
+>   capnweb sidecar contract, and host/SDK API are the same ones a future public
+>   authoring story will use — what's deferred is concrete extensions and
+>   publishing/install tooling, not the architecture.
 
 ## The golden path
 
-Always follow this shape: a class extending `SandboxExtension`, a `withX(sandbox)`
-factory, and (to call from a Worker) a delegate method on the Sandbox subclass.
+Always follow this shape: a class extending `SandboxExtension`, a
+`withX(sandbox)` factory, and (to call from a Worker) a delegate method on the
+Sandbox subclass.
 
 ```typescript
 import {
@@ -33,7 +48,7 @@ import {
 } from '@cloudflare/sandbox/extensions';
 import { shellEscape } from '@repo/shared';
 
-// SDK-only extension: drives existing sub-APIs, no manifest.
+// SDK-only extension: drives existing sub-APIs, no package.
 class ClaudeCode extends SandboxExtension {
   constructor(sandbox: SandboxLike) {
     super(sandbox);
@@ -51,17 +66,21 @@ export const withClaudeCode = (s: SandboxLike) => new ClaudeCode(s);
 ```
 
 ```typescript
-// Sidecar extension: opt in with a manifest, then use the protected
-// call / health / stop helpers. Stream by passing { onEvent }.
+// Sidecar extension: ship a tarball and get a typed capnweb remote main.
+import sidecarTarballBytes from './sidecar-package.tgz';
+import type { InterpreterSidecarAPI } from './shared';
+
 class Interpreter extends SandboxExtension {
   constructor(sandbox: SandboxLike) {
-    super(sandbox, buildInterpreterManifest());
+    super(sandbox, { tarball: new Uint8Array(sidecarTarballBytes) });
   }
-  runCode(code: string) {
-    return this.call('runCode', [code]);
-  }
-  runCodeStream(code: string, onEvent: ExtensionEventHandler) {
-    return this.call('runCode', [code], { onEvent });
+
+  async runCode(
+    code: string,
+    onProgress?: (event: { kind: string; data: unknown }) => void
+  ) {
+    const api = await this.sidecar<InterpreterSidecarAPI>();
+    return api.runCode(code, onProgress ?? (() => {}));
   }
 }
 export const withInterpreter = (s: SandboxLike) => new Interpreter(s);
@@ -81,95 +100,117 @@ export class Sandbox extends BaseSandbox<Env> {
 
 ## Rules (do not deviate)
 
-1. **Extend `SandboxExtension`.** It is an `RpcTarget`, captures the sandbox in a
-   `#private` field, and exposes `protected get client(): SandboxAPI`. Never
-   re-implement this; never extend `RpcTarget` directly for an extension.
-2. **Import `SandboxLike` from `@cloudflare/sandbox/extensions`.** Do not redefine
-   it. It is `{ readonly client: SandboxAPI }` — the framework's contract.
-3. **Declare a constructor + `withX(sandbox)` factory.** The base constructor is
-   `protected`, so each extension needs its own (`constructor(s) { super(s) }` or
-   `super(s, buildManifest())`). The factory is the public API.
-4. **Stay lazy.** The constructor must not fire any RPC. Only capture the sandbox
-   (the base already does this) and reach `this.client.*` _inside_ methods.
-   Field initializers (`x = withX(this)`) run after `super()`, so `this.client`
-   exists — but an eager RPC in a constructor fires during DO construction and is
-   fragile.
-5. **Sidecar features need a manifest.** `call` / `health` / `stop` /
-   `extensionId` throw if no manifest was passed. Pass one to `super()` to use
-   them.
+1. **Extend `SandboxExtension`.** It is an `RpcTarget`, captures the sandbox
+   in a `#private` field, and exposes `protected get client(): SandboxAPI`.
+   Never re-implement this; never extend `RpcTarget` directly for an extension.
+2. **Import `SandboxLike` from `@cloudflare/sandbox/extensions`.** Do not
+   redefine it. It is `{ readonly client: SandboxAPI }` — the framework's
+   contract.
+3. **Declare a constructor + `withX(sandbox)` factory.** The base constructor
+   is `protected`, so each extension needs its own (`constructor(s) { super(s) }`
+   or `super(s, { tarball })`). The factory is the public API.
+4. **Stay lazy.** The constructor must not fire any RPC. Only capture the
+   sandbox (the base already does this) and reach `this.client.*` _inside_
+   methods. Field initializers (`x = withX(this)`) run after `super()`, so
+   `this.client` exists — but an eager RPC in a constructor fires during DO
+   construction and is fragile.
+5. **Sidecar features need a package.** `sidecar()` / `sidecarHealth()` /
+   `stopSidecar()` throw if no `ExtensionPackage` was passed. Pass one to
+   `super()` to use them.
 6. **No `any`; no exposed ports/preview URLs.** Put shared wire types in
-   `@repo/shared`. Extensions are RPC-only.
+   `@repo/shared` (or in the extension's own `./shared` module). Extensions
+   are RPC-only.
 
 ## What the base gives you
 
 - `protected get client(): SandboxAPI` — the container control client. Use
   `this.client.commands`, `this.client.files`, etc.
-- `protected call(method, args?, options?)` — invoke a sidecar method (registers
-  - starts the sidecar on first use). Pass `{ onEvent }` in `options` to stream
-    events; omit it for a buffered call.
-- `protected health()` / `protected stop()` — sidecar lifecycle.
-- `protected get extensionId` — the manifest id.
+- `protected sidecar<T extends object>(): Promise<T>` — provision + spawn
+  the sidecar on demand and return its typed capnweb remote main. `T` is
+  the sidecar's `SandboxSidecar` subclass shape. Each call reconnects
+  through the host so a crashed sidecar can be restarted on the next use.
+- `protected sidecarHealth()` / `protected stopSidecar()` — sidecar
+  lifecycle.
 
-There is **one** `call` method — streaming is just `call(method, args, { onEvent })`.
-Registration is automatic, **once, lazily**, on first sidecar call (retried on
-failure). Readiness retry and stream-event de-duplication are handled for you —
-do not add your own retry around `call`.
+**Streaming is just a typed callback parameter** on a sidecar method.
+capnweb stubs the callback and routes invocations back through both the
+SDK → container and container → sidecar hops; no separate `call()` /
+`callStream()` distinction, no `onEvent` plumbing.
 
 ## Building a sidecar extension
 
-A sidecar is a process the container provisions and supervises. You provide a
-**manifest** and a **sidecar program**.
+A sidecar is a self-contained npm package the container provisions and
+supervises. You provide an **`ExtensionPackage`** (just the tarball bytes
+the build pipeline produces) and a **sidecar program**.
 
-**Manifest** (`ExtensionManifest` from `@cloudflare/sandbox/extensions`):
+### Tarball shape
 
-```typescript
-import type { ExtensionManifest } from '@cloudflare/sandbox/extensions';
+The tarball is an npm-style `.tgz` whose `package.json` declares:
 
-function buildInterpreterManifest(): ExtensionManifest {
-  return {
-    id: 'interpreter',
-    version: '1', // id+version = identity; bump to reprovision
-    assets: [
-      // written to disk on first use
-      { path: 'server.cjs', content: SERVER_SOURCE } // or { ..., encoding: 'base64', mode: 0o755 }
-    ],
-    command: ['bun', '{dir}/server.cjs'], // {dir} = provisioned dir, {socket} = bridge socket
-    readinessTimeoutMs: 10_000
-  };
+```jsonc
+{
+  "name": "demo-sidecar", // becomes the slugified id
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "demo-sidecar": "./dist/sidecar.js"
+  },
+  "sandboxExtension": {
+    "bin": "demo-sidecar", // disambiguates when there are multiple bins
+    "readinessTimeoutMs": 5000
+  }
 }
 ```
 
-Ship the sidecar runtime as `assets[]` so it stays **out of the compiled
-container binary** — this is how a feature is fully extracted from core. Use
-`encoding: 'base64'` + `mode: 0o755` for prebuilt binaries; match arch/libc
-(glibc vs musl) for native code.
+Identity is **content-hash-keyed**: any byte change reprovisions, even at
+the same package version. The host extracts `package.json`, derives the
+extension id by slugifying `name` (`@acme/foo` → `acme-foo`), and resolves
+the bin via `sandboxExtension.bin` or the single `bin` entry.
 
-**Sidecar program contract** (mirror `packages/sandbox-container/src/extensions/echo-sidecar.ts`):
-a self-contained process — no imports from the host — that:
+The sidecar entry should be **pre-bundled** (esbuild / `Bun.build`) so
+`bun add ./extension.tgz` resolves no transitive deps and runs offline.
 
-- listens on the unix socket at `process.env.EXT_SOCKET`,
-- speaks the frame protocol: 4-byte big-endian length + UTF-8 JSON, message
-  kinds `req` (in), `res` (ok/err, out), `evt` (streaming, out, correlated to the
-  request `id`),
-- implements `__ping__` → returns `"pong"` (reserved for health probes),
-- stays portable (runs under Bun or Node).
+### Sidecar program contract
 
-Keep the sidecar source inline (a string asset) for portability, or ship a
-binary. The container `ExtensionHost` spawns it lazily on first call, supervises
-it (transparent re-provision + restart after a crash or container sleep/wake),
-and bridges calls over the socket. Unused extensions cost ~nothing.
+```typescript
+import {
+  SandboxSidecar,
+  serveSandboxSidecar
+} from '@cloudflare/sandbox/sidecar';
+
+class InterpreterApi extends SandboxSidecar {
+  async runCode(
+    code: string,
+    onEvent: (event: { kind: string; data: unknown }) => void | Promise<void>
+  ): Promise<{ ok: true }> {
+    await onEvent({ kind: 'stdout', data: 'starting\n' });
+    // ...
+    return { ok: true };
+  }
+}
+
+serveSandboxSidecar(new InterpreterApi());
+```
+
+The `SandboxSidecar` base implements `__ping__` (reserved for health
+probes — do not override). `serveSandboxSidecar` reads `EXT_SOCKET` from
+env (injected by the container's `ExtensionHost`), opens the unix socket,
+and serves one capnweb session per connection with `target` as the local
+main.
 
 ## Calling an extension from a Worker
 
-Extension methods are not directly callable as `sandbox.myExt.method()` from a
-Worker: property pipelining through the DO stub is **broken under the current
-vite-plugin runtime** (see `TunnelsRpcTarget` in
-`packages/sandbox/src/tunnels/tunnels-handler.ts`). `SandboxExtension` keeps the
-`RpcTarget` shape ready for when that lifts, but **do not rely on it today**.
+Extension methods are not directly callable as `sandbox.myExt.method()`
+from a Worker: property pipelining through the DO stub is **broken under
+the current vite-plugin runtime** (see `TunnelsRpcTarget` in
+`packages/sandbox/src/tunnels/tunnels-handler.ts`). `SandboxExtension`
+keeps the `RpcTarget` shape ready for when that lifts, but **do not rely
+on it today**.
 
-Expose extension behavior to the Worker with a **delegate method** on the Sandbox
-subclass. `getSandbox()` returns a Proxy that forwards any non-enhanced public DO
-method to the stub, so a thin method is automatically callable:
+Expose extension behavior to the Worker with a **delegate method** on the
+Sandbox subclass. `getSandbox()` returns a Proxy that forwards any
+non-enhanced public DO method to the stub, so a thin method is
+automatically callable:
 
 ```typescript
 export class Sandbox extends BaseSandbox<Env> {
@@ -181,96 +222,133 @@ export class Sandbox extends BaseSandbox<Env> {
 }
 ```
 
-For a full `sandbox.myExt.*` surface, mirror the `callTunnels` dispatch + Proxy
-pattern in `packages/sandbox/src/sandbox.ts`. **Inside** the DO
-(`this.claudeCode.ask()`) it is a plain local call — the caveat only concerns the
-DO→Worker hop.
+For a full `sandbox.myExt.*` surface, mirror the `callTunnels` dispatch +
+Proxy pattern in `packages/sandbox/src/sandbox.ts`. **Inside** the DO
+(`this.claudeCode.ask()`) it is a plain local call — the caveat only
+concerns the DO→Worker hop.
 
 ## Streaming
 
-- Stream via `call(method, args, { onEvent })`. The framework forwards `evt`
-  frames to `onEvent` and guarantees no duplicate events on a readiness retry —
-  you do not manage retries.
-- If you build your own retry that accumulates streamed output, construct the
-  accumulator **inside** the retry lambda so a partial-then-failed attempt does
-  not leave stale entries.
-- Returning a stream across the DO→Worker boundary must use a `ReadableStream`
-  (transferable). Prefer accumulating server-side and returning a plain result
-  where possible.
+- Pass a callback parameter to a sidecar method. capnweb stubs the
+  callback and routes invocations back through both hops. The sidecar
+  awaits the callback exactly the same way it would locally.
+- There is **no** `onEvent` framework option, no string event kinds, no
+  retry plumbing. The shared TypeScript interface is the contract.
+- Returning a stream across the DO→Worker boundary still must use a
+  `ReadableStream` (transferable). Prefer accumulating server-side and
+  returning a plain result where possible.
+
+## Wire protocol (hash-first connect)
+
+The SDK hashes the tarball locally and first sends only the hash on
+`client.extensions.connect()`. If the current host process has not yet
+provisioned that hash, it throws `ExtensionTarballRequiredError` (wire
+name `EXTENSION_TARBALL_REQUIRED`); the SDK retries once with `tarball`
+attached.
+
+`ExtensionHost` provisions by content hash:
+
+1. write `extension.tgz` under `/var/lib/sandbox-extensions/<hash>/`,
+2. read `package/package.json` from the tarball (in-process),
+3. derive the registration (slug id, version, bin, readiness timeout),
+4. `bun add --ignore-scripts ./extension.tgz` (no scripts unless the
+   `ExtensionPackage` sets `allowInstallScripts: true`),
+5. `Bun.spawn` the resolved bin under `bun`, inject `EXT_SOCKET` /
+   `EXT_DIR`, wait for the capnweb connection.
+
+Provisioning is **idempotent** inside a host process: re-connecting with
+same hash is a no-op after the package is registered. A crashed sidecar is
+restarted transparently on the next `sidecar()` call.
 
 ## Instance lifecycle
 
-- One extension instance per DO cold start, shared across every `getSandbox()`
-  stub for that DO. Fine for caching, but treat any local cache as best-effort —
-  the container is the source of truth and can restart. Re-sync via a list/
-  refresh call when needed.
-- The field name (`claudeCode`, `interpreter`) must not collide with a base
-  `Sandbox` member.
+- One extension instance per DO cold start, shared across every
+  `getSandbox()` stub for that DO. Fine for caching, but treat any local
+  cache as best-effort — the container is the source of truth and can
+  restart. Re-sync via a list/refresh call when needed.
+- The field name (`claudeCode`, `interpreter`) must not collide with a
+  base `Sandbox` member.
 
 ## Authoring checklist ("extract X into `withX()`")
 
 1. **Module** `packages/sandbox/src/<name>/index.ts`: a class extending
-   `SandboxExtension`, the `withX(sandbox)` factory, and (for sidecars) a
-   `build<Name>Manifest()` + the sidecar program/asset.
+   `SandboxExtension`, the `withX(sandbox)` factory, and (for sidecars)
+   the sidecar program source and a build step that emits its tarball.
 2. **Subpath export**: add `./<name>` to `packages/sandbox/package.json`
    `exports` and an entry to `packages/sandbox/tsdown.config.ts`.
-3. **Shared types**: any new wire types go in `@repo/shared` (`rpc-types.ts`).
-   Rebuild with `npm run build -w @repo/shared` before typechecking dependents.
-4. **Worker exposure**: add delegate method(s) on the consumer Sandbox subclass
-   (never direct field pipelining).
+3. **Shared types**: any new wire types go in `@repo/shared`
+   (`rpc-types.ts`) or in the extension's own typed-interface module
+   compiled into both ends. Rebuild with `npm run build -w @repo/shared`
+   before typechecking dependents.
+4. **Worker exposure**: add delegate method(s) on the consumer Sandbox
+   subclass (never direct field pipelining).
 5. **Unit test** `packages/sandbox/tests/<name>.test.ts`: mock
-   `sandbox.client.<subApi>` (or `client.extensions` for sidecars); assert lazy
-   construction (no RPC in constructor), input validation, happy path, and (for
-   sidecars) register-once + id-binding. Mirror
+   `sandbox.client.<subApi>` (or `client.extensions` for sidecars);
+   assert lazy construction (no RPC in constructor), input validation,
+   happy path, and (for sidecars) the hash-first connect retry. Mirror
    `packages/sandbox/tests/extensions.test.ts`.
-6. **Sidecar host test** (if applicable): exercise the real spawned sidecar in
-   `packages/sandbox-container/tests/extensions/`. Mirror `extension-host.test.ts`.
-   Run it via an explicit file path — `bun test tests/extensions` resolves the
-   `@cloudflare/sandbox` workspace symlink and tries to run SDK vitest files
-   under Bun (which lacks `cloudflare:workers`).
-7. **Changeset**: `patch` unless the public surface changes; `@cloudflare/sandbox`
-   only; user-facing description (see the changesets skill).
+6. **Sidecar host test** (if applicable): exercise the real spawned
+   sidecar against a fixture tarball in
+   `packages/sandbox-container/tests/extensions/`. Mirror
+   `extension-host.test.ts`. Run via an explicit file path — `bun test
+tests/extensions` resolves the `@cloudflare/sandbox` workspace
+   symlink and tries to run SDK vitest files under Bun (which lacks
+   `cloudflare:workers`).
+7. **Changeset**: `patch` unless the public surface changes;
+   `@cloudflare/sandbox` only; user-facing description (see the
+   changesets skill).
 8. `npm run check` + `npm test -w @cloudflare/sandbox`.
 
 ## Architecture (for reviewers)
 
 SDK side — `packages/sandbox/src/extensions/index.ts`:
 
-- `SandboxExtension` — the single base class (above).
-- `Extensions` / `withExtensions(sandbox)` — low-level client wrapping
-  `sandbox.client.extensions` (`register` / `call` / `health` / `stop`; `call`
-  takes `{ onEvent }` to stream) with bounded readiness retry + stream de-dup.
-  The base uses this internally; it is also an escape hatch for ad-hoc use.
-  (The capnweb wire keeps separate `call` / `callStream` methods underneath.)
-- `ContainerControlClient.get extensions()` (`container-control/client.ts`)
-  surfaces the capnweb `extensions` sub-API.
+- `SandboxExtension` — the single base class. Handles hash-first connect
+  with one bytes-attached retry and reconnects through the host on each
+  `sidecar()` call to avoid stale stubs after crashes.
+- `ContainerControlClient.get extensions()`
+  (`container-control/client.ts`) surfaces the capnweb `extensions`
+  sub-API (`connect` / `health` / `stop`).
 
-Shared — `packages/shared/src/rpc-types.ts`: `ExtensionManifest`,
-`ExtensionAsset`, `ExtensionHealth`, and `SandboxExtensionsAPI` (a member of
+Sidecar helper — `packages/sandbox/src/sidecar/index.ts`:
+
+- `SandboxSidecar` — `RpcTarget` base with the reserved `__ping__`.
+- `serveSandboxSidecar(target)` — opens the `EXT_SOCKET` unix socket,
+  serves a capnweb session per connection.
+- `SocketTransport` — length-prefixed capnweb transport over a Node
+  socket; mirrors the host-side transport.
+
+Shared — `packages/shared/src/rpc-types.ts`: `ExtensionPackage`,
+`ExtensionRegistration`, `ExtensionConnectRequest`, `ExtensionHealth`,
+`EXTENSION_TARBALL_REQUIRED`, and `SandboxExtensionsAPI` (a member of
 `SandboxAPI`).
 
 Container side — `packages/sandbox-container/src/extensions/`:
 
-- `extension-host.ts` — `ExtensionHost`: provision assets (idempotent, keyed by
-  id+version), lazy spawn, supervise (transparent restart), `call` over the
-  bridge, bounded `__ping__` health. Wired into `core/container.ts` DI and
-  cleaned up in `server.ts`.
-- `bridge.ts` + `protocol.ts` — unix-socket client + frame codec.
-- `echo-sidecar.ts` — reference sidecar.
-- `control-plane/api.ts` `ExtensionsRPCAPI` — the `client.extensions` surface.
+- `extension-host.ts` — `ExtensionHost`: provision-by-content-hash, lazy
+  spawn via `Bun.spawn`, supervise (transparent restart), connect
+  capnweb bridge, return remote main stubs.
+- `provision.ts` — in-process tar reader, package.json derivation,
+  `bun add --ignore-scripts ./extension.tgz`.
+- `capnweb-bridge.ts` + `socket-transport.ts` — capnweb session over a
+  unix socket; `remoteMain()` returns a `.dup()`-ed stub so callers can
+  dispose freely without tearing down the underlying session.
+- `control-plane/api.ts` `ExtensionsRPCAPI` — the `client.extensions`
+  surface.
 
-Design rationale and the provisioning option ladder: `docs/EXTENSION_ARCHITECTURE_V2.md`
-(context only).
+Design rationale: `docs/EXTENSION_ARCHITECTURE_V2.md` (context only).
 
 ## Key files
 
-- `packages/sandbox/src/extensions/index.ts` — `SandboxExtension`, `withExtensions`.
+- `packages/sandbox/src/extensions/index.ts` — `SandboxExtension`.
+- `packages/sandbox/src/sidecar/index.ts` — sidecar author helper.
 - `packages/sandbox/tests/extensions.test.ts` — reference SDK unit tests.
-- `packages/sandbox/src/tunnels/tunnels-handler.ts` — `RpcTarget` + `callTunnels`
-  dispatch precedent and the Worker-pipelining caveat.
+- `packages/sandbox/src/tunnels/tunnels-handler.ts` — `RpcTarget` +
+  `callTunnels` dispatch precedent and the Worker-pipelining caveat.
 - `packages/sandbox/src/sandbox.ts` — `getSandbox()` Proxy + `callTunnels`.
-- `packages/sandbox/package.json` (`exports`) + `tsdown.config.ts` — subpath wiring.
-- `packages/sandbox-container/src/extensions/` — `ExtensionHost`, bridge, protocol,
-  echo sidecar.
+- `packages/sandbox/package.json` (`exports`) + `tsdown.config.ts` —
+  subpath wiring (`./extensions`, `./sidecar`).
+- `packages/sandbox-container/src/extensions/` — `ExtensionHost`,
+  capnweb bridge, provisioning.
 - `packages/sandbox-container/tests/extensions/extension-host.test.ts` —
-  end-to-end sidecar validation.
+  end-to-end fixture-tarball validation.

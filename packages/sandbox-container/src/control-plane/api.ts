@@ -2,6 +2,8 @@ import type {
   CheckChangesRequest,
   CheckChangesResult,
   ExecutionError,
+  ExtensionConnectRequest,
+  ExtensionHealth,
   FileEncoding,
   FileInfo,
   ListFilesOptions,
@@ -21,7 +23,6 @@ import type {
   ServiceResult
 } from '../core/types';
 import type { ExtensionHost } from '../extensions';
-import type { ExtensionHealth, ExtensionManifest } from '../extensions/types';
 import type { BackupService } from '../services/backup-service';
 import type { FileService } from '../services/file-service';
 import type { GitService } from '../services/git-service';
@@ -1141,11 +1142,19 @@ class TunnelsRPCAPI extends RpcTarget {
 // ===========================================================================
 
 /**
- * Dynamic capnweb surface for sidecar extensions.
+ * Capnweb surface for sidecar extensions.
  *
- * The SDK registers an extension manifest, then issues `call` / `callStream`
- * which the host forwards to the sidecar over a unix socket, letting an
- * extension expose methods without a bespoke per-extension RPC class.
+ * `connect` provisions an extension package on first use (keyed by tarball
+ * content hash) and returns the sidecar's capnweb remote main as a stub.
+ * Calls on the stub are proxied through the container's capnweb session into
+ * the sidecar's separate capnweb session — callback parameters (including
+ * streaming handlers) round-trip across both hops via capnweb's cross-session
+ * stub forwarding.
+ *
+ * Identity lives inside the tarball's `package.json`; the host derives `id`,
+ * `version`, `bin`, and readiness timeout from there. The wire payload is
+ * the tarball bytes on first connect per hash; subsequent connects send the
+ * hash alone.
  */
 class ExtensionsRPCAPI extends RpcTarget {
   #host: ExtensionHost;
@@ -1154,47 +1163,15 @@ class ExtensionsRPCAPI extends RpcTarget {
     this.#host = host;
   }
 
-  async register(manifest: ExtensionManifest): Promise<void> {
-    await this.#host.register(manifest);
+  async connect(req: ExtensionConnectRequest): Promise<unknown> {
+    return this.#host.connect(req);
   }
 
-  /** Invoke a sidecar method and return its result. */
-  async call(
-    id: string,
-    method: string,
-    args: unknown[],
-    timeoutMs?: number
-  ): Promise<unknown> {
-    return this.#host.call(id, method, args, undefined, timeoutMs);
+  async health(packageHash: string): Promise<ExtensionHealth> {
+    return this.#host.health(packageHash);
   }
 
-  /**
-   * Invoke a sidecar method, forwarding streaming events to `onEvent`.
-   * capnweb stubs the callback so events route back to the caller.
-   */
-  async callStream(
-    id: string,
-    method: string,
-    args: unknown[],
-    onEvent: (event: string, data: unknown) => void | Promise<void>,
-    timeoutMs?: number
-  ): Promise<unknown> {
-    // Return the callback promise so the bridge awaits event delivery before
-    // resolving the result — capnweb can dispose the stub once this resolves.
-    return this.#host.call(
-      id,
-      method,
-      args,
-      (event, data) => onEvent(event, data),
-      timeoutMs
-    );
-  }
-
-  async health(id: string): Promise<ExtensionHealth> {
-    return this.#host.health(id);
-  }
-
-  async stop(id: string): Promise<void> {
-    await this.#host.stop(id);
+  async stop(packageHash: string): Promise<void> {
+    await this.#host.stop(packageHash);
   }
 }

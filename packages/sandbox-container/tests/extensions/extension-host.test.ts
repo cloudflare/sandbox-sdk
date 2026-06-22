@@ -1,17 +1,74 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+/**
+ * End-to-end validation of the extension framework.
+ *
+ * Builds a real fixture tarball at test time, hands the bytes to
+ * `ExtensionHost.connect()`, and round-trips capnweb calls through the
+ * actual sidecar process.
+ */
+
+import { afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
+import net, { type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNoOpLogger } from '@repo/shared';
-import { buildEchoManifest } from '../../src/extensions/echo-sidecar';
+import { createNoOpLogger, EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
+import { RpcSession, RpcTarget } from 'capnweb';
+import { CapnwebExtensionBridge } from '../../src/extensions/capnweb-bridge';
 import { ExtensionHost } from '../../src/extensions/extension-host';
-import type { ExtensionManifest } from '../../src/extensions/types';
+import { hashTarball } from '../../src/extensions/provision';
+import { SocketTransport } from '../../src/extensions/socket-transport';
 
-/**
- * End-to-end validation of the extension framework: provision an asset, spawn a
- * real sidecar process, and round-trip calls/events over the unix-socket bridge.
- */
-describe('ExtensionHost', () => {
+interface DemoSidecarApi {
+  echo(value: string): Promise<string>;
+  runJob(
+    label: string,
+    onEvent: (event: { kind: string; data: unknown }) => void | Promise<void>
+  ): Promise<{ ok: true; label: string }>;
+  fail(message: string): Promise<never>;
+  __ping__(): Promise<string>;
+}
+
+class PingTarget extends RpcTarget {
+  __ping__(): string {
+    return 'pong';
+  }
+}
+
+let tarballBytes: Uint8Array;
+let packageHash: string;
+
+const FIXTURE_DIR = join(import.meta.dir, 'fixtures', 'demo-sidecar');
+
+beforeAll(async () => {
+  // Bundle the sidecar with capnweb + SandboxSidecar helper inlined so the
+  // tarball installs offline. `bun build --compile=false --target=node
+  // --bundle` produces a self-contained ESM bundle.
+  const distDir = join(FIXTURE_DIR, 'dist');
+  const build = await Bun.build({
+    entrypoints: [join(FIXTURE_DIR, 'src/sidecar.ts')],
+    outdir: distDir,
+    naming: 'sidecar.js',
+    target: 'bun',
+    format: 'esm'
+  });
+  if (!build.success) {
+    throw new Error(
+      `failed to bundle fixture sidecar:\n${build.logs.map((l) => l.message).join('\n')}`
+    );
+  }
+
+  // `bun pm pack` writes the tarball into the package directory. We read
+  // via Bun.file() because other tests in this suite globally mock
+  // `node:fs` (see `cert.test.ts`), and bun's `mock.module` is process-wide.
+  execFileSync('bun', ['pm', 'pack'], { cwd: FIXTURE_DIR, stdio: 'pipe' });
+  const tarballPath = join(FIXTURE_DIR, 'demo-sidecar-1.0.0.tgz');
+  tarballBytes = new Uint8Array(await Bun.file(tarballPath).arrayBuffer());
+  packageHash = hashTarball(tarballBytes);
+});
+
+describe('ExtensionHost (capnweb + npm-tarball)', () => {
   let host: ExtensionHost | null = null;
 
   function makeHost(): ExtensionHost {
@@ -25,158 +82,169 @@ describe('ExtensionHost', () => {
     host = null;
   });
 
-  it('provisions, spawns, and round-trips a call to the echo sidecar', async () => {
+  it('provisions, spawns, and round-trips a capnweb call', async () => {
     const h = makeHost();
-    await h.register(buildEchoManifest());
+    const stub = (await h.connect({
+      packageHash,
+      tarball: tarballBytes
+    })) as DemoSidecarApi;
 
-    const result = await h.call('echo', 'echo', ['hello']);
-
-    expect(result).toBe('hello');
+    expect(await stub.echo('hello')).toBe('hello');
   });
 
-  it('forwards streaming events before the final response', async () => {
+  it('forwards a streaming callback through both capnweb hops', async () => {
     const h = makeHost();
-    await h.register(buildEchoManifest());
+    const stub = (await h.connect({
+      packageHash,
+      tarball: tarballBytes
+    })) as DemoSidecarApi;
 
-    const events: Array<{ event: string; data: unknown }> = [];
-    const result = await h.call('echo', 'echo', ['streamed'], (event, data) => {
-      events.push({ event, data });
+    const events: Array<{ kind: string; data: unknown }> = [];
+    const result = await stub.runJob('demo', async (event) => {
+      events.push(event);
     });
 
-    expect(result).toBe('streamed');
-    expect(events).toEqual([{ event: 'echo', data: 'streamed' }]);
+    expect(result).toEqual({ ok: true, label: 'demo' });
+    expect(events).toEqual([
+      { kind: 'started', data: 'demo' },
+      { kind: 'progress', data: 0.5 },
+      { kind: 'progress', data: 1 }
+    ]);
   });
 
-  it('awaits async event delivery before resolving the result', async () => {
+  it('propagates sidecar errors across capnweb', async () => {
     const h = makeHost();
-    await h.register(buildEchoManifest());
+    const stub = (await h.connect({
+      packageHash,
+      tarball: tarballBytes
+    })) as DemoSidecarApi;
 
-    let eventDelivered = false;
-    const result = await h.call('echo', 'echo', ['x'], async () => {
-      // Simulate a slow (async) callback, e.g. an RPC back to the SDK.
-      await new Promise((r) => setTimeout(r, 30));
-      eventDelivered = true;
-    });
-
-    // The result must not resolve until the event callback has completed.
-    expect(eventDelivered).toBe(true);
-    expect(result).toBe('x');
+    // Wrap with Promise.resolve so bun's matcher sees a plain promise rather
+    // than capnweb's `RpcPromise` proxy (which is also callable for pipelining).
+    await expect(Promise.resolve(stub.fail('boom'))).rejects.toThrow(/boom/);
   });
 
-  it('reports health with a live ping once started', async () => {
+  it('throws ExtensionTarballRequired when the host has not seen the hash and no bytes are sent', async () => {
     const h = makeHost();
-    await h.register(buildEchoManifest());
+    let thrown: unknown;
+    try {
+      await h.connect({ packageHash });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect((thrown as Error).name).toBe(EXTENSION_TARBALL_REQUIRED);
+  });
 
-    // No work until first use.
-    let health = await h.health('echo');
-    expect(health.registered).toBe(true);
+  it('reuses the same provisioned dir for the second connect with the same hash', async () => {
+    const h = makeHost();
+    await h.connect({ packageHash, tarball: tarballBytes });
+
+    // Second connect: hash-only, must not fail.
+    const stub = (await h.connect({ packageHash })) as DemoSidecarApi;
+    expect(await stub.echo('again')).toBe('again');
+  });
+
+  it('serializes concurrent first connects for the same hash', async () => {
+    const h = makeHost();
+    const [a, b, c] = await Promise.all([
+      h.connect({ packageHash, tarball: tarballBytes }),
+      h.connect({ packageHash, tarball: tarballBytes }),
+      h.connect({ packageHash, tarball: tarballBytes })
+    ]);
+
+    expect(await (a as DemoSidecarApi).echo('a')).toBe('a');
+    expect(await (b as DemoSidecarApi).echo('b')).toBe('b');
+    expect(await (c as DemoSidecarApi).echo('c')).toBe('c');
+  });
+
+  it('reports health with a live __ping__ once the sidecar is running', async () => {
+    const h = makeHost();
+
+    // No work until first connect.
+    let health = await h.health(packageHash);
+    expect(health.provisioned).toBe(false);
     expect(health.running).toBe(false);
 
-    await h.call('echo', 'echo', ['warm']);
+    await h.connect({ packageHash, tarball: tarballBytes });
 
-    health = await h.health('echo');
+    health = await h.health(packageHash);
+    expect(health.provisioned).toBe(true);
     expect(health.running).toBe(true);
     expect(health.responsive).toBe(true);
     expect(health.pid).toBeGreaterThan(0);
+    expect(health.id).toBe('demo-sidecar');
+    expect(health.version).toBe('1.0.0');
   });
 
-  it('rejects calls to unknown methods with the sidecar error', async () => {
+  it('restarts the sidecar transparently after stop()', async () => {
     const h = makeHost();
-    await h.register(buildEchoManifest());
+    let stub = (await h.connect({
+      packageHash,
+      tarball: tarballBytes
+    })) as DemoSidecarApi;
+    expect(await stub.echo('first')).toBe('first');
 
-    await expect(h.call('echo', 'nope', [])).rejects.toThrow(
-      /Unknown method: nope/
-    );
-  });
-
-  it('throws when calling an unregistered extension', async () => {
-    const h = makeHost();
-    await expect(h.call('missing', 'echo', [])).rejects.toThrow(
-      /not registered/
-    );
-  });
-
-  it('restarts the sidecar transparently after it exits', async () => {
-    const h = makeHost();
-    await h.register(buildEchoManifest());
-
-    await h.call('echo', 'echo', ['first']);
-    const firstHealth = await h.health('echo');
-    expect(firstHealth.running).toBe(true);
-
-    // Kill the sidecar out from under the host.
-    await h.stop('echo');
-    const stopped = await h.health('echo');
+    await h.stop(packageHash);
+    const stopped = await h.health(packageHash);
     expect(stopped.running).toBe(false);
 
-    // Next call should re-provision + respawn.
-    const result = await h.call('echo', 'echo', ['second']);
-    expect(result).toBe('second');
+    // Next connect must respawn (hash-only is sufficient \u2014 provisioned dir
+    // is still on disk).
+    stub = (await h.connect({ packageHash })) as DemoSidecarApi;
+    expect(await stub.echo('second')).toBe('second');
   });
 
-  it('is idempotent on re-registering the same id+version', async () => {
+  it('rejects a mismatched declared hash on first provision', async () => {
     const h = makeHost();
-    const manifest: ExtensionManifest = buildEchoManifest();
-    await h.register(manifest);
-    await h.register({ ...manifest, command: ['definitely-missing-binary'] });
-
-    const result = await h.call('echo', 'echo', ['again']);
-    expect(result).toBe('again');
-  });
-
-  it('rejects invalid manifests before provisioning', async () => {
-    const h = makeHost();
-    const manifest = buildEchoManifest();
-
-    await expect(h.register({ ...manifest, id: '../bad' })).rejects.toThrow(
-      /manifest id/
-    );
-    await expect(h.register({ ...manifest, command: [] })).rejects.toThrow(
-      /command must not be empty/
-    );
     await expect(
-      h.register({ ...manifest, assets: [{ path: '../escape', content: 'x' }] })
-    ).rejects.toThrow(/asset path must be relative/);
-    await expect(
-      h.register({
-        ...manifest,
-        assets: [{ path: '/tmp/escape', content: 'x' }]
+      h.connect({
+        packageHash: '0'.repeat(64),
+        tarball: tarballBytes
       })
-    ).rejects.toThrow(/asset path must be relative/);
+    ).rejects.toThrow(/hash mismatch/);
   });
 
-  it('rejects cleanly when the sidecar command cannot spawn', async () => {
-    const h = makeHost();
-    await h.register({
-      ...buildEchoManifest(),
-      command: ['definitely-missing-extension-binary'],
-      readinessTimeoutMs: 500
+  // Sanity: the bundled fixture must really be installable. If this fails the
+  // beforeAll didn't produce a valid tarball.
+  it('produced a valid bundled fixture', async () => {
+    const bundled = Bun.file(join(FIXTURE_DIR, 'dist', 'sidecar.js'));
+    expect(await bundled.exists()).toBe(true);
+    expect(tarballBytes.length).toBeGreaterThan(1024);
+    expect(packageHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('marks a bridge disconnected when the sidecar socket closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ext-bridge-socket-'));
+    const socketPath = join(dir, 'bridge.sock');
+    const accepted: Socket[] = [];
+    const server = net.createServer((socket) => {
+      accepted.push(socket);
+      new RpcSession(new SocketTransport(socket), new PingTarget());
     });
 
-    await expect(h.call('echo', 'echo', ['x'])).rejects.toThrow();
-    const health = await h.health('echo');
-    expect(health.running).toBe(false);
-  });
+    try {
+      await mkdir(dir, { recursive: true });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(socketPath, resolve);
+      });
+      const bridge = new CapnwebExtensionBridge(
+        'demo-sidecar',
+        createNoOpLogger()
+      );
+      await bridge.connect(socketPath, 1000);
+      expect(bridge.connected).toBe(true);
 
-  it('rejects (does not hang) when a call exceeds its timeout', async () => {
-    const h = makeHost();
-    await h.register(buildEchoManifest());
+      accepted[0]?.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
-    await expect(h.call('echo', 'hang', [], undefined, 200)).rejects.toThrow(
-      /timed out after 200ms/
-    );
-  });
-
-  it('recovers when the sidecar drops the connection but stays alive', async () => {
-    const h = makeHost();
-    await h.register(buildEchoManifest());
-
-    // Warm it up, then ask the sidecar to drop the socket without exiting.
-    await h.call('echo', 'echo', ['warm']);
-    await expect(h.call('echo', 'drop', [])).rejects.toThrow(/closed/);
-
-    // The next call must transparently reconnect rather than hang on a dead socket.
-    const result = await h.call('echo', 'echo', ['after-drop']);
-    expect(result).toBe('after-drop');
+      expect(bridge.connected).toBe(false);
+      bridge.close();
+    } finally {
+      server.close();
+      accepted[0]?.destroy();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

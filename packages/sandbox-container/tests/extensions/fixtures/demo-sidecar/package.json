@@ -1,0 +1,16 @@
+{
+  "name": "demo-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "demo-sidecar": "./dist/sidecar.js"
+  },
+  "files": [
+    "dist/sidecar.js"
+  ],
+  "sandboxExtension": {
+    "bin": "demo-sidecar",
+    "readinessTimeoutMs": 5000
+  }
+}

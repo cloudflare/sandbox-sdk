@@ -324,82 +324,118 @@ export interface SandboxTunnelsAPI {
 // ---------------------------------------------------------------------------
 
 /**
- * A file an extension needs on disk before its sidecar can run. Provisioned
- * idempotently by the container's extension host. `content` is UTF-8 text by
- * default; set `encoding: 'base64'` for binary assets.
+ * Author-facing description of a sidecar extension. An extension is an
+ * npm-style package: an `.tgz` whose embedded `package.json` declares the
+ * sidecar entrypoint (via `bin`) and any extension metadata (under the
+ * `sandboxExtension` key).
+ *
+ * The SDK ships the tarball bytes; the container hashes them, provisions a
+ * dedicated directory keyed by content hash, derives identity from the
+ * embedded `package.json`, installs the package with `bun add`, and spawns
+ * the declared bin under Bun.
+ *
+ * `ExtensionPackage` carries tarball bytes produced by an extension build.
+ * The SDK sends those bytes only when the container has not provisioned the
+ * package hash yet.
  */
-export interface ExtensionAsset {
-  /** Path relative to the extension's provisioned directory. */
-  path: string;
-  content: string;
-  encoding?: 'utf8' | 'base64';
-  /** Optional file mode (e.g. 0o755 for executables). */
-  mode?: number;
+export interface ExtensionPackage {
+  /** Raw `.tgz` bytes. */
+  tarball: Uint8Array;
+  /**
+   * Bin entry to run when the embedded `package.json` declares more than one.
+   * Defaults to the value of `sandboxExtension.bin` in `package.json`, then
+   * to the single bin entry if there is exactly one.
+   */
+  bin?: string;
+  /**
+   * Max time to wait for the sidecar to accept a capnweb connection on its
+   * unix socket. Falls back to `sandboxExtension.readinessTimeoutMs` in
+   * `package.json`, then to a host default.
+   */
+  readinessTimeoutMs?: number;
+  /**
+   * Run lifecycle scripts during `bun add`. Defaults to false — provisioning
+   * happens before the sidecar is supervised, so install-time side effects
+   * are deliberately opt-in.
+   */
+  allowInstallScripts?: boolean;
 }
 
 /**
- * Declarative description of a sidecar extension. The SDK ships this and the
- * container's extension host materialises + supervises it.
- *
- * Identity is `id` + `version`: re-registering the same pair is a no-op, while
- * a new version reprovisions. The `command` argv supports the placeholders
- * `{dir}` (provisioned directory) and `{socket}` (bridge socket path).
+ * Container-derived identity for a provisioned extension package. Not
+ * authored — produced by the host after extracting the embedded
+ * `package.json` from a tarball.
  */
-export interface ExtensionManifest {
+export interface ExtensionRegistration {
+  /** Slugified package name (e.g. `@acme/foo` → `acme-foo`). */
   id: string;
+  packageName: string;
   version: string;
-  assets?: ExtensionAsset[];
-  /** Argv for the sidecar process. Supports `{dir}` / `{socket}` placeholders. */
-  command: string[];
-  /** Extra env for the sidecar. `EXT_SOCKET`/`EXT_DIR` are always injected. */
-  env?: Record<string, string>;
-  /** Working directory for the sidecar. Defaults to the provisioned directory. */
-  cwd?: string;
-  /** Max time to wait for the sidecar to accept a bridge connection. */
-  readinessTimeoutMs?: number;
+  /** Hex sha256 of the tarball bytes. */
+  packageHash: string;
+  /** Resolved bin entry the host spawns. */
+  bin: string;
+  readinessTimeoutMs: number;
 }
 
-/** Health snapshot for a registered extension. */
+/** Health snapshot for a provisioned extension. */
 export interface ExtensionHealth {
+  packageHash: string;
   id: string;
   version: string;
-  registered: boolean;
+  /** Tarball is on disk and the package.json has been read. */
+  provisioned: boolean;
+  /** Sidecar process is currently running. */
   running: boolean;
   pid: number | null;
-  /** Whether a ping round-tripped over the bridge. */
+  /** Whether a `__ping__` round-tripped over capnweb. */
   responsive: boolean;
 }
 
 /**
- * Generic control surface for container sidecar extensions. Lets the SDK
- * register a manifest then invoke arbitrary sidecar methods over the bridge —
- * the transport-level equivalent of a per-feature RPC sub-API.
+ * Connect request payload. The SDK hashes the tarball locally and first sends
+ * only the hash. If the current host process has not provisioned that hash,
+ * it responds with an `ExtensionTarballRequired` error and the SDK retries
+ * with `tarball` populated.
+ */
+export interface ExtensionConnectRequest {
+  packageHash: string;
+  /** Only sent when the host has not seen this hash yet. */
+  tarball?: Uint8Array;
+  bin?: string;
+  readinessTimeoutMs?: number;
+  allowInstallScripts?: boolean;
+}
+
+/**
+ * Error name thrown by the host's `connect` when it has not yet provisioned
+ * the requested hash and the request did not carry tarball bytes. The SDK
+ * recognises this name via `Error.name` and retries the connect with the
+ * bytes attached. Kept as a string constant so it survives capnweb
+ * cross-realm error reconstruction.
+ */
+export const EXTENSION_TARBALL_REQUIRED = 'ExtensionTarballRequired';
+
+/**
+ * Control surface for container sidecar extensions.
+ *
+ * `connect` is the only entry point: it provisions on first use, supervises
+ * lazily, and returns the sidecar's capnweb remote main as a stub. Calls on
+ * the stub are proxied through the container's capnweb session to the
+ * sidecar's capnweb session — callback parameters (including streaming
+ * handlers) round-trip across both hops.
  */
 export interface SandboxExtensionsAPI {
-  /** Register (or re-register) an extension manifest. Does not spawn anything. */
-  register(manifest: ExtensionManifest): Promise<void>;
-  /** Invoke a sidecar method, starting the sidecar on demand. */
-  call(
-    id: string,
-    method: string,
-    args: unknown[],
-    timeoutMs?: number
-  ): Promise<unknown>;
   /**
-   * Invoke a sidecar method, forwarding streaming events to `onEvent` before
-   * the final result resolves.
+   * Provision the package (if new) and return the sidecar's typed remote
+   * main. The result is a capnweb stub whose methods correspond to the
+   * sidecar's `RpcTarget` surface.
    */
-  callStream(
-    id: string,
-    method: string,
-    args: unknown[],
-    onEvent: (event: string, data: unknown) => void | Promise<void>,
-    timeoutMs?: number
-  ): Promise<unknown>;
-  /** Health snapshot, probing the bridge with a ping when running. */
-  health(id: string): Promise<ExtensionHealth>;
-  /** Stop a sidecar and release its bridge. */
-  stop(id: string): Promise<void>;
+  connect(req: ExtensionConnectRequest): Promise<unknown>;
+  /** Health snapshot, probing the sidecar with a `__ping__` when running. */
+  health(packageHash: string): Promise<ExtensionHealth>;
+  /** Stop a sidecar and release its capnweb session. */
+  stop(packageHash: string): Promise<void>;
 }
 
 /**

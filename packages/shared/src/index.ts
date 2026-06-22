@@ -78,11 +78,11 @@ export type {
   UploadPartsResponse,
   WriteFileRequest
 } from './request-types.js';
-// RPC interface types (shared between SDK and container)
 export type {
-  ExtensionAsset,
+  ExtensionConnectRequest,
   ExtensionHealth,
-  ExtensionManifest,
+  ExtensionPackage,
+  ExtensionRegistration,
   NamedTunnelInfo,
   QuickTunnelInfo,
   SandboxAPI,
@@ -101,6 +101,8 @@ export type {
   TunnelInfo,
   TunnelOptions
 } from './rpc-types.js';
+// RPC interface types (shared between SDK and container)
+export { EXTENSION_TARBALL_REQUIRED } from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
 // Export SSE utilities

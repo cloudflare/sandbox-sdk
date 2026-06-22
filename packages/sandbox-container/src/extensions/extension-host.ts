@@ -1,55 +1,69 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import type { Logger } from '@repo/shared';
-import { ExtensionBridge } from './bridge';
-import type {
-  ExtensionEventHandler,
-  ExtensionHealth,
-  ExtensionManifest
-} from './types';
+import { join } from 'node:path';
+import {
+  EXTENSION_TARBALL_REQUIRED,
+  type ExtensionConnectRequest,
+  type ExtensionHealth,
+  type ExtensionRegistration,
+  type Logger
+} from '@repo/shared';
+import { CapnwebExtensionBridge } from './capnweb-bridge';
+import { hashTarball, provisionPackage } from './provision';
 
 const DEFAULT_ROOT_DIR = '/var/lib/sandbox-extensions';
-const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
-const MANIFEST_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-// Health probes must never hang the caller, so the ping is always bounded even
-// though normal calls are unbounded by default.
-const PING_TIMEOUT_MS = 5_000;
 const STOP_GRACE_MS = 500;
 
 interface ExtensionInstance {
-  manifest: ExtensionManifest;
+  registration: ExtensionRegistration;
   provisionedDir: string;
+  binAbsolutePath: string;
   socketPath: string;
-  provisioned: boolean;
-  child: ChildProcess | null;
-  bridge: ExtensionBridge | null;
+  child: Bun.Subprocess | null;
+  bridge: CapnwebExtensionBridge | null;
   startPromise: Promise<void> | null;
   generation: number;
   logger: Logger;
 }
 
 /**
+ * Error the host throws when a `connect()` request arrives with only a
+ * package hash and the host has not yet provisioned that hash. The SDK
+ * recognises it by name and retries with the tarball bytes attached.
+ *
+ * Carrying it as a named subclass keeps the contract typed inside the
+ * container; the wire reproduction is via `Error.name`, preserved by
+ * capnweb across the session boundary.
+ */
+export class ExtensionTarballRequiredError extends Error {
+  override readonly name = EXTENSION_TARBALL_REQUIRED;
+  readonly packageHash: string;
+  constructor(packageHash: string) {
+    super(
+      `Extension package '${packageHash}' is not provisioned; resend connect() with tarball bytes`
+    );
+    this.packageHash = packageHash;
+  }
+}
+
+/**
  * Container-side host for sidecar extensions.
  *
- * Responsibilities:
- * - **provision** — materialise an extension's assets on disk, idempotently,
- *   keyed by `id`+`version`.
- * - **start** — spawn the sidecar process lazily (on first call), inject the
- *   bridge socket path, and connect a {@link ExtensionBridge}.
- * - **supervise** — detect sidecar exit and transparently re-provision +
- *   restart on the next call (also covers container sleep/wake).
- * - **bridge** — forward typed method calls (and streaming events) to the
- *   sidecar over a unix domain socket — never an exposed TCP port.
+ * Each registered extension is identified by a content hash of its
+ * `.tgz` bytes; the host provisions on first connect, lazily spawns the
+ * sidecar, and exposes its capnweb remote main to callers. Calls flow
+ * Worker \u2192 DO \u2192 container (capnweb session A) \u2192 sidecar (capnweb
+ * session B); capnweb proxies methods and callback stubs across both hops.
  *
- * Startup-optimised: registering an extension does no work; the sidecar is
- * only spawned when first invoked, so unused extensions add ~zero overhead.
+ * Startup-optimised: unused extensions cost ~nothing. A connect for an
+ * unknown hash with no tarball attached fails with
+ * {@link ExtensionTarballRequiredError} so the SDK can resend with bytes;
+ * once provisioned, the hash alone is enough for every subsequent connect.
  */
 export class ExtensionHost {
-  readonly #instances = new Map<string, ExtensionInstance>();
+  readonly #instancesByHash = new Map<string, ExtensionInstance>();
+  readonly #provisioningByHash = new Map<string, Promise<ExtensionInstance>>();
   readonly #logger: Logger;
   readonly #rootDir: string;
   readonly #socketDir: string;
@@ -64,57 +78,30 @@ export class ExtensionHost {
   }
 
   /**
-   * Register (or re-register) an extension manifest. Idempotent: re-registering
-   * the same `id`+`version` is a no-op; a changed version replaces the entry
-   * and stops the previous sidecar. Does not spawn anything.
+   * Provision (if new) and return the sidecar's capnweb remote main as a
+   * `.dup()`-ed stub. The duplicate lets the caller dispose freely without
+   * tearing down the bridge's held reference.
    */
-  async register(manifest: ExtensionManifest): Promise<void> {
-    this.#validateManifest(manifest);
-    const existing = this.#instances.get(manifest.id);
-    if (existing && existing.manifest.version === manifest.version) {
-      return;
-    }
-    if (existing) {
-      await this.#teardown(existing);
-    }
-
-    this.#instances.set(manifest.id, {
-      manifest,
-      provisionedDir: join(this.#rootDir, manifest.id, manifest.version),
-      socketPath: this.#socketPathFor(manifest),
-      provisioned: false,
-      child: null,
-      bridge: null,
-      startPromise: null,
-      generation: 0,
-      logger: this.#logger.child({ extensionId: manifest.id })
-    });
-  }
-
-  /** Invoke a sidecar method, starting the sidecar on demand. */
-  async call(
-    id: string,
-    method: string,
-    args: unknown[],
-    onEvent?: ExtensionEventHandler,
-    timeoutMs?: number
-  ): Promise<unknown> {
-    const instance = this.#require(id);
+  async connect(req: ExtensionConnectRequest): Promise<object> {
+    const instance = await this.#ensureProvisioned(req);
     await this.#ensureReady(instance);
     if (!instance.bridge) {
-      throw new Error(`Extension '${id}' bridge unavailable`);
+      throw new Error(
+        `Extension '${instance.registration.id}' bridge unavailable`
+      );
     }
-    return instance.bridge.call(method, args, onEvent, timeoutMs);
+    return instance.bridge.remoteMain();
   }
 
-  /** Health snapshot, optionally probing the bridge with a ping. */
-  async health(id: string): Promise<ExtensionHealth> {
-    const instance = this.#instances.get(id);
+  /** Health snapshot, probing the sidecar with `__ping__` when running. */
+  async health(packageHash: string): Promise<ExtensionHealth> {
+    const instance = this.#instancesByHash.get(packageHash);
     if (!instance) {
       return {
-        id,
+        packageHash,
+        id: '',
         version: '',
-        registered: false,
+        provisioned: false,
         running: false,
         pid: null,
         responsive: false
@@ -124,32 +111,23 @@ export class ExtensionHost {
     const running = instance.child !== null && instance.child.exitCode === null;
     let responsive = false;
     if (running && instance.bridge?.connected) {
-      try {
-        responsive =
-          (await instance.bridge.call(
-            '__ping__',
-            [],
-            undefined,
-            PING_TIMEOUT_MS
-          )) === 'pong';
-      } catch {
-        responsive = false;
-      }
+      responsive = await instance.bridge.ping();
     }
 
     return {
-      id,
-      version: instance.manifest.version,
-      registered: true,
+      packageHash,
+      id: instance.registration.id,
+      version: instance.registration.version,
+      provisioned: true,
       running,
       pid: instance.child?.pid ?? null,
       responsive
     };
   }
 
-  /** Stop a single extension's sidecar and release its bridge. */
-  async stop(id: string): Promise<void> {
-    const instance = this.#instances.get(id);
+  /** Stop a single extension's sidecar and release its capnweb session. */
+  async stop(packageHash: string): Promise<void> {
+    const instance = this.#instancesByHash.get(packageHash);
     if (instance) {
       await this.#teardown(instance);
     }
@@ -158,37 +136,95 @@ export class ExtensionHost {
   /** Stop every sidecar. Called during container shutdown. */
   async stopAll(): Promise<void> {
     await Promise.all(
-      [...this.#instances.values()].map((instance) => this.#teardown(instance))
+      [...this.#instancesByHash.values()].map((instance) =>
+        this.#teardown(instance)
+      )
     );
     await rm(this.#socketDir, { recursive: true, force: true }).catch(() => {});
   }
 
   // --- internals -----------------------------------------------------------
 
-  #require(id: string): ExtensionInstance {
-    const instance = this.#instances.get(id);
-    if (!instance) {
-      throw new Error(`Extension '${id}' is not registered`);
+  async #ensureProvisioned(
+    req: ExtensionConnectRequest
+  ): Promise<ExtensionInstance> {
+    const existing = this.#instancesByHash.get(req.packageHash);
+    if (existing) return existing;
+
+    const inFlight = this.#provisioningByHash.get(req.packageHash);
+    if (inFlight) return inFlight;
+
+    if (!req.tarball) {
+      throw new ExtensionTarballRequiredError(req.packageHash);
     }
+
+    const promise = this.#provision(req).finally(() => {
+      this.#provisioningByHash.delete(req.packageHash);
+    });
+    this.#provisioningByHash.set(req.packageHash, promise);
+    return promise;
+  }
+
+  async #provision(req: ExtensionConnectRequest): Promise<ExtensionInstance> {
+    const existing = this.#instancesByHash.get(req.packageHash);
+    if (existing) return existing;
+
+    if (!req.tarball) {
+      throw new ExtensionTarballRequiredError(req.packageHash);
+    }
+
+    // Defensively re-hash the bytes: the host's identity for this instance is
+    // what *we* see, not what the SDK claimed. Mismatched hashes signal a
+    // corrupt or misrouted upload.
+    const computedHash = hashTarball(req.tarball);
+    if (computedHash !== req.packageHash) {
+      throw new Error(
+        `Extension tarball hash mismatch (declared ${req.packageHash.slice(0, 12)}\u2026, computed ${computedHash.slice(0, 12)}\u2026)`
+      );
+    }
+
+    const dir = join(this.#rootDir, computedHash);
+    const { registration, binAbsolutePath } = await provisionPackage({
+      tarballBytes: req.tarball,
+      packageHash: computedHash,
+      dir,
+      binOverride: req.bin,
+      readinessTimeoutMsOverride: req.readinessTimeoutMs,
+      allowInstallScripts: req.allowInstallScripts,
+      logger: this.#logger
+    });
+
+    const instance: ExtensionInstance = {
+      registration,
+      provisionedDir: dir,
+      binAbsolutePath,
+      socketPath: this.#freshSocketPath(),
+      child: null,
+      bridge: null,
+      startPromise: null,
+      generation: 0,
+      logger: this.#logger.child({
+        extensionId: registration.id,
+        packageHash: computedHash.slice(0, 12)
+      })
+    };
+    this.#instancesByHash.set(computedHash, instance);
     return instance;
   }
 
   /**
-   * Ensure the sidecar is provisioned, spawned, and bridged. Concurrent callers
-   * share a single in-flight start. A dead sidecar (crash or container wake) is
-   * transparently restarted.
+   * Ensure the sidecar is spawned and bridged. Concurrent callers share a
+   * single in-flight start; a dead sidecar (crash or container wake) is
+   * transparently restarted on the next connect.
    */
   #ensureReady(instance: ExtensionInstance): Promise<void> {
     const alive =
       instance.child !== null &&
       instance.child.exitCode === null &&
       instance.bridge?.connected === true;
-    if (alive) {
-      return Promise.resolve();
-    }
-    if (instance.startPromise) {
-      return instance.startPromise;
-    }
+    if (alive) return Promise.resolve();
+
+    if (instance.startPromise) return instance.startPromise;
 
     const startPromise = this.#start(instance).finally(() => {
       instance.startPromise = null;
@@ -205,17 +241,18 @@ export class ExtensionHost {
     instance.bridge?.close();
     instance.bridge = null;
 
-    await this.#provision(instance);
-    this.#assertCurrent(instance, generation);
     const spawned = await this.#spawn(instance);
     this.#assertCurrent(instance, generation);
 
-    const bridge = new ExtensionBridge(instance.manifest.id, instance.logger);
+    const bridge = new CapnwebExtensionBridge(
+      instance.registration.id,
+      instance.logger
+    );
     try {
       await Promise.race([
         bridge.connect(
           instance.socketPath,
-          instance.manifest.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS
+          instance.registration.readinessTimeoutMs
         ),
         spawned.failed
       ]);
@@ -223,113 +260,86 @@ export class ExtensionHost {
     } catch (error) {
       bridge.close();
       await this.#stopChild(spawned.child, instance.logger);
-      if (instance.child === spawned.child) {
-        instance.child = null;
-      }
+      if (instance.child === spawned.child) instance.child = null;
       throw error;
     } finally {
       spawned.cleanup();
     }
+
     instance.bridge = bridge;
     instance.logger.debug('Extension sidecar ready', {
       pid: instance.child?.pid ?? null
     });
   }
 
-  /** Write the manifest's assets to disk once per version (idempotent). */
-  async #provision(instance: ExtensionInstance): Promise<void> {
-    if (instance.provisioned) return;
-
-    await mkdir(instance.provisionedDir, { recursive: true });
-    for (const asset of instance.manifest.assets ?? []) {
-      const target = this.#assetTarget(instance, asset.path);
-      await mkdir(dirname(target), { recursive: true });
-      const data = Buffer.from(
-        asset.content,
-        asset.encoding === 'base64' ? 'base64' : 'utf8'
-      );
-      await writeFile(target, data, { mode: asset.mode });
-    }
-    instance.provisioned = true;
-    instance.logger.debug('Extension assets provisioned', {
-      dir: instance.provisionedDir
-    });
-  }
-
   async #spawn(instance: ExtensionInstance): Promise<{
-    child: ChildProcess;
+    child: Bun.Subprocess;
     failed: Promise<never>;
     cleanup: () => void;
   }> {
-    // Use a fresh socket path for every (re)spawn. A deterministic path would
-    // race the previous sidecar's leftover socket file on restart: a unix
-    // bind() fails with EADDRINUSE if the path still exists on disk, which a
-    // crashed/SIGKILLed sidecar never unlinks. A unique path sidesteps that.
-    instance.socketPath = this.#socketPathFor(instance.manifest);
-    await mkdir(dirname(instance.socketPath), { recursive: true, mode: 0o700 });
-    // Defensive: a fresh path should never exist, but never inherit a stale one.
-    if (existsSync(instance.socketPath)) {
+    // Fresh socket path per (re)spawn. A deterministic path would race the
+    // previous sidecar's leftover socket file on restart: a unix bind() fails
+    // with EADDRINUSE if the path still exists on disk, which a crashed/
+    // SIGKILLed sidecar never unlinks.
+    instance.socketPath = this.#freshSocketPath();
+    await mkdir(this.#socketDir, { recursive: true, mode: 0o700 });
+    // Bun-native I/O to dodge any test `mock.module('node:fs')` interference.
+    if (await Bun.file(instance.socketPath).exists()) {
       await rm(instance.socketPath, { force: true });
     }
 
-    const argv = instance.manifest.command.map((part) =>
-      part
-        .replaceAll('{dir}', instance.provisionedDir)
-        .replaceAll('{socket}', instance.socketPath)
-    );
-    const [command, ...args] = argv;
+    let child: Bun.Subprocess;
+    try {
+      child = Bun.spawn({
+        // Always invoke through `bun` so the runtime is consistent with the
+        // container regardless of the bin shim's shebang.
+        cmd: ['bun', instance.binAbsolutePath],
+        cwd: instance.provisionedDir,
+        env: {
+          // Current sidecars are trusted in-repo code and inherit the container
+          // environment. Before enabling third-party extensions, replace this
+          // with an explicit allowlist so secrets are not exposed by default.
+          ...process.env,
+          EXT_SOCKET: instance.socketPath,
+          EXT_DIR: instance.provisionedDir
+        },
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe'
+      });
+    } catch (error) {
+      // Bun.spawn throws synchronously for missing binaries / spawn errors,
+      // unlike node:child_process which emits 'error'. Surface both the same way.
+      throw error instanceof Error ? error : new Error(String(error));
+    }
 
-    const child = spawn(command, args, {
-      cwd:
-        instance.manifest.cwd?.replaceAll('{dir}', instance.provisionedDir) ??
-        instance.provisionedDir,
-      env: {
-        ...process.env,
-        ...instance.manifest.env,
-        EXT_SOCKET: instance.socketPath,
-        EXT_DIR: instance.provisionedDir
-      },
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let cleanup = () => {};
     const failed = new Promise<never>((_, reject) => {
-      const onError = (error: Error) => reject(error);
-      const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      child.exited.then((exitCode) => {
         reject(
           new Error(
-            `Extension '${instance.manifest.id}' sidecar exited before readiness (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
+            `Extension '${instance.registration.id}' sidecar exited before readiness (code ${exitCode ?? 'null'})`
           )
         );
-      child.once('error', onError);
-      child.once('exit', onExit);
-      cleanup = () => {
-        child.removeListener('error', onError);
-        child.removeListener('exit', onExit);
-      };
+      });
     });
+    const cleanup = () => {
+      // child.exited is a single promise we can't detach from; the host just
+      // ignores the resolution after readiness. Kept as a function for
+      // symmetry and future extension.
+    };
 
-    child.stdout?.on('data', (chunk: Buffer) =>
-      instance.logger.debug('sidecar stdout', { output: chunk.toString() })
+    void this.#pipeStream(
+      instance,
+      child.stdout as ReadableStream<Uint8Array> | undefined,
+      'stdout'
     );
-    child.stderr?.on('data', (chunk: Buffer) =>
-      instance.logger.debug('sidecar stderr', { output: chunk.toString() })
+    void this.#pipeStream(
+      instance,
+      child.stderr as ReadableStream<Uint8Array> | undefined,
+      'stderr'
     );
-    child.on('error', (error) => {
-      instance.logger.warn('Extension sidecar process error', {
-        error: error.message
-      });
-      if (instance.child === child) {
-        instance.child = null;
-        instance.bridge?.close();
-        instance.bridge = null;
-      }
-    });
-    child.on('exit', (code, signal) => {
-      instance.logger.warn('Extension sidecar exited', {
-        code,
-        signal
-      });
+    void child.exited.then((exitCode) => {
+      instance.logger.warn('Extension sidecar exited', { exitCode });
       if (instance.child === child) {
         instance.child = null;
         instance.bridge?.close();
@@ -341,6 +351,26 @@ export class ExtensionHost {
     return { child, failed, cleanup };
   }
 
+  async #pipeStream(
+    instance: ExtensionInstance,
+    stream: ReadableStream<Uint8Array> | undefined,
+    label: 'stdout' | 'stderr'
+  ): Promise<void> {
+    if (!stream) return;
+    const decoder = new TextDecoder();
+    try {
+      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+        instance.logger.debug(`sidecar ${label}`, {
+          output: decoder.decode(chunk, { stream: true })
+        });
+      }
+    } catch (error) {
+      instance.logger.debug(`sidecar ${label} stream errored`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
   async #teardown(instance: ExtensionInstance): Promise<void> {
     instance.generation++;
     const startPromise = instance.startPromise;
@@ -349,94 +379,32 @@ export class ExtensionHost {
     instance.bridge = null;
     const child = instance.child;
     instance.child = null;
-    if (child) {
-      await this.#stopChild(child, instance.logger);
-    }
+    if (child) await this.#stopChild(child, instance.logger);
     await startPromise?.catch(() => {});
-    // A start racing this teardown may have spawned a fresh child after we
-    // nulled the field (the generation guard aborts it, but only after spawn,
-    // and it never reaches the bridge assignment). Reap the child so stop()
-    // never leaves an orphaned sidecar.
+    // A start racing this teardown may have produced a fresh child after we
+    // nulled the field. The generation guard aborts the start, but only
+    // after spawn; reap any orphan so stop() never leaves one behind.
     const late = instance.child;
     instance.child = null;
-    if (late) {
-      await this.#stopChild(late, instance.logger);
-    }
-    if (existsSync(instance.socketPath)) {
+    if (late) await this.#stopChild(late, instance.logger);
+    if (await Bun.file(instance.socketPath).exists()) {
       await rm(instance.socketPath, { force: true }).catch(() => {});
     }
-  }
-
-  #validateManifest(manifest: ExtensionManifest): void {
-    this.#validateSlug('id', manifest.id);
-    this.#validateSlug('version', manifest.version);
-    if (manifest.command.length === 0 || manifest.command[0]?.length === 0) {
-      throw new Error(
-        `Extension '${manifest.id}' manifest command must not be empty`
-      );
-    }
-    if (
-      manifest.readinessTimeoutMs !== undefined &&
-      (!Number.isFinite(manifest.readinessTimeoutMs) ||
-        manifest.readinessTimeoutMs <= 0)
-    ) {
-      throw new Error(
-        `Extension '${manifest.id}' readinessTimeoutMs must be positive`
-      );
-    }
-    for (const asset of manifest.assets ?? []) {
-      this.#validateAssetPath(manifest.id, asset.path);
-    }
-  }
-
-  #validateSlug(field: 'id' | 'version', value: string): void {
-    if (!MANIFEST_SLUG_PATTERN.test(value)) {
-      throw new Error(
-        `Extension manifest ${field} must match ${MANIFEST_SLUG_PATTERN}`
-      );
-    }
-  }
-
-  #validateAssetPath(id: string, path: string): void {
-    if (
-      !path ||
-      path === '.' ||
-      path.includes('\0') ||
-      isAbsolute(path) ||
-      path.split(/[\\/]/).includes('..')
-    ) {
-      throw new Error(`Extension '${id}' asset path must be relative`);
-    }
-  }
-
-  #assetTarget(instance: ExtensionInstance, path: string): string {
-    const root = resolve(instance.provisionedDir);
-    const target = resolve(root, path);
-    if (target !== root && !target.startsWith(`${root}${sep}`)) {
-      throw new Error(
-        `Extension '${instance.manifest.id}' asset path escapes its directory`
-      );
-    }
-    return target;
   }
 
   #assertCurrent(instance: ExtensionInstance, generation: number): void {
     if (instance.generation !== generation) {
       throw new Error(
-        `Extension '${instance.manifest.id}' start was cancelled`
+        `Extension '${instance.registration.id}' start was cancelled`
       );
     }
   }
 
-  async #stopChild(child: ChildProcess, logger: Logger): Promise<void> {
+  async #stopChild(child: Bun.Subprocess, logger: Logger): Promise<void> {
     if (child.exitCode !== null) return;
-    const exited = new Promise<void>((resolve) => {
-      child.once('exit', () => resolve());
-      child.once('error', () => resolve());
-    });
     child.kill('SIGTERM');
     const stopped = await Promise.race([
-      exited.then(() => true),
+      child.exited.then(() => true),
       new Promise<boolean>((resolve) =>
         setTimeout(() => resolve(false), STOP_GRACE_MS)
       )
@@ -447,27 +415,21 @@ export class ExtensionHost {
       );
       child.kill('SIGKILL');
       await Promise.race([
-        exited,
-        new Promise<void>((resolve) => setTimeout(resolve, STOP_GRACE_MS))
+        child.exited,
+        new Promise<void>((resolve) =>
+          setTimeout(() => resolve(), STOP_GRACE_MS)
+        )
       ]);
     }
   }
 
   /**
-   * Short, unique socket path in a private per-host temp directory. The hashed
-   * id keeps the name readable and the random suffix makes every (re)spawn use
-   * a distinct path — so a restart never collides with a leftover socket file.
-   * Staying flat under the random `#socketDir` also keeps the path well under
-   * the ~104-char unix socket length limit.
+   * Short, unique socket path inside a private per-host temp directory.
+   * Random suffix prevents collisions with leftover socket files from a
+   * crashed predecessor; flat layout keeps paths well under the ~104-char
+   * unix socket length limit.
    */
-  #socketPathFor(manifest: ExtensionManifest): string {
-    const hash = createHash('sha1')
-      .update(`${manifest.id}@${manifest.version}`)
-      .digest('hex')
-      .slice(0, 12);
-    return join(
-      this.#socketDir,
-      `${hash}-${randomBytes(4).toString('hex')}.sock`
-    );
+  #freshSocketPath(): string {
+    return join(this.#socketDir, `${randomBytes(6).toString('hex')}.sock`);
   }
 }

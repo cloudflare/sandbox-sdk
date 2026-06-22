@@ -1,8 +1,8 @@
-import {
-  type ExecEvent,
-  type ExecResult,
-  type ListFilesResult,
-  type SessionCreateResult
+import type {
+  ExecEvent,
+  ExecResult,
+  ListFilesResult,
+  SessionCreateResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';

@@ -1,195 +1,62 @@
 /**
- * SDK extensions client unit tests.
+ * SDK-side extensions unit tests.
  *
- * Exercises the thin wrapper over `sandbox.client.extensions`: lazy
- * construction, method delegation, and the bounded readiness retry.
+ * Exercises `SandboxExtension`: lazy construction, the hash-first connect
+ * dance against `client.extensions`, and reconnect-on-use sidecar semantics.
+ *
+ * Container-side end-to-end coverage lives in
+ * `packages/sandbox-container/tests/extensions/extension-host.test.ts`.
  */
 
 import type {
+  ExtensionConnectRequest,
   ExtensionHealth,
-  ExtensionManifest,
+  ExtensionPackage,
   SandboxExtensionsAPI
 } from '@repo/shared';
+import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  SandboxExtension,
-  type SandboxLike,
-  withExtensions
-} from '../src/extensions';
+import { SandboxExtension, type SandboxLike } from '../src/extensions';
 
 type ExtensionsApiMock = {
-  register: Mock<SandboxExtensionsAPI['register']>;
-  call: Mock<SandboxExtensionsAPI['call']>;
-  callStream: Mock<SandboxExtensionsAPI['callStream']>;
+  connect: Mock<SandboxExtensionsAPI['connect']>;
   health: Mock<SandboxExtensionsAPI['health']>;
   stop: Mock<SandboxExtensionsAPI['stop']>;
 };
 
 function makeSandbox(): {
-  sandbox: { client: { extensions: SandboxExtensionsAPI } };
+  sandbox: SandboxLike;
   api: ExtensionsApiMock;
 } {
   const api: ExtensionsApiMock = {
-    register: vi.fn(async () => {}),
-    call: vi.fn(async () => undefined),
-    callStream: vi.fn(async () => undefined),
+    connect: vi.fn(async () => ({}) as unknown),
     health: vi.fn(async () => ({}) as ExtensionHealth),
     stop: vi.fn(async () => {})
   };
-  return {
-    sandbox: { client: { extensions: api as unknown as SandboxExtensionsAPI } },
-    api
-  };
+  // The tests only ever exercise `client.extensions`; widening to SandboxAPI
+  // would force us to stub every sub-API for no benefit.
+  const sandbox = {
+    client: { extensions: api as unknown as SandboxExtensionsAPI }
+  } as unknown as SandboxLike;
+  return { sandbox, api };
 }
 
-const MANIFEST: ExtensionManifest = {
-  id: 'echo',
-  version: '1',
-  command: ['bun', '{dir}/echo.cjs']
-};
+const TARBALL = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]); // gzip magic + flags, plenty enough to hash
 
-describe('withExtensions', () => {
+const PKG: ExtensionPackage = { tarball: TARBALL };
+
+describe('SandboxExtension', () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it('does not touch the client during construction (lazy)', () => {
-    const { sandbox, api } = makeSandbox();
-    withExtensions(sandbox);
-    expect(api.register).not.toHaveBeenCalled();
-    expect(api.call).not.toHaveBeenCalled();
-  });
-
-  it('delegates register / call / health / stop', async () => {
-    const { sandbox, api } = makeSandbox();
-    api.call.mockResolvedValue('pong');
-    const ext = withExtensions(sandbox);
-
-    await ext.register(MANIFEST);
-    const result = await ext.call('echo', 'echo', ['hi']);
-    await ext.health('echo');
-    await ext.stop('echo');
-
-    expect(api.register).toHaveBeenCalledWith(MANIFEST);
-    expect(api.call).toHaveBeenCalledWith('echo', 'echo', ['hi']);
-    expect(result).toBe('pong');
-    expect(api.health).toHaveBeenCalledWith('echo');
-    expect(api.stop).toHaveBeenCalledWith('echo');
-  });
-
-  it('defaults call args to an empty array', async () => {
-    const { sandbox, api } = makeSandbox();
-    const ext = withExtensions(sandbox);
-    await ext.call('echo', 'ping');
-    expect(api.call).toHaveBeenCalledWith('echo', 'ping', []);
-  });
-
-  it('forwards call timeouts when provided', async () => {
-    const { sandbox, api } = makeSandbox();
-    const ext = withExtensions(sandbox);
-    await ext.call('echo', 'ping', [], { timeoutMs: 123 });
-    expect(api.call).toHaveBeenCalledWith('echo', 'ping', [], 123);
-  });
-
-  it('streams events when onEvent is passed', async () => {
-    const { sandbox, api } = makeSandbox();
-    api.callStream.mockImplementation(async (_id, _m, _a, onEvent) => {
-      await onEvent('echo', 'streamed');
-      return 'streamed';
-    });
-    const ext = withExtensions(sandbox);
-
-    const events: Array<{ event: string; data: unknown }> = [];
-    const result = await ext.call('echo', 'echo', ['x'], {
-      onEvent: (event, data) => void events.push({ event, data })
-    });
-
-    expect(result).toBe('streamed');
-    expect(events).toEqual([{ event: 'echo', data: 'streamed' }]);
-  });
-
-  it('retries a readiness error then succeeds', async () => {
-    vi.useFakeTimers();
-    const { sandbox, api } = makeSandbox();
-    api.call
-      .mockRejectedValueOnce(
-        new Error("Extension 'echo' bridge is not connected")
-      )
-      .mockResolvedValueOnce('ok');
-    const ext = withExtensions(sandbox);
-
-    const promise = ext.call('echo', 'echo', []);
-    await vi.runAllTimersAsync();
-    await expect(promise).resolves.toBe('ok');
-    expect(api.call).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not retry non-readiness errors', async () => {
-    const { sandbox, api } = makeSandbox();
-    api.call.mockRejectedValue(new Error('Unknown method: nope'));
-    const ext = withExtensions(sandbox);
-
-    await expect(ext.call('echo', 'nope', [])).rejects.toThrow(
-      /Unknown method/
-    );
-    expect(api.call).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not retry a streaming call once events have been emitted', async () => {
-    const { sandbox, api } = makeSandbox();
-    // Emit one event, then fail with a (broadly bridge-ish) error.
-    api.callStream.mockImplementation(async (_id, _m, _a, onEvent) => {
-      await onEvent('echo', 'partial');
-      throw new Error('Extension bridge is not connected');
-    });
-    const ext = withExtensions(sandbox);
-
-    const events: unknown[] = [];
-    await expect(
-      ext.call('echo', 'echo', [], {
-        onEvent: (_e, d) => void events.push(d)
-      })
-    ).rejects.toThrow();
-    // Exactly one attempt: the emitted-guard blocks the retry, so no dup events.
-    expect(api.callStream).toHaveBeenCalledTimes(1);
-    expect(events).toEqual(['partial']);
-  });
-
-  it('does not retry a mid-life "socket closed" error', async () => {
-    const { sandbox, api } = makeSandbox();
-    api.call.mockRejectedValue(new Error('Extension bridge socket closed'));
-    const ext = withExtensions(sandbox);
-
-    await expect(ext.call('echo', 'echo', [])).rejects.toThrow(/socket closed/);
-    expect(api.call).toHaveBeenCalledTimes(1);
-  });
-
-  it('gives up after exhausting readiness retries', async () => {
-    vi.useFakeTimers();
-    const { sandbox, api } = makeSandbox();
-    api.call.mockRejectedValue(
-      new Error('sidecar did not accept a bridge connection')
-    );
-    const ext = withExtensions(sandbox);
-
-    const promise = ext.call('echo', 'echo', []);
-    const assertion = expect(promise).rejects.toThrow(/did not accept/);
-    await vi.runAllTimersAsync();
-    await assertion;
-    expect(api.call).toHaveBeenCalledTimes(3);
-  });
-});
-
-describe('SandboxExtension', () => {
   class Commands extends SandboxExtension {
-    // biome-ignore lint/complexity/noUselessConstructor: widens the base's protected constructor to public so the test can instantiate it
+    // biome-ignore lint/complexity/noUselessConstructor: widens the protected base constructor
     constructor(sandbox: SandboxLike) {
       super(sandbox);
     }
     list() {
-      // Reach an arbitrary control sub-API through the protected accessor.
       return (
         this.client as unknown as { commands: { exec: () => unknown } }
       ).commands.exec();
@@ -216,108 +83,144 @@ describe('SandboxExtension', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it('throws a helpful error if sidecar methods are used without a manifest', async () => {
-    class NoManifest extends SandboxExtension {
-      // biome-ignore lint/complexity/noUselessConstructor: widens the base's protected constructor to public so the test can instantiate it
+  it('throws a helpful error if sidecar methods are used without a package', async () => {
+    class NoPackage extends SandboxExtension {
+      // biome-ignore lint/complexity/noUselessConstructor: widens the protected base constructor
       constructor(sandbox: SandboxLike) {
         super(sandbox);
       }
       run() {
-        return this.call('whatever', []);
+        return this.sidecar();
       }
     }
     const { sandbox } = makeSandbox();
-    const ext = new NoManifest(sandbox as unknown as SandboxLike);
+    const ext = new NoPackage(sandbox);
 
-    await expect(ext.run()).rejects.toThrow(/no sidecar manifest/i);
+    await expect(ext.run()).rejects.toThrow(/no sidecar package/i);
+  });
+
+  it('does not touch the sandbox during construction (lazy)', () => {
+    const { sandbox, api } = makeSandbox();
+
+    class Ext extends SandboxExtension {
+      constructor(s: SandboxLike) {
+        super(s, PKG);
+      }
+    }
+    new Ext(sandbox);
+
+    expect(api.connect).not.toHaveBeenCalled();
+    expect(api.health).not.toHaveBeenCalled();
+    expect(api.stop).not.toHaveBeenCalled();
   });
 });
 
 describe('SandboxExtension (sidecar mode)', () => {
-  class Interpreter extends SandboxExtension {
-    constructor(sandbox: SandboxLike) {
-      super(sandbox, MANIFEST);
-    }
-    runCode(code: string) {
-      return this.call('runCode', [code]);
-    }
-    stream(code: string, onEvent: (e: string, d: unknown) => void) {
-      return this.call('runCode', [code], { onEvent });
-    }
-    status() {
-      return this.health();
-    }
-    halt() {
-      return this.stop();
-    }
+  interface FakeApi {
+    do(input: string): Promise<string>;
   }
 
-  function makeInterpreter() {
+  function buildExt() {
     const { sandbox, api } = makeSandbox();
-    return { ext: new Interpreter(sandbox as unknown as SandboxLike), api };
+    class Ext extends SandboxExtension {
+      constructor(s: SandboxLike) {
+        super(s, PKG);
+      }
+      async run(input: string) {
+        const stub = await this.sidecar<FakeApi>();
+        return stub.do(input);
+      }
+      health() {
+        return this.sidecarHealth();
+      }
+      stop() {
+        return this.stopSidecar();
+      }
+    }
+    return { ext: new Ext(sandbox), api };
   }
 
-  it('registers the manifest exactly once across multiple calls', async () => {
-    const { ext, api } = makeInterpreter();
-    api.call.mockResolvedValue('done');
+  it('sends the hash alone on first connect; retries with tarball on ExtensionTarballRequired', async () => {
+    const { ext, api } = buildExt();
+    const fakeStub = { do: vi.fn(async (s: string) => `did:${s}`) };
 
-    await ext.runCode('a');
-    await ext.runCode('b');
+    api.connect
+      .mockImplementationOnce(async () => {
+        // Host has not provisioned this hash yet.
+        const err = new Error('need tarball');
+        (err as { name: string }).name = EXTENSION_TARBALL_REQUIRED;
+        throw err;
+      })
+      .mockImplementationOnce(async () => fakeStub);
 
-    expect(api.register).toHaveBeenCalledTimes(1);
-    expect(api.register).toHaveBeenCalledWith(MANIFEST);
+    const result = await ext.run('hi');
+    expect(result).toBe('did:hi');
+
+    expect(api.connect).toHaveBeenCalledTimes(2);
+    const first = api.connect.mock.calls[0][0] as ExtensionConnectRequest;
+    const second = api.connect.mock.calls[1][0] as ExtensionConnectRequest;
+
+    expect(first.tarball).toBeUndefined();
+    expect(first.packageHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(second.tarball).toBeInstanceOf(Uint8Array);
+    expect(second.packageHash).toBe(first.packageHash);
   });
 
-  it('binds the extension id on call', async () => {
-    const { ext, api } = makeInterpreter();
-    api.call.mockResolvedValue('42');
+  it('reconnects through the host on each sidecar call', async () => {
+    const { ext, api } = buildExt();
+    const firstStub = { do: vi.fn(async (s: string) => `first:${s}`) };
+    const secondStub = { do: vi.fn(async (s: string) => `second:${s}`) };
+    api.connect
+      .mockResolvedValueOnce(firstStub)
+      .mockResolvedValueOnce(secondStub);
 
-    const result = await ext.runCode('1+1');
+    await expect(ext.run('a')).resolves.toBe('first:a');
+    await expect(ext.run('b')).resolves.toBe('second:b');
 
-    expect(result).toBe('42');
-    expect(api.call).toHaveBeenCalledWith('echo', 'runCode', ['1+1']);
+    expect(api.connect).toHaveBeenCalledTimes(2);
+    expect(firstStub.do).toHaveBeenCalledTimes(1);
+    expect(secondStub.do).toHaveBeenCalledTimes(1);
   });
 
-  it('binds the extension id and forwards events when streaming', async () => {
-    const { ext, api } = makeInterpreter();
-    api.callStream.mockImplementation(async (_id, _m, _a, onEvent) => {
-      await onEvent('stdout', 'hi');
-      return 'ok';
-    });
+  it('retries cleanly after a failed connect', async () => {
+    const { ext, api } = buildExt();
+    const fakeStub = { do: vi.fn(async (s: string) => `did:${s}`) };
+    api.connect
+      .mockRejectedValueOnce(new Error('connect failed'))
+      .mockResolvedValueOnce(fakeStub);
 
-    const events: unknown[] = [];
-    const result = await ext.stream('print(1)', (_e, d) => void events.push(d));
-
-    expect(result).toBe('ok');
-    expect(events).toEqual(['hi']);
-    expect(api.callStream).toHaveBeenCalledWith(
-      'echo',
-      'runCode',
-      ['print(1)'],
-      expect.any(Function)
-    );
+    await expect(ext.run('a')).rejects.toThrow(/connect failed/);
+    await expect(ext.run('b')).resolves.toBe('did:b');
+    expect(api.connect).toHaveBeenCalledTimes(2);
   });
 
-  it('registers before health and stop helpers', async () => {
-    const { ext, api } = makeInterpreter();
+  it('does not retry on a non-ExtensionTarballRequired error', async () => {
+    const { ext, api } = buildExt();
+    api.connect.mockRejectedValueOnce(new Error('something else'));
 
-    await ext.status();
-    await ext.halt();
-
-    expect(api.register).toHaveBeenCalledTimes(1);
-    expect(api.health).toHaveBeenCalledWith('echo');
-    expect(api.stop).toHaveBeenCalledWith('echo');
+    await expect(ext.run('a')).rejects.toThrow(/something else/);
+    expect(api.connect).toHaveBeenCalledTimes(1);
   });
 
-  it('re-attempts registration after a failure', async () => {
-    const { ext, api } = makeInterpreter();
-    api.register
-      .mockRejectedValueOnce(new Error('register failed'))
-      .mockResolvedValueOnce(undefined);
-    api.call.mockResolvedValue('ok');
+  it('forwards health by package hash', async () => {
+    const { ext, api } = buildExt();
+    await ext.health();
+    expect(api.health).toHaveBeenCalledTimes(1);
+    const arg = api.health.mock.calls[0][0];
+    expect(typeof arg).toBe('string');
+    expect(arg).toMatch(/^[0-9a-f]{64}$/);
+  });
 
-    await expect(ext.runCode('a')).rejects.toThrow(/register failed/);
-    await expect(ext.runCode('b')).resolves.toBe('ok');
-    expect(api.register).toHaveBeenCalledTimes(2);
+  it('stopSidecar stops the host-side sidecar and the next call reconnects', async () => {
+    const { ext, api } = buildExt();
+    const fakeStub = { do: vi.fn(async (s: string) => `did:${s}`) };
+    api.connect.mockResolvedValue(fakeStub);
+
+    await ext.run('warm');
+    await ext.stop();
+    await ext.run('after');
+
+    expect(api.connect).toHaveBeenCalledTimes(2);
+    expect(api.stop).toHaveBeenCalledTimes(1);
   });
 });
