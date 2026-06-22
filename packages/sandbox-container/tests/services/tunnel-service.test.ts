@@ -377,7 +377,9 @@ describe('TunnelService > exit callback', () => {
       onTunnelExit
     }));
     await withFakeCloudflared(QUICK_BANNER, () =>
-      service.runQuickTunnel('quick-natural', 8080)
+      service.runQuickTunnel('quick-natural', 8080, {
+        tunnelRunId: 'run-quick-natural'
+      })
     );
     expect(service.list()).toHaveLength(1);
 
@@ -387,7 +389,12 @@ describe('TunnelService > exit callback', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(onTunnelExit).toHaveBeenCalledTimes(1);
-    expect(onTunnelExit).toHaveBeenCalledWith('quick-natural', 8080, 2);
+    expect(onTunnelExit).toHaveBeenCalledWith(
+      'quick-natural',
+      8080,
+      2,
+      'run-quick-natural'
+    );
     // Service registry is cleared so list() reflects truth.
     expect(service.list()).toHaveLength(0);
   });
@@ -408,7 +415,12 @@ describe('TunnelService > exit callback', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(onTunnelExit).toHaveBeenCalledTimes(1);
-    expect(onTunnelExit).toHaveBeenCalledWith('quick-graceful', 8080, 0);
+    expect(onTunnelExit).toHaveBeenCalledWith(
+      'quick-graceful',
+      8080,
+      0,
+      undefined
+    );
   });
 
   it('skips the callback when the accessor returns null (no session bound)', async () => {
@@ -632,17 +644,23 @@ describe('TunnelService > runNamedTunnel', () => {
       onTunnelExit
     }));
     await withFakeNamedCloudflared(NAMED_BANNER, () =>
-      service.runNamedTunnel('named-exit', 'T', 8080)
+      service.runNamedTunnel('named-exit', 'T', 8080, {
+        tunnelRunId: 'run-named-exit'
+      })
     );
     fakeProcs[0].resolveExit(2);
     await new Promise((r) => setTimeout(r, 20));
 
     expect(onTunnelExit).toHaveBeenCalledTimes(1);
-    expect(onTunnelExit).toHaveBeenCalledWith('named-exit', 8080, 2);
+    expect(onTunnelExit).toHaveBeenCalledWith(
+      'named-exit',
+      8080,
+      2,
+      'run-named-exit'
+    );
     expect(service.list()).toHaveLength(0);
   });
 });
-
 
 // ---------------------------------------------------------------------------
 // Missing cloudflared binary

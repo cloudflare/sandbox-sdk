@@ -24,6 +24,8 @@ export interface TunnelMetaEntry {
   runtimeIdentityID?: RuntimeIdentityID;
   /** Sandbox lifetime that owns this tunnel record. */
   sandboxLifetimeID?: SandboxLifetimeID;
+  /** Runtime-local cloudflared run that owns current process callbacks. */
+  tunnelRunId?: string;
   /** Cloudflare tunnel id for hidden named records that can respawn or clean up. */
   tunnelId?: string;
   /** User-provided named-tunnel label for hidden respawn/cleanup records. */

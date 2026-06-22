@@ -23,6 +23,8 @@ export interface RunTunnelOptions {
   readyTimeoutMs?: number;
   /** Override the SIGTERM→SIGKILL grace period. Forwarded to TunnelManager. */
   stopGraceMs?: number;
+  /** Runtime-local run identity included in exit callbacks. */
+  tunnelRunId?: string;
 }
 
 interface TunnelRecord {
@@ -72,7 +74,7 @@ export class TunnelService {
         if (!cb) return;
         // Fire-and-forget the DO notification. Errors are swallowed
         // so a misbehaving DO can't crash the manager's exit handler.
-        cb.onTunnelExit(id, port, code).catch((err) => {
+        cb.onTunnelExit(id, port, code, options?.tunnelRunId).catch((err) => {
           this.logger.warn('onTunnelExit RPC failed', {
             id,
             error: err instanceof Error ? err.message : String(err)
@@ -152,7 +154,7 @@ export class TunnelService {
         this.tunnels.delete(id);
         const cb = this.getControlCallback();
         if (!cb) return;
-        cb.onTunnelExit(id, port, code).catch((err) => {
+        cb.onTunnelExit(id, port, code, options?.tunnelRunId).catch((err) => {
           this.logger.warn('onTunnelExit RPC failed', {
             id,
             error: err instanceof Error ? err.message : String(err)

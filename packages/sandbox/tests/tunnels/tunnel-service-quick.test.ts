@@ -26,7 +26,7 @@ import {
 } from './helpers';
 
 type RunQuickTunnelMock = Mock<
-  (id: string, port: number) => Promise<TunnelInfo>
+  (id: string, port: number, tunnelRunId?: string) => Promise<TunnelInfo>
 >;
 type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
 type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
@@ -48,7 +48,13 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
     client: {
       tunnels: {
         runQuickTunnel:
-          vi.fn<(id: string, port: number) => Promise<TunnelInfo>>(),
+          vi.fn<
+            (
+              id: string,
+              port: number,
+              tunnelRunId?: string
+            ) => Promise<TunnelInfo>
+          >(),
         destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
         listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
       }
@@ -105,9 +111,10 @@ describe('tunnel service > get', () => {
     const info = await handler.get(8080);
 
     expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
-    const [id, port] = client.tunnels.runQuickTunnel.mock.calls[0];
+    const [id, port, tunnelRunId] = client.tunnels.runQuickTunnel.mock.calls[0];
     expect(port).toBe(8080);
     expect(id).toMatch(/^quick-[0-9a-f]{8}$/);
+    expect(tunnelRunId).toEqual(expect.any(String));
     expect(info.id).toBe(id);
     expect(info.name).toBeUndefined();
 
@@ -119,7 +126,7 @@ describe('tunnel service > get', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
     expect(metaPut?.[1]).toEqual({
-      '8080': { optionsHash: 'v1:quick' }
+      '8080': { optionsHash: 'v1:quick', tunnelRunId }
     });
   });
 
@@ -171,17 +178,22 @@ describe('tunnel service > get', () => {
     expect(info.id).toBe(secondId);
   });
 
-  it('cache hit: returns the stored record without any container RPC', async () => {
+  it('cache hit: returns a current-runtime record without any container RPC', async () => {
     const record = makeRecord({ id: 'quick-cached0000cached', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-1' }
+    });
     const { tunnels: handler } = createTunnelsHandle({
       client: client as unknown as Parameters<
         typeof createTunnelsHandle
       >[0]['client'],
       storage,
-      logger: makeLogger()
+      logger: makeLogger(),
+      ...makeFences()
     });
+    (storage.put as StoragePutMock).mockClear();
 
     const info = await handler.get(8080);
 
@@ -190,6 +202,88 @@ describe('tunnel service > get', () => {
     expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
     expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
     expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an unscoped quick record instead of returning a stale URL', async () => {
+    const stale = makeRecord({ id: 'quick-stale000stale', port: 8080 });
+    const fresh = makeRecord({
+      id: 'quick-fresh000fresh',
+      port: 8080,
+      url: 'https://fresh.trycloudflare.com',
+      hostname: 'fresh.trycloudflare.com'
+    });
+    const { client, storage, handler } = makeHandler({
+      storage: makeStorage({ '8080': stale }),
+      ...makeFences()
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValue(fresh);
+
+    const info = await handler.get(8080);
+
+    expect(info).toEqual(fresh);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    await expect(storage.get('tunnels')).resolves.toEqual({ '8080': fresh });
+  });
+
+  it('captures runtime after spawn when no active runtime exists before RPC', async () => {
+    const getRuntime = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'runtime-after-rpc' });
+    const markStarted = vi.fn(async () => ({ id: 'runtime-created-early' }));
+    const { client, storage, handler } = makeHandler({
+      currentRuntime: {
+        get: getRuntime,
+        markStarted,
+        assertActive: vi.fn(async () => {})
+      },
+      currentLifetime: makeFences().currentLifetime
+    } as unknown as Partial<TunnelsHost>);
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    await handler.get(8080);
+
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
+    expect(markStarted).not.toHaveBeenCalled();
+    const meta =
+      await storage.get<Record<string, Record<string, unknown>>>(
+        'tunnels:meta'
+      );
+    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-after-rpc');
+  });
+
+  it('does not commit when runtime is unavailable after spawn', async () => {
+    const { client, storage, handler } = makeHandler({
+      currentRuntime: {
+        get: vi.fn(async () => null),
+        assertActive: vi.fn(async () => {})
+      },
+      currentLifetime: makeFences().currentLifetime
+    } as unknown as Partial<TunnelsHost>);
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    let caught: unknown;
+    try {
+      await handler.get(8080);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({ name: 'OperationInterruptedError' });
+    expect((caught as { code?: unknown }).code).toBe(
+      ErrorCode.OPERATION_INTERRUPTED
+    );
+    expect((caught as { context?: unknown }).context).toMatchObject({
+      operation: 'tunnel.get',
+      reason: 'recovery_exhausted',
+      admitted: true,
+      retryable: true
+    });
+    await expect(storage.get('tunnels')).resolves.toBeUndefined();
   });
 
   it('recovers quick get() after runtime replacement during spawn', async () => {
@@ -861,6 +955,54 @@ describe('tunnel service > handleTunnelExit', () => {
     expect(meta['8080']?.needsRespawn).toBe(true);
   });
 
+  it('ignores stale named-tunnel exit callbacks from an old run', async () => {
+    const current: TunnelInfo = {
+      id: 'tunnel-uuid-named',
+      port: 8080,
+      name: 'api',
+      hostname: 'api.example.com',
+      url: 'https://api.example.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    };
+    const { client } = makeClient();
+    const storage = makeStorage();
+    await (storage.put as StoragePutMock)('tunnels', { '8080': current });
+    await (storage.put as StoragePutMock)('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'dns-current',
+        tunnelId: 'tunnel-uuid-named',
+        name: 'api',
+        hostname: 'api.example.com',
+        tunnelRunId: 'run-current'
+      }
+    });
+    const { handleTunnelExit } = createTunnelsHandle({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandle
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await (
+      handleTunnelExit as unknown as (
+        id: string,
+        port: number,
+        exitCode: number | null,
+        tunnelRunId: string
+      ) => Promise<void>
+    )('tunnel-uuid-named', 8080, 0, 'run-old');
+
+    await expect(storage.get('tunnels')).resolves.toEqual({ '8080': current });
+    const meta =
+      await storage.get<Record<string, Record<string, unknown>>>(
+        'tunnels:meta'
+      );
+    expect(meta?.['8080']?.tunnelRunId).toBe('run-current');
+    expect(meta?.['8080']).not.toHaveProperty('needsRespawn');
+  });
+
   it('is a no-op when the stored id has been replaced (id-mismatch safety net)', async () => {
     const newer = makeRecord({ id: 'quick-newer000newer00', port: 8080 });
     const { client } = makeClient();
@@ -1040,6 +1182,39 @@ describe('pruneTunnelsForRestart', () => {
     expect(nextMeta['8081']?.name).toBe('app');
     expect(nextMeta['8081']?.hostname).toBe('app.example.com');
     expect(nextMeta['8080']).toBeUndefined();
+  });
+
+  it('preserves hidden named entries across repeated reconciliation', async () => {
+    const storage = makeStorage();
+    await (storage.put as StoragePutMock)('tunnels', {});
+    await (storage.put as StoragePutMock)('tunnels:meta', {
+      '8081': {
+        optionsHash: 'v1:named:app',
+        dnsRecordId: 'rec-1',
+        tunnelId: 'uuid-1',
+        name: 'app',
+        hostname: 'app.example.com',
+        accountId: 'acct-1',
+        zoneId: 'zone-1',
+        needsRespawn: true
+      }
+    });
+
+    await pruneTunnelsForRestart(storage);
+
+    await expect(storage.get('tunnels')).resolves.toEqual({});
+    await expect(storage.get('tunnels:meta')).resolves.toEqual({
+      '8081': {
+        optionsHash: 'v1:named:app',
+        dnsRecordId: 'rec-1',
+        tunnelId: 'uuid-1',
+        name: 'app',
+        hostname: 'app.example.com',
+        accountId: 'acct-1',
+        zoneId: 'zone-1',
+        needsRespawn: true
+      }
+    });
   });
 
   it('is a no-op on empty storage', async () => {

@@ -944,17 +944,26 @@ class TunnelsRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async runQuickTunnel(id: string, port: number): Promise<TunnelInfo> {
-    const result = await this.#svc.runQuickTunnel(id, port);
+  async runQuickTunnel(
+    id: string,
+    port: number,
+    tunnelRunId?: string
+  ): Promise<TunnelInfo> {
+    const result = await this.#svc.runQuickTunnel(id, port, {
+      tunnelRunId
+    });
     return extractData<TunnelInfo>(result);
   }
 
   async runNamedTunnel(
     id: string,
     token: string,
-    port: number
+    port: number,
+    tunnelRunId?: string
   ): Promise<TunnelInfo> {
-    const result = await this.#svc.runNamedTunnel(id, token, port);
+    const result = await this.#svc.runNamedTunnel(id, token, port, {
+      tunnelRunId
+    });
     return extractData<TunnelInfo>(result);
   }
 

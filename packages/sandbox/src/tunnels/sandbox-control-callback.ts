@@ -31,17 +31,19 @@ export class SandboxControlCallbackImpl
   async onTunnelExit(
     id: string,
     port: number,
-    exitCode: number | null
+    exitCode: number | null,
+    tunnelRunId?: string
   ): Promise<void> {
     const handler = this.getHandler();
     if (!handler) {
       this.logger.debug('onTunnelExit: no handler bound; ignoring', {
         id,
         port,
-        exitCode
+        exitCode,
+        tunnelRunId
       });
       return;
     }
-    await handler(id, port, exitCode);
+    await handler(id, port, exitCode, tunnelRunId);
   }
 }

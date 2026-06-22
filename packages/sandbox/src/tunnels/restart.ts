@@ -5,6 +5,7 @@ import {
   readMetaMap,
   STORAGE_KEY,
   type TunnelMap,
+  type TunnelMetaEntry,
   type TunnelMetaMap,
   type TunnelsStorage
 } from './storage';
@@ -21,6 +22,22 @@ import {
  * `get(port, { name })` can respawn cloudflared against the existing
  * Cloudflare tunnel and DNS record.
  */
+function isHiddenNamedRespawnMeta(
+  entry: TunnelMetaEntry | undefined
+): entry is TunnelMetaEntry & {
+  needsRespawn: true;
+  tunnelId: string;
+  name: string;
+  hostname: string;
+} {
+  return (
+    entry?.needsRespawn === true &&
+    typeof entry.tunnelId === 'string' &&
+    typeof entry.name === 'string' &&
+    typeof entry.hostname === 'string'
+  );
+}
+
 export async function pruneTunnelsForRestart(
   storage: TunnelsStorage
 ): Promise<void> {
@@ -35,6 +52,10 @@ export async function pruneTunnelsForRestart(
       if (info.name) {
         nextMeta[portKey] = namedRespawnMeta(info, meta[portKey]);
       }
+    }
+    for (const [portKey, entry] of Object.entries(meta)) {
+      if (nextMeta[portKey] || !isHiddenNamedRespawnMeta(entry)) continue;
+      nextMeta[portKey] = entry;
     }
     await txn.put(STORAGE_KEY, nextMap);
     await txn.put(META_STORAGE_KEY, nextMeta);

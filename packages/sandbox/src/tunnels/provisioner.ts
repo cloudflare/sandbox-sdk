@@ -66,7 +66,10 @@ export class TunnelProvisioner {
     this.#host = host;
   }
 
-  async provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
+  async provisionQuickTunnel(
+    port: number,
+    tunnelRunId: string
+  ): Promise<QuickTunnelInfo> {
     const MAX_ID_RETRIES = 3;
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
@@ -74,7 +77,8 @@ export class TunnelProvisioner {
       try {
         return (await this.#host.client.tunnels.runQuickTunnel(
           id,
-          port
+          port,
+          tunnelRunId
         )) as QuickTunnelInfo;
       } catch (err) {
         if (!isTunnelAlreadyRunningError(err)) throw err;
@@ -177,11 +181,15 @@ export class TunnelProvisioner {
     };
   }
 
-  async runNamedTunnel(prepared: PreparedNamedTunnel): Promise<void> {
+  async runNamedTunnel(
+    prepared: PreparedNamedTunnel,
+    tunnelRunId: string
+  ): Promise<void> {
     await this.#host.client.tunnels.runNamedTunnel(
       prepared.tunnelId,
       prepared.tunnelToken,
-      prepared.info.port
+      prepared.info.port,
+      tunnelRunId
     );
   }
 

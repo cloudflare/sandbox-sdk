@@ -11,10 +11,7 @@ import type {
 import { SandboxLifetimeChangedError } from '../sandbox-lifetime';
 
 export interface TunnelLifecycleHost {
-  currentRuntime?: Pick<
-    CurrentRuntimeIdentity,
-    'get' | 'markStarted' | 'assertActive'
-  >;
+  currentRuntime?: Pick<CurrentRuntimeIdentity, 'get' | 'assertActive'>;
   currentLifetime?: Pick<
     CurrentSandboxLifetime,
     'getOrCreate' | 'assertCurrent'
@@ -40,6 +37,28 @@ export class TunnelOperationLifecycle {
       runtime: await this.#captureRuntime(),
       lifetime: await this.#host.currentLifetime?.getOrCreate()
     };
+  }
+
+  async requireRuntime(
+    snapshot: TunnelLifecycleSnapshot,
+    phase: string,
+    admitted: true | 'unknown'
+  ): Promise<TunnelLifecycleSnapshot> {
+    if (snapshot.runtime) return snapshot;
+    const runtime = await this.#captureRuntime();
+    if (runtime) {
+      return { ...snapshot, runtime };
+    }
+    if (this.#host.currentRuntime) {
+      throw createTunnelInterruptedError({
+        reason: 'runtime_replaced',
+        phase,
+        admitted,
+        retryable: true,
+        message: 'Tunnel operation was interrupted by a runtime replacement'
+      });
+    }
+    return snapshot;
   }
 
   async assertActive(
@@ -97,8 +116,8 @@ export class TunnelOperationLifecycle {
   async #captureRuntime(): Promise<RuntimeIdentity | undefined> {
     const currentRuntime = this.#host.currentRuntime;
     if (!currentRuntime) return undefined;
-    const runtime =
-      (await currentRuntime.get()) ?? (await currentRuntime.markStarted());
+    const runtime = await currentRuntime.get();
+    if (!runtime) return undefined;
     await currentRuntime.assertActive(runtime);
     return runtime;
   }

@@ -46,8 +46,8 @@ export function createTunnelsHandle(host: TunnelServiceHost): TunnelsHandle {
 
   return {
     tunnels,
-    handleTunnelExit: (id, port, exitCode) =>
-      service.onTunnelExit(id, port, exitCode),
+    handleTunnelExit: (id, port, exitCode, tunnelRunId) =>
+      service.onTunnelExit(id, port, exitCode, tunnelRunId),
     destroyAll: () => service.destroyAll(),
     resumeCleanup: () => service.resumeCleanup(),
     onRuntimeStart: () => service.onRuntimeStart(),

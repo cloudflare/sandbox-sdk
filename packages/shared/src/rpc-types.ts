@@ -269,7 +269,11 @@ export interface TunnelOptions {
 
 export interface SandboxTunnelsAPI {
   /** Spawn `cloudflared tunnel --url`. No credentials required. */
-  runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
+  runQuickTunnel(
+    id: string,
+    port: number,
+    tunnelRunId?: string
+  ): Promise<TunnelInfo>;
   /**
    * Spawn `cloudflared tunnel run --token <token> --url http://localhost:<port>`.
    *
@@ -281,7 +285,12 @@ export interface SandboxTunnelsAPI {
    *
    * The token must never be logged, persisted, or echoed back to callers.
    */
-  runNamedTunnel(id: string, token: string, port: number): Promise<TunnelInfo>;
+  runNamedTunnel(
+    id: string,
+    token: string,
+    port: number,
+    tunnelRunId?: string
+  ): Promise<TunnelInfo>;
   /** Stop the cloudflared process for the given tunnel id. */
   destroyTunnel(id: string): Promise<{ success: true; id: string }>;
   /** List tunnels currently running inside the container. */
@@ -426,6 +435,7 @@ export interface SandboxControlCallback {
   onTunnelExit(
     id: string,
     port: number,
-    exitCode: number | null
+    exitCode: number | null,
+    tunnelRunId?: string
   ): Promise<void>;
 }

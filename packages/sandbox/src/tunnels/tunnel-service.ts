@@ -82,10 +82,7 @@ export interface TunnelServiceHost {
    */
   fetcher?: typeof fetch;
   /** Runtime fence for records backed by a current container process. */
-  currentRuntime?: Pick<
-    CurrentRuntimeIdentity,
-    'get' | 'markStarted' | 'assertActive'
-  >;
+  currentRuntime?: Pick<CurrentRuntimeIdentity, 'get' | 'assertActive'>;
   /** Sandbox lifetime fence for operations that must not cross destroy(). */
   currentLifetime?: Pick<
     CurrentSandboxLifetime,
@@ -109,7 +106,8 @@ export interface TunnelsHandler {
 export type TunnelExitHandler = (
   id: string,
   port: number,
-  exitCode: number | null
+  exitCode: number | null,
+  tunnelRunId?: string
 ) => Promise<void>;
 
 export interface TunnelsHandle {
@@ -175,6 +173,10 @@ function hasErrorCode(error: unknown, code: string): boolean {
 
 function isTunnelNotFoundError(error: unknown): boolean {
   return hasErrorCode(error, 'TUNNEL_NOT_FOUND');
+}
+
+function createTunnelRunId(): string {
+  return crypto.randomUUID();
 }
 
 /** Tunnel domain façade for public operations and lifecycle hooks. */
@@ -272,9 +274,12 @@ export class TunnelService implements TunnelsHandler {
         }
       }
 
-      if (metaEntry?.runtimeIdentityID) {
-        const currentRuntime = await this.#host.currentRuntime?.get();
-        if (currentRuntime?.id !== metaEntry.runtimeIdentityID) {
+      if (this.#host.currentRuntime) {
+        const currentRuntime = await this.#host.currentRuntime.get();
+        if (
+          !metaEntry?.runtimeIdentityID ||
+          currentRuntime?.id !== metaEntry.runtimeIdentityID
+        ) {
           return {
             info: existing.name
               ? await this.#provisionNamedTunnel(port, existing.name)
@@ -333,8 +338,17 @@ export class TunnelService implements TunnelsHandler {
 
   /** Provision a fresh quick tunnel and persist it. Caller holds the per-port lock. */
   async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
-    const lifecycle = await this.#lifecycle.capture();
-    const spawned = await this.#provisioner.provisionQuickTunnel(port);
+    let lifecycle = await this.#lifecycle.capture();
+    const tunnelRunId = createTunnelRunId();
+    const spawned = await this.#provisioner.provisionQuickTunnel(
+      port,
+      tunnelRunId
+    );
+    lifecycle = await this.#lifecycle.requireRuntime(
+      lifecycle,
+      'process_ready',
+      true
+    );
     await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
     await this.#host.storage.transaction(async (txn) => {
       const nextMap = await readMap(txn);
@@ -348,7 +362,8 @@ export class TunnelService implements TunnelsHandler {
         }),
         ...(lifecycle.lifetime && {
           sandboxLifetimeID: lifecycle.lifetime.id
-        })
+        }),
+        tunnelRunId
       };
       await txn.put(META_STORAGE_KEY, nextMeta);
     });
@@ -360,18 +375,35 @@ export class TunnelService implements TunnelsHandler {
     port: number,
     name: string
   ): Promise<NamedTunnelInfo> {
-    const lifecycle = await this.#lifecycle.capture();
+    let lifecycle = await this.#lifecycle.capture();
 
     await this.#resumePortCleanup(port);
 
     const prepared = await this.#provisioner.prepareNamedTunnel(port, name);
+    const cleanupEntry = createNamedTunnelCleanupEntry(
+      prepared.info,
+      prepared.meta
+    );
+    if (cleanupEntry) {
+      await this.#host.storage.transaction(async (txn) => {
+        const cleanup = await readCleanupMap(txn);
+        cleanup[port.toString()] = cleanupEntry;
+        await txn.put(CLEANUP_STORAGE_KEY, cleanup);
+      });
+    }
     await this.#lifecycle.assertActive(
       lifecycle,
       'cloudflare_ready',
       'unknown'
     );
 
-    await this.#provisioner.runNamedTunnel(prepared);
+    const tunnelRunId = createTunnelRunId();
+    await this.#provisioner.runNamedTunnel(prepared, tunnelRunId);
+    lifecycle = await this.#lifecycle.requireRuntime(
+      lifecycle,
+      'process_ready',
+      true
+    );
     await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
 
     await this.#host.storage.transaction(async (txn) => {
@@ -386,9 +418,13 @@ export class TunnelService implements TunnelsHandler {
         }),
         ...(lifecycle.lifetime && {
           sandboxLifetimeID: lifecycle.lifetime.id
-        })
+        }),
+        tunnelRunId
       };
       await txn.put(META_STORAGE_KEY, nextMeta);
+      const cleanup = await readCleanupMap(txn);
+      delete cleanup[port.toString()];
+      await txn.put(CLEANUP_STORAGE_KEY, cleanup);
     });
     await this.#lifecycle.assertActive(lifecycle, 'committing', true);
     return prepared.info;
@@ -508,7 +544,8 @@ export class TunnelService implements TunnelsHandler {
   async onTunnelExit(
     id: string,
     port: number,
-    exitCode: number | null
+    exitCode: number | null,
+    tunnelRunId?: string
   ): Promise<void> {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
@@ -518,10 +555,15 @@ export class TunnelService implements TunnelsHandler {
         await this.#host.storage.transaction(async (txn) => {
           const map = await readMap(txn);
           const existing = map[port.toString()];
+          const meta = await readMetaMap(txn);
+          const metaEntry = meta[port.toString()];
           // Defensive: only act if storage still references this exact
           // tunnel id. Exit callbacks for superseded tunnel processes
           // are ignored so current records stay intact.
           if (existing?.id !== id) return;
+          if (metaEntry?.tunnelRunId && tunnelRunId !== metaEntry.tunnelRunId) {
+            return;
+          }
 
           if (existing.name) {
             // Named tunnel. The Cloudflare-side tunnel and DNS record
@@ -541,7 +583,6 @@ export class TunnelService implements TunnelsHandler {
           // process and cannot be recovered. Drop both entries.
           delete map[port.toString()];
           await txn.put(STORAGE_KEY, map);
-          const meta = await readMetaMap(txn);
           delete meta[port.toString()];
           await txn.put(META_STORAGE_KEY, meta);
         });
@@ -569,7 +610,15 @@ export class TunnelService implements TunnelsHandler {
 
   async destroyAll(): Promise<void> {
     const map = await readMap(this.#host.storage);
-    const ports = Object.keys(map).map((p) => Number(p));
+    const meta = await readMetaMap(this.#host.storage);
+    const ports = new Set(Object.keys(map).map((p) => Number(p)));
+    for (const [portKey, entry] of Object.entries(meta)) {
+      const port = Number(portKey);
+      if (Number.isFinite(port) && namedTunnelInfoFromMeta(port, entry)) {
+        ports.add(port);
+      }
+    }
+
     for (const port of ports) {
       try {
         await this.destroy(port);

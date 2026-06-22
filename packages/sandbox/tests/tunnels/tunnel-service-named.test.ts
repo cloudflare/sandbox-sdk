@@ -28,10 +28,15 @@ import {
 import { makeFences, makeLogger, makeStorage } from './helpers';
 
 type RunQuickTunnelMock = Mock<
-  (id: string, port: number) => Promise<TunnelInfo>
+  (id: string, port: number, tunnelRunId?: string) => Promise<TunnelInfo>
 >;
 type RunNamedTunnelMock = Mock<
-  (id: string, token: string, port: number) => Promise<unknown>
+  (
+    id: string,
+    token: string,
+    port: number,
+    tunnelRunId?: string
+  ) => Promise<unknown>
 >;
 type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
 type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
@@ -54,10 +59,21 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
     client: {
       tunnels: {
         runQuickTunnel:
-          vi.fn<(id: string, port: number) => Promise<TunnelInfo>>(),
+          vi.fn<
+            (
+              id: string,
+              port: number,
+              tunnelRunId?: string
+            ) => Promise<TunnelInfo>
+          >(),
         runNamedTunnel:
           vi.fn<
-            (id: string, token: string, port: number) => Promise<unknown>
+            (
+              id: string,
+              token: string,
+              port: number,
+              tunnelRunId?: string
+            ) => Promise<unknown>
           >(),
         destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
         listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
@@ -459,6 +475,71 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
     expect(client.tunnels.runNamedTunnel).not.toHaveBeenCalled();
   });
 
+  it('respawns an unscoped named record instead of returning it as current', async () => {
+    const cf = makeFakeCloudflare({
+      existingTunnels: [
+        {
+          id: 'kept-tun-id',
+          name: 'sandbox-sb1-api',
+          deleted_at: null,
+          metadata: { sandboxId: 'sb1', createdBy: 'sandbox-sdk' }
+        }
+      ],
+      existingDns: [
+        {
+          id: 'dns-kept',
+          type: 'CNAME',
+          name: 'api.example.com',
+          content: 'kept-tun-id.cfargotunnel.com',
+          comment: 'sandbox-sb1'
+        }
+      ]
+    });
+    const { tunnels, client, storage } = makeHandler({
+      fetcher: cf.fetcher as unknown as typeof fetch,
+      fences: makeFences()
+    });
+    await storage.put('tunnels', {
+      '8080': {
+        id: 'kept-tun-id',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        url: 'https://api.example.com',
+        createdAt: '2026-05-13T00:00:00.000Z'
+      }
+    });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'dns-kept',
+        tunnelId: 'kept-tun-id',
+        name: 'api',
+        hostname: 'api.example.com',
+        accountId: 'ACCT',
+        zoneId: 'zone-id'
+      }
+    });
+    client.tunnels.runNamedTunnel.mockResolvedValue({
+      id: 'kept-tun-id',
+      port: 8080,
+      url: '',
+      hostname: '',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    });
+
+    const info = await tunnels.get(8080, { name: 'api' });
+
+    expect(info.id).toBe('kept-tun-id');
+    expect(client.tunnels.runNamedTunnel).toHaveBeenCalledTimes(1);
+    const meta =
+      await storage.get<Record<string, Record<string, unknown>>>(
+        'tunnels:meta'
+      );
+    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-1');
+    expect(meta?.['8080']?.tunnelRunId).toEqual(expect.any(String));
+  });
+
   it('quick → named on same port throws', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
@@ -754,11 +835,22 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
     );
     expect(deleteCalls).toEqual([]);
 
-    // Storage was not written.
-    const tunnels1 = (await (storage.get as StorageGetMock)(
-      'tunnels'
-    )) as unknown;
-    expect(tunnels1 ?? {}).toEqual({});
+    // Public storage is still empty, but cleanup intent is durable.
+    await expect(storage.get('tunnels')).resolves.toBeUndefined();
+    await expect(storage.get('tunnels:meta')).resolves.toBeUndefined();
+    await expect(storage.get('tunnels:cleanup')).resolves.toEqual({
+      '8080': {
+        tunnelId: '11111111-2222-3333-4444-555555555555',
+        port: 8080,
+        name: 'api',
+        hostname: 'api.example.com',
+        dnsRecordId: 'dns-id',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        phase: 'claimed',
+        updatedAt: expect.any(String)
+      }
+    });
   });
 });
 
@@ -843,7 +935,8 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
     expect(client.tunnels.runNamedTunnel).toHaveBeenCalledWith(
       'kept-tun-id',
       'REUSED_TOKEN',
-      8080
+      8080,
+      expect.any(String)
     );
   });
 
@@ -1458,6 +1551,48 @@ describe('tunnel service > destroyAll()', () => {
 
     // Storage is empty after destroyAll — list() reflects truth.
     expect(await tunnels.list()).toEqual([]);
+  });
+
+  it('cleans hidden named tunnels that are waiting for respawn', async () => {
+    const cf = makeFakeCloudflare({});
+    const { client, storage, destroyAll } = makeHandler({
+      sandboxId: 'sb1',
+      fetcher: cf.fetcher as unknown as typeof fetch
+    });
+    await storage.put('tunnels', {});
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:named:api',
+        tunnelId: 'tunnel-uuid-hidden',
+        name: 'api',
+        hostname: 'api.example.com',
+        dnsRecordId: 'dns-record-hidden',
+        accountId: 'ACCT',
+        zoneId: 'zone-id',
+        needsRespawn: true
+      }
+    });
+    client.tunnels.destroyTunnel.mockResolvedValue({
+      success: true,
+      id: 'tunnel-uuid-hidden'
+    });
+
+    await expect(destroyAll()).resolves.toBeUndefined();
+
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith(
+      'tunnel-uuid-hidden'
+    );
+    const deletes = cf.fetcher.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE'
+    );
+    const targets = deletes.map(([url]) => String(url));
+    expect(
+      targets.some((t) => t.includes('/dns_records/dns-record-hidden'))
+    ).toBe(true);
+    expect(
+      targets.some((t) => t.includes('/cfd_tunnel/tunnel-uuid-hidden'))
+    ).toBe(true);
+    await expect(storage.get('tunnels:meta')).resolves.toEqual({});
   });
 
   it('resumes retained named tunnel cleanup records', async () => {
