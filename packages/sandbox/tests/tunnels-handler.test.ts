@@ -9,6 +9,9 @@
 import type { Logger, TunnelInfo } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
+import { ErrorCode } from '../src/errors';
+import { SandboxLifetimeChangedError } from '../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
@@ -105,25 +108,46 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   };
 }
 
-function makeHandler() {
-  const { client } = makeClient();
-  const storage = makeStorage();
-  const { tunnels, handleTunnelExit } = createTunnelsHandler({
-    client: client as unknown as Parameters<
-      typeof createTunnelsHandler
-    >[0]['client'],
-    storage,
-    logger: makeLogger()
-  });
-  // `handler` alias kept for legacy test bodies; new tests should
-  // reach for `tunnels` and `handleTunnelExit` directly.
+type TunnelsHost = Parameters<typeof createTunnelsHandler>[0];
+
+/**
+ * Pass-through runtime/lifetime fences. Both default to a single stable
+ * identity that always asserts active; tests override only the hook whose
+ * behavior they exercise.
+ */
+function makeFences(
+  overrides: {
+    currentRuntime?: Record<string, unknown>;
+    currentLifetime?: Record<string, unknown>;
+  } = {}
+): Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'> {
   return {
-    client,
+    currentRuntime: {
+      get: vi.fn(async () => ({ id: 'runtime-1' })),
+      markStarted: vi.fn(async () => ({ id: 'runtime-1' })),
+      assertActive: vi.fn(async () => {}),
+      ...overrides.currentRuntime
+    },
+    currentLifetime: {
+      getOrCreate: vi.fn(async () => ({ id: 'lifetime-1' })),
+      assertCurrent: vi.fn(async () => {}),
+      ...overrides.currentLifetime
+    }
+  } as unknown as Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
+}
+
+function makeHandler(extra: Partial<TunnelsHost> = {}) {
+  const { client } = makeClient();
+  const { storage: providedStorage, ...rest } = extra;
+  const storage =
+    (providedStorage as TunnelsStorage | undefined) ?? makeStorage();
+  const { tunnels, handleTunnelExit } = createTunnelsHandler({
+    client: client as unknown as TunnelsHost['client'],
     storage,
-    handler: tunnels,
-    tunnels,
-    handleTunnelExit
-  };
+    logger: makeLogger(),
+    ...rest
+  } as unknown as TunnelsHost);
+  return { client, storage, handler: tunnels, tunnels, handleTunnelExit };
 }
 
 describe('tunnels handler > get', () => {
@@ -160,6 +184,22 @@ describe('tunnels handler > get', () => {
     expect(metaPut?.[1]).toEqual({
       '8080': { optionsHash: 'v1:quick' }
     });
+  });
+
+  it('records runtime and sandbox lifetime ownership for quick tunnels', async () => {
+    const { client, storage, handler } = makeHandler(makeFences());
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    await handler.get(8080);
+
+    const meta =
+      await storage.get<Record<string, Record<string, unknown>>>(
+        'tunnels:meta'
+      );
+    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-1');
+    expect(meta?.['8080']?.sandboxLifetimeID).toBe('lifetime-1');
   });
 
   it('retries with a fresh id when the container reports TUNNEL_ALREADY_RUNNING', async () => {
@@ -213,6 +253,129 @@ describe('tunnels handler > get', () => {
     expect(client.tunnels.listTunnels).not.toHaveBeenCalled();
     expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
     expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it('recovers quick get() after runtime replacement during spawn', async () => {
+    const second = makeRecord({
+      id: 'quick-second00second',
+      port: 8080,
+      url: 'https://second.trycloudflare.com',
+      hostname: 'second.trycloudflare.com'
+    });
+    const { client, handler } = makeHandler(
+      makeFences({
+        currentRuntime: {
+          // First attempt's post-spawn fence reports a replaced runtime;
+          // the retry runs clean.
+          assertActive: vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new RuntimeIdentityInactiveError())
+            .mockResolvedValue(undefined)
+        }
+      })
+    );
+    client.tunnels.runQuickTunnel
+      .mockResolvedValueOnce(makeRecord({ id: 'quick-first000first' }))
+      .mockResolvedValueOnce(second);
+
+    const info = await handler.get(8080);
+
+    expect(info).toEqual(second);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces sandbox lifetime changes as non-retryable operation interruptions', async () => {
+    const { client, handler } = makeHandler(
+      makeFences({
+        currentLifetime: {
+          assertCurrent: vi
+            .fn()
+            .mockRejectedValue(new SandboxLifetimeChangedError())
+        }
+      })
+    );
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: expect.objectContaining({
+        reason: 'sandbox_lifetime_changed',
+        operation: 'tunnel.get',
+        retryable: false,
+        admitted: true
+      })
+    });
+  });
+
+  it('bounds runtime-replacement recovery and never commits a partial record', async () => {
+    // Every post-spawn fence reports a replaced runtime, so recovery can
+    // never converge. The operation surfaces recovery_exhausted and
+    // leaves storage empty so no orphaned tunnel record persists.
+    let assertCalls = 0;
+    const { client, storage, handler } = makeHandler(
+      makeFences({
+        currentRuntime: {
+          assertActive: vi.fn(async () => {
+            assertCalls += 1;
+            if (assertCalls % 2 === 0) {
+              throw new RuntimeIdentityInactiveError();
+            }
+          })
+        }
+      })
+    );
+    client.tunnels.runQuickTunnel.mockImplementation(
+      async (id: string, port: number) => makeRecord({ id, port })
+    );
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: expect.objectContaining({
+        reason: 'recovery_exhausted',
+        operation: 'tunnel.get',
+        retryable: true,
+        admitted: true,
+        recoveryAttempts: 2,
+        maxRecoveryAttempts: 2
+      })
+    });
+    expect(await storage.get('tunnels')).toBeUndefined();
+    expect(await storage.get('tunnels:meta')).toBeUndefined();
+  });
+
+  it('refreshes a quick cache hit owned by an old runtime', async () => {
+    const fresh = makeRecord({
+      id: 'quick-fresh0000fresh',
+      port: 8080,
+      url: 'https://fresh.trycloudflare.com',
+      hostname: 'fresh.trycloudflare.com'
+    });
+    const storage = makeStorage({
+      '8080': makeRecord({ id: 'quick-stale0000stale' })
+    });
+    await (storage.put as StoragePutMock)('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-old' }
+    });
+    const { client, handler } = makeHandler({
+      storage,
+      ...makeFences({
+        currentRuntime: {
+          get: vi.fn(async () => ({ id: 'runtime-new' })),
+          markStarted: vi.fn(async () => ({ id: 'runtime-new' }))
+        }
+      })
+    });
+    client.tunnels.runQuickTunnel.mockResolvedValue(fresh);
+
+    const info = await handler.get(8080);
+
+    expect(info).toEqual(fresh);
+    expect(client.tunnels.runQuickTunnel).toHaveBeenCalledTimes(1);
   });
 
   it('after storage is cleared (simulating container restart), behaves like cache miss', async () => {
@@ -530,6 +693,33 @@ describe('tunnels handler > list', () => {
     const { handler } = makeHandler();
     await expect(handler.list()).resolves.toEqual([]);
   });
+
+  it('hides named tunnels that need respawn', async () => {
+    const active = makeRecord({ id: 'quick-active00000000', port: 8080 });
+    const staleNamed: TunnelInfo = {
+      id: 'tunnel-uuid-named',
+      port: 8081,
+      name: 'api',
+      hostname: 'api.example.com',
+      url: 'https://api.example.com',
+      createdAt: '2026-05-13T00:00:00.000Z'
+    };
+    const { storage, handler } = makeHandler();
+    await (storage.put as StoragePutMock)('tunnels', {
+      '8080': active,
+      '8081': staleNamed
+    });
+    await (storage.put as StoragePutMock)('tunnels:meta', {
+      '8080': { optionsHash: 'v1:quick' },
+      '8081': {
+        optionsHash: 'v1:named:api',
+        dnsRecordId: 'dns-id',
+        needsRespawn: true
+      }
+    });
+
+    await expect(handler.list()).resolves.toEqual([active]);
+  });
 });
 
 describe('tunnels handler > per-port serialization', () => {
@@ -689,13 +879,12 @@ describe('tunnels handler > handleTunnelExit', () => {
 
     await handleTunnelExit('tunnel-uuid-named', 8080, 0);
 
-    // The tunnel record is left in place so list() still surfaces the
-    // (now-detached) hostname — the next get() will respawn cloudflared.
+    // The public record is hidden; the next get() uses private metadata
+    // to respawn cloudflared behind the same named hostname.
     const tunnels = (await storage.get<Record<string, TunnelInfo>>(
       'tunnels'
     )) as Record<string, TunnelInfo>;
-    expect(tunnels['8080']).toBeDefined();
-    expect(tunnels['8080'].id).toBe('tunnel-uuid-named');
+    expect(tunnels).toEqual({});
 
     // Meta is preserved verbatim, with `needsRespawn` flipped on so the
     // next get(port, { name }) cache hit falls through to provision.
@@ -708,6 +897,9 @@ describe('tunnels handler > handleTunnelExit', () => {
           accountId?: string;
           zoneId?: string;
           needsRespawn?: boolean;
+          tunnelId?: string;
+          name?: string;
+          hostname?: string;
         }
       >
     >('tunnels:meta')) as Record<
@@ -718,11 +910,17 @@ describe('tunnels handler > handleTunnelExit', () => {
         accountId?: string;
         zoneId?: string;
         needsRespawn?: boolean;
+        tunnelId?: string;
+        name?: string;
+        hostname?: string;
       }
     >;
     expect(meta['8080']?.dnsRecordId).toBe('kept-dns-id');
     expect(meta['8080']?.accountId).toBe('acct-A');
     expect(meta['8080']?.zoneId).toBe('zone-A');
+    expect(meta['8080']?.tunnelId).toBe('tunnel-uuid-named');
+    expect(meta['8080']?.name).toBe('api');
+    expect(meta['8080']?.hostname).toBe('api.example.com');
     expect(meta['8080']?.needsRespawn).toBe(true);
   });
 
@@ -887,11 +1085,23 @@ describe('pruneTunnelsForRestart', () => {
     )) as Record<string, { name?: string }>;
     const nextMeta = (await (storage.get as StorageGetMock)(
       'tunnels:meta'
-    )) as Record<string, { needsRespawn?: boolean; dnsRecordId?: string }>;
-    expect(Object.keys(nextTunnels)).toEqual(['8081']);
+    )) as Record<
+      string,
+      {
+        needsRespawn?: boolean;
+        dnsRecordId?: string;
+        tunnelId?: string;
+        name?: string;
+        hostname?: string;
+      }
+    >;
+    expect(nextTunnels).toEqual({});
     expect(nextMeta['8081']?.needsRespawn).toBe(true);
-    // dnsRecordId is preserved so destroy() can still clean up.
+    // Private identity is preserved so get() can respawn and destroy() can clean up.
     expect(nextMeta['8081']?.dnsRecordId).toBe('rec-1');
+    expect(nextMeta['8081']?.tunnelId).toBe('uuid-1');
+    expect(nextMeta['8081']?.name).toBe('app');
+    expect(nextMeta['8081']?.hostname).toBe('app.example.com');
     expect(nextMeta['8080']).toBeUndefined();
   });
 

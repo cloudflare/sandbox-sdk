@@ -1,0 +1,200 @@
+import type { NamedTunnelInfo, TunnelInfo, TunnelOptions } from '@repo/shared';
+import type { RuntimeIdentityID } from '../current-runtime-identity';
+import type { SandboxLifetimeID } from '../sandbox-lifetime';
+
+/** DO storage key for the `port → TunnelInfo` map. */
+export const STORAGE_KEY = 'tunnels';
+
+/**
+ * Sidecar storage key for per-port metadata the handler needs but the
+ * public `TunnelInfo` shape does not carry.
+ */
+export const META_STORAGE_KEY = 'tunnels:meta';
+
+export const CLEANUP_STORAGE_KEY = 'tunnels:cleanup';
+
+export type TunnelMap = Record<string, TunnelInfo>;
+
+export interface TunnelMetaEntry {
+  /** Stable hash of the `options` object the tunnel was created with. */
+  optionsHash: string;
+  /** Cloudflare DNS record id for named tunnels; absent for quick. */
+  dnsRecordId?: string;
+  /** Runtime identity that owns the current cloudflared process. */
+  runtimeIdentityID?: RuntimeIdentityID;
+  /** Sandbox lifetime that owns this tunnel record. */
+  sandboxLifetimeID?: SandboxLifetimeID;
+  /** Cloudflare tunnel id for hidden named records that can respawn or clean up. */
+  tunnelId?: string;
+  /** User-provided named-tunnel label for hidden respawn/cleanup records. */
+  name?: string;
+  /** Public named-tunnel hostname for hidden respawn/cleanup records. */
+  hostname?: string;
+  /**
+   * Resolved `(accountId, zoneId)` the named tunnel was provisioned
+   * against. Compared on cache hit to detect env-var changes that
+   * would otherwise silently serve a stale URL.
+   */
+  accountId?: string;
+  zoneId?: string;
+  /**
+   * Set for hidden named tunnels whose Cloudflare resources outlived
+   * the runtime-local cloudflared process.
+   */
+  needsRespawn?: boolean;
+}
+
+export type TunnelMetaMap = Record<string, TunnelMetaEntry>;
+
+export interface TunnelCleanupEntry {
+  tunnelId: string;
+  port: number;
+  name: string;
+  hostname: string;
+  dnsRecordId?: string;
+  accountId?: string;
+  zoneId?: string;
+  phase: 'claimed';
+  updatedAt: string;
+}
+
+export type TunnelCleanupMap = Record<string, TunnelCleanupEntry>;
+
+/**
+ * Subset of `DurableObjectTransaction` (and `DurableObjectStorage`) used
+ * inside a transaction closure — no nested `transaction()`.
+ */
+export interface TunnelsStorageTxn {
+  get<T>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<boolean>;
+}
+
+/**
+ * Subset of `DurableObjectStorage` the handler uses.
+ *
+ * `transaction` gives optimistic concurrency for read-modify-write paths.
+ */
+export interface TunnelsStorage extends TunnelsStorageTxn {
+  transaction<T>(closure: (txn: TunnelsStorageTxn) => Promise<T>): Promise<T>;
+}
+
+export async function readMap(storage: TunnelsStorageTxn): Promise<TunnelMap> {
+  return (await storage.get<TunnelMap>(STORAGE_KEY)) ?? {};
+}
+
+export async function readMetaMap(
+  storage: TunnelsStorageTxn
+): Promise<TunnelMetaMap> {
+  return (await storage.get<TunnelMetaMap>(META_STORAGE_KEY)) ?? {};
+}
+
+export async function readCleanupMap(
+  storage: TunnelsStorageTxn
+): Promise<TunnelCleanupMap> {
+  return (await storage.get<TunnelCleanupMap>(CLEANUP_STORAGE_KEY)) ?? {};
+}
+
+/**
+ * Stable hash of `options`. Empty/undefined options collapse to the same
+ * hash so `get(port)`, `get(port, {})`, and `get(port, { name: undefined })`
+ * all hit the same cache entry. Named tunnels hash on `name` alone.
+ */
+export function computeOptionsHash(options?: TunnelOptions): string {
+  if (!options || !options.name) return 'v1:quick';
+  return `v1:named:${options.name}`;
+}
+
+/** Strip the optional `v1:` prefix so legacy hashes compare equal. */
+function normaliseHash(hash: string): string {
+  return hash.startsWith('v1:') ? hash.slice(3) : hash;
+}
+
+export function optionsHashesEqual(a: string, b: string): boolean {
+  return normaliseHash(a) === normaliseHash(b);
+}
+
+export function fallbackOptionsHash(info: TunnelInfo): string {
+  return info.name ? computeOptionsHash({ name: info.name }) : 'v1:quick';
+}
+
+export function effectiveOptionsHash(
+  info: TunnelInfo,
+  meta: TunnelMetaEntry | undefined
+): string {
+  return meta?.optionsHash ?? fallbackOptionsHash(info);
+}
+
+export function tunnelConfigChanged(
+  meta: TunnelMetaEntry | undefined,
+  config: { accountId: string; zoneId: string }
+): boolean {
+  return (
+    (meta?.accountId !== undefined && meta.accountId !== config.accountId) ||
+    (meta?.zoneId !== undefined && meta.zoneId !== config.zoneId)
+  );
+}
+
+export function namedTunnelInfoFromMeta(
+  port: number,
+  meta: TunnelMetaEntry | undefined
+): NamedTunnelInfo | undefined {
+  if (!meta?.needsRespawn || !meta.tunnelId || !meta.name || !meta.hostname) {
+    return undefined;
+  }
+  return {
+    id: meta.tunnelId,
+    port,
+    name: meta.name,
+    hostname: meta.hostname,
+    url: `https://${meta.hostname}`,
+    createdAt: new Date().toISOString()
+  };
+}
+
+export function createNamedTunnelCleanupEntry(
+  info: TunnelInfo,
+  meta: TunnelMetaEntry | undefined
+): TunnelCleanupEntry | undefined {
+  if (!info.name || !meta?.dnsRecordId) return undefined;
+  return {
+    tunnelId: info.id,
+    port: info.port,
+    name: info.name,
+    hostname: info.hostname,
+    dnsRecordId: meta.dnsRecordId,
+    accountId: meta.accountId,
+    zoneId: meta.zoneId,
+    phase: 'claimed',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function namedRespawnMeta(
+  info: NamedTunnelInfo,
+  existing?: TunnelMetaEntry
+): TunnelMetaEntry {
+  return {
+    ...existing,
+    optionsHash:
+      existing?.optionsHash ?? computeOptionsHash({ name: info.name }),
+    tunnelId: info.id,
+    name: info.name,
+    hostname: info.hostname,
+    needsRespawn: true
+  };
+}
+
+export async function markNamedTunnelNeedsRespawn(
+  storage: TunnelsStorageTxn,
+  portKey: string,
+  info: NamedTunnelInfo
+): Promise<void> {
+  const map = await readMap(storage);
+  delete map[portKey];
+  await storage.put(STORAGE_KEY, map);
+
+  const meta = await readMetaMap(storage);
+  meta[portKey] = namedRespawnMeta(info, meta[portKey]);
+  await storage.put(META_STORAGE_KEY, meta);
+}

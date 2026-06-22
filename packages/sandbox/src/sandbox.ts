@@ -947,6 +947,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // sandbox.destroy(). Stored separately so the public `tunnels` getter
   // stays narrow (users don't see destroyAll).
   private destroyAllTunnels: (() => Promise<void>) | null = null;
+  private resumeTunnelCleanup: (() => Promise<void>) | null = null;
   // capnweb localMain exposed to the container side of the RPC
   // session. Constructed once in the constructor (the lazy accessor
   // keeps it pointing at the current `tunnelExitHandler`), so the
@@ -2632,6 +2633,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // startup window sees the reconciled cache by the time it runs.
     try {
       await pruneTunnelsForRestart(this.ctx.storage);
+      this.ensureTunnelsBuilt();
+      await this.resumeTunnelCleanup?.();
     } catch (error) {
       this.logger.error(
         'Failed to reconcile tunnel storage after container start',
@@ -5008,6 +5011,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
+      currentRuntime: this.currentRuntime,
+      currentLifetime: this.currentLifetime,
       getNamedTunnelConfig: async () => {
         const envObj = this.env as Record<string, unknown>;
         const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');
@@ -5029,6 +5034,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.tunnelsHandler = built.tunnels;
     this.tunnelExitHandler = built.handleTunnelExit;
     this.destroyAllTunnels = built.destroyAll;
+    this.resumeTunnelCleanup = built.resumeCleanup;
   }
 
   /**
