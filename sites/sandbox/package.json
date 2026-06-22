@@ -14,7 +14,7 @@
   "dependencies": {
     "@astrojs/check": "^0.9.5",
     "@astrojs/react": "^5.0.4",
-    "@cloudflare/vite-plugin": "^1.37.2",
+    "@cloudflare/vite-plugin": "^1.42.0",
     "@tailwindcss/vite": "^4.1.17",
     "astro": "^6.1.10",
     "clsx": "^2.1.1",
@@ -30,6 +30,6 @@
     "@types/react-dom": "^19.2.3",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
-    "wrangler": "^4.76.0"
+    "wrangler": "^4.102.0"
   }
 }
