@@ -773,6 +773,69 @@ describe('TunnelService > ensureTunnelRun', () => {
     expect(fakeProcs).toHaveLength(1);
   });
 
+  it('replays the same inflight runId without spawning another process', async () => {
+    const service = new TunnelService(mockLogger);
+
+    const first = service.ensureTunnelRun({
+      tunnelId: 'tid-inflight',
+      runId: 'rid-inflight',
+      mode: 'quick',
+      port: 8080
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fakeProcs).toHaveLength(1);
+
+    const replay = service.ensureTunnelRun({
+      tunnelId: 'tid-inflight',
+      runId: 'rid-inflight',
+      mode: 'quick',
+      port: 8080
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fakeProcs).toHaveLength(1);
+
+    fakeProcs[0].stderr.write(QUICK_BANNER);
+    await new Promise((r) => setTimeout(r, 30));
+    fetchHandler.ready = true;
+
+    const [firstResult, replayResult] = await Promise.all([first, replay]);
+    expect(firstResult.success).toBe(true);
+    expect(replayResult.success).toBe(true);
+    if (!replayResult.success) return;
+    expect(replayResult.data.started).toBe(false);
+    expect(replayResult.data.run.runId).toBe('rid-inflight');
+  });
+
+  it('rejects a different run on the same port while the first run is starting', async () => {
+    const service = new TunnelService(mockLogger);
+
+    const first = service.ensureTunnelRun({
+      tunnelId: 'tid-starting-a',
+      runId: 'rid-starting-a',
+      mode: 'quick',
+      port: 8080
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fakeProcs).toHaveLength(1);
+
+    const second = await service.ensureTunnelRun({
+      tunnelId: 'tid-starting-b',
+      runId: 'rid-starting-b',
+      mode: 'quick',
+      port: 8080
+    });
+
+    expect(second.success).toBe(false);
+    if (second.success) return;
+    expect(second.error.code).toBe('TUNNEL_RUN_CONFLICT');
+    expect(fakeProcs).toHaveLength(1);
+
+    fakeProcs[0].stderr.write(QUICK_BANNER);
+    await new Promise((r) => setTimeout(r, 30));
+    fetchHandler.ready = true;
+    expect((await first).success).toBe(true);
+  });
+
   it('returns TUNNEL_RUN_CONFLICT for same runId with different params', async () => {
     const service = new TunnelService(mockLogger);
 

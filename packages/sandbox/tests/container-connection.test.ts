@@ -545,6 +545,34 @@ describe('ContainerControlConnection', () => {
       );
     });
 
+    it('fills required container-unavailable context fields when the response context is partial', async () => {
+      const body = JSON.stringify({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: 'Container was replaced',
+        context: {}
+      });
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect(error).toMatchObject({
+        context: {
+          reason: 'container_replaced',
+          retryable: true
+        }
+      });
+    });
+
     it('fires onClose after a failed connect so the client can discard the poisoned connection', async () => {
       const onClose = vi.fn();
       const conn = new ContainerControlConnection({

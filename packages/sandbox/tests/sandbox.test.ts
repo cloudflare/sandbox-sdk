@@ -8,6 +8,7 @@ import {
   ProcessNotFoundError
 } from '../src/errors';
 import { connect, Sandbox } from '../src/sandbox';
+import { SessionInitInvalidatedError } from '../src/session-init';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -931,9 +932,7 @@ describe('Sandbox - Automatic Session Management', () => {
       )
         .mockImplementationOnce(async (_id: string) => {
           callCount++;
-          throw new Error(
-            'Default session initialization was invalidated by a container stop'
-          );
+          throw new SessionInitInvalidatedError();
         })
         .mockImplementationOnce(async (sessionId: string) => {
           callCount++;

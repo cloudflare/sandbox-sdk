@@ -31,7 +31,7 @@ type RestoreLifecycleDeps = {
 
 export type RestoreLifecycleContext = {
   lifetime: SandboxLifetime;
-  runtimeReady: (archiveSize?: number) => Promise<{
+  runtimeReady: () => Promise<{
     runtime: RuntimeIdentity;
     operation: BackupRestoreOperationRecord;
   }>;
@@ -40,8 +40,7 @@ export type RestoreLifecycleContext = {
     operation: BackupRestoreOperationRecord;
   }>;
   verify: (
-    result: BackupRestoreOperationResult,
-    archiveSize?: number
+    result: BackupRestoreOperationResult
   ) => Promise<BackupRestoreOperationRecord>;
 };
 
@@ -69,7 +68,7 @@ export class RestoreLifecycleRunner {
 
       const context: RestoreLifecycleContext = {
         lifetime,
-        runtimeReady: async (archiveSize) => {
+        runtimeReady: async () => {
           try {
             runtime = await this.captureRuntime();
             await this.deps.currentLifetime.assertCurrent(lifetime);
@@ -85,8 +84,7 @@ export class RestoreLifecycleRunner {
 
           currentOperation = await this.markRuntimeReady(
             currentOperation,
-            runtime,
-            archiveSize
+            runtime
           );
           return { runtime, operation: currentOperation };
         },
@@ -116,7 +114,7 @@ export class RestoreLifecycleRunner {
           );
           return { runtime, operation: currentOperation };
         },
-        verify: async (result, archiveSize) => {
+        verify: async (result) => {
           if (!runtime) {
             throw new Error(
               'Backup restore verification requires runtimeReady()'
@@ -138,8 +136,7 @@ export class RestoreLifecycleRunner {
           currentOperation = await this.markVerified(
             currentOperation,
             runtime,
-            result,
-            archiveSize
+            result
           );
           return currentOperation;
         }
@@ -207,7 +204,6 @@ export class RestoreLifecycleRunner {
   }> {
     const lifetime = await this.deps.currentLifetime.getOrCreate();
     const operation = createBackupRestoreOperationRecord({
-      operationId: crypto.randomUUID(),
       sandboxLifetimeID: lifetime.id,
       backupId,
       dir,
@@ -235,17 +231,12 @@ export class RestoreLifecycleRunner {
 
   private async markRuntimeReady(
     operation: BackupRestoreOperationRecord,
-    runtime: RuntimeIdentity,
-    archiveSize?: number
+    runtime: RuntimeIdentity
   ): Promise<BackupRestoreOperationRecord> {
     const next: BackupRestoreOperationRecord = {
       ...operation,
       phase: 'runtime_ready',
       runtimeIdentityID: runtime.id,
-      payload: {
-        ...operation.payload,
-        ...(archiveSize !== undefined && { archiveSize })
-      },
       updatedAt: new Date().toISOString()
     };
     await this.operationRecords.put(next);
@@ -274,8 +265,7 @@ export class RestoreLifecycleRunner {
   private async markVerified(
     operation: BackupRestoreOperationRecord,
     runtime: RuntimeIdentity,
-    result: BackupRestoreOperationResult,
-    archiveSize?: number
+    result: BackupRestoreOperationResult
   ): Promise<BackupRestoreOperationRecord> {
     const completedAt = new Date().toISOString();
     const next: BackupRestoreOperationRecord = {
@@ -283,10 +273,6 @@ export class RestoreLifecycleRunner {
       phase: 'verified',
       status: 'committed',
       runtimeIdentityID: runtime.id,
-      payload: {
-        ...operation.payload,
-        ...(archiveSize !== undefined && { archiveSize })
-      },
       result,
       completedAt,
       updatedAt: completedAt

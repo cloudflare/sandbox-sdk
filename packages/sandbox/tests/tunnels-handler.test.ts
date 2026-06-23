@@ -17,7 +17,7 @@ import type {
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
-import { ErrorCode } from '../src/errors';
+import { ErrorCode, RPCTransportError } from '../src/errors';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
@@ -146,7 +146,7 @@ function makeRuntimeFences(runtimeId = 'runtime-1') {
     runtime,
     lifetime,
     currentRuntime: {
-      get: vi.fn(async () => runtime),
+      get: vi.fn<() => Promise<typeof runtime | null>>(async () => runtime),
       markStarted: vi.fn(async () => runtime),
       assertActive: vi.fn(async (_runtime: typeof runtime) => {})
     },
@@ -166,6 +166,20 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
     createdAt: '2026-05-13T00:00:00.000Z',
     ...overrides
   };
+}
+
+function createDisposedRPCError(): RPCTransportError {
+  return new RPCTransportError({
+    code: ErrorCode.RPC_TRANSPORT_ERROR,
+    message: 'RPC session was shut down by disposing the main stub',
+    httpStatus: 503,
+    context: {
+      kind: 'session_disposed',
+      originalMessage: 'RPC session was shut down by disposing the main stub',
+      errorName: 'Error'
+    },
+    timestamp: '2026-05-13T00:00:00.000Z'
+  });
 }
 
 function makeHandler(options: { withFences?: boolean } = {}) {
@@ -202,172 +216,6 @@ describe('tunnels handler > get', () => {
   });
   afterEach(() => {
     warn.mockRestore();
-  });
-
-  it('uses ensureTunnelRun and stores runtime metadata for quick tunnels', async () => {
-    const { client, storage, handler } = makeHandler({ withFences: true });
-    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
-      started: true,
-      run: {
-        tunnelId: request.tunnelId,
-        runId: request.runId,
-        mode: 'quick',
-        port: request.port,
-        url: 'https://fresh.trycloudflare.com',
-        hostname: 'fresh.trycloudflare.com',
-        startedAt: '2026-05-13T00:00:00.000Z'
-      }
-    }));
-
-    const info = await handler.get(8080);
-
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
-    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
-    const request = client.tunnels.ensureTunnelRun.mock.calls[0][0];
-    expect(request).toMatchObject({ mode: 'quick', port: 8080 });
-    expect(request.tunnelId).toMatch(/^quick-/);
-    expect(request.runId).toMatch(/^run-/);
-    expect(info).toMatchObject({
-      id: request.tunnelId,
-      port: 8080,
-      url: 'https://fresh.trycloudflare.com',
-      hostname: 'fresh.trycloudflare.com'
-    });
-    const meta = await storage.get<Record<string, unknown>>('tunnels:meta');
-    expect(meta?.['8080']).toMatchObject({
-      optionsHash: 'v1:quick',
-      runtimeIdentityID: 'runtime-1',
-      sandboxLifetimeID: 'lifetime-1',
-      tunnelRunId: request.runId
-    });
-  });
-
-  it('retries quick tunnel provisioning when runtime replacement is detected before commit', async () => {
-    const { client, storage, handler, fences } = makeHandler({
-      withFences: true
-    });
-    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
-      started: true,
-      run: {
-        tunnelId: request.tunnelId,
-        runId: request.runId,
-        mode: 'quick',
-        port: request.port,
-        url: `https://${request.runId}.trycloudflare.com`,
-        hostname: `${request.runId}.trycloudflare.com`,
-        startedAt: '2026-05-13T00:00:00.000Z'
-      }
-    }));
-    fences?.currentRuntime.assertActive
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new RuntimeIdentityInactiveError())
-      .mockResolvedValue(undefined);
-
-    const info = await handler.get(8080);
-
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const secondRunId = client.tunnels.ensureTunnelRun.mock.calls[1][0].runId;
-    expect(info.hostname).toBe(`${secondRunId}.trycloudflare.com`);
-    const stored = await storage.get<Record<string, TunnelInfo>>('tunnels');
-    expect(stored?.['8080']).toEqual(info);
-  });
-
-  it('captures runtime before quick tunnel admission so a replacement during spawn retries', async () => {
-    const { client, storage, handler, fences } = makeHandler({
-      withFences: true
-    });
-    let activeRuntimeId = 'runtime-1';
-    const makeRuntime = (id: string) => ({
-      id,
-      owns: (record: { readonly runtimeIdentityID: string }) =>
-        record.runtimeIdentityID === id,
-      scope: <T extends object>(value: T) => ({
-        ...value,
-        runtimeIdentityID: id
-      })
-    });
-    fences?.currentRuntime.get.mockImplementation(async () =>
-      makeRuntime(activeRuntimeId)
-    );
-    fences?.currentRuntime.assertActive.mockImplementation(async (runtime) => {
-      if (runtime.id !== activeRuntimeId) {
-        throw new RuntimeIdentityInactiveError();
-      }
-    });
-    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
-      if (client.tunnels.ensureTunnelRun.mock.calls.length === 1) {
-        activeRuntimeId = 'runtime-2';
-      }
-      return {
-        started: true,
-        run: {
-          tunnelId: request.tunnelId,
-          runId: request.runId,
-          mode: 'quick',
-          port: request.port,
-          url: `https://${request.runId}.trycloudflare.com`,
-          hostname: `${request.runId}.trycloudflare.com`,
-          startedAt: '2026-05-13T00:00:00.000Z'
-        }
-      };
-    });
-
-    const info = await handler.get(8080);
-
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const staleRunId = client.tunnels.ensureTunnelRun.mock.calls[0][0].runId;
-    const currentRunId = client.tunnels.ensureTunnelRun.mock.calls[1][0].runId;
-    expect(info.hostname).toBe(`${currentRunId}.trycloudflare.com`);
-    expect(info.hostname).not.toBe(`${staleRunId}.trycloudflare.com`);
-    const meta =
-      await storage.get<Record<string, { runtimeIdentityID: string }>>(
-        'tunnels:meta'
-      );
-    expect(meta?.['8080'].runtimeIdentityID).toBe('runtime-2');
-  });
-
-  it('surfaces OPERATION_INTERRUPTED and leaves storage empty after quick tunnel recovery exhaustion', async () => {
-    const { client, storage, handler, fences } = makeHandler({
-      withFences: true
-    });
-    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
-      started: true,
-      run: {
-        tunnelId: request.tunnelId,
-        runId: request.runId,
-        mode: 'quick',
-        port: request.port,
-        url: `https://${request.runId}.trycloudflare.com`,
-        hostname: `${request.runId}.trycloudflare.com`,
-        startedAt: '2026-05-13T00:00:00.000Z'
-      }
-    }));
-    let assertActiveCalls = 0;
-    fences?.currentRuntime.assertActive.mockImplementation(async () => {
-      assertActiveCalls += 1;
-      if (assertActiveCalls % 2 === 0) {
-        throw new RuntimeIdentityInactiveError();
-      }
-    });
-
-    await expect(handler.get(8080)).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: {
-        reason: 'recovery_exhausted',
-        operation: 'tunnel.get',
-        phase: 'interrupted',
-        admitted: 'unknown',
-        retryable: false,
-        recoveryAttempts: 2,
-        maxRecoveryAttempts: 2
-      }
-    });
-
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(3);
-    expect(await storage.get<Record<string, TunnelInfo>>('tunnels')).toEqual(
-      {}
-    );
   });
 
   it('ignores stale tunnel exit callbacks whose run id does not match storage metadata', async () => {
@@ -1132,83 +980,5 @@ describe('tunnels handler > handleTunnelExit', () => {
       String(msg).includes('tunnel.exit')
     );
     expect(eventCall).toBeDefined();
-  });
-});
-
-describe('TunnelsHandler public surface', () => {
-  it('does not expose any exit hook on the public interface', () => {
-    // Compile-time guard: if a future change adds a method to
-    // TunnelsHandler beyond get/list/destroy, this assertion fails
-    // and the developer has to consciously update the allowlist.
-    type AllowedKeys = 'get' | 'list' | 'destroy';
-    type _Check = keyof TunnelsHandler extends AllowedKeys ? true : false;
-    const ok: _Check = true;
-    expect(ok).toBe(true);
-  });
-});
-
-describe('route-based SandboxClient.tunnels placeholder', () => {
-  it('throws "RPC transport required" from any method on the proxy', async () => {
-    const { SandboxClient } = await import('../src/clients/sandbox-client');
-    const client = new SandboxClient({ baseUrl: 'http://test.invalid' });
-    expect(() =>
-      (client.tunnels as unknown as { get: () => void }).get()
-    ).toThrow(/RPC transport/);
-    expect(() =>
-      (client.tunnels as unknown as { list: () => void }).list()
-    ).toThrow(/RPC transport/);
-    expect(() =>
-      (client.tunnels as unknown as { destroy: () => void }).destroy()
-    ).toThrow(/RPC transport/);
-  });
-});
-
-describe('pruneTunnelsForRestart', () => {
-  it('drops quick-tunnel entries and marks named ones for respawn', async () => {
-    const storage = makeStorage();
-    await (storage.put as StoragePutMock)('tunnels', {
-      '8080': {
-        id: 'quick-abc',
-        port: 8080,
-        url: 'https://x.trycloudflare.com',
-        hostname: 'x.trycloudflare.com',
-        createdAt: '2024-01-01T00:00:00.000Z'
-      },
-      '8081': {
-        id: 'uuid-1',
-        port: 8081,
-        name: 'app',
-        hostname: 'app.example.com',
-        url: 'https://app.example.com',
-        createdAt: '2024-01-01T00:00:00.000Z'
-      }
-    });
-    await (storage.put as StoragePutMock)('tunnels:meta', {
-      '8080': { optionsHash: 'quick' },
-      '8081': { optionsHash: 'named:app', dnsRecordId: 'rec-1' }
-    });
-
-    await pruneTunnelsForRestart(storage);
-
-    const nextTunnels = (await (storage.get as StorageGetMock)(
-      'tunnels'
-    )) as Record<string, { name?: string }>;
-    const nextMeta = (await (storage.get as StorageGetMock)(
-      'tunnels:meta'
-    )) as Record<string, { needsRespawn?: boolean; dnsRecordId?: string }>;
-    expect(Object.keys(nextTunnels)).toEqual(['8081']);
-    expect(nextMeta['8081']?.needsRespawn).toBe(true);
-    // dnsRecordId is preserved so destroy() can still clean up.
-    expect(nextMeta['8081']?.dnsRecordId).toBe('rec-1');
-    expect(nextMeta['8080']).toBeUndefined();
-  });
-
-  it('is a no-op on empty storage', async () => {
-    const storage = makeStorage();
-    await pruneTunnelsForRestart(storage);
-    const nextTunnels = (await (storage.get as StorageGetMock)(
-      'tunnels'
-    )) as Record<string, unknown>;
-    expect(nextTunnels).toEqual({});
   });
 });

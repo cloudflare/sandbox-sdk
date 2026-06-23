@@ -108,6 +108,10 @@ import {
   sanitizeSandboxId,
   validatePort
 } from './security';
+import {
+  isSessionInitInvalidated,
+  SessionInitInvalidatedError
+} from './session-init';
 import { parseSSEStream } from './sse-parser';
 import {
   buildS3fsSource,
@@ -324,22 +328,6 @@ function isFetcher(value: unknown): value is Fetcher {
     value !== null &&
     'fetch' in value &&
     typeof value.fetch === 'function'
-  );
-}
-
-/**
- * Returns true when an error thrown by `initializeDefaultSession` carries
- * the specific message that signals a container generation change while the
- * createSession RPC was in flight. Only this message triggers the single-shot
- * retry in `ensureDefaultSession`.
- */
-function isSessionInitInvalidated(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === 'object' &&
-    'message' in err &&
-    (err as { message: unknown }).message ===
-      'Default session initialization was invalidated by a container stop'
   );
 }
 
@@ -3618,9 +3606,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Fail the attempt so the next caller starts fresh against the new
     // container.
     if (generation !== this.containerGeneration) {
-      throw new Error(
-        'Default session initialization was invalidated by a container stop'
-      );
+      throw new SessionInitInvalidatedError();
     }
 
     // Durable storage is the cross-eviction source of truth for the default
@@ -7070,9 +7056,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      await lifecycle.runtimeReady(archiveHead.size);
-
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -7140,7 +7125,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         id
       };
-      await lifecycle.verify(result, archiveHead.size);
+      await lifecycle.verify(result);
 
       outcome = 'success';
 
@@ -7291,9 +7276,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
       const archiveSize = metadata.sizeBytes;
-      await lifecycle.runtimeReady(archiveSize);
 
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Ensure backup directory exists
@@ -7377,7 +7362,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         id
       };
-      await lifecycle.verify(result, archiveSize);
+      await lifecycle.verify(result);
 
       // Clean up archive after extraction (no FUSE mount holds it open)
       await this.execWithSession(

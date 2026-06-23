@@ -41,8 +41,23 @@ interface TunnelRecord {
 /** Runtime-run registry entry for ensureTunnelRun/stopTunnelRun paths. */
 interface TunnelRunRecord {
   request: EnsureTunnelRunRequest;
-  snapshot: TunnelRunSnapshot;
   manager: TunnelManager;
+  result: Promise<ServiceResult<EnsureTunnelRunResult>>;
+}
+
+function tunnelRunRequestsMatch(
+  left: EnsureTunnelRunRequest,
+  right: EnsureTunnelRunRequest
+): boolean {
+  return (
+    left.tunnelId === right.tunnelId &&
+    left.runId === right.runId &&
+    left.mode === right.mode &&
+    left.port === right.port &&
+    (left.mode !== 'named' ||
+      right.mode !== 'named' ||
+      left.token === right.token)
+  );
 }
 
 export class TunnelService {
@@ -222,25 +237,20 @@ export class TunnelService {
   ): Promise<ServiceResult<EnsureTunnelRunResult>> {
     const { tunnelId, runId, mode, port } = request;
 
-    // Idempotent replay: same runId already running.
     const existing = this.tunnelRuns.get(runId);
     if (existing) {
-      const prev = existing.request;
-      if (
-        prev.tunnelId !== tunnelId ||
-        prev.mode !== mode ||
-        prev.port !== port
-      ) {
+      if (!tunnelRunRequestsMatch(existing.request, request)) {
         return serviceError({
           message: `Run ${runId} already active with different params`,
           code: 'TUNNEL_RUN_CONFLICT',
           details: { runId, tunnelId, port }
         });
       }
-      return serviceSuccess({ run: existing.snapshot, started: false });
+      const result = await existing.result;
+      if (!result.success) return result;
+      return serviceSuccess({ run: result.data.run, started: false });
     }
 
-    // Conflict: different runId on the same port.
     for (const rec of this.tunnelRuns.values()) {
       if (rec.request.port === port) {
         return serviceError({
@@ -277,6 +287,16 @@ export class TunnelService {
       }
     });
 
+    const result = this.startTunnelRun(request, manager);
+    this.tunnelRuns.set(runId, { request, manager, result });
+    return await result;
+  }
+
+  private async startTunnelRun(
+    request: EnsureTunnelRunRequest,
+    manager: TunnelManager
+  ): Promise<ServiceResult<EnsureTunnelRunResult>> {
+    const { tunnelId, runId, mode, port } = request;
     try {
       const startResult = await manager.start();
       const snapshot: TunnelRunSnapshot = {
@@ -292,10 +312,10 @@ export class TunnelService {
             }
           : {})
       };
-      this.tunnelRuns.set(runId, { request, snapshot, manager });
       this.logger.info('Tunnel run started', { tunnelId, runId, mode, port });
       return serviceSuccess({ run: snapshot, started: true });
     } catch (err) {
+      this.tunnelRuns.delete(runId);
       await manager.stop().catch(() => {});
       if (err instanceof CloudflaredNotFoundError) {
         return serviceError({
@@ -360,7 +380,14 @@ export class TunnelService {
 
   /** Stop every tunnel. Called on container shutdown. */
   async destroyAll(): Promise<void> {
-    const ids = Array.from(this.tunnels.keys());
-    await Promise.all(ids.map((id) => this.destroyTunnel(id)));
+    const legacyIds = Array.from(this.tunnels.keys());
+    const runRefs = Array.from(this.tunnelRuns.values()).map(({ request }) => ({
+      tunnelId: request.tunnelId,
+      runId: request.runId
+    }));
+    await Promise.all([
+      ...legacyIds.map((id) => this.destroyTunnel(id)),
+      ...runRefs.map((ref) => this.stopTunnelRun(ref))
+    ]);
   }
 }

@@ -58,18 +58,27 @@ async function tryParseContainerUnavailable(
     const body = (await response.clone().json()) as StructuredErrorBody;
     if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
 
+    const reason =
+      body.context?.reason === 'container_starting' ||
+      body.context?.reason === 'container_unhealthy' ||
+      body.context?.reason === 'container_replaced' ||
+      body.context?.reason === 'rpc_upgrade_failed'
+        ? body.context.reason
+        : 'container_replaced';
+    const context = {
+      reason,
+      retryable: true as const,
+      ...(typeof body.context?.retryAfterMs === 'number' && {
+        retryAfterMs: body.context.retryAfterMs
+      })
+    };
+
     return createErrorFromResponse({
       code: ErrorCode.CONTAINER_UNAVAILABLE,
       message: body.message ?? 'Container is unavailable',
-      context: body.context ?? {
-        reason: 'container_replaced',
-        retryable: true
-      },
+      context,
       httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
-      suggestion: getSuggestion(
-        ErrorCode.CONTAINER_UNAVAILABLE,
-        body.context ?? ({} as Record<string, unknown>)
-      ),
+      suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
       timestamp: new Date().toISOString()
     });
   } catch {

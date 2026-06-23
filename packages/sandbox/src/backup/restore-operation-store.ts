@@ -34,7 +34,6 @@ export type BackupRestoreOperationResult = {
 };
 
 export type BackupRestoreOperationRecord = {
-  operationId: string;
   operationKey: string;
   kind: 'backup.restore';
   sandboxLifetimeID: SandboxLifetimeID;
@@ -61,14 +60,12 @@ export function backupRestoreOperationKey(
 }
 
 export function createBackupRestoreOperationRecord(params: {
-  operationId: string;
   sandboxLifetimeID: SandboxLifetimeID;
   backupId: string;
   dir: string;
   now: string;
 }): BackupRestoreOperationRecord {
   return {
-    operationId: params.operationId,
     operationKey: backupRestoreOperationKey(params.backupId, params.dir),
     kind: 'backup.restore',
     sandboxLifetimeID: params.sandboxLifetimeID,

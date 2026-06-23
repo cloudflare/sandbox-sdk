@@ -98,10 +98,13 @@ async function createBackupSandbox(
   params: {
     storageHooks?: { onPut?: (key: string, value: StoredValue) => void };
     bucket?: TestBucket;
+    initialRuntime?: 'active' | 'cold';
   } = {}
 ) {
   const storageMap = new Map<string, StoredValue>();
-  storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
+  if (params.initialRuntime !== 'cold') {
+    storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
+  }
   storageMap.set('sandbox:lifetime', {
     id: 'lifetime-1',
     generation: 1,
@@ -110,6 +113,7 @@ async function createBackupSandbox(
   });
 
   const storage = createStorage(storageMap, params.storageHooks);
+  const containerState = { running: params.initialRuntime !== 'cold' };
   const ctx = {
     storage,
     blockConcurrencyWhile: vi.fn(<T>(callback: () => Promise<T>) => callback()),
@@ -119,7 +123,7 @@ async function createBackupSandbox(
       equals: vi.fn(),
       name: 'test-sandbox'
     },
-    container: { running: true }
+    container: containerState
   } as unknown as DurableObjectState<{}>;
 
   const bucket = params.bucket ?? createBackupBucket();
@@ -135,12 +139,17 @@ async function createBackupSandbox(
     expect(ctx.blockConcurrencyWhile).toHaveBeenCalled();
   });
 
-  vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
-    success: true,
-    id: 'backup-session',
-    message: 'Created',
-    timestamp: '2026-06-23T12:00:00.000Z'
-  });
+  vi.spyOn(sandbox.client.utils, 'createSession').mockImplementation(
+    async () => {
+      containerState.running = true;
+      return {
+        success: true,
+        id: 'backup-session',
+        message: 'Created',
+        timestamp: '2026-06-23T12:00:00.000Z'
+      };
+    }
+  );
   vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
     success: true,
     sessionId: 'backup-session',
@@ -256,6 +265,29 @@ describe('backup restore lifecycle', () => {
     ) as BackupRestoreOperationRecord;
     expect(record.status).toBe('interrupted');
     expect(record.phase).toBe('interrupted');
+  });
+
+  it('starts the backup session before fencing a cold runtime', async () => {
+    const { sandbox, storageMap } = await createBackupSandbox({
+      initialRuntime: 'cold'
+    });
+    const backupId = crypto.randomUUID();
+
+    await expect(
+      sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' })
+    ).resolves.toEqual({
+      success: true,
+      id: backupId,
+      dir: '/workspace/project'
+    });
+
+    expect(sandbox.client.utils.createSession).toHaveBeenCalled();
+    const record = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(record.status).toBe('committed');
+    expect(record.phase).toBe('verified');
+    expect(record.runtimeIdentityID).toBeDefined();
   });
 
   it('does not retry when the sandbox lifetime changes before runtime work starts', async () => {
