@@ -37,8 +37,10 @@ import {
   type ExecutionResult,
   type OutputMessage,
   type Result,
+  type ResultData,
   ResultImpl,
-  type RunCodeOptions
+  type RunCodeOptions,
+  toResultData
 } from './types.js';
 
 export type {
@@ -50,6 +52,7 @@ export type {
   InterpreterExecutionEvent,
   OutputMessage,
   Result,
+  ResultData,
   RunCodeOptions
 } from './types.js';
 export { Execution, ResultImpl } from './types.js';
@@ -209,7 +212,7 @@ export class Interpreter extends SandboxExtension {
       case 'result': {
         const result = new ResultImpl(event as unknown as Result);
         execution.results.push(result);
-        await options.onResult?.(result);
+        await options.onResult?.(toResultData(result));
         break;
       }
       case 'error': {

@@ -819,6 +819,15 @@ export function getSandbox<T extends Sandbox<any>>(
         // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
         return target[prop];
       }
+      // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+      const value = target[prop];
+      // Plain data properties (e.g. sleepAfter) pass through unchanged.
+      if (value !== undefined && typeof value !== 'function') {
+        return value;
+      }
+      // Methods and extension namespaces become a callable proxy: invoking it
+      // forwards to the stub method (sandbox.method(...)), while a nested
+      // access dispatches sandbox.<ext>.<method>(...) through callExtension.
       return new Proxy(
         (...args: unknown[]) => {
           // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript

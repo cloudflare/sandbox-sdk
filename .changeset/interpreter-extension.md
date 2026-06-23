@@ -20,4 +20,4 @@ const context = await sandbox.interpreter.createCodeContext({
 const result = await sandbox.interpreter.runCode('print("hello")', { context });
 ```
 
-`createCodeContext`, `runCode`, `runCodeStream`, `listCodeContexts`, and `deleteCodeContext` keep the same signatures, except `runCode()` now returns a plain `ExecutionResult` instead of an `Execution` instance. Python execution still requires the `-python` image variant.
+`createCodeContext`, `runCode`, `runCodeStream`, `listCodeContexts`, and `deleteCodeContext` keep the same signatures, with two changes so values stay serializable when calls cross the Worker/DO boundary: `runCode()` now returns a plain `ExecutionResult` instead of an `Execution` instance, and the `onResult` callback now receives plain `ResultData` instead of a `Result` instance (the `formats()` helper is no longer on the callback argument). Python execution still requires the `-python` image variant.

@@ -143,6 +143,44 @@ describe('withInterpreter', () => {
     expect(execution.executionCount).toBe(1);
   });
 
+  it('passes RPC-safe plain data to onResult (no class instance)', async () => {
+    const { sandbox, api } = makeSandbox();
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
+        await onEvent({ type: 'result', text: '42', metadata: {} });
+      })
+    };
+    api.connect.mockResolvedValue(stub);
+
+    const ext = withInterpreter(sandbox);
+    const context = {
+      id: 'ctx-1',
+      language: 'python',
+      cwd: '/workspace',
+      createdAt: new Date(),
+      lastUsed: new Date()
+    };
+
+    const received: unknown[] = [];
+    await ext.runCode('40 + 2', {
+      context,
+      onResult: (result) => {
+        received.push(result);
+      }
+    });
+
+    expect(received).toHaveLength(1);
+    const result = received[0] as Record<string, unknown>;
+    expect(result.text).toBe('42');
+    // Must be plain data so it survives the Worker/DO callback boundary:
+    // no methods, and structured-cloneable.
+    expect(typeof (result as { formats?: unknown }).formats).toBe('undefined');
+    expect(() => structuredClone(result)).not.toThrow();
+  });
+
   it('surfaces error events on the Execution', async () => {
     const { sandbox, api } = makeSandbox();
     const stub: InterpreterSidecarAPI = {
