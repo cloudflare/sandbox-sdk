@@ -180,8 +180,13 @@ export abstract class SandboxExtension extends RpcTarget {
  */
 function isTarballRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const candidate = error as { name?: unknown; message?: unknown };
+  const candidate = error as {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+  };
   if (candidate.name === EXTENSION_TARBALL_REQUIRED) return true;
+  if (candidate.code === EXTENSION_TARBALL_REQUIRED) return true;
   if (typeof candidate.message !== 'string') return false;
   return (
     candidate.message.includes(EXTENSION_TARBALL_REQUIRED) ||
