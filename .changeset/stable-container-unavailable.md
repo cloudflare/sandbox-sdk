@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Classify transient container unavailability as a retryable `CONTAINER_UNAVAILABLE` error instead of surfacing raw transport failures, and recover the default session when the container is replaced mid-initialization. This reduces spurious errors when a sandbox's container is starting up or being replaced during a deployment rollout.
+Classify sandbox runtime and platform update interruptions as structured errors instead of surfacing raw transport or Durable Object messages. This gives applications clear retry guidance for idempotent operations and reduces transient startup failures when a sandbox is starting up or being replaced during deployment rollouts.
