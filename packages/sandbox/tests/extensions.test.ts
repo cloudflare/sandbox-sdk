@@ -92,11 +92,20 @@ describe('SandboxExtension', () => {
       run() {
         return this.sidecar();
       }
+      health() {
+        return this.sidecarHealth();
+      }
+      stop() {
+        return this.stopSidecar();
+      }
     }
-    const { sandbox } = makeSandbox();
+    const { sandbox, api } = makeSandbox();
     const ext = new NoPackage(sandbox);
 
     await expect(ext.run()).rejects.toThrow(/no sidecar package/i);
+    await expect(ext.health()).rejects.toThrow(/no sidecar package/i);
+    await expect(ext.stop()).rejects.toThrow(/no sidecar package/i);
+    expect(api.stop).not.toHaveBeenCalled();
   });
 
   it('does not touch the sandbox during construction (lazy)', () => {

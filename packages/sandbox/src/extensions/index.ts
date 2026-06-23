@@ -117,7 +117,6 @@ export abstract class SandboxExtension extends RpcTarget {
    * demand.
    */
   protected async stopSidecar(): Promise<void> {
-    if (!this.#pkg) return;
     const hash = await this.#hashOnce();
     await this.#sandbox.client.extensions.stop(hash);
   }
