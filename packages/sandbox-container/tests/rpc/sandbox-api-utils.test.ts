@@ -138,3 +138,15 @@ describe('SandboxControlAPI utils.createSession', () => {
     expect(err.details?.containerPlacementId).toBeUndefined();
   });
 });
+
+describe('SandboxControlAPI tunnels.ensureTunnelRun and stopTunnelRun', () => {
+  it('exposes ensureTunnelRun on the tunnels sub-stub', () => {
+    const api = buildApi({} as unknown as SessionManager);
+    expect(typeof api.tunnels.ensureTunnelRun).toBe('function');
+  });
+
+  it('exposes stopTunnelRun on the tunnels sub-stub', () => {
+    const api = buildApi({} as unknown as SessionManager);
+    expect(typeof api.tunnels.stopTunnelRun).toBe('function');
+  });
+});

@@ -6,9 +6,18 @@
  * lightweight in-memory `ctx.storage` shim.
  */
 
-import type { Logger, TunnelInfo } from '@repo/shared';
+import type {
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
+  Logger,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
+  TunnelInfo
+} from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
+import { ErrorCode } from '../src/errors';
 import { SandboxSecurityError } from '../src/security';
 import {
   createTunnelsHandler,
@@ -33,6 +42,12 @@ type RunQuickTunnelMock = Mock<
 >;
 type DestroyTunnelMock = Mock<(id: string) => Promise<unknown>>;
 type ListTunnelsMock = Mock<() => Promise<TunnelInfo[]>>;
+type EnsureTunnelRunMock = Mock<
+  (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
+>;
+type StopTunnelRunMock = Mock<
+  (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
+>;
 type StorageGetMock = Mock<(key: string) => Promise<unknown>>;
 type StoragePutMock = Mock<(key: string, next: unknown) => Promise<unknown>>;
 type StorageTransactionMock = Mock<
@@ -44,6 +59,8 @@ interface MockTunnelsClient {
   runQuickTunnel: RunQuickTunnelMock;
   destroyTunnel: DestroyTunnelMock;
   listTunnels: ListTunnelsMock;
+  ensureTunnelRun: EnsureTunnelRunMock;
+  stopTunnelRun: StopTunnelRunMock;
 }
 
 function makeClient(): { client: { tunnels: MockTunnelsClient } } {
@@ -53,7 +70,15 @@ function makeClient(): { client: { tunnels: MockTunnelsClient } } {
         runQuickTunnel:
           vi.fn<(id: string, port: number) => Promise<TunnelInfo>>(),
         destroyTunnel: vi.fn<(id: string) => Promise<unknown>>(),
-        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>()
+        listTunnels: vi.fn<() => Promise<TunnelInfo[]>>(),
+        ensureTunnelRun:
+          vi.fn<
+            (request: EnsureTunnelRunRequest) => Promise<EnsureTunnelRunResult>
+          >(),
+        stopTunnelRun:
+          vi.fn<
+            (request: StopTunnelRunRequest) => Promise<StopTunnelRunResult>
+          >()
       }
     }
   };
@@ -94,6 +119,44 @@ function makeStorage(initial?: Record<string, TunnelInfo>): TunnelsStorage {
   return storage;
 }
 
+function makeRuntimeFences(runtimeId = 'runtime-1') {
+  const runtime = {
+    id: runtimeId,
+    owns: (record: { readonly runtimeIdentityID: string }) =>
+      record.runtimeIdentityID === runtimeId,
+    scope: <T extends object>(value: T) => ({
+      ...value,
+      runtimeIdentityID: runtimeId
+    })
+  };
+  const lifetime = {
+    id: 'lifetime-1',
+    generation: 1,
+    createdAt: '2026-05-13T00:00:00.000Z',
+    updatedAt: '2026-05-13T00:00:00.000Z',
+    owns: (record: { readonly sandboxLifetimeID: string }) =>
+      record.sandboxLifetimeID === 'lifetime-1',
+    scope: <T extends object>(value: T) => ({
+      ...value,
+      sandboxLifetimeID: 'lifetime-1'
+    })
+  };
+
+  return {
+    runtime,
+    lifetime,
+    currentRuntime: {
+      get: vi.fn(async () => runtime),
+      markStarted: vi.fn(async () => runtime),
+      assertActive: vi.fn(async () => {})
+    },
+    currentLifetime: {
+      getOrCreate: vi.fn(async () => lifetime),
+      assertCurrent: vi.fn(async () => {})
+    }
+  };
+}
+
 function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   return {
     id: 'quick-0123456789abcdef',
@@ -105,16 +168,21 @@ function makeRecord(overrides: Partial<TunnelInfo> = {}): TunnelInfo {
   };
 }
 
-function makeHandler() {
+function makeHandler(options: { withFences?: boolean } = {}) {
   const { client } = makeClient();
   const storage = makeStorage();
+  const fences = options.withFences ? makeRuntimeFences() : undefined;
   const { tunnels, handleTunnelExit } = createTunnelsHandler({
     client: client as unknown as Parameters<
       typeof createTunnelsHandler
     >[0]['client'],
     storage,
-    logger: makeLogger()
-  });
+    logger: makeLogger(),
+    ...(fences && {
+      currentRuntime: fences.currentRuntime,
+      currentLifetime: fences.currentLifetime
+    })
+  } as unknown as Parameters<typeof createTunnelsHandler>[0]);
   // `handler` alias kept for legacy test bodies; new tests should
   // reach for `tunnels` and `handleTunnelExit` directly.
   return {
@@ -122,7 +190,8 @@ function makeHandler() {
     storage,
     handler: tunnels,
     tunnels,
-    handleTunnelExit
+    handleTunnelExit,
+    fences
   };
 }
 
@@ -133,6 +202,140 @@ describe('tunnels handler > get', () => {
   });
   afterEach(() => {
     warn.mockRestore();
+  });
+
+  it('uses ensureTunnelRun and stores runtime metadata for quick tunnels', async () => {
+    const { client, storage, handler } = makeHandler({ withFences: true });
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
+      started: true,
+      run: {
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        mode: 'quick',
+        port: request.port,
+        url: 'https://fresh.trycloudflare.com',
+        hostname: 'fresh.trycloudflare.com',
+        startedAt: '2026-05-13T00:00:00.000Z'
+      }
+    }));
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    expect(client.tunnels.runQuickTunnel).not.toHaveBeenCalled();
+    const request = client.tunnels.ensureTunnelRun.mock.calls[0][0];
+    expect(request).toMatchObject({ mode: 'quick', port: 8080 });
+    expect(request.tunnelId).toMatch(/^quick-/);
+    expect(request.runId).toMatch(/^run-/);
+    expect(info).toMatchObject({
+      id: request.tunnelId,
+      port: 8080,
+      url: 'https://fresh.trycloudflare.com',
+      hostname: 'fresh.trycloudflare.com'
+    });
+    const meta = await storage.get<Record<string, unknown>>('tunnels:meta');
+    expect(meta?.['8080']).toMatchObject({
+      optionsHash: 'v1:quick',
+      runtimeIdentityID: 'runtime-1',
+      sandboxLifetimeID: 'lifetime-1',
+      tunnelRunId: request.runId
+    });
+  });
+
+  it('retries quick tunnel provisioning when runtime replacement is detected before commit', async () => {
+    const { client, storage, handler, fences } = makeHandler({
+      withFences: true
+    });
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
+      started: true,
+      run: {
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        mode: 'quick',
+        port: request.port,
+        url: `https://${request.runId}.trycloudflare.com`,
+        hostname: `${request.runId}.trycloudflare.com`,
+        startedAt: '2026-05-13T00:00:00.000Z'
+      }
+    }));
+    fences?.currentRuntime.assertActive
+      .mockRejectedValueOnce(new RuntimeIdentityInactiveError())
+      .mockResolvedValue(undefined);
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const secondRunId = client.tunnels.ensureTunnelRun.mock.calls[1][0].runId;
+    expect(info.hostname).toBe(`${secondRunId}.trycloudflare.com`);
+    const stored = await storage.get<Record<string, TunnelInfo>>('tunnels');
+    expect(stored?.['8080']).toEqual(info);
+  });
+
+  it('surfaces OPERATION_INTERRUPTED and leaves storage empty after quick tunnel recovery exhaustion', async () => {
+    const { client, storage, handler, fences } = makeHandler({
+      withFences: true
+    });
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
+      started: true,
+      run: {
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        mode: 'quick',
+        port: request.port,
+        url: `https://${request.runId}.trycloudflare.com`,
+        hostname: `${request.runId}.trycloudflare.com`,
+        startedAt: '2026-05-13T00:00:00.000Z'
+      }
+    }));
+    fences?.currentRuntime.assertActive.mockRejectedValue(
+      new RuntimeIdentityInactiveError()
+    );
+
+    await expect(handler.get(8080)).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: {
+        reason: 'recovery_exhausted',
+        operation: 'tunnel.get',
+        phase: 'interrupted',
+        admitted: 'unknown',
+        retryable: false,
+        recoveryAttempts: 2,
+        maxRecoveryAttempts: 2
+      }
+    });
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(3);
+    expect(await storage.get<Record<string, TunnelInfo>>('tunnels')).toEqual(
+      {}
+    );
+  });
+
+  it('ignores stale tunnel exit callbacks whose run id does not match storage metadata', async () => {
+    const record = makeRecord({ id: 'quick-current', port: 8080 });
+    const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        sandboxLifetimeID: 'lifetime-1',
+        tunnelRunId: 'run-current'
+      }
+    });
+    const { client } = makeClient();
+    const { handleTunnelExit } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await handleTunnelExit('quick-current', 8080, 0, 'run-old');
+
+    expect(await storage.get<Record<string, TunnelInfo>>('tunnels')).toEqual({
+      '8080': record
+    });
   });
 
   it('mints a `quick-<8 hex>` id and forwards it to the RPC client on cache miss', async () => {
@@ -369,6 +572,36 @@ describe('tunnels handler > destroy', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({});
     expect(metaPut?.[1]).toEqual({});
+  });
+
+  it('calls stopTunnelRun with the exact run ref when runtime metadata exists', async () => {
+    const record = makeRecord({ id: 'quick-runref', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        sandboxLifetimeID: 'lifetime-1',
+        tunnelRunId: 'run-1'
+      }
+    });
+    const { tunnels: handler } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger()
+    });
+    client.tunnels.stopTunnelRun.mockResolvedValue({ stopped: true });
+
+    await handler.destroy(8080);
+
+    expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
+      tunnelId: record.id,
+      runId: 'run-1'
+    });
+    expect(client.tunnels.destroyTunnel).not.toHaveBeenCalled();
   });
 
   it('wraps the read-modify-write in storage.transaction()', async () => {

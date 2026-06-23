@@ -31,7 +31,7 @@ describe('SandboxControlCallbackImpl', () => {
     await cb.onTunnelExit('quick-a', 8080, 0);
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith('quick-a', 8080, 0);
+    expect(handler).toHaveBeenCalledWith('quick-a', 8080, 0, undefined);
   });
 
   it('passes through a null exitCode (signalled process)', async () => {
@@ -40,7 +40,16 @@ describe('SandboxControlCallbackImpl', () => {
 
     await cb.onTunnelExit('quick-b', 8081, null);
 
-    expect(handler).toHaveBeenCalledWith('quick-b', 8081, null);
+    expect(handler).toHaveBeenCalledWith('quick-b', 8081, null, undefined);
+  });
+
+  it('passes through a runtime run id when present', async () => {
+    const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
+    const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
+
+    await cb.onTunnelExit('quick-b', 8081, 0, 'run-current');
+
+    expect(handler).toHaveBeenCalledWith('quick-b', 8081, 0, 'run-current');
   });
 
   it('is a no-op when the accessor returns null', async () => {

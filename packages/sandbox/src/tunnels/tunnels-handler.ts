@@ -11,6 +11,7 @@
 
 import { RpcTarget } from 'cloudflare:workers';
 import type {
+  EnsureTunnelRunResult,
   Logger,
   NamedTunnelInfo,
   QuickTunnelInfo,
@@ -19,6 +20,21 @@ import type {
   TunnelOptions
 } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
+import {
+  type CurrentRuntimeIdentity,
+  type RuntimeIdentityID,
+  RuntimeIdentityInactiveError
+} from '../current-runtime-identity';
+import {
+  ErrorCode,
+  OperationInterruptedError,
+  RPCTransportError
+} from '../errors';
+import {
+  type CurrentSandboxLifetime,
+  SandboxLifetimeChangedError,
+  type SandboxLifetimeID
+} from '../sandbox-lifetime';
 import {
   SandboxSecurityError,
   validatePort,
@@ -93,6 +109,10 @@ export interface TunnelsHandlerHost {
    * to the global `fetch`. Tests inject a mock here.
    */
   fetcher?: typeof fetch;
+  /** Current container runtime fence for runtime-local quick tunnel records. */
+  currentRuntime?: CurrentRuntimeIdentity;
+  /** Logical sandbox lifetime fence for recovery across destroy(). */
+  currentLifetime?: CurrentSandboxLifetime;
 }
 
 export interface TunnelsHandler {
@@ -111,7 +131,8 @@ export interface TunnelsHandler {
 export type TunnelExitHandler = (
   id: string,
   port: number,
-  exitCode: number | null
+  exitCode: number | null,
+  runId?: string
 ) => Promise<void>;
 
 export interface TunnelsHandle {
@@ -148,6 +169,12 @@ interface TunnelMetaEntry {
   optionsHash: string;
   /** Cloudflare DNS record id for named tunnels; absent for quick. */
   dnsRecordId?: string;
+  /** Runtime identity that owns a runtime-local quick tunnel record. */
+  runtimeIdentityID?: RuntimeIdentityID;
+  /** Sandbox lifetime that owns this tunnel record. */
+  sandboxLifetimeID?: SandboxLifetimeID;
+  /** Runtime-local cloudflared process run id. */
+  tunnelRunId?: string;
   /**
    * Resolved `(accountId, zoneId)` the named tunnel was provisioned
    * against. Compared on cache hit to detect env-var changes that
@@ -190,6 +217,86 @@ function shortId(): string {
   return Array.from(buf)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+function runtimeRunId(): string {
+  return `run-${crypto.randomUUID()}`;
+}
+
+const TUNNEL_GET_MAX_RECOVERY_ATTEMPTS = 2;
+
+function createTunnelInterruptedError(params: {
+  reason:
+    | 'runtime_replaced'
+    | 'transport_disposed'
+    | 'sandbox_lifetime_changed'
+    | 'recovery_exhausted';
+  phase: string;
+  admitted: boolean | 'unknown';
+  retryable: boolean;
+  recoveryAttempts?: number;
+  maxRecoveryAttempts?: number;
+}): OperationInterruptedError {
+  return new OperationInterruptedError({
+    message:
+      params.reason === 'recovery_exhausted'
+        ? 'Tunnel recovery attempts were exhausted'
+        : 'Tunnel operation was interrupted by a sandbox runtime change',
+    code: ErrorCode.OPERATION_INTERRUPTED,
+    httpStatus: 409,
+    context: {
+      reason: params.reason,
+      operation: 'tunnel.get',
+      phase: params.phase,
+      admitted: params.admitted,
+      retryable: params.retryable,
+      ...(params.recoveryAttempts !== undefined && {
+        recoveryAttempts: params.recoveryAttempts
+      }),
+      ...(params.maxRecoveryAttempts !== undefined && {
+        maxRecoveryAttempts: params.maxRecoveryAttempts
+      })
+    },
+    timestamp: new Date().toISOString(),
+    suggestion: params.retryable
+      ? 'Retry tunnels.get() for the same port so the SDK can establish a fresh tunnel run.'
+      : 'Start a new tunnels.get() call only if this tunnel is still desired for the current sandbox.'
+  });
+}
+
+function translateTunnelInterruption(
+  error: unknown,
+  phase: string,
+  admitted: boolean | 'unknown'
+): OperationInterruptedError | null {
+  if (error instanceof OperationInterruptedError) {
+    return error;
+  }
+  if (error instanceof RuntimeIdentityInactiveError) {
+    return createTunnelInterruptedError({
+      reason: 'runtime_replaced',
+      phase,
+      admitted,
+      retryable: true
+    });
+  }
+  if (error instanceof SandboxLifetimeChangedError) {
+    return createTunnelInterruptedError({
+      reason: 'sandbox_lifetime_changed',
+      phase,
+      admitted,
+      retryable: false
+    });
+  }
+  if (error instanceof RPCTransportError) {
+    return createTunnelInterruptedError({
+      reason: 'transport_disposed',
+      phase,
+      admitted: 'unknown',
+      retryable: true
+    });
+  }
+  return null;
 }
 
 /**
@@ -334,66 +441,74 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       if (options?.name !== undefined) validateTunnelName(options.name);
       const requestedHash = computeOptionsHash(options);
 
-      const info = await this.#withPortLock(port, async () => {
-        const map = await readMap(this.#host.storage);
-        const existing = map[port.toString()];
-        if (existing) {
-          const meta = await readMetaMap(this.#host.storage);
-          const metaEntry = meta[port.toString()];
-          const cachedHash = metaEntry?.optionsHash;
-          // Quick tunnels created before the meta sidecar shipped, or
-          // any port whose meta entry was lost, fall back to comparing
-          // by discriminator alone so cache hits keep working.
-          const effectiveHash =
-            cachedHash ??
-            (existing.name ? `v1:named:${existing.name}` : 'v1:quick');
-          if (!optionsHashesEqual(effectiveHash, requestedHash)) {
-            throw new Error(
-              `Tunnel on port ${port} was created with different options. ` +
-                `Call destroy(${port}) before changing tunnel options.`
-            );
-          }
-          // Container restart marker: the CF-side tunnel + DNS still
-          // exist, but `cloudflared` died with the container. Fall
-          // through to the named-tunnel provision path, which reuses
-          // the tagged tunnel via `findTunnelByName` and respawns the
-          // process. Only named tunnels get this branch; quick tunnels
-          // were dropped from storage by `pruneTunnelsForRestart`.
-          if (metaEntry?.needsRespawn && existing.name) {
-            return await this.#provisionNamedTunnel(port, existing.name);
-          }
-          // Config-drift check for named tunnels: if CLOUDFLARE_ZONE_ID
-          // (or the resolved account id) changed since the tunnel was
-          // provisioned, the cached `hostname` is stale and would no
-          // longer resolve. Re-provision against the current config;
-          // `#provisionNamedTunnel` handles tunnel + DNS reuse via the
-          // `findTunnelByName` and `upsertCNAME` paths.
-          if (existing.name && this.#host.getNamedTunnelConfig) {
-            const currentConfig = await this.#host.getNamedTunnelConfig();
-            const storedAccountId = metaEntry?.accountId;
-            const storedZoneId = metaEntry?.zoneId;
+      const info = await this.#getWithRecovery(port, options, () => {
+        return this.#withPortLock(port, async () => {
+          const map = await readMap(this.#host.storage);
+          const existing = map[port.toString()];
+          if (existing) {
+            const meta = await readMetaMap(this.#host.storage);
+            const metaEntry = meta[port.toString()];
+            const cachedHash = metaEntry?.optionsHash;
+            // Quick tunnels created before the meta sidecar shipped, or
+            // any port whose meta entry was lost, fall back to comparing
+            // by discriminator alone so cache hits keep working.
+            const effectiveHash =
+              cachedHash ??
+              (existing.name ? `v1:named:${existing.name}` : 'v1:quick');
+            if (!optionsHashesEqual(effectiveHash, requestedHash)) {
+              throw new Error(
+                `Tunnel on port ${port} was created with different options. ` +
+                  `Call destroy(${port}) before changing tunnel options.`
+              );
+            }
             if (
-              (storedAccountId !== undefined &&
-                storedAccountId !== currentConfig.accountId) ||
-              (storedZoneId !== undefined &&
-                storedZoneId !== currentConfig.zoneId)
+              !existing.name &&
+              (await this.#quickTunnelRecordIsStale(metaEntry))
             ) {
-              // The cached zone name is for the old zone id; clear it
-              // so `#provisionNamedTunnel` re-resolves against the new
-              // one. Without this, `hostname` would be `<name>.<old
-              // zone name>` even after re-provision.
-              this.#zoneNamePromise = null;
+              return await this.#provisionQuickTunnel(port);
+            }
+            // Container restart marker: the CF-side tunnel + DNS still
+            // exist, but `cloudflared` died with the container. Fall
+            // through to the named-tunnel provision path, which reuses
+            // the tagged tunnel via `findTunnelByName` and respawns the
+            // process. Only named tunnels get this branch; quick tunnels
+            // were dropped from storage by `pruneTunnelsForRestart`.
+            if (metaEntry?.needsRespawn && existing.name) {
               return await this.#provisionNamedTunnel(port, existing.name);
             }
+            // Config-drift check for named tunnels: if CLOUDFLARE_ZONE_ID
+            // (or the resolved account id) changed since the tunnel was
+            // provisioned, the cached `hostname` is stale and would no
+            // longer resolve. Re-provision against the current config;
+            // `#provisionNamedTunnel` handles tunnel + DNS reuse via the
+            // `findTunnelByName` and `upsertCNAME` paths.
+            if (existing.name && this.#host.getNamedTunnelConfig) {
+              const currentConfig = await this.#host.getNamedTunnelConfig();
+              const storedAccountId = metaEntry?.accountId;
+              const storedZoneId = metaEntry?.zoneId;
+              if (
+                (storedAccountId !== undefined &&
+                  storedAccountId !== currentConfig.accountId) ||
+                (storedZoneId !== undefined &&
+                  storedZoneId !== currentConfig.zoneId)
+              ) {
+                // The cached zone name is for the old zone id; clear it
+                // so `#provisionNamedTunnel` re-resolves against the new
+                // one. Without this, `hostname` would be `<name>.<old
+                // zone name>` even after re-provision.
+                this.#zoneNamePromise = null;
+                return await this.#provisionNamedTunnel(port, existing.name);
+              }
+            }
+            cacheState = 'hit';
+            return existing;
           }
-          cacheState = 'hit';
-          return existing;
-        }
 
-        if (options?.name) {
-          return await this.#provisionNamedTunnel(port, options.name);
-        }
-        return await this.#provisionQuickTunnel(port);
+          if (options?.name) {
+            return await this.#provisionNamedTunnel(port, options.name);
+          }
+          return await this.#provisionQuickTunnel(port);
+        });
       });
       outcome = 'success';
       return info;
@@ -412,6 +527,68 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     }
   }
 
+  async #getWithRecovery(
+    port: number,
+    options: TunnelOptions | undefined,
+    run: () => Promise<TunnelInfo>
+  ): Promise<TunnelInfo> {
+    let recoveryAttempts = 0;
+    while (true) {
+      try {
+        return await run();
+      } catch (error) {
+        const interrupted = translateTunnelInterruption(
+          error,
+          'provisioning',
+          'unknown'
+        );
+        if (!interrupted || options?.name || !interrupted.context.retryable) {
+          throw error;
+        }
+        if (recoveryAttempts >= TUNNEL_GET_MAX_RECOVERY_ATTEMPTS) {
+          throw createTunnelInterruptedError({
+            reason: 'recovery_exhausted',
+            phase: 'interrupted',
+            admitted: interrupted.context.admitted,
+            retryable: false,
+            recoveryAttempts,
+            maxRecoveryAttempts: TUNNEL_GET_MAX_RECOVERY_ATTEMPTS
+          });
+        }
+        recoveryAttempts++;
+        await this.#clearQuickTunnelStorage(port);
+      }
+    }
+  }
+
+  async #clearQuickTunnelStorage(port: number): Promise<void> {
+    await this.#host.storage.transaction(async (txn) => {
+      const map = await readMap(txn);
+      delete map[port.toString()];
+      await txn.put(STORAGE_KEY, map);
+      const meta = await readMetaMap(txn);
+      delete meta[port.toString()];
+      await txn.put(META_STORAGE_KEY, meta);
+    });
+  }
+
+  async #quickTunnelRecordIsStale(
+    metaEntry?: TunnelMetaEntry
+  ): Promise<boolean> {
+    if (!this.#host.currentRuntime || !this.#host.currentLifetime) {
+      return false;
+    }
+    if (!metaEntry?.runtimeIdentityID || !metaEntry.sandboxLifetimeID) {
+      return true;
+    }
+    const runtime = await this.#host.currentRuntime.get();
+    const lifetime = await this.#host.currentLifetime.getOrCreate();
+    return (
+      runtime?.id !== metaEntry.runtimeIdentityID ||
+      lifetime.id !== metaEntry.sandboxLifetimeID
+    );
+  }
+
   /**
    * Provision a fresh quick tunnel and persist it. Caller holds the
    * per-port lock.
@@ -424,6 +601,10 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
    * persistent failure still surfaces.
    */
   async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
+    if (this.#host.currentRuntime && this.#host.currentLifetime) {
+      return await this.#provisionQuickTunnelRun(port);
+    }
+
     const MAX_ID_RETRIES = 3;
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
@@ -452,6 +633,89 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     // caller sees something diagnosable; in practice this branch is
     // unreachable given the 32-bit id space and per-sandbox tunnel count.
     throw lastError ?? new Error('Failed to mint a unique quick-tunnel id');
+  }
+
+  async #provisionQuickTunnelRun(port: number): Promise<QuickTunnelInfo> {
+    if (!this.#host.currentRuntime || !this.#host.currentLifetime) {
+      throw new Error('Quick tunnel runtime fences are not configured');
+    }
+
+    const lifetime = await this.#host.currentLifetime.getOrCreate();
+    const tunnelId = `quick-${crypto.randomUUID()}`;
+    const runId = runtimeRunId();
+
+    let ensureResult: EnsureTunnelRunResult;
+    try {
+      ensureResult = await this.#host.client.tunnels.ensureTunnelRun({
+        tunnelId,
+        runId,
+        mode: 'quick',
+        port
+      });
+    } catch (error) {
+      const interrupted = translateTunnelInterruption(
+        error,
+        'runtime_ready',
+        'unknown'
+      );
+      throw interrupted ?? error;
+    }
+
+    const runtime =
+      (await this.#host.currentRuntime.get()) ??
+      (await this.#host.currentRuntime.markStarted());
+    try {
+      await this.#host.currentRuntime.assertActive(runtime);
+      await this.#host.currentLifetime.assertCurrent(lifetime);
+    } catch (error) {
+      const interrupted = translateTunnelInterruption(
+        error,
+        'runtime_ready',
+        'unknown'
+      );
+      throw interrupted ?? error;
+    }
+
+    const { run } = ensureResult;
+    if (!run.url || !run.hostname) {
+      throw new Error('Quick tunnel run did not produce a public URL');
+    }
+
+    const spawned: QuickTunnelInfo = {
+      id: run.tunnelId,
+      port: run.port,
+      url: run.url,
+      hostname: run.hostname,
+      createdAt: run.startedAt
+    };
+
+    await this.#host.storage.transaction(async (txn) => {
+      const nextMap = await readMap(txn);
+      nextMap[port.toString()] = spawned;
+      await txn.put(STORAGE_KEY, nextMap);
+      const nextMeta = await readMetaMap(txn);
+      nextMeta[port.toString()] = {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: runtime.id,
+        sandboxLifetimeID: lifetime.id,
+        tunnelRunId: run.runId
+      };
+      await txn.put(META_STORAGE_KEY, nextMeta);
+    });
+
+    try {
+      await this.#host.currentRuntime.assertActive(runtime);
+      await this.#host.currentLifetime.assertCurrent(lifetime);
+    } catch (error) {
+      const interrupted = translateTunnelInterruption(
+        error,
+        'storage_committed',
+        true
+      );
+      throw interrupted ?? error;
+    }
+
+    return spawned;
   }
 
   /**
@@ -614,7 +878,14 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
         // named tunnels: destroy() is also responsible for Cloudflare-side
         // cleanup, which must still run if the container already stopped.
         try {
-          await this.#host.client.tunnels.destroyTunnel(existing.id);
+          if (metaBefore?.tunnelRunId) {
+            await this.#host.client.tunnels.stopTunnelRun({
+              tunnelId: existing.id,
+              runId: metaBefore.tunnelRunId
+            });
+          } else {
+            await this.#host.client.tunnels.destroyTunnel(existing.id);
+          }
         } catch (error) {
           if (isTunnelNotFoundError(error)) {
             // Container already forgot — fall through to CF cleanup.
@@ -763,7 +1034,12 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
 
   const tunnels = new TunnelsRpcTarget(host, withPortLock);
 
-  const handleTunnelExit: TunnelExitHandler = async (id, port, exitCode) => {
+  const handleTunnelExit: TunnelExitHandler = async (
+    id,
+    port,
+    exitCode,
+    runId
+  ) => {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
@@ -777,6 +1053,15 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
           // cloudflared dies → new get() spawns fresh → old callback
           // fires" would clobber the new record.
           if (existing?.id !== id) return;
+          const meta = await readMetaMap(txn);
+          const metaEntry = meta[port.toString()];
+          if (
+            runId &&
+            metaEntry?.tunnelRunId &&
+            metaEntry.tunnelRunId !== runId
+          ) {
+            return;
+          }
 
           if (existing.name) {
             // Named tunnel. The Cloudflare-side tunnel and DNS record
@@ -791,12 +1076,10 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
             // band) that would crash-loop without a backoff/circuit
             // breaker, and the symmetric "wait for next get()" is the
             // same contract container restart already offers.
-            const meta = await readMetaMap(txn);
             meta[port.toString()] = {
-              ...meta[port.toString()],
+              ...metaEntry,
               optionsHash:
-                meta[port.toString()]?.optionsHash ??
-                `v1:named:${existing.name}`,
+                metaEntry?.optionsHash ?? `v1:named:${existing.name}`,
               needsRespawn: true
             };
             await txn.put(META_STORAGE_KEY, meta);
@@ -807,7 +1090,6 @@ export function createTunnelsHandler(host: TunnelsHandlerHost): TunnelsHandle {
           // process and cannot be recovered. Drop both entries.
           delete map[port.toString()];
           await txn.put(STORAGE_KEY, map);
-          const meta = await readMetaMap(txn);
           delete meta[port.toString()];
           await txn.put(META_STORAGE_KEY, meta);
         });

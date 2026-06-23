@@ -643,7 +643,6 @@ describe('TunnelService > runNamedTunnel', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // Missing cloudflared binary
 // ---------------------------------------------------------------------------
@@ -712,5 +711,218 @@ describe('TunnelService > cloudflared binary missing', () => {
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error.code).toBe('TUNNEL_START_ERROR');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime-run API (ensureTunnelRun / stopTunnelRun)
+// ---------------------------------------------------------------------------
+
+describe('TunnelService > ensureTunnelRun', () => {
+  it('starts a quick run and returns the snapshot with started: true', async () => {
+    const service = new TunnelService(mockLogger);
+
+    let result!: Awaited<ReturnType<typeof service.ensureTunnelRun>>;
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      result = await service.ensureTunnelRun({
+        tunnelId: 'tid-1',
+        runId: 'rid-1',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.started).toBe(true);
+    expect(result.data.run.tunnelId).toBe('tid-1');
+    expect(result.data.run.runId).toBe('rid-1');
+    expect(result.data.run.mode).toBe('quick');
+    expect(result.data.run.port).toBe(8080);
+    expect(typeof result.data.run.url).toBe('string');
+    expect(result.data.run.url).toBeTruthy();
+    expect(typeof result.data.run.hostname).toBe('string');
+    expect(result.data.run.hostname).toBeTruthy();
+  });
+
+  it('replays the same runId + same params with started: false', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-2',
+        runId: 'rid-2',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    // Replay — no new cloudflared should spawn
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-2',
+      runId: 'rid-2',
+      mode: 'quick',
+      port: 8080
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.started).toBe(false);
+    expect(result.data.run.runId).toBe('rid-2');
+    // Only one cloudflared was spawned across both calls
+    expect(fakeProcs).toHaveLength(1);
+  });
+
+  it('returns TUNNEL_RUN_CONFLICT for same runId with different params', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-3',
+        runId: 'rid-3',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-3',
+      runId: 'rid-3',
+      mode: 'quick',
+      port: 9090 // different port
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
+  });
+
+  it('returns TUNNEL_RUN_CONFLICT for different runId on same port', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-4',
+        runId: 'rid-4a',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-5', // different tunnelId
+      runId: 'rid-4b', // different runId
+      mode: 'quick',
+      port: 8080 // same port
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
+  });
+
+  it('returns TUNNEL_RUN_CONFLICT for different runId on same tunnelId', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-6',
+        runId: 'rid-6a',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-6', // same tunnelId
+      runId: 'rid-6b', // different runId
+      mode: 'quick',
+      port: 9090
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
+  });
+});
+
+describe('TunnelService > stopTunnelRun', () => {
+  it('stops the exact matching run and returns stopped: true', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-s1',
+        runId: 'rid-s1',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    const stopPromise = service.stopTunnelRun({
+      tunnelId: 'tid-s1',
+      runId: 'rid-s1'
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    fakeProcs[0].resolveExit(0);
+    const result = await stopPromise;
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.stopped).toBe(true);
+    expect(fakeProcs[0].kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('returns stopped: false for a non-existent runId without error', async () => {
+    const service = new TunnelService(mockLogger);
+
+    const result = await service.stopTunnelRun({
+      tunnelId: 'tid-ghost',
+      runId: 'rid-ghost'
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.stopped).toBe(false);
+  });
+
+  it('returns stopped: false when tunnelId matches but runId differs', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-s2',
+        runId: 'rid-s2',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    const result = await service.stopTunnelRun({
+      tunnelId: 'tid-s2',
+      runId: 'rid-s2-different'
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.stopped).toBe(false);
+    // Original process still running — no kill called for this attempt
+    expect(fakeProcs[0].kill).not.toHaveBeenCalled();
+  });
+
+  it('runtime-run records do not appear in legacy list()', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.ensureTunnelRun({
+        tunnelId: 'tid-list',
+        runId: 'rid-list',
+        mode: 'quick',
+        port: 8080
+      });
+    });
+
+    // Legacy list() should be empty — runtime-run records are separate
+    expect(service.list()).toHaveLength(0);
   });
 });

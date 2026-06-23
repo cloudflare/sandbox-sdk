@@ -1,6 +1,8 @@
 import type {
   CheckChangesRequest,
   CheckChangesResult,
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
   ExecutionError,
   FileEncoding,
   FileInfo,
@@ -9,6 +11,8 @@ import type {
   OutputMessage,
   Result,
   SandboxAPI,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
   TunnelInfo,
   WatchRequest
 } from '@repo/shared';
@@ -1127,5 +1131,19 @@ class TunnelsRPCAPI extends RpcTarget {
 
   async listTunnels(): Promise<TunnelInfo[]> {
     return this.#svc.list();
+  }
+
+  async ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult> {
+    const result = await this.#svc.ensureTunnelRun(request);
+    return extractData<EnsureTunnelRunResult>(result);
+  }
+
+  async stopTunnelRun(
+    request: StopTunnelRunRequest
+  ): Promise<StopTunnelRunResult> {
+    const result = await this.#svc.stopTunnelRun(request);
+    return extractData<StopTunnelRunResult>(result);
   }
 }
