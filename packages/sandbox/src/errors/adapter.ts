@@ -28,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -67,6 +68,7 @@ import {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  OperationInterruptedError,
   PermissionDeniedError,
   PortAlreadyExposedError,
   PortError,
@@ -287,6 +289,13 @@ export function createErrorFromResponse(
     case ErrorCode.CODE_EXECUTION_ERROR:
       return new CodeExecutionError(
         errorResponse as unknown as ErrorResponse<CodeExecutionContext>
+      );
+
+    // Operation lifecycle errors — raised by the SDK when a sandbox-owned
+    // operation is interrupted by a runtime replacement or lifetime change.
+    case ErrorCode.OPERATION_INTERRUPTED:
+      return new OperationInterruptedError(
+        errorResponse as unknown as ErrorResponse<OperationInterruptedContext>
       );
 
     // Container availability errors (SDK-side, raised when the sandbox

@@ -152,7 +152,13 @@ export const ErrorCode = {
   // Container Availability Errors (503) — raised when the sandbox container
   // is not yet ready to accept requests or was replaced while a connection
   // attempt was in progress. Always retryable from the caller's perspective.
-  CONTAINER_UNAVAILABLE: 'CONTAINER_UNAVAILABLE'
+  CONTAINER_UNAVAILABLE: 'CONTAINER_UNAVAILABLE',
+
+  // Operation Lifecycle Errors (409) — raised when a sandbox-owned operation
+  // (e.g. backup restore) was interrupted by a runtime replacement or sandbox
+  // lifetime change after the operation had already been admitted. The caller
+  // should retry the full operation from the beginning.
+  OPERATION_INTERRUPTED: 'OPERATION_INTERRUPTED'
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

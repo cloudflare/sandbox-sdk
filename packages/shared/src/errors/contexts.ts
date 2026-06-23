@@ -302,3 +302,50 @@ export interface RPCTransportContext {
   /** WebSocket close reason, when available (kind === 'peer_closed'). */
   closeReason?: string;
 }
+
+/**
+ * Reason a sandbox-owned operation was interrupted. Callers may branch on
+ * this to decide whether to retry the full operation.
+ */
+export type OperationInterruptedReason =
+  /** The container runtime was replaced while the operation was in progress. */
+  | 'runtime_replaced'
+  /** The RPC session was disposed mid-operation. */
+  | 'transport_disposed'
+  /** The sandbox lifetime changed (destroy() was called). Not retryable. */
+  | 'sandbox_lifetime_changed'
+  /** Internal recovery attempts were exhausted. Not retryable. */
+  | 'recovery_exhausted';
+
+/**
+ * Operation interruption context. Surfaced when a sandbox-owned operation
+ * (such as backup restore) was interrupted by a runtime replacement or
+ * sandbox lifetime change. Public-safe: does not include internal ids.
+ */
+export interface OperationInterruptedContext {
+  /**
+   * Categorical reason. Use `retryable` to decide whether to retry rather
+   * than branching on the reason string.
+   */
+  reason: OperationInterruptedReason;
+  /** Name of the operation that was interrupted (e.g. 'backup.restore'). */
+  operation: string;
+  /** Lifecycle phase at which the interruption was detected. */
+  phase: string;
+  /**
+   * Whether the operation's container-local side effects reached the runtime.
+   * `false` means the operation was interrupted before admission; `true`
+   * means effects were committed; `'unknown'` means the operation may or may
+   * not have committed.
+   */
+  admitted: boolean | 'unknown';
+  /**
+   * Whether the caller can safely retry the full operation from the beginning.
+   * `sandbox_lifetime_changed` and `recovery_exhausted` set this to false.
+   */
+  retryable: boolean;
+  /** Number of internal recovery attempts made before surfacing this error. */
+  recoveryAttempts?: number;
+  /** Maximum number of internal recovery attempts allowed. */
+  maxRecoveryAttempts?: number;
+}

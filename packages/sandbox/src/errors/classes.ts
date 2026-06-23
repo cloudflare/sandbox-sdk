@@ -28,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -883,5 +884,25 @@ export class RPCTransportError extends SandboxError<RPCTransportContext> {
 
   get originalMessage(): string {
     return this.errorResponse.context.originalMessage;
+  }
+}
+
+// ============================================================================
+// Operation Lifecycle Errors
+// ============================================================================
+
+/**
+ * Raised when a sandbox-owned operation was interrupted by a runtime
+ * replacement or sandbox lifetime change after the operation was admitted.
+ * The caller can retry the full operation when `context.retryable` is true.
+ */
+export class OperationInterruptedError extends SandboxError<OperationInterruptedContext> {
+  constructor(errorResponse: ErrorResponse<OperationInterruptedContext>) {
+    super(errorResponse);
+    this.name = 'OperationInterruptedError';
+  }
+
+  get reason(): OperationInterruptedContext['reason'] {
+    return this.context.reason;
   }
 }
