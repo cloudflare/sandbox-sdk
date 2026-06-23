@@ -7,7 +7,7 @@
  * and supervised by the container `ExtensionHost`. None of it is compiled into
  * the core SDK or the container binary anymore.
  *
- * Usage — attach it to a Sandbox subclass and expose thin delegate methods:
+ * Usage — attach it to a Sandbox subclass and call it as a nested extension:
  *
  * ```ts
  * import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
@@ -15,14 +15,10 @@
  *
  * export class Sandbox extends BaseSandbox<Env> {
  *   interpreter = withInterpreter(this);
- *
- *   createCodeContext(options?: CreateContextOptions) {
- *     return this.interpreter.createCodeContext(options);
- *   }
- *   async runCode(code: string, options?: RunCodeOptions) {
- *     return (await this.interpreter.runCode(code, options)).toJSON();
- *   }
  * }
+ *
+ * const context = await sandbox.interpreter.createCodeContext({ language: 'python' });
+ * const result = await sandbox.interpreter.runCode('print("hello")', { context });
  * ```
  */
 
@@ -38,6 +34,7 @@ import {
   type CreateContextOptions,
   Execution,
   type ExecutionError,
+  type ExecutionResult,
   type OutputMessage,
   type Result,
   ResultImpl,
@@ -89,8 +86,7 @@ function toCodeContext(raw: InterpreterContextWire): CodeContext {
 
 /**
  * The interpreter extension. Bridges to the sidecar over the extension host;
- * reconstructs streamed execution events into the familiar {@link Execution}
- * result shape so the public DX is unchanged from the old in-core interpreter.
+ * reconstructs streamed execution events into serializable execution results.
  */
 export class Interpreter extends SandboxExtension {
   readonly #contexts = new Map<string, CodeContext>();
@@ -114,11 +110,11 @@ export class Interpreter extends SandboxExtension {
     return context;
   }
 
-  /** Run code with optional context, collecting results into an Execution. */
+  /** Run code with optional context, collecting results into serializable data. */
   async runCode(
     code: string,
     options: RunCodeOptions = {}
-  ): Promise<Execution> {
+  ): Promise<ExecutionResult> {
     const context =
       options.context ??
       (await this.#getOrCreateDefaultContext(options.language ?? 'python'));
@@ -130,7 +126,7 @@ export class Interpreter extends SandboxExtension {
       await this.#applyEvent(execution, event, options);
     });
 
-    return execution;
+    return execution.toJSON();
   }
 
   /** Run code and surface raw execution events as an SSE byte stream. */

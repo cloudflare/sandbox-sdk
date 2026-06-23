@@ -78,6 +78,7 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
+import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
 import { LocalMountSyncManager } from './local-mount-sync';
 import {
@@ -333,6 +334,11 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
   createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
   getSession: (sessionId: string) => Promise<ExecutionSession>;
+  callExtension: (
+    extensionName: string,
+    method: string,
+    args: unknown[]
+  ) => Promise<unknown>;
   execWithSessionToken: (
     command: string,
     sessionId: string,
@@ -809,10 +815,52 @@ export function getSandbox<T extends Sandbox<any>>(
       if (typeof prop === 'string' && prop in enhancedMethods) {
         return enhancedMethods[prop as keyof typeof enhancedMethods];
       }
-      // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
-      return target[prop];
+      if (typeof prop !== 'string' || prop === 'then') {
+        // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+        return target[prop];
+      }
+      return new Proxy(
+        (...args: unknown[]) => {
+          // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+          return target[prop](...args);
+        },
+        {
+          get: (_, method) => {
+            if (typeof method !== 'string' || method === 'then') {
+              return undefined;
+            }
+            return (...args: unknown[]) =>
+              stub.callExtension(prop, method, args);
+          }
+        }
+      );
     }
   }) as T;
+}
+
+function getConcreteExtensionMethod(
+  extension: SandboxExtension,
+  method: string
+): ((...args: unknown[]) => unknown) | undefined {
+  const ownValue = (extension as unknown as Record<string, unknown>)[method];
+  if (Object.hasOwn(extension, method) && typeof ownValue === 'function') {
+    return ownValue as (...args: unknown[]) => unknown;
+  }
+
+  let prototype = Object.getPrototypeOf(extension) as object | null;
+  while (
+    prototype &&
+    prototype !== SandboxExtension.prototype &&
+    prototype !== Object.prototype
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
+    if (typeof descriptor?.value === 'function') {
+      return descriptor.value as (...args: unknown[]) => unknown;
+    }
+    prototype = Object.getPrototypeOf(prototype) as object | null;
+  }
+
+  return undefined;
 }
 
 function enhanceSession(
@@ -969,6 +1017,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error(`sandbox.tunnels missing method: ${method}`);
     }
     return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
+
+  async callExtension(
+    extensionName: string,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    if (method === 'constructor' || method === 'then') {
+      throw new Error(`Unknown extension method: ${extensionName}.${method}`);
+    }
+    const extension = (this as unknown as Record<string, unknown>)[
+      extensionName
+    ];
+    if (!(extension instanceof SandboxExtension)) {
+      throw new Error(`Unknown sandbox extension: ${extensionName}`);
+    }
+    const fn = getConcreteExtensionMethod(extension, method);
+    if (!fn) {
+      throw new Error(`Unknown extension method: ${extensionName}.${method}`);
+    }
+    return fn.apply(extension, args);
   }
 
   /**
