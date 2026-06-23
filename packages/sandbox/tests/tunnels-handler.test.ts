@@ -148,7 +148,7 @@ function makeRuntimeFences(runtimeId = 'runtime-1') {
     currentRuntime: {
       get: vi.fn(async () => runtime),
       markStarted: vi.fn(async () => runtime),
-      assertActive: vi.fn(async () => {})
+      assertActive: vi.fn(async (_runtime: typeof runtime) => {})
     },
     currentLifetime: {
       getOrCreate: vi.fn(async () => lifetime),
@@ -259,6 +259,7 @@ describe('tunnels handler > get', () => {
       }
     }));
     fences?.currentRuntime.assertActive
+      .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new RuntimeIdentityInactiveError())
       .mockResolvedValue(undefined);
 
@@ -269,6 +270,60 @@ describe('tunnels handler > get', () => {
     expect(info.hostname).toBe(`${secondRunId}.trycloudflare.com`);
     const stored = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(stored?.['8080']).toEqual(info);
+  });
+
+  it('captures runtime before quick tunnel admission so a replacement during spawn retries', async () => {
+    const { client, storage, handler, fences } = makeHandler({
+      withFences: true
+    });
+    let activeRuntimeId = 'runtime-1';
+    const makeRuntime = (id: string) => ({
+      id,
+      owns: (record: { readonly runtimeIdentityID: string }) =>
+        record.runtimeIdentityID === id,
+      scope: <T extends object>(value: T) => ({
+        ...value,
+        runtimeIdentityID: id
+      })
+    });
+    fences?.currentRuntime.get.mockImplementation(async () =>
+      makeRuntime(activeRuntimeId)
+    );
+    fences?.currentRuntime.assertActive.mockImplementation(async (runtime) => {
+      if (runtime.id !== activeRuntimeId) {
+        throw new RuntimeIdentityInactiveError();
+      }
+    });
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => {
+      if (client.tunnels.ensureTunnelRun.mock.calls.length === 1) {
+        activeRuntimeId = 'runtime-2';
+      }
+      return {
+        started: true,
+        run: {
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          mode: 'quick',
+          port: request.port,
+          url: `https://${request.runId}.trycloudflare.com`,
+          hostname: `${request.runId}.trycloudflare.com`,
+          startedAt: '2026-05-13T00:00:00.000Z'
+        }
+      };
+    });
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const staleRunId = client.tunnels.ensureTunnelRun.mock.calls[0][0].runId;
+    const currentRunId = client.tunnels.ensureTunnelRun.mock.calls[1][0].runId;
+    expect(info.hostname).toBe(`${currentRunId}.trycloudflare.com`);
+    expect(info.hostname).not.toBe(`${staleRunId}.trycloudflare.com`);
+    const meta =
+      await storage.get<Record<string, { runtimeIdentityID: string }>>(
+        'tunnels:meta'
+      );
+    expect(meta?.['8080'].runtimeIdentityID).toBe('runtime-2');
   });
 
   it('surfaces OPERATION_INTERRUPTED and leaves storage empty after quick tunnel recovery exhaustion', async () => {
@@ -287,9 +342,13 @@ describe('tunnels handler > get', () => {
         startedAt: '2026-05-13T00:00:00.000Z'
       }
     }));
-    fences?.currentRuntime.assertActive.mockRejectedValue(
-      new RuntimeIdentityInactiveError()
-    );
+    let assertActiveCalls = 0;
+    fences?.currentRuntime.assertActive.mockImplementation(async () => {
+      assertActiveCalls += 1;
+      if (assertActiveCalls % 2 === 0) {
+        throw new RuntimeIdentityInactiveError();
+      }
+    });
 
     await expect(handler.get(8080)).rejects.toMatchObject({
       name: 'OperationInterruptedError',

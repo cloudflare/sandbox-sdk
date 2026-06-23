@@ -644,14 +644,12 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     const tunnelId = `quick-${crypto.randomUUID()}`;
     const runId = runtimeRunId();
 
-    let ensureResult: EnsureTunnelRunResult;
+    const runtime =
+      (await this.#host.currentRuntime.get()) ??
+      (await this.#host.currentRuntime.markStarted());
     try {
-      ensureResult = await this.#host.client.tunnels.ensureTunnelRun({
-        tunnelId,
-        runId,
-        mode: 'quick',
-        port
-      });
+      await this.#host.currentRuntime.assertActive(runtime);
+      await this.#host.currentLifetime.assertCurrent(lifetime);
     } catch (error) {
       const interrupted = translateTunnelInterruption(
         error,
@@ -661,10 +659,14 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       throw interrupted ?? error;
     }
 
-    const runtime =
-      (await this.#host.currentRuntime.get()) ??
-      (await this.#host.currentRuntime.markStarted());
+    let ensureResult: EnsureTunnelRunResult;
     try {
+      ensureResult = await this.#host.client.tunnels.ensureTunnelRun({
+        tunnelId,
+        runId,
+        mode: 'quick',
+        port
+      });
       await this.#host.currentRuntime.assertActive(runtime);
       await this.#host.currentLifetime.assertCurrent(lifetime);
     } catch (error) {
