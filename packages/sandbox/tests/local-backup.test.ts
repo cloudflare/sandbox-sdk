@@ -124,6 +124,7 @@ interface MockCtx {
     equals: ReturnType<typeof vi.fn>;
     name: string;
   };
+  container: { running: boolean };
 }
 
 describe('Local Backup & Restore', () => {
@@ -136,12 +137,17 @@ describe('Local Backup & Restore', () => {
     vi.clearAllMocks();
 
     mockBucket = createMockR2Bucket();
+    const storageState = new Map<string, unknown>();
 
     mockCtx = {
       storage: {
-        get: vi.fn().mockResolvedValue(null),
-        put: vi.fn().mockResolvedValue(undefined),
-        delete: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn(async (key: string) => storageState.get(key) ?? null),
+        put: vi.fn(async (key: string, value: unknown) => {
+          storageState.set(key, value);
+        }),
+        delete: vi.fn(async (key: string) => {
+          storageState.delete(key);
+        }),
         list: vi.fn().mockResolvedValue(new Map())
       },
       blockConcurrencyWhile: vi
@@ -154,7 +160,8 @@ describe('Local Backup & Restore', () => {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
         name: 'test-sandbox'
-      } as any
+      } as any,
+      container: { running: true }
     };
 
     mockEnv = {
