@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import type { ExtensionRegistration, Logger } from '@repo/shared';
 
@@ -93,12 +93,22 @@ export async function provisionPackage(
   await runBunAdd(input.dir, input.allowInstallScripts === true);
 
   const binTarget = resolveBinTarget(packageJSON, registration.bin);
-  const binAbsolutePath = join(
+  const packageRoot = resolve(
     input.dir,
     'node_modules',
-    registration.packageName,
-    binTarget
+    registration.packageName
   );
+  const binAbsolutePath = resolve(packageRoot, binTarget);
+  const relativeBinPath = relative(packageRoot, binAbsolutePath);
+  if (
+    relativeBinPath === '..' ||
+    relativeBinPath.startsWith(`..${sep}`) ||
+    isAbsolute(relativeBinPath)
+  ) {
+    throw new Error(
+      `Extension '${registration.id}' bin '${registration.bin}' resolves outside the installed package directory`
+    );
+  }
 
   if (!(await Bun.file(binAbsolutePath).exists())) {
     throw new Error(

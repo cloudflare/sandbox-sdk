@@ -242,34 +242,36 @@ export class ExtensionHost {
     instance.bridge = null;
 
     const spawned = await this.#spawn(instance);
-    this.#assertCurrent(instance, generation);
-
-    const bridge = new CapnwebExtensionBridge(
-      instance.registration.id,
-      instance.logger
-    );
     try {
-      await Promise.race([
-        bridge.connect(
-          instance.socketPath,
-          instance.registration.readinessTimeoutMs
-        ),
-        spawned.failed
-      ]);
       this.#assertCurrent(instance, generation);
-    } catch (error) {
-      bridge.close();
-      await this.#stopChild(spawned.child, instance.logger);
-      if (instance.child === spawned.child) instance.child = null;
-      throw error;
+
+      const bridge = new CapnwebExtensionBridge(
+        instance.registration.id,
+        instance.logger
+      );
+      try {
+        await Promise.race([
+          bridge.connect(
+            instance.socketPath,
+            instance.registration.readinessTimeoutMs
+          ),
+          spawned.failed
+        ]);
+        this.#assertCurrent(instance, generation);
+      } catch (error) {
+        bridge.close();
+        await this.#stopChild(spawned.child, instance.logger);
+        if (instance.child === spawned.child) instance.child = null;
+        throw error;
+      }
+
+      instance.bridge = bridge;
+      instance.logger.debug('Extension sidecar ready', {
+        pid: instance.child?.pid ?? null
+      });
     } finally {
       spawned.cleanup();
     }
-
-    instance.bridge = bridge;
-    instance.logger.debug('Extension sidecar ready', {
-      pid: instance.child?.pid ?? null
-    });
   }
 
   async #spawn(instance: ExtensionInstance): Promise<{
