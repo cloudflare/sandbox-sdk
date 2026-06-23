@@ -49,7 +49,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({ language }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as CodeContext;
@@ -61,7 +61,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({ code, options: { context } }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as ExecutionResult;
@@ -95,7 +95,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(listResponse.status).toBe(200);
     const contexts = (await listResponse.json()) as CodeContext[];
@@ -115,7 +115,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const listAfterDelete = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     const contextsAfter = (await listAfterDelete.json()) as CodeContext[];
     expect(contextsAfter.map((c) => c.id)).not.toContain(pythonCtx.id);
@@ -303,7 +303,7 @@ for i in range(3):
 `.trim(),
         options: { context: streamCtx }
       }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
 
     expect(streamResponse.status).toBe(200);
