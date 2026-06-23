@@ -20,8 +20,9 @@ import { ExtensionHost } from '../../src/extensions/extension-host';
 import { hashTarball } from '../../src/extensions/provision';
 import { SocketTransport } from '../../src/extensions/socket-transport';
 
-interface DemoSidecarApi {
+interface DemoSidecarAPI {
   echo(value: string): Promise<string>;
+  env(name: string): Promise<string | undefined>;
   runJob(
     label: string,
     onEvent: (event: { kind: string; data: unknown }) => void | Promise<void>
@@ -87,9 +88,28 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     const stub = (await h.connect({
       packageHash,
       tarball: tarballBytes
-    })) as DemoSidecarApi;
+    })) as DemoSidecarAPI;
 
     expect(await stub.echo('hello')).toBe('hello');
+  });
+
+  it('does not inherit arbitrary host environment variables', async () => {
+    const h = makeHost();
+    const envName = 'SANDBOX_EXTENSION_HOST_SECRET_TEST';
+    process.env[envName] = 'hidden';
+
+    try {
+      const stub = (await h.connect({
+        packageHash,
+        tarball: tarballBytes
+      })) as DemoSidecarAPI;
+      expect(await stub.env(envName)).toBeUndefined();
+      expect(typeof (await stub.env('PATH'))).toBe('string');
+      expect(typeof (await stub.env('EXT_SOCKET'))).toBe('string');
+      expect(typeof (await stub.env('EXT_DIR'))).toBe('string');
+    } finally {
+      delete process.env[envName];
+    }
   });
 
   it('forwards a streaming callback through both capnweb hops', async () => {
@@ -97,7 +117,7 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     const stub = (await h.connect({
       packageHash,
       tarball: tarballBytes
-    })) as DemoSidecarApi;
+    })) as DemoSidecarAPI;
 
     const events: Array<{ kind: string; data: unknown }> = [];
     const result = await stub.runJob('demo', async (event) => {
@@ -117,7 +137,7 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     const stub = (await h.connect({
       packageHash,
       tarball: tarballBytes
-    })) as DemoSidecarApi;
+    })) as DemoSidecarAPI;
 
     // Wrap with Promise.resolve so bun's matcher sees a plain promise rather
     // than capnweb's `RpcPromise` proxy (which is also callable for pipelining).
@@ -141,7 +161,7 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     await h.connect({ packageHash, tarball: tarballBytes });
 
     // Second connect: hash-only, must not fail.
-    const stub = (await h.connect({ packageHash })) as DemoSidecarApi;
+    const stub = (await h.connect({ packageHash })) as DemoSidecarAPI;
     expect(await stub.echo('again')).toBe('again');
   });
 
@@ -153,9 +173,9 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
       h.connect({ packageHash, tarball: tarballBytes })
     ]);
 
-    expect(await (a as DemoSidecarApi).echo('a')).toBe('a');
-    expect(await (b as DemoSidecarApi).echo('b')).toBe('b');
-    expect(await (c as DemoSidecarApi).echo('c')).toBe('c');
+    expect(await (a as DemoSidecarAPI).echo('a')).toBe('a');
+    expect(await (b as DemoSidecarAPI).echo('b')).toBe('b');
+    expect(await (c as DemoSidecarAPI).echo('c')).toBe('c');
   });
 
   it('reports health with a live __ping__ once the sidecar is running', async () => {
@@ -182,7 +202,7 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     let stub = (await h.connect({
       packageHash,
       tarball: tarballBytes
-    })) as DemoSidecarApi;
+    })) as DemoSidecarAPI;
     expect(await stub.echo('first')).toBe('first');
 
     await h.stop(packageHash);
@@ -191,8 +211,26 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
 
     // Next connect must respawn (hash-only is sufficient \u2014 provisioned dir
     // is still on disk).
-    stub = (await h.connect({ packageHash })) as DemoSidecarApi;
+    stub = (await h.connect({ packageHash })) as DemoSidecarAPI;
     expect(await stub.echo('second')).toBe('second');
+  });
+
+  it('does not emit an unhandled rejection when a ready sidecar stops', async () => {
+    const h = makeHost();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await h.connect({ packageHash, tarball: tarballBytes });
+      await h.stop(packageHash);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('rejects a mismatched declared hash on first provision', async () => {

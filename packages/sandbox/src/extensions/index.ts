@@ -57,12 +57,12 @@ export type SandboxLike = {
  *
  * // Sidecar
  * import sidecarTarballBytes from './sidecar-package.tgz';
- * import type { MyApi } from './shared';
+ * import type { MyAPI } from './shared';
  *
  * class MyExt extends SandboxExtension {
  *   constructor(s: SandboxLike) { super(s, { tarball: new Uint8Array(sidecarTarballBytes) }); }
  *   async run(input: string): Promise<string> {
- *     const api = await this.sidecar<MyApi>();
+ *     const api = await this.sidecar<MyAPI>();
  *     return api.run(input);
  *   }
  * }

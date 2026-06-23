@@ -15,9 +15,13 @@ import {
   serveSandboxSidecar
 } from '@cloudflare/sandbox/sidecar';
 
-class DemoSidecarApi extends SandboxSidecar {
+class DemoSidecarAPI extends SandboxSidecar {
   async echo(value: string): Promise<string> {
     return value;
+  }
+
+  env(name: string): string | undefined {
+    return process.env[name];
   }
 
   /**
@@ -41,6 +45,6 @@ class DemoSidecarApi extends SandboxSidecar {
   }
 }
 
-serveSandboxSidecar(new DemoSidecarApi(), {
+serveSandboxSidecar(new DemoSidecarAPI(), {
   readyMessage: 'demo sidecar listening'
 });

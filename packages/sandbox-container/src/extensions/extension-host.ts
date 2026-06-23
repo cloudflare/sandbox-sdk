@@ -296,10 +296,7 @@ export class ExtensionHost {
         cmd: ['bun', instance.binAbsolutePath],
         cwd: instance.provisionedDir,
         env: {
-          // Current sidecars are trusted in-repo code and inherit the container
-          // environment. Before enabling third-party extensions, replace this
-          // with an explicit allowlist so secrets are not exposed by default.
-          ...process.env,
+          PATH: process.env.PATH ?? '',
           EXT_SOCKET: instance.socketPath,
           EXT_DIR: instance.provisionedDir
         },
@@ -323,9 +320,7 @@ export class ExtensionHost {
       });
     });
     const cleanup = () => {
-      // child.exited is a single promise we can't detach from; the host just
-      // ignores the resolution after readiness. Kept as a function for
-      // symmetry and future extension.
+      failed.catch(() => {});
     };
 
     void this.#pipeStream(

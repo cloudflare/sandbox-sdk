@@ -40,7 +40,7 @@ export interface ProvisionResult {
  * never reads top-level package.json keys other than `name`, `version`,
  * `bin`, and `sandboxExtension`.
  */
-interface SandboxExtensionPackageJson {
+interface SandboxExtensionPackageJSON {
   name: string;
   version: string;
   bin?: string | Record<string, string>;
@@ -80,8 +80,8 @@ export async function provisionPackage(
   // any test-suite `mock.module('node:fs')` interference.
   await Bun.write(tarballPath, input.tarballBytes);
 
-  const packageJson = readPackageJsonFromTarball(input.tarballBytes);
-  const registration = deriveRegistration(packageJson, input);
+  const packageJSON = readPackageJSONFromTarball(input.tarballBytes);
+  const registration = deriveRegistration(packageJSON, input);
 
   input.logger.debug('Installing extension package', {
     packageHash: input.packageHash,
@@ -92,7 +92,7 @@ export async function provisionPackage(
 
   await runBunAdd(input.dir, input.allowInstallScripts === true);
 
-  const binTarget = resolveBinTarget(packageJson, registration.bin);
+  const binTarget = resolveBinTarget(packageJSON, registration.bin);
   const binAbsolutePath = join(
     input.dir,
     'node_modules',
@@ -110,7 +110,7 @@ export async function provisionPackage(
 }
 
 function deriveRegistration(
-  pkg: SandboxExtensionPackageJson,
+  pkg: SandboxExtensionPackageJSON,
   input: ProvisionInput
 ): ExtensionRegistration {
   if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
@@ -162,7 +162,7 @@ function slugifyPackageName(name: string): string {
 }
 
 function chooseBinName(
-  pkg: SandboxExtensionPackageJson,
+  pkg: SandboxExtensionPackageJSON,
   override: string | undefined
 ): string {
   if (override) return override;
@@ -195,7 +195,7 @@ function chooseBinName(
 }
 
 function resolveBinTarget(
-  pkg: SandboxExtensionPackageJson,
+  pkg: SandboxExtensionPackageJSON,
   binName: string
 ): string {
   if (typeof pkg.bin === 'string') {
@@ -227,9 +227,9 @@ function normaliseBinPath(target: string): string {
  * Implemented in-process to avoid shelling out to `tar` and to keep the host
  * runtime independent of the container image's userland tools.
  */
-function readPackageJsonFromTarball(
+function readPackageJSONFromTarball(
   tarballBytes: Uint8Array
-): SandboxExtensionPackageJson {
+): SandboxExtensionPackageJSON {
   const inflated = gunzipSync(tarballBytes);
   const entry = findTarEntry(inflated, 'package/package.json');
   if (!entry) {
@@ -251,7 +251,7 @@ function readPackageJsonFromTarball(
   if (typeof parsed !== 'object' || parsed === null) {
     throw new Error('Extension tarball package.json must be a JSON object');
   }
-  return parsed as SandboxExtensionPackageJson;
+  return parsed as SandboxExtensionPackageJSON;
 }
 
 const TAR_BLOCK_SIZE = 512;

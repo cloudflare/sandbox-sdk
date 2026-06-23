@@ -19,7 +19,7 @@ import type { Mock } from 'vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
 
-type ExtensionsApiMock = {
+type ExtensionsAPIMock = {
   connect: Mock<SandboxExtensionsAPI['connect']>;
   health: Mock<SandboxExtensionsAPI['health']>;
   stop: Mock<SandboxExtensionsAPI['stop']>;
@@ -27,9 +27,9 @@ type ExtensionsApiMock = {
 
 function makeSandbox(): {
   sandbox: SandboxLike;
-  api: ExtensionsApiMock;
+  api: ExtensionsAPIMock;
 } {
-  const api: ExtensionsApiMock = {
+  const api: ExtensionsAPIMock = {
     connect: vi.fn(async () => ({}) as unknown),
     health: vi.fn(async () => ({}) as ExtensionHealth),
     stop: vi.fn(async () => {})
@@ -125,7 +125,7 @@ describe('SandboxExtension', () => {
 });
 
 describe('SandboxExtension (sidecar mode)', () => {
-  interface FakeApi {
+  interface FakeAPI {
     do(input: string): Promise<string>;
   }
 
@@ -136,7 +136,7 @@ describe('SandboxExtension (sidecar mode)', () => {
         super(s, PKG);
       }
       async run(input: string) {
-        const stub = await this.sidecar<FakeApi>();
+        const stub = await this.sidecar<FakeAPI>();
         return stub.do(input);
       }
       health() {
