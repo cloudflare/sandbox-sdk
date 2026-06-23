@@ -104,6 +104,10 @@ import {
   sanitizeSandboxId,
   validatePort
 } from './security';
+import {
+  isSessionInitInvalidated,
+  SessionInitInvalidatedError
+} from './session-init';
 import { parseSSEStream } from './sse-parser';
 import {
   buildS3fsSource,
@@ -3522,6 +3526,36 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSessionInit = init;
     try {
       return await promise;
+    } catch (err) {
+      // Retry once when the container generation was advanced (by onStop)
+      // while the initial createSession RPC was in flight. The fresh
+      // generation is captured after the failed attempt so the retry
+      // targets the new container.
+      if (isSessionInitInvalidated(err)) {
+        // Fast path: a concurrent caller may have already initialized the
+        // session by the time we get here.
+        if (this.defaultSession === sessionId) return this.defaultSession;
+        // Join an in-flight init for the current generation that was started
+        // by a concurrent caller rather than starting a parallel one. The guard
+        // `freshPending !== init` prevents joining the same slot that just
+        // failed (which would return an already-rejected promise).
+        const freshPending = this.defaultSessionInit;
+        if (
+          freshPending != null &&
+          freshPending !== init &&
+          freshPending.sessionId === sessionId &&
+          freshPending.generation === this.containerGeneration
+        ) {
+          return freshPending.promise;
+        }
+        // No concurrent init exists: start a fresh one with the current
+        // generation.
+        return await this.initializeDefaultSession(
+          sessionId,
+          this.containerGeneration
+        );
+      }
+      throw err;
     } finally {
       // Identity guard: only clear the slot if it still holds this
       // attempt. A newer mismatching caller or an onStop may have
@@ -3562,9 +3596,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Fail the attempt so the next caller starts fresh against the new
     // container.
     if (generation !== this.containerGeneration) {
-      throw new Error(
-        'Default session initialization was invalidated by a container stop'
-      );
+      throw new SessionInitInvalidatedError();
     }
 
     // Durable storage is the cross-eviction source of truth for the default

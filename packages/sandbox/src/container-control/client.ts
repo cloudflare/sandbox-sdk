@@ -94,6 +94,7 @@ import {
 } from '@repo/shared/errors';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
+import { SandboxError } from '../errors/classes';
 import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
@@ -163,6 +164,12 @@ interface RPCErrorPayload {
  * no longer in service.
  */
 export function translateRPCError(error: unknown): never {
+  // Preserve locally-created SDK errors. These already carry the correct
+  // code, context, and HTTP status. Re-wrapping them would create a new
+  // instance with an empty context (no `details` property) and lose the
+  // original structured information.
+  if (error instanceof SandboxError) throw error;
+
   if (error instanceof Error) {
     // Format (1): propagated error properties. Distinguish from arbitrary
     // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the

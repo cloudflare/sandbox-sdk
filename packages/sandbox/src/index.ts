@@ -108,14 +108,26 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
+export type {
+  ContainerUnavailableContext,
+  OperationInterruptedContext,
+  OperationInterruptedReason,
+  RPCTransportContext,
+  RPCTransportErrorKind
+} from './errors';
 // Export backup and process readiness errors
 export {
   BackupCreateError,
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  // Container availability error (raised when the sandbox container is not
+  // yet ready to accept requests or was replaced during a connection attempt)
+  ContainerUnavailableError,
   InvalidBackupConfigError,
+  // Operation lifecycle error (raised when a sandbox-owned operation is
+  // interrupted by a runtime replacement or sandbox lifetime change)
+  OperationInterruptedError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
   // RPC transport error (raised on capnweb WebSocket session failures)
