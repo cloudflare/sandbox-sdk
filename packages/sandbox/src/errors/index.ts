@@ -47,6 +47,7 @@ export type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorCodeType,
   ErrorResponse,
@@ -91,6 +92,8 @@ export {
   CommandError,
   // Command Errors
   CommandNotFoundError,
+  // Container Availability Errors (SDK-side)
+  ContainerUnavailableError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,

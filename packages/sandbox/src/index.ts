@@ -108,13 +108,20 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
+export type {
+  ContainerUnavailableContext,
+  RPCTransportContext,
+  RPCTransportErrorKind
+} from './errors';
 // Export backup and process readiness errors
 export {
   BackupCreateError,
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  // Container availability error (raised when the sandbox container is not
+  // yet ready to accept requests or was replaced during a connection attempt)
+  ContainerUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,

@@ -369,9 +369,11 @@ describe('ContainerControlConnection', () => {
         });
 
         const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toThrow(
-          'WebSocket upgrade failed: 500'
-        );
+        // Exhausted retryable responses now surface as ContainerUnavailableError.
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          code: 'CONTAINER_UNAVAILABLE',
+          context: { reason: 'rpc_upgrade_failed', retryable: true }
+        });
 
         // Run all timers — connect() must settle even with fake timers.
         await vi.advanceTimersByTimeAsync(60_000);
@@ -411,9 +413,12 @@ describe('ContainerControlConnection', () => {
         retryTimeoutMs: 0
       });
 
-      await expect(conn.connect()).rejects.toThrow(
-        'WebSocket upgrade failed: 500'
-      );
+      // Even when retries are disabled, a retryable status surfaces as
+      // ContainerUnavailableError (not a generic upgrade_failed message).
+      await expect(conn.connect()).rejects.toMatchObject({
+        code: 'CONTAINER_UNAVAILABLE',
+        context: { reason: 'rpc_upgrade_failed', retryable: true }
+      });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -458,9 +463,11 @@ describe('ContainerControlConnection', () => {
         conn.setRetryTimeoutMs(1_000);
 
         const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toThrow(
-          'WebSocket upgrade failed: 503'
-        );
+        // Budget too small for retry: ContainerUnavailableError surfaces immediately.
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          code: 'CONTAINER_UNAVAILABLE',
+          context: { reason: 'rpc_upgrade_failed', retryable: true }
+        });
 
         await vi.advanceTimersByTimeAsync(60_000);
         await assertion;
@@ -506,6 +513,54 @@ describe('ContainerControlConnection', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('structured error classification', () => {
+    it('throws ContainerUnavailableError when upgrade response contains structured CONTAINER_UNAVAILABLE body', async () => {
+      const body = JSON.stringify({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: 'Container is starting',
+        context: { reason: 'container_starting', retryable: true }
+      });
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect((error as Error).constructor.name).toBe(
+        'ContainerUnavailableError'
+      );
+      expect((error as { context?: { reason?: string } }).context?.reason).toBe(
+        'container_starting'
+      );
+    });
+
+    it('fires onClose after a failed connect so the client can discard the poisoned connection', async () => {
+      const onClose = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi
+            .fn()
+            .mockResolvedValue(
+              new Response('Container unavailable', { status: 503 })
+            )
+        },
+        retryTimeoutMs: 0,
+        onClose
+      });
+
+      await expect(conn.connect()).rejects.toThrow();
+      expect(onClose).toHaveBeenCalledOnce();
     });
   });
 

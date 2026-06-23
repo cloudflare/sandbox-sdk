@@ -20,11 +20,62 @@ import type {
   SandboxWatchAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
+import { ErrorCode, getHttpStatus, getSuggestion } from '@repo/shared/errors';
 import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
+import { createErrorFromResponse } from '../errors/adapter';
 import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
 } from '../response-retry';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Wire shape used by the container and by SDK-internal throws. */
+interface StructuredErrorBody {
+  code?: string;
+  message?: string;
+  context?: Record<string, unknown>;
+}
+
+/**
+ * Attempt to parse a structured CONTAINER_UNAVAILABLE JSON body from a
+ * non-101 upgrade response. Returns a typed ContainerUnavailableError when
+ * the body contains a recognized code, or null if the response is not
+ * JSON / not a container availability error.
+ *
+ * The response body is consumed only once via `clone()` so the caller still
+ * holds the original Response.
+ */
+async function tryParseContainerUnavailable(
+  response: Response
+): Promise<Error | null> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) return null;
+
+  try {
+    const body = (await response.clone().json()) as StructuredErrorBody;
+    if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
+
+    return createErrorFromResponse({
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: body.message ?? 'Container is unavailable',
+      context: body.context ?? {
+        reason: 'container_replaced',
+        retryable: true
+      },
+      httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+      suggestion: getSuggestion(
+        ErrorCode.CONTAINER_UNAVAILABLE,
+        body.context ?? ({} as Record<string, unknown>)
+      ),
+      timestamp: new Date().toISOString()
+    });
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Connection manager
@@ -58,14 +109,12 @@ export interface ContainerControlConnectionOptions {
    */
   localMain?: any;
   /**
-   * Invoked when an active WebSocket transitions to closed/errored.
-   * Fired at most once per successful connection from the WS event
-   * handlers in `doConnect`. Gives owners a synchronous teardown
-   * signal so recovery doesn't depend on a periodic poller running
-   * inside what may be an idle isolate.
+   * Invoked when connection setup fails or an active WebSocket transitions
+   * to closed/errored. Fired at most once per connection attempt. Gives
+   * owners a synchronous teardown signal so recovery doesn't depend on a
+   * periodic poller running inside what may be an idle isolate.
    *
-   * Not fired for `doConnect` failures (the rejected `connect()`
-   * promise is the signal in that case) nor for `disconnect()`.
+   * Not fired for `disconnect()`.
    */
   onClose?: () => void;
 }
@@ -231,6 +280,28 @@ export class ContainerControlConnection {
       const response = await this.fetchUpgradeWithRetry();
 
       if (response.status !== 101) {
+        // Try to surface a structured ContainerUnavailableError from the
+        // response body so callers get typed context rather than a generic
+        // upgrade_failed RPCTransportError.
+        const structured = await tryParseContainerUnavailable(response);
+        if (structured) throw structured;
+
+        // No structured body. If the status was retryable, we exhausted the
+        // retry budget without the container becoming available.
+        if (isRetryableWebSocketUpgradeResponse(response)) {
+          throw createErrorFromResponse({
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
+            message: `Container was unavailable after exhausting upgrade retry budget (status ${response.status})`,
+            context: { reason: 'rpc_upgrade_failed', retryable: true },
+            httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+            suggestion: getSuggestion(
+              ErrorCode.CONTAINER_UNAVAILABLE,
+              {} as Record<string, unknown>
+            ),
+            timestamp: new Date().toISOString()
+          });
+        }
+
         throw new Error(
           `WebSocket upgrade failed: ${response.status} ${response.statusText}`
         );
@@ -259,6 +330,11 @@ export class ContainerControlConnection {
     } catch (error) {
       this.connected = false;
       this.transport.abort(error);
+      // Signal the client to discard this connection. The transport is now
+      // permanently aborted; any in-flight or future stub calls would fail
+      // immediately. Firing onClose here lets the client null out its
+      // reference so the next RPC attempt creates a fresh connection.
+      this.fireOnClose();
       this.logger.error(
         'ContainerControlConnection failed',
         error instanceof Error ? error : new Error(String(error))

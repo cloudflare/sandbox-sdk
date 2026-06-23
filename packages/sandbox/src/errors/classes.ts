@@ -13,6 +13,7 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -821,6 +822,33 @@ export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
   }
   get backupId() {
     return this.context.backupId;
+  }
+}
+
+// ============================================================================
+// Container Availability Errors (SDK-side)
+// ============================================================================
+
+/**
+ * Raised when the sandbox container cannot accept an incoming RPC connection.
+ * The container may be starting up, temporarily unhealthy, or was replaced
+ * while the connection attempt was in progress.
+ *
+ * Always retryable: the operation that triggered the connection attempt can
+ * be retried once the container is ready.
+ */
+export class ContainerUnavailableError extends SandboxError<ContainerUnavailableContext> {
+  constructor(errorResponse: ErrorResponse<ContainerUnavailableContext>) {
+    super(errorResponse);
+    this.name = 'ContainerUnavailableError';
+  }
+
+  get reason(): ContainerUnavailableContext['reason'] {
+    return this.context.reason;
+  }
+
+  get retryAfterMs(): number | undefined {
+    return this.context.retryAfterMs;
   }
 }
 

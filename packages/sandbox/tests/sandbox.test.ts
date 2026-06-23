@@ -857,7 +857,11 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(calls[2][1]).toBe('sandbox-renamed');
     });
 
-    it('invalidates an in-flight init when onStop runs mid-flight', async () => {
+    it('retries default session init after onStop invalidates an in-flight init', async () => {
+      // An exec whose session-create RPC completes after a container stop now
+      // retries the session init once with the new generation. The retry
+      // succeeds, writing the session to storage, and the original exec call
+      // also resolves.
       let resolveCreate!: (value: unknown) => void;
       vi.mocked(sandbox.client.utils.createSession).mockReturnValueOnce(
         new Promise((resolve) => {
@@ -869,15 +873,23 @@ describe('Sandbox - Automatic Session Management', () => {
       await (sandbox as any).onStop();
 
       resolveCreate({ success: true, id: 'sandbox-default', message: 'ok' });
-      await expect(inflight).rejects.toThrow();
+      // Retry absorbs the invalidation — the exec recovers transparently.
+      await inflight;
 
+      // The retry's successful init writes the session to storage.
       const defaultSessionPuts = vi
         .mocked(mockCtx.storage.put)
         .mock.calls.filter((call) => call[0] === 'defaultSession');
-      expect(defaultSessionPuts).toHaveLength(0);
+      expect(defaultSessionPuts).toHaveLength(1);
+      // createSession: once for the invalidated attempt + once for the retry.
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
     });
 
-    it('does not join a stale init promise after onStop clears it', async () => {
+    it('uses the session already established by a concurrent caller when retrying', async () => {
+      // When onStop fires while a session-create RPC is in flight, and a
+      // concurrent exec starts a fresh init, the retrying exec picks up the
+      // session that the concurrent exec wrote rather than issuing a third
+      // createSession call.
       let resolveFirst!: (value: unknown) => void;
       vi.mocked(sandbox.client.utils.createSession)
         .mockReturnValueOnce(
@@ -896,10 +908,55 @@ describe('Sandbox - Automatic Session Management', () => {
       const second = sandbox.exec('echo two');
 
       resolveFirst({ success: true, id: 'sandbox-default', message: 'ok' });
-      await expect(first).rejects.toThrow();
+      // Both execs resolve: the retry in `first` sees the session that
+      // `second` already established via the fast path in ensureDefaultSession.
+      await first;
       await second;
 
+      // Only two createSession calls: one for the invalidated `first` attempt,
+      // one for `second`. The `first` retry uses the fast path.
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries default session initialization once after container generation invalidation', async () => {
+      let callCount = 0;
+      vi.spyOn(
+        sandbox as unknown as {
+          initializeDefaultSession: (
+            id: string,
+            gen: number
+          ) => Promise<string>;
+        },
+        'initializeDefaultSession'
+      )
+        .mockImplementationOnce(async (_id: string) => {
+          callCount++;
+          throw new Error(
+            'Default session initialization was invalidated by a container stop'
+          );
+        })
+        .mockImplementationOnce(async (sessionId: string) => {
+          callCount++;
+          // Mirror the real impl: write to in-memory cache so ensureDefaultSession
+          // sees the session as initialized on success.
+          (sandbox as unknown as { defaultSession: string }).defaultSession =
+            sessionId;
+          return sessionId;
+        });
+
+      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
+        success: true,
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo ok',
+        timestamp: new Date().toISOString()
+      } as never);
+
+      // Should succeed: retry absorbs the generation-invalidation error.
+      await sandbox.exec('echo ok');
+
+      expect(callCount).toBe(2);
     });
 
     it('keeps default shell state independent of sessionless proxy configuration', async () => {

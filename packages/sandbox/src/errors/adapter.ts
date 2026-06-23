@@ -13,6 +13,7 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -48,6 +49,7 @@ import {
   CodeExecutionError,
   CommandError,
   CommandNotFoundError,
+  ContainerUnavailableError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,
@@ -285,6 +287,13 @@ export function createErrorFromResponse(
     case ErrorCode.CODE_EXECUTION_ERROR:
       return new CodeExecutionError(
         errorResponse as unknown as ErrorResponse<CodeExecutionContext>
+      );
+
+    // Container availability errors (SDK-side, raised when the sandbox
+    // container cannot accept the incoming RPC connection).
+    case ErrorCode.CONTAINER_UNAVAILABLE:
+      return new ContainerUnavailableError(
+        errorResponse as unknown as ErrorResponse<ContainerUnavailableContext>
       );
 
     // RPC Transport Errors (SDK-side, raised by translateRPCError on

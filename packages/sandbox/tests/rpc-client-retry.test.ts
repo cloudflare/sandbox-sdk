@@ -1,3 +1,5 @@
+import type { ErrorResponse } from '@repo/shared/errors';
+import { ErrorCode } from '@repo/shared/errors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -41,7 +43,11 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
-import { ContainerControlClient } from '../src/container-control/client';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
+import { SandboxError } from '../src/errors/classes';
 
 describe('ContainerControlClient retry timeout wiring', () => {
   beforeEach(() => {
@@ -105,5 +111,31 @@ describe('ContainerControlClient retry timeout wiring', () => {
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBe(15_000);
+  });
+});
+
+describe('translateRPCError', () => {
+  it('re-throws SandboxError subclasses without wrapping as RPCTransportError', () => {
+    const originalError = new SandboxError({
+      code: ErrorCode.BACKUP_RESTORE_FAILED,
+      message: 'Restore interrupted',
+      context: { dir: '/workspace', backupId: 'bk-1' },
+      httpStatus: 500,
+      timestamp: new Date().toISOString()
+    } as ErrorResponse<{ dir: string; backupId: string }>);
+
+    let caughtError: unknown;
+    try {
+      translateRPCError(originalError);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    // The same instance must be re-thrown unchanged, not a freshly
+    // constructed error that loses context or changes identity.
+    expect(caughtError).toBe(originalError);
+    expect((caughtError as Error).constructor.name).not.toBe(
+      'RPCTransportError'
+    );
   });
 });

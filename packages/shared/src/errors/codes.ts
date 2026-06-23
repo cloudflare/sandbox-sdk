@@ -147,7 +147,12 @@ export const ErrorCode = {
   // mid-call (peer close), the WebSocket failed before/after upgrade, the
   // peer sent a frame the transport cannot handle, or the session was
   // disposed while a call was in flight.
-  RPC_TRANSPORT_ERROR: 'RPC_TRANSPORT_ERROR'
+  RPC_TRANSPORT_ERROR: 'RPC_TRANSPORT_ERROR',
+
+  // Container Availability Errors (503) — raised when the sandbox container
+  // is not yet ready to accept requests or was replaced while a connection
+  // attempt was in progress. Always retryable from the caller's perspective.
+  CONTAINER_UNAVAILABLE: 'CONTAINER_UNAVAILABLE'
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

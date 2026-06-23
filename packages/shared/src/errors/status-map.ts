@@ -71,6 +71,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
   [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
   [ErrorCode.RPC_TRANSPORT_ERROR]: 503,
+  [ErrorCode.CONTAINER_UNAVAILABLE]: 503,
 
   // 408 Request Timeout
   [ErrorCode.PROCESS_READY_TIMEOUT]: 408,

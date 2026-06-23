@@ -98,6 +98,9 @@ export function getSuggestion(
     case ErrorCode.BACKUP_RESTORE_FAILED:
       return 'Backup restoration failed. The archive may be corrupted or the target directory may be in use';
 
+    case ErrorCode.CONTAINER_UNAVAILABLE:
+      return 'The sandbox container is temporarily unavailable. Retry the same operation — it will succeed once the container is ready.';
+
     case ErrorCode.RPC_TRANSPORT_ERROR: {
       const kind = context.kind as string | undefined;
       switch (kind) {
