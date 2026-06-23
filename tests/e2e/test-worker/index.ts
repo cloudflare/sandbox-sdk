@@ -120,6 +120,9 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   // Command errors
   CommandNotFoundError: { status: 404, code: 'COMMAND_NOT_FOUND' },
   CommandError: { status: 500, code: 'COMMAND_EXECUTION_ERROR' },
+  // Runtime lifecycle errors
+  ContainerUnavailableError: { status: 503, code: 'CONTAINER_UNAVAILABLE' },
+  OperationInterruptedError: { status: 409, code: 'OPERATION_INTERRUPTED' },
   // Process errors
   ProcessNotFoundError: { status: 404, code: 'PROCESS_NOT_FOUND' },
   ProcessError: { status: 500, code: 'PROCESS_ERROR' },
