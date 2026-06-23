@@ -1024,6 +1024,41 @@ console.log('Echo server on port ' + port);
         });
       }
 
+      // Code Interpreter - Execute Code with callbacks through the Worker proxy.
+      // The callbacks are defined here in the Worker and passed to runCode on the
+      // getSandbox() stub, so they cross the Worker->DO boundary as jsRPC stubs.
+      if (
+        url.pathname === '/api/code/execute/callbacks' &&
+        request.method === 'POST'
+      ) {
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        const results: unknown[] = [];
+        let error: unknown;
+        const execution = await sandbox.interpreter.runCode(body.code, {
+          ...(body.options || {}),
+          onStdout: (message) => {
+            stdout.push(message.text);
+          },
+          onStderr: (message) => {
+            stderr.push(message.text);
+          },
+          onResult: (result) => {
+            results.push(result.text ?? null);
+          },
+          onError: (err) => {
+            error = err;
+          }
+        });
+        return new Response(
+          JSON.stringify({
+            callbacks: { stdout, stderr, results, error },
+            execution
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
       // Code Interpreter - Execute Code with Streaming
       if (
         url.pathname === '/api/code/execute/stream' &&

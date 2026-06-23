@@ -249,6 +249,17 @@ data for one-shot results.
   `ReadableStream` (transferable). Prefer accumulating server-side and
   returning a plain, cloneable result where possible (see _Return values
   must be RPC-safe_).
+- **Callback parameters cross as jsRPC stubs.** When a Worker calls
+  `sandbox.<ext>.<method>(arg, fn)` directly, `fn` is passed in the
+  `callExtension` `args` array and crosses the Worker→DO hop. Cloudflare
+  jsRPC stubs the function and routes each call back to the Worker — it is
+  **not** structured-cloned (that would throw `DataCloneError`). This is a
+  supported feature, but it is an implicit dependency on jsRPC function
+  stubs for `unknown[]` args. Each invocation is a round-trip, so prefer a
+  returned `ReadableStream` for high-volume streaming to a Worker. Inside
+  the DO, the same callback is a plain local call. The interpreter's
+  `runCode` callbacks exercise this path in
+  `tests/e2e/code-interpreter-workflow.test.ts`.
 
 ## Wire protocol (hash-first connect)
 
