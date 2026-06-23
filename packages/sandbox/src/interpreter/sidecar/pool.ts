@@ -3,15 +3,14 @@
  *
  * Adapted from the container binary's former `runtime/process-pool.ts`. It is
  * intentionally dependency-light (no `@repo/shared`, no container `CONFIG`) so
- * it bundles cleanly into the standalone interpreter sidecar. Executor binaries
- * are resolved relative to the provisioned extension directory (`EXT_DIR`)
- * rather than baked-in container paths.
+ * it bundles cleanly into the standalone interpreter sidecar.
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Mutex, Semaphore } from 'async-mutex';
 
 /** Minimal logger so the pool stays free of host logging dependencies. */
@@ -27,7 +26,7 @@ const noopLogger: SidecarLogger = {
   error() {}
 };
 
-const EXT_DIR = process.env.EXT_DIR ?? process.cwd();
+const SIDECAR_DIST_DIR = dirname(fileURLToPath(import.meta.url));
 
 const SPAWN_TIMEOUT_MS = parseInt(
   process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
@@ -256,8 +255,8 @@ export class ProcessPoolManager {
     }
 
     const candidates = [
-      join(EXT_DIR, 'executors/javascript/node_executor.mjs'),
-      join(EXT_DIR, 'executors/javascript/node_executor.js')
+      join(SIDECAR_DIST_DIR, 'executors/javascript/node_executor.mjs'),
+      join(SIDECAR_DIST_DIR, 'executors/javascript/node_executor.js')
     ];
     const resolved = candidates.find((path) => existsSync(path));
 
@@ -273,7 +272,7 @@ export class ProcessPoolManager {
   }
 
   private pythonExecutorPath(): string {
-    return join(EXT_DIR, 'executors/python/ipython_executor.py');
+    return join(SIDECAR_DIST_DIR, 'executors/python/ipython_executor.py');
   }
 
   private releaseProcessSlot(processId: string): void {
