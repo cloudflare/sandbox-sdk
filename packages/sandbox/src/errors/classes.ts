@@ -897,8 +897,11 @@ export class RPCTransportError extends SandboxError<RPCTransportContext> {
  * The caller can retry the full operation when `context.retryable` is true.
  */
 export class OperationInterruptedError extends SandboxError<OperationInterruptedContext> {
-  constructor(errorResponse: ErrorResponse<OperationInterruptedContext>) {
-    super(errorResponse);
+  constructor(
+    errorResponse: ErrorResponse<OperationInterruptedContext>,
+    options?: { cause?: unknown }
+  ) {
+    super(errorResponse, options);
     this.name = 'OperationInterruptedError';
   }
 

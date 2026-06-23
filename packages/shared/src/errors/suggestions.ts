@@ -102,7 +102,7 @@ export function getSuggestion(
       return 'The sandbox container is temporarily unavailable. Retry the same operation — it will succeed once the container is ready.';
 
     case ErrorCode.OPERATION_INTERRUPTED:
-      return 'The operation was interrupted by a sandbox runtime change. Retry the full operation from the beginning.';
+      return 'The sandbox operation was interrupted by a runtime change. Retry only if the operation is idempotent, or verify sandbox state before retrying.';
 
     case ErrorCode.RPC_TRANSPORT_ERROR: {
       const kind = context.kind as string | undefined;

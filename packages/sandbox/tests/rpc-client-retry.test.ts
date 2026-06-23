@@ -13,12 +13,28 @@ interface CapturedOptions {
   retryTimeoutMs?: number;
 }
 
+interface CapturedRPCMain {
+  commands: {
+    execute: (
+      command: string,
+      sessionId: string,
+      options?: { timeoutMs?: number }
+    ) => Promise<unknown>;
+  };
+}
+
 const captured: {
   options: CapturedOptions[];
   setRetryTimeoutCalls: number[];
+  rpcMain: CapturedRPCMain;
 } = {
   options: [],
-  setRetryTimeoutCalls: []
+  setRetryTimeoutCalls: [],
+  rpcMain: {
+    commands: {
+      execute: async () => ({ success: true })
+    }
+  }
 };
 
 vi.mock('../src/container-control/connection', () => ({
@@ -37,7 +53,7 @@ vi.mock('../src/container-control/connection', () => ({
     }
     disconnect() {}
     rpc() {
-      return new Proxy({}, { get: () => ({}) });
+      return captured.rpcMain;
     }
     async connect() {}
   }
@@ -47,12 +63,17 @@ import {
   ContainerControlClient,
   translateRPCError
 } from '../src/container-control/client';
-import { SandboxError } from '../src/errors/classes';
+import { OperationInterruptedError, SandboxError } from '../src/errors/classes';
 
 describe('ContainerControlClient retry timeout wiring', () => {
   beforeEach(() => {
     captured.options.length = 0;
     captured.setRetryTimeoutCalls.length = 0;
+    captured.rpcMain = {
+      commands: {
+        execute: async () => ({ success: true })
+      }
+    };
     vi.useFakeTimers();
   });
 
@@ -97,6 +118,29 @@ describe('ContainerControlClient retry timeout wiring', () => {
     expect(captured.setRetryTimeoutCalls).toEqual([45_000]);
   });
 
+  it('attaches operation context to interrupted RPC method calls', async () => {
+    captured.rpcMain.commands.execute = async () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() }
+    });
+
+    await expect(
+      client.commands.execute('echo ready', 'default')
+    ).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: {
+        reason: 'transport_disposed',
+        operation: 'commands.execute',
+        phase: 'rpc_call',
+        admitted: 'unknown',
+        retryable: false
+      }
+    });
+  });
+
   it('caches setRetryTimeoutMs() calls made before any connection is created', () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() }
@@ -115,6 +159,30 @@ describe('ContainerControlClient retry timeout wiring', () => {
 });
 
 describe('translateRPCError', () => {
+  it('maps session-disposed RPC errors to OperationInterruptedError with operation context', () => {
+    let caughtError: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'commands.execute' }
+      );
+    } catch (e) {
+      caughtError = e;
+    }
+
+    expect(caughtError).toBeInstanceOf(OperationInterruptedError);
+    expect((caughtError as OperationInterruptedError).code).toBe(
+      ErrorCode.OPERATION_INTERRUPTED
+    );
+    expect((caughtError as OperationInterruptedError).context).toMatchObject({
+      reason: 'transport_disposed',
+      operation: 'commands.execute',
+      phase: 'rpc_call',
+      admitted: 'unknown',
+      retryable: false
+    });
+  });
+
   it('re-throws SandboxError subclasses without wrapping as RPCTransportError', () => {
     const originalError = new SandboxError({
       code: ErrorCode.BACKUP_RESTORE_FAILED,

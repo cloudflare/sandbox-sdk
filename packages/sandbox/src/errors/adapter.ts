@@ -295,7 +295,8 @@ export function createErrorFromResponse(
     // operation is interrupted by a runtime replacement or lifetime change.
     case ErrorCode.OPERATION_INTERRUPTED:
       return new OperationInterruptedError(
-        errorResponse as unknown as ErrorResponse<OperationInterruptedContext>
+        errorResponse as unknown as ErrorResponse<OperationInterruptedContext>,
+        options
       );
 
     // Container availability errors (SDK-side, raised when the sandbox
