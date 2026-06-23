@@ -80,6 +80,10 @@ export type {
 } from './request-types.js';
 // RPC interface types (shared between SDK and container)
 export type {
+  EnsureNamedTunnelRunRequest,
+  EnsureQuickTunnelRunRequest,
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
   NamedTunnelInfo,
   QuickTunnelInfo,
   SandboxAPI,
@@ -94,8 +98,13 @@ export type {
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
   TunnelInfo,
-  TunnelOptions
+  TunnelOptions,
+  TunnelRunIdentity,
+  TunnelRunMode,
+  TunnelRunSnapshot
 } from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';

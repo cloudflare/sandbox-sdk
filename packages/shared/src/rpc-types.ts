@@ -297,6 +297,78 @@ export interface TunnelOptions {
   name?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Runtime-run tunnel control types
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable logical identity for a single cloudflared process run.
+ * `tunnelId` is SDK-issued; `runId` is a per-run nonce minted by the SDK
+ * to support idempotent admission and stale-callback fencing.
+ */
+export interface TunnelRunIdentity {
+  tunnelId: string;
+  runId: string;
+}
+
+/** Discriminator for quick vs. named cloudflared modes. */
+export type TunnelRunMode = 'quick' | 'named';
+
+/** Request to start or replay a quick tunnel run. */
+export interface EnsureQuickTunnelRunRequest {
+  tunnelId: string;
+  runId: string;
+  mode: 'quick';
+  port: number;
+}
+
+/**
+ * Request to start or replay a named tunnel run.
+ * `token` is named-mode only and must never be persisted or logged.
+ */
+export interface EnsureNamedTunnelRunRequest {
+  tunnelId: string;
+  runId: string;
+  mode: 'named';
+  port: number;
+  /** Opaque Cloudflare tunnel token. Never logged or stored. */
+  token: string;
+}
+
+export type EnsureTunnelRunRequest =
+  | EnsureQuickTunnelRunRequest
+  | EnsureNamedTunnelRunRequest;
+
+/**
+ * Runtime-local snapshot of a running cloudflared process.
+ * Quick tunnels carry `url` and `hostname`; named tunnels leave them absent
+ * because the SDK owns the hostname via the Cloudflare API.
+ */
+export interface TunnelRunSnapshot {
+  tunnelId: string;
+  runId: string;
+  mode: TunnelRunMode;
+  port: number;
+  /** Public URL for quick tunnels (absent on named). */
+  url?: string;
+  /** Hostname portion of `url` for quick tunnels (absent on named). */
+  hostname?: string;
+  startedAt: string;
+}
+
+export interface EnsureTunnelRunResult {
+  run: TunnelRunSnapshot;
+  /** `true` when this call spawned the process; `false` on idempotent replay. */
+  started: boolean;
+}
+
+export type StopTunnelRunRequest = TunnelRunIdentity;
+
+export interface StopTunnelRunResult {
+  /** `true` when the exact run was found and stopped; `false` otherwise. */
+  stopped: boolean;
+}
+
 export interface SandboxTunnelsAPI {
   /** Spawn `cloudflared tunnel --url`. No credentials required. */
   runQuickTunnel(id: string, port: number): Promise<TunnelInfo>;
@@ -316,6 +388,21 @@ export interface SandboxTunnelsAPI {
   destroyTunnel(id: string): Promise<{ success: true; id: string }>;
   /** List tunnels currently running inside the container. */
   listTunnels(): Promise<TunnelInfo[]>;
+  /**
+   * Start or replay a cloudflared process run identified by `(tunnelId, runId)`.
+   * Same `runId` with same params is idempotent (`started: false`).
+   * Same `runId` with different params, or a different active run on the
+   * same port or tunnelId, returns a `TUNNEL_RUN_CONFLICT` error.
+   */
+  ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult>;
+  /**
+   * Stop the cloudflared process identified by the exact `(tunnelId, runId)` pair.
+   * Returns `{ stopped: true }` when the run was found and stopped;
+   * `{ stopped: false }` when no matching run is active (service success).
+   */
+  stopTunnelRun(request: StopTunnelRunRequest): Promise<StopTunnelRunResult>;
 }
 
 /**
@@ -337,6 +424,7 @@ export interface SandboxControlCallback {
   onTunnelExit(
     id: string,
     port: number,
-    exitCode: number | null
+    exitCode: number | null,
+    runId?: string
   ): Promise<void>;
 }
