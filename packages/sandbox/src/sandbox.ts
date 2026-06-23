@@ -59,6 +59,11 @@ import {
   BACKUP_ALLOWED_PREFIXES,
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
+import {
+  getHttpStatus,
+  getSuggestion,
+  type OperationInterruptedContext
+} from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { type ExecuteResponse, SandboxClient } from './clients';
@@ -77,6 +82,7 @@ import {
   CustomDomainRequiredError,
   ErrorCode,
   InvalidBackupConfigError,
+  OperationInterruptedError,
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
@@ -86,6 +92,7 @@ import {
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
+import { isPlatformTransientError } from './platform-errors';
 import {
   forwardPreviewRequest,
   type PreviewTCPPort
@@ -623,6 +630,65 @@ function applySandboxConfiguration(
   return Promise.all(operations).then(() => undefined);
 }
 
+function createPlatformInterruptedError(
+  error: unknown,
+  operation: string
+): OperationInterruptedError | null {
+  if (!isPlatformTransientError(error)) return null;
+
+  const context: OperationInterruptedContext = {
+    reason: 'runtime_replaced',
+    operation,
+    phase: 'durable_object_call',
+    admitted: 'unknown',
+    retryable: false
+  };
+
+  return new OperationInterruptedError(
+    {
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: `Sandbox operation ${operation} was interrupted while the platform was updating the sandbox runtime`,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+      suggestion: getSuggestion(
+        ErrorCode.OPERATION_INTERRUPTED,
+        context as unknown as Record<string, unknown>
+      ),
+      timestamp: new Date().toISOString()
+    },
+    { cause: error }
+  );
+}
+
+function translatePlatformInterruption(
+  error: unknown,
+  operation: string
+): never {
+  throw createPlatformInterruptedError(error, operation) ?? error;
+}
+
+function withSandboxOperationContext<TArgs extends unknown[], TResult>(
+  operation: string,
+  fn: (...args: TArgs) => TResult
+): (...args: TArgs) => TResult {
+  return (...args: TArgs): TResult => {
+    try {
+      const result = fn(...args);
+      if (
+        result != null &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        return (result as unknown as Promise<unknown>).catch((error: unknown) =>
+          translatePlatformInterruption(error, operation)
+        ) as TResult;
+      }
+      return result;
+    } catch (error) {
+      translatePlatformInterruption(error, operation);
+    }
+  };
+}
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -820,7 +886,10 @@ export function getSandbox<T extends Sandbox<any>>(
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
-        return (...args: unknown[]) => stub.callTunnels(method, args);
+        return withSandboxOperationContext(
+          `sandbox.tunnels.${method}`,
+          (...args: unknown[]) => stub.callTunnels(method, args)
+        );
       }
     })
   };
@@ -831,7 +900,14 @@ export function getSandbox<T extends Sandbox<any>>(
   return new Proxy(stub, {
     get(target, prop) {
       if (typeof prop === 'string' && prop in enhancedMethods) {
-        return enhancedMethods[prop as keyof typeof enhancedMethods];
+        const method = enhancedMethods[prop as keyof typeof enhancedMethods];
+        if (typeof method === 'function') {
+          return withSandboxOperationContext(
+            `sandbox.${prop}`,
+            method as (...args: unknown[]) => unknown
+          );
+        }
+        return method;
       }
       // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
       return target[prop];

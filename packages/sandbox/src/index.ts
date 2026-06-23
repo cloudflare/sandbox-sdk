@@ -11,6 +11,10 @@ export {
   SandboxClient,
   UtilityClient
 } from './clients';
+export {
+  isDurableObjectCodeUpdateReset,
+  isPlatformTransientError
+} from './platform-errors';
 export { getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
