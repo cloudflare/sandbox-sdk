@@ -175,6 +175,40 @@ describe('SandboxExtension (sidecar mode)', () => {
     expect(second.packageHash).toBe(first.packageHash);
   });
 
+  it('retries when capnweb wraps ExtensionTarballRequired as RPCTransportError', async () => {
+    const { ext, api } = buildExt();
+    const fakeStub = { do: vi.fn(async (s: string) => `did:${s}`) };
+
+    api.connect
+      .mockRejectedValueOnce(
+        new Error(
+          "RPCTransportError: Extension package '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' is not provisioned; resend connect() with tarball bytes"
+        )
+      )
+      .mockResolvedValueOnce(fakeStub);
+
+    await expect(ext.run('hi')).resolves.toBe('did:hi');
+    expect(api.connect).toHaveBeenCalledTimes(2);
+    const second = api.connect.mock.calls[1][0] as ExtensionConnectRequest;
+    expect(second.tarball).toBeInstanceOf(Uint8Array);
+  });
+
+  it('adds a diagnostic helper when sidecar provisioning fails after tarball retry', async () => {
+    const { ext, api } = buildExt();
+    api.connect
+      .mockRejectedValueOnce(
+        new Error(
+          "RPCTransportError: Extension package '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' is not provisioned; resend connect() with tarball bytes"
+        )
+      )
+      .mockRejectedValueOnce(new Error('bun add failed'));
+
+    await expect(ext.run('hi')).rejects.toThrow(
+      /Failed to provision sandbox sidecar package.*valid npm-style \.tgz.*bun add failed/
+    );
+    expect(api.connect).toHaveBeenCalledTimes(2);
+  });
+
   it('reconnects through the host on each sidecar call', async () => {
     const { ext, api } = buildExt();
     const firstStub = { do: vi.fn(async (s: string) => `first:${s}`) };
