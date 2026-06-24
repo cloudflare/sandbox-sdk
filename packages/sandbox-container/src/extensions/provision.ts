@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { gunzipSync } from 'node:zlib';
+import { Readable } from 'node:stream';
+import { createGunzip } from 'node:zlib';
 import type { ExtensionRegistration, Logger } from '@repo/shared';
+import tar from 'tar-stream';
 
 const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
@@ -80,7 +82,7 @@ export async function provisionPackage(
   // any test-suite `mock.module('node:fs')` interference.
   await Bun.write(tarballPath, input.tarballBytes);
 
-  const packageJSON = readPackageJSONFromTarball(input.tarballBytes);
+  const packageJSON = await readPackageJSONFromTarball(input.tarballBytes);
   const registration = deriveRegistration(packageJSON, input);
 
   input.logger.debug('Installing extension package', {
@@ -237,17 +239,10 @@ function normaliseBinPath(target: string): string {
  * Implemented in-process to avoid shelling out to `tar` and to keep the host
  * runtime independent of the container image's userland tools.
  */
-function readPackageJSONFromTarball(
+async function readPackageJSONFromTarball(
   tarballBytes: Uint8Array
-): SandboxExtensionPackageJSON {
-  const inflated = gunzipSync(tarballBytes);
-  const entry = findTarEntry(inflated, 'package/package.json');
-  if (!entry) {
-    throw new Error(
-      "Extension tarball does not contain 'package/package.json'"
-    );
-  }
-  const json = Buffer.from(entry).toString('utf8');
+): Promise<SandboxExtensionPackageJSON> {
+  const json = await readTarballEntry(tarballBytes, 'package/package.json');
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -264,67 +259,38 @@ function readPackageJSONFromTarball(
   return parsed as SandboxExtensionPackageJSON;
 }
 
-const TAR_BLOCK_SIZE = 512;
-
-/**
- * Minimal POSIX/ustar tar reader. Returns the bytes of the first regular-file
- * entry whose name matches `targetName` (after long-name prefix handling).
- *
- * Handles:
- *  - regular files (`typeflag` `'0'` or `'\0'`),
- *  - long file names emitted by GNU tar as a `'L'` header preceding the real entry.
- *
- * Does not attempt to handle sparse files, hard/symlinks, or extended PAX
- * headers \u2014 npm-produced tarballs never contain them.
- */
-function findTarEntry(
-  buffer: Buffer,
+async function readTarballEntry(
+  tarballBytes: Uint8Array,
   targetName: string
-): Uint8Array | undefined {
-  let offset = 0;
-  let nextLongName: string | undefined;
-  while (offset + TAR_BLOCK_SIZE <= buffer.length) {
-    const header = buffer.subarray(offset, offset + TAR_BLOCK_SIZE);
-    if (header[0] === 0) break; // Two consecutive zero blocks signal end of archive.
-    const name = readTarString(header, 0, 100);
-    const sizeOctal = readTarString(header, 124, 12);
-    const size = sizeOctal ? Number.parseInt(sizeOctal.trim(), 8) : 0;
-    const typeflag = String.fromCharCode(header[156]);
-    const prefix = readTarString(header, 345, 155);
+): Promise<string> {
+  const extract = tar.extract();
+  const entryPromise = new Promise<string>((resolveEntry, rejectEntry) => {
+    extract.on('entry', (header, stream, next) => {
+      if (header.name !== targetName) {
+        stream.resume();
+        stream.on('end', next);
+        return;
+      }
 
-    offset += TAR_BLOCK_SIZE;
-    const dataLength = Number.isFinite(size) ? size : 0;
-    const data = buffer.subarray(offset, offset + dataLength);
-    offset += alignTo(dataLength, TAR_BLOCK_SIZE);
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('error', rejectEntry);
+      stream.on('end', () => {
+        resolveEntry(Buffer.concat(chunks).toString('utf8'));
+        extract.destroy();
+      });
+    });
+    extract.on('error', rejectEntry);
+    extract.on('finish', () => {
+      rejectEntry(
+        new Error("Extension tarball does not contain 'package/package.json'")
+      );
+    });
+  });
 
-    if (typeflag === 'L') {
-      // GNU long-name extension: next header's name is the data of this one.
-      nextLongName = Buffer.from(data).toString('utf8').replace(/\0+$/, '');
-      continue;
-    }
+  Readable.from(Buffer.from(tarballBytes)).pipe(createGunzip()).pipe(extract);
 
-    const entryName = nextLongName ?? (prefix ? `${prefix}/${name}` : name);
-    nextLongName = undefined;
-
-    if (
-      (typeflag === '0' || typeflag === '\u0000') &&
-      entryName === targetName
-    ) {
-      return data;
-    }
-  }
-  return undefined;
-}
-
-function readTarString(buffer: Buffer, start: number, length: number): string {
-  const slice = buffer.subarray(start, start + length);
-  const end = slice.indexOf(0);
-  return slice.subarray(0, end === -1 ? slice.length : end).toString('utf8');
-}
-
-function alignTo(value: number, block: number): number {
-  const remainder = value % block;
-  return remainder === 0 ? value : value + (block - remainder);
+  return entryPromise;
 }
 
 /**
