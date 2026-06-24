@@ -400,11 +400,11 @@ The bridge supports the Sandbox SDK session mechanism through the `Session-Id` r
 - **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
 - **Use a session**: Pass `Session-Id: <session-id>` on `/exec`, `/pty`, and file operation requests.
 - **Delete a session**: `DELETE /v1/sandbox/:id/session/:sid` — tears down the session.
-- **Default session**: When no `Session-Id` header is provided, requests use the sandbox's default session.
+- **Headerless requests are stateless**: When no `Session-Id` header is provided, command and file requests do not reuse the SDK's default shell session. Use an explicit session when you need `cd`, exported environment variables, or other shell state to persist across calls.
 
 ### Session limitations
 
-- **Custom sessions don't survive container sleep.** Only the default session persists across container restarts. Custom sessions are ephemeral — if the container sleeps and restarts, custom sessions are lost.
+- **Custom sessions don't survive container sleep.** Custom sessions are ephemeral — if the container sleeps and restarts, custom sessions are lost. Create a new session after restart before sending session-scoped requests.
 - **`destroy()` kills in-flight operations immediately.** Deleting a sandbox via `DELETE /v1/sandbox/:id` calls `sandbox.destroy()`, which terminates all running commands and sessions without waiting for completion.
 - **Deleted sandbox IDs can be reused.** After destroying a sandbox, the same ID can be used again — it gets a fresh container.
 
