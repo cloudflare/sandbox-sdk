@@ -619,6 +619,68 @@ function applySandboxConfiguration(
   return Promise.all(operations).then(() => undefined);
 }
 
+/**
+ * Tracks whether the AbortSignal-not-serializable warning has already been
+ * emitted in this isolate, so we warn once per isolate rather than on every
+ * call. The compatibility flag is fixed for the isolate's lifetime, so a
+ * single notice is enough.
+ */
+let warnedAboutAbortSignalRPC = false;
+
+/**
+ * Detects whether an `AbortSignal` can cross the Worker -> Durable Object RPC
+ * boundary. Without the `enable_abortsignal_rpc` compatibility flag, the
+ * structured clone used for RPC arguments throws
+ * `DataCloneError: AbortSignal serialization is not enabled.` We probe this
+ * locally with `structuredClone` so we can react *before* the actual RPC call,
+ * which would otherwise reject (and leave an unhandled rejection inside
+ * workerd's RPC machinery).
+ */
+function isAbortSignalRPCDisabled(signal: AbortSignal): boolean {
+  try {
+    structuredClone(signal);
+    return false;
+  } catch (error) {
+    // Flag off: "AbortSignal serialization is not enabled."
+    // Flag on:  "AbortSignal can only be serialized for RPC." (RPC works)
+    // Only the former means the signal cannot cross the RPC boundary.
+    return (
+      error instanceof Error &&
+      /AbortSignal serialization is not enabled/i.test(error.message)
+    );
+  }
+}
+
+/**
+ * Returns `execOptions` with any `signal` removed when the
+ * `enable_abortsignal_rpc` compatibility flag is not set, warning the user
+ * once. This keeps `exec()` from throwing a `DataCloneError` across the RPC
+ * boundary (issue #764): the command still runs, but cancellation via the
+ * signal becomes a no-op until the flag is enabled.
+ */
+function stripUnsupportedSignal<O extends { signal?: AbortSignal }>(
+  options: O | undefined,
+  logger: ReturnType<typeof createLogger>
+): O | undefined {
+  if (!options?.signal || !isAbortSignalRPCDisabled(options.signal)) {
+    return options;
+  }
+
+  if (!warnedAboutAbortSignalRPC) {
+    warnedAboutAbortSignalRPC = true;
+    logger.warn(
+      'An AbortSignal was passed to exec(), but AbortSignal cannot cross the ' +
+        'Worker -> Durable Object boundary unless the `enable_abortsignal_rpc` ' +
+        'compatibility flag is enabled. The signal is being ignored so the ' +
+        'command can run. Add "enable_abortsignal_rpc" to compatibility_flags ' +
+        'in your Wrangler config to enable cancellation.'
+    );
+  }
+
+  const { signal: _signal, ...rest } = options;
+  return rest as O;
+}
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -671,19 +733,22 @@ export function getSandbox<T extends Sandbox<any>>(
 
   const defaultSessionId = `sandbox-${effectiveId}`;
   const useDefaultSession = options?.enableDefaultSession !== false;
+  const clientLogger = createLogger({ component: 'sandbox-do' });
 
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
-    exec: (command: string, execOptions?: ExecOptions) =>
-      useDefaultSession
-        ? stub.exec(command, execOptions)
+    exec: (command: string, execOptions?: ExecOptions) => {
+      const safeOptions = stripUnsupportedSignal(execOptions, clientLogger);
+      return useDefaultSession
+        ? stub.exec(command, safeOptions)
         : stub.execWithSessionToken(
             command,
             DISABLE_SESSION_TOKEN,
-            execOptions
-          ),
+            safeOptions
+          );
+    },
     startProcess: (command: string, processOptions?: ProcessOptions) =>
       useDefaultSession || processOptions?.sessionId !== undefined
         ? stub.startProcess(command, processOptions)
@@ -700,14 +765,15 @@ export function getSandbox<T extends Sandbox<any>>(
         ? stub.getProcess(id, sessionId)
         : stub.getProcess(id, DISABLE_SESSION_TOKEN),
     execStream: (command: string, streamOptions?: StreamOptions) => {
-      if (useDefaultSession || streamOptions?.sessionId !== undefined) {
-        return stub.execStream(command, streamOptions);
+      const safeOptions = stripUnsupportedSignal(streamOptions, clientLogger);
+      if (useDefaultSession || safeOptions?.sessionId !== undefined) {
+        return stub.execStream(command, safeOptions);
       }
 
       return stub.execStreamWithSessionToken(
         command,
         DISABLE_SESSION_TOKEN,
-        streamOptions
+        safeOptions
       );
     },
     writeFile: (
