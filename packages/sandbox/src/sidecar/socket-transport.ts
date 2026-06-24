@@ -3,6 +3,8 @@ import type { RpcTransport } from 'capnweb';
 
 const HEADER_BYTES = 4;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+const MAX_QUEUED_MESSAGES = 128;
+const RESUME_QUEUED_MESSAGES = 64;
 
 /**
  * capnweb `RpcTransport` over a unix-domain socket, mirroring the host-side
@@ -21,6 +23,7 @@ export class SocketTransport implements RpcTransport {
     reject: (err: Error) => void;
   }> = [];
   #error: Error | null = null;
+  #paused = false;
 
   constructor(socket: Socket) {
     this.#socket = socket;
@@ -39,12 +42,44 @@ export class SocketTransport implements RpcTransport {
     }
     const header = Buffer.allocUnsafe(HEADER_BYTES);
     header.writeUInt32BE(body.length, 0);
-    this.#socket.write(Buffer.concat([header, body]));
+    const flushed = this.#socket.write(Buffer.concat([header, body]));
+    if (!flushed) await this.#awaitDrain();
+  }
+
+  #awaitDrain(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: Error) => {
+        cleanup();
+        reject(err);
+      };
+      const onClose = () => {
+        cleanup();
+        reject(this.#error ?? new Error('Extension socket closed'));
+      };
+      const cleanup = () => {
+        this.#socket.off('drain', onDrain);
+        this.#socket.off('error', onError);
+        this.#socket.off('close', onClose);
+      };
+      if (this.#error) {
+        reject(this.#error);
+        return;
+      }
+      this.#socket.once('drain', onDrain);
+      this.#socket.once('error', onError);
+      this.#socket.once('close', onClose);
+    });
   }
 
   receive(): Promise<string> {
     if (this.#queue.length > 0) {
-      return Promise.resolve(this.#queue.shift()!);
+      const message = this.#queue.shift()!;
+      this.#updateReadFlow();
+      return Promise.resolve(message);
     }
     if (this.#error) return Promise.reject(this.#error);
     return new Promise<string>((resolve, reject) => {
@@ -80,7 +115,18 @@ export class SocketTransport implements RpcTransport {
         waiter.resolve(message);
       } else {
         this.#queue.push(message);
+        this.#updateReadFlow();
       }
+    }
+  }
+
+  #updateReadFlow(): void {
+    if (!this.#paused && this.#queue.length >= MAX_QUEUED_MESSAGES) {
+      this.#socket.pause();
+      this.#paused = true;
+    } else if (this.#paused && this.#queue.length <= RESUME_QUEUED_MESSAGES) {
+      this.#socket.resume();
+      this.#paused = false;
     }
   }
 

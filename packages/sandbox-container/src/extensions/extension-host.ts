@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,8 +7,13 @@ import {
   type ExtensionRegistration,
   type Logger
 } from '@repo/shared';
+import { $ } from 'bun';
 import { CapnwebExtensionBridge } from './capnweb-bridge';
-import { hashTarball, provisionPackage } from './provision';
+import {
+  hashTarball,
+  loadProvisionedPackage,
+  provisionPackage
+} from './provision';
 
 const DEFAULT_ROOT_DIR = '/var/lib/sandbox-extensions';
 const STOP_GRACE_MS = 500;
@@ -73,7 +76,7 @@ export class ExtensionHost {
     this.#rootDir = rootDir;
     this.#socketDir = join(
       tmpdir(),
-      `sbx-ext-${randomBytes(8).toString('hex')}`
+      `sbx-ext-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
     );
   }
 
@@ -140,7 +143,7 @@ export class ExtensionHost {
         this.#teardown(instance)
       )
     );
-    await rm(this.#socketDir, { recursive: true, force: true }).catch(() => {});
+    await $`rm -rf ${this.#socketDir}`.quiet().catch(() => {});
   }
 
   // --- internals -----------------------------------------------------------
@@ -154,15 +157,30 @@ export class ExtensionHost {
     const inFlight = this.#provisioningByHash.get(req.packageHash);
     if (inFlight) return inFlight;
 
-    if (!req.tarball) {
-      throw new ExtensionTarballRequiredError(req.packageHash);
-    }
-
-    const promise = this.#provision(req).finally(() => {
+    // A single guarded promise covers both disk-rehydrate and fresh
+    // provisioning so concurrent connects for the same hash never race into
+    // two instances (and therefore two orphaned sidecars).
+    const promise = this.#acquire(req).finally(() => {
       this.#provisioningByHash.delete(req.packageHash);
     });
     this.#provisioningByHash.set(req.packageHash, promise);
     return promise;
+  }
+
+  async #acquire(req: ExtensionConnectRequest): Promise<ExtensionInstance> {
+    const dir = join(this.#rootDir, req.packageHash);
+    const restored = await loadProvisionedPackage(dir, req.packageHash);
+    if (restored) {
+      const instance = this.#createInstance(
+        restored.registration,
+        dir,
+        restored.binAbsolutePath
+      );
+      this.#instancesByHash.set(req.packageHash, instance);
+      return instance;
+    }
+
+    return this.#provision(req);
   }
 
   async #provision(req: ExtensionConnectRequest): Promise<ExtensionInstance> {
@@ -194,9 +212,19 @@ export class ExtensionHost {
       logger: this.#logger
     });
 
-    const instance: ExtensionInstance = {
+    const instance = this.#createInstance(registration, dir, binAbsolutePath);
+    this.#instancesByHash.set(computedHash, instance);
+    return instance;
+  }
+
+  #createInstance(
+    registration: ExtensionRegistration,
+    provisionedDir: string,
+    binAbsolutePath: string
+  ): ExtensionInstance {
+    return {
       registration,
-      provisionedDir: dir,
+      provisionedDir,
       binAbsolutePath,
       socketPath: this.#freshSocketPath(),
       child: null,
@@ -205,11 +233,9 @@ export class ExtensionHost {
       generation: 0,
       logger: this.#logger.child({
         extensionId: registration.id,
-        packageHash: computedHash.slice(0, 12)
+        packageHash: registration.packageHash.slice(0, 12)
       })
     };
-    this.#instancesByHash.set(computedHash, instance);
-    return instance;
   }
 
   /**
@@ -284,10 +310,11 @@ export class ExtensionHost {
     // with EADDRINUSE if the path still exists on disk, which a crashed/
     // SIGKILLed sidecar never unlinks.
     instance.socketPath = this.#freshSocketPath();
-    await mkdir(this.#socketDir, { recursive: true, mode: 0o700 });
+    await $`mkdir -p ${this.#socketDir}`.quiet();
+    await $`chmod 700 ${this.#socketDir}`.quiet();
     // Bun-native I/O to dodge any test `mock.module('node:fs')` interference.
     if (await Bun.file(instance.socketPath).exists()) {
-      await rm(instance.socketPath, { force: true });
+      await $`rm -f ${instance.socketPath}`.quiet();
     }
 
     let child: Bun.Subprocess;
@@ -385,7 +412,7 @@ export class ExtensionHost {
     instance.child = null;
     if (late) await this.#stopChild(late, instance.logger);
     if (await Bun.file(instance.socketPath).exists()) {
-      await rm(instance.socketPath, { force: true }).catch(() => {});
+      await $`rm -f ${instance.socketPath}`.quiet().catch(() => {});
     }
   }
 
@@ -427,6 +454,9 @@ export class ExtensionHost {
    * unix socket length limit.
    */
   #freshSocketPath(): string {
-    return join(this.#socketDir, `${randomBytes(6).toString('hex')}.sock`);
+    return join(
+      this.#socketDir,
+      `${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}.sock`
+    );
   }
 }

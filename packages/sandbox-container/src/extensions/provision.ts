@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import type { ExtensionRegistration, Logger } from '@repo/shared';
+import { $ } from 'bun';
 import tar from 'tar-stream';
 
 const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -36,6 +35,13 @@ export interface ProvisionResult {
   binAbsolutePath: string;
 }
 
+interface ProvisionManifest {
+  registration: ExtensionRegistration;
+  binTarget: string;
+}
+
+const PROVISION_MANIFEST_FILE = '.sandbox-extension.json';
+
 /**
  * Shape of the metadata block we expect inside an extension's `package.json`.
  * Authors put any extension-specific configuration under this key; the host
@@ -57,7 +63,7 @@ interface SandboxExtensionPackageJSON {
  * \u2014 any byte change reprovisions, even at the same package version.
  */
 export function hashTarball(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
+  return new Bun.SHA256().update(bytes).digest('hex');
 }
 
 /**
@@ -76,7 +82,7 @@ export function hashTarball(bytes: Uint8Array): string {
 export async function provisionPackage(
   input: ProvisionInput
 ): Promise<ProvisionResult> {
-  await mkdir(input.dir, { recursive: true });
+  await $`mkdir -p ${input.dir}`;
   const tarballPath = join(input.dir, 'extension.tgz');
   // Bun-native I/O on purpose: the container is always Bun, and this avoids
   // any test-suite `mock.module('node:fs')` interference.
@@ -101,12 +107,7 @@ export async function provisionPackage(
     registration.packageName
   );
   const binAbsolutePath = resolve(packageRoot, binTarget);
-  const relativeBinPath = relative(packageRoot, binAbsolutePath);
-  if (
-    relativeBinPath === '..' ||
-    relativeBinPath.startsWith(`..${sep}`) ||
-    isAbsolute(relativeBinPath)
-  ) {
+  if (!isInside(packageRoot, binAbsolutePath)) {
     throw new Error(
       `Extension '${registration.id}' bin '${registration.bin}' resolves outside the installed package directory`
     );
@@ -118,7 +119,79 @@ export async function provisionPackage(
     );
   }
 
+  await writeProvisionManifest(input.dir, { registration, binTarget });
   return { registration, binAbsolutePath };
+}
+
+export async function loadProvisionedPackage(
+  dir: string,
+  packageHash: string
+): Promise<ProvisionResult | null> {
+  // The manifest is written only after a fully successful provision, so any
+  // read/parse/shape failure is treated as "not provisioned" and the caller
+  // reprovisions from the tarball rather than surfacing a connect error.
+  const manifest = await readProvisionManifest(dir);
+  if (!manifest) return null;
+  if (manifest.registration.packageHash !== packageHash) return null;
+
+  const packageRoot = resolve(
+    dir,
+    'node_modules',
+    manifest.registration.packageName
+  );
+  const binAbsolutePath = resolve(packageRoot, manifest.binTarget);
+  // Re-apply the provision-time containment guard: never spawn a bin that
+  // resolves outside the installed package directory, even from on-disk state.
+  if (!isInside(packageRoot, binAbsolutePath)) return null;
+  if (!(await Bun.file(binAbsolutePath).exists())) return null;
+
+  return { registration: manifest.registration, binAbsolutePath };
+}
+
+async function readProvisionManifest(
+  dir: string
+): Promise<ProvisionManifest | null> {
+  try {
+    const manifestFile = Bun.file(join(dir, PROVISION_MANIFEST_FILE));
+    if (!(await manifestFile.exists())) return null;
+    const parsed = (await manifestFile.json()) as unknown;
+    if (!isProvisionManifest(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isProvisionManifest(value: unknown): value is ProvisionManifest {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.binTarget !== 'string') return false;
+  const registration = candidate.registration as
+    | Record<string, unknown>
+    | undefined;
+  return (
+    typeof registration === 'object' &&
+    registration !== null &&
+    typeof registration.packageHash === 'string' &&
+    typeof registration.packageName === 'string' &&
+    typeof registration.id === 'string'
+  );
+}
+
+/** True when `child` resolves to `parent` itself or a path nested inside it. */
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+async function writeProvisionManifest(
+  dir: string,
+  manifest: ProvisionManifest
+): Promise<void> {
+  await Bun.write(
+    join(dir, PROVISION_MANIFEST_FILE),
+    JSON.stringify(manifest, null, 2)
+  );
 }
 
 function deriveRegistration(

@@ -165,6 +165,44 @@ describe('ExtensionHost (capnweb + npm-tarball)', () => {
     expect(await stub.echo('again')).toBe('again');
   });
 
+  it('rehydrates a provisioned extension from disk after host restart', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'ext-host-rehydrate-test-'));
+    const first = new ExtensionHost(createNoOpLogger(), rootDir);
+    host = first;
+    await first.connect({ packageHash, tarball: tarballBytes });
+    await first.stopAll();
+
+    const second = new ExtensionHost(createNoOpLogger(), rootDir);
+    host = second;
+    const stub = (await second.connect({ packageHash })) as DemoSidecarAPI;
+    expect(await stub.echo('rehydrated')).toBe('rehydrated');
+  });
+
+  it('serializes concurrent hash-only connects when rehydrating from disk', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'ext-host-rehydrate-race-'));
+    const first = new ExtensionHost(createNoOpLogger(), rootDir);
+    host = first;
+    await first.connect({ packageHash, tarball: tarballBytes });
+    await first.stopAll();
+
+    const second = new ExtensionHost(createNoOpLogger(), rootDir);
+    host = second;
+    const [a, b, c] = await Promise.all([
+      second.connect({ packageHash }),
+      second.connect({ packageHash }),
+      second.connect({ packageHash })
+    ]);
+
+    expect(await (a as DemoSidecarAPI).echo('a')).toBe('a');
+    expect(await (b as DemoSidecarAPI).echo('b')).toBe('b');
+    expect(await (c as DemoSidecarAPI).echo('c')).toBe('c');
+
+    // A single stop() must fully tear the extension down; if a concurrent
+    // connect had spawned an orphaned sidecar, the host would not track it.
+    await second.stop(packageHash);
+    expect((await second.health(packageHash)).running).toBe(false);
+  });
+
   it('serializes concurrent first connects for the same hash', async () => {
     const h = makeHost();
     const [a, b, c] = await Promise.all([
