@@ -22,6 +22,7 @@ import {
   proxyToSandbox,
   type SandboxProcess
 } from '@cloudflare/sandbox';
+import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 
 // ---------------------------------------------------------------------------
