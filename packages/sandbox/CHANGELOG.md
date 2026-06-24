@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.2
+
+### Patch Changes
+
+- [#778](https://github.com/cloudflare/sandbox-sdk/pull/778) [`b48fa30`](https://github.com/cloudflare/sandbox-sdk/commit/b48fa304e01dc5dd12fe8e5a4d0969d094c9116c) Thanks [@aron-cf](https://github.com/aron-cf)! - Disable the default session for bridge command and file requests. Calls without `Session-Id` now run without reusing shell state; pass `Session-Id` from the session API to preserve working directory or environment across calls.
+
 ## 0.12.1
 
 ### Patch Changes
