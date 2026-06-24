@@ -22,15 +22,6 @@ export class SecurityServiceAdapter {
     };
   }
 
-  // Git service interface
-  validateGitUrl(url: string): { isValid: boolean; errors: string[] } {
-    const result = this.securityService.validateGitUrl(url);
-    return {
-      isValid: result.isValid,
-      errors: result.errors.map((e) => e.message)
-    };
-  }
-
   // Command validation (for any service that needs it)
   validateCommand(command: string): { isValid: boolean; errors: string[] } {
     const result = this.securityService.validateCommand(command);

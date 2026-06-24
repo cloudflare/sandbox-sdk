@@ -84,6 +84,11 @@
       "import": "./dist/interpreter/index.js",
       "require": "./dist/interpreter/index.js"
     },
+    "./git": {
+      "types": "./dist/git/index.d.ts",
+      "import": "./dist/git/index.js",
+      "require": "./dist/git/index.js"
+    },
     "./openai": {
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",

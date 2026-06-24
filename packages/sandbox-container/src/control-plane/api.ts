@@ -11,7 +11,6 @@ import type {
   FileEncoding,
   FileInfo,
   FileSessionOptions,
-  GitCheckoutOptions,
   ListFilesOptions,
   Logger,
   MkdirOptions,
@@ -38,7 +37,6 @@ import type {
 import type { ExtensionHost } from '../extensions';
 import type { BackupService } from '../services/backup-service';
 import type { FileService } from '../services/file-service';
-import type { GitService } from '../services/git-service';
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
@@ -50,7 +48,6 @@ export interface SandboxAPIDeps {
   processService: ProcessService;
   fileService: FileService;
   portService: PortService;
-  gitService: GitService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
@@ -106,9 +103,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get ports() {
     return new PortsRPCAPI(this.#deps.portService, this.#deps.processService);
-  }
-  get git() {
-    return new GitRPCAPI(this.#deps.gitService);
   }
   get utils() {
     return new UtilsRPCAPI(this.#deps.sessionManager);
@@ -705,30 +699,6 @@ class PortsRPCAPI extends RpcTarget {
         cancelled = true;
       }
     });
-  }
-}
-
-// ===========================================================================
-// Git
-// ===========================================================================
-
-class GitRPCAPI extends RpcTarget {
-  #svc: GitService;
-  constructor(svc: GitService) {
-    super();
-    this.#svc = svc;
-  }
-
-  async checkout(repoUrl: string, options: GitCheckoutOptions = {}) {
-    const result = await this.#svc.cloneRepository(repoUrl, options);
-    const data = extractData<{ path: string; branch: string }>(result);
-    return {
-      success: true,
-      repoUrl,
-      branch: data.branch ?? '',
-      targetDir: data.path,
-      timestamp: new Date().toISOString()
-    };
   }
 }
 

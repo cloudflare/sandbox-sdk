@@ -53,7 +53,6 @@ export type {
   DeleteFileRequest,
   ExecuteRequest,
   FileExistsRequest,
-  GitCheckoutRequest,
   ListFilesRequest,
   MkdirRequest,
   MoveFileRequest,
@@ -83,7 +82,6 @@ export type {
   ExtensionPackage,
   ExtensionRegistration,
   FileSessionOptions,
-  GitCheckoutOptions,
   MkdirOptions,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,
@@ -99,7 +97,6 @@ export type {
   SandboxControlCallback,
   SandboxExtensionsAPI,
   SandboxFilesAPI,
-  SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTerminalsAPI,
@@ -154,7 +151,6 @@ export type {
   // File watch types
   FileWatchEventType,
   FileWatchSSEEvent,
-  GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
   ISandbox,

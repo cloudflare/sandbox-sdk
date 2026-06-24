@@ -1,4 +1,5 @@
-import type { ExecResult, GitCheckoutResult } from '@repo/shared';
+import type { GitCheckoutResult } from '@cloudflare/sandbox/git';
+import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,

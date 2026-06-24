@@ -1001,15 +1001,6 @@ export interface ListFilesResult {
   exitCode?: number;
 }
 
-export interface GitCheckoutResult {
-  success: boolean;
-  repoUrl: string;
-  branch: string;
-  targetDir: string;
-  timestamp: string;
-  exitCode?: number;
-}
-
 // File Streaming Types
 
 /**
@@ -1336,19 +1327,6 @@ export interface ExecutionSession {
   ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
   exists(path: string): Promise<FileExistsResult>;
-
-  // Git operations
-  gitCheckout(
-    repoUrl: string,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
-      depth?: number;
-      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
-      cloneTimeoutMs?: number;
-    }
-  ): Promise<GitCheckoutResult>;
 
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
@@ -1708,20 +1686,6 @@ export interface ISandbox {
     path: string,
     options?: { sessionId?: string }
   ): Promise<FileExistsResult>;
-
-  // Git operations
-  gitCheckout(
-    repoUrl: string,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      sessionId?: string;
-      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
-      depth?: number;
-      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
-      cloneTimeoutMs?: number;
-    }
-  ): Promise<GitCheckoutResult>;
 
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;

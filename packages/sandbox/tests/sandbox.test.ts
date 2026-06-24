@@ -817,33 +817,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(fetched?.sessionId).toBeUndefined();
     });
 
-    it('should use sessionless routing for git operations', async () => {
-      vi.spyOn(sandbox.client.git, 'checkout').mockResolvedValue({
-        success: true,
-        stdout: 'Cloned successfully',
-        stderr: '',
-        branch: 'main',
-        targetDir: '/workspace/repo',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      await sandbox.gitCheckout('https://github.com/test/repo.git', {
-        branch: 'main',
-        cloneTimeoutMs: 90_000
-      });
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
-        'https://github.com/test/repo.git',
-        {
-          branch: 'main',
-          targetDir: undefined,
-          depth: undefined,
-          timeoutMs: 90_000
-        }
-      );
-    });
-
     it('does not touch default-session storage for implicit file operations', async () => {
       vi.mocked(mockCtx.storage.put).mockImplementation(async (key) => {
         if (key === 'defaultSession') throw new Error('storage down');
@@ -919,7 +892,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(session.exec).toBeInstanceOf(Function);
       expect(session.exec).toBeInstanceOf(Function);
       expect(session.writeFile).toBeInstanceOf(Function);
-      expect(session.gitCheckout).toBeInstanceOf(Function);
     });
 
     it('should execute operations in specific session context', async () => {
@@ -1161,33 +1133,6 @@ describe('Sandbox - Automatic Session Management', () => {
         '/test.txt',
         'content',
         { sessionId: 'test-session', encoding: undefined }
-      );
-    });
-
-    it('should perform git checkout with session context', async () => {
-      vi.spyOn(sandbox.client.git, 'checkout').mockResolvedValue({
-        success: true,
-        stdout: 'Cloned',
-        stderr: '',
-        branch: 'main',
-        targetDir: '/workspace/repo',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      await session.gitCheckout('https://github.com/test/repo.git', {
-        depth: 1,
-        cloneTimeoutMs: 90_000
-      });
-
-      expect(sandbox.client.git.checkout).toHaveBeenCalledWith(
-        'https://github.com/test/repo.git',
-        {
-          sessionId: 'test-session',
-          branch: undefined,
-          targetDir: undefined,
-          depth: 1,
-          timeoutMs: 90_000
-        }
       );
     });
   });
