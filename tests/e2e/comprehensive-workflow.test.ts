@@ -18,10 +18,10 @@
  * Individual edge cases and error handling remain in dedicated test files.
  */
 
+import type { GitCheckoutResult } from '@cloudflare/sandbox/git';
 import type {
   ExecResult,
   FileInfo,
-  GitCheckoutResult,
   ListFilesResult,
   Process,
   ProcessLogsResult,

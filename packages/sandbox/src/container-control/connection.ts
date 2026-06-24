@@ -13,7 +13,6 @@ import type {
   SandboxCommandsAPI,
   SandboxControlCallback,
   SandboxFilesAPI,
-  SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxUtilsAPI,

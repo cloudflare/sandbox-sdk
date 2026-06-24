@@ -181,6 +181,11 @@ import type {
 
 // Sandbox subclass wiring the code interpreter extension.
 export class Sandbox extends BaseSandbox<Env> {
+  git = withGit(this);
+
+  gitCheckout(repoUrl: string, options?: GitCheckoutOptions) {
+    return this.git.checkout(repoUrl, options);
+  }
   interpreter = withInterpreter(this);
 }
 
@@ -628,11 +633,12 @@ console.log('Echo server on port ' + port);
 
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {
-        const result = await executor.gitCheckout(body.repoUrl, {
+        const result = await sandbox.gitCheckout(body.repoUrl, {
           branch: body.branch,
           targetDir: body.targetDir,
           depth: body.depth,
-          cloneTimeoutMs: body.cloneTimeoutMs
+          cloneTimeoutMs: body.cloneTimeoutMs,
+          ...(sessionId ? { sessionId } : {})
         });
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
@@ -1574,7 +1580,8 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
     window.addEventListener('resize', () => fitAddon.fit());
     window.terminalConnect = connect;
     window.terminalDisconnect = () => { ws?.close(); ws = null; };
-    window.testCloseWs = () => { ws?.close(); };
+    windo
+}w.testCloseWs = () => { ws?.close(); };
 
     connect();
   </script>

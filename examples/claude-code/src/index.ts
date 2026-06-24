@@ -1,4 +1,5 @@
 import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
+import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 
 export { ContainerProxy } from '@cloudflare/sandbox';
 
@@ -9,6 +10,12 @@ export class Sandbox extends BaseSandbox<Env> {
   // claude traffic (allowedHosts gates outboundByHost when internet is off).
   enableInternet = false;
   allowedHosts = ['github.com', 'api.anthropic.com'];
+
+  git = withGit(this);
+
+  gitCheckout(repoUrl: string, options?: GitCheckoutOptions) {
+    return this.git.checkout(repoUrl, options);
+  }
 }
 
 Sandbox.outboundByHost = {

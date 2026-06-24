@@ -546,20 +546,6 @@ export function getSandbox<T extends Sandbox<any>>(
       options.sessionId === undefined
         ? stub.exists(path)
         : stub.exists(path, { sessionId: options.sessionId }),
-    gitCheckout: (
-      repoUrl: string,
-      gitOptions?: {
-        branch?: string;
-        targetDir?: string;
-        sessionId?: string;
-        depth?: number;
-        cloneTimeoutMs?: number;
-      }
-    ) =>
-      stub.gitCheckout(repoUrl, {
-        ...gitOptions,
-        sessionId: gitOptions?.sessionId
-      }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return rpcSession as ExecutionSession;
@@ -2655,26 +2641,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 0;
   }
 
-  async gitCheckout(
-    repoUrl: string,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      sessionId?: string;
-      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
-      depth?: number;
-      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
-      cloneTimeoutMs?: number;
+  async getProcessLogs(
+    id: string
+  ): Promise<{ stdout: string; stderr: string; processId: string }> {
+    const response = await this.client.processes.getProcessLogs(id);
+    return {
+      stdout: response.stdout,
+      stderr: response.stderr,
+      processId: response.processId
+    };
+  }
+
+  /**
+   * Stream logs from a background process as a ReadableStream.
+   */
+  async streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>> {
+    // Check for cancellation
+    if (options?.signal?.aborted) {
+      throw new Error('Operation was aborted');
     }
-  ) {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    return this.client.git.checkout(repoUrl, {
-      ...(session !== undefined && { sessionId: session }),
-      branch: options?.branch,
-      targetDir: options?.targetDir,
-      depth: options?.depth,
-      timeoutMs: options?.cloneTimeoutMs
-    });
+
+    return this.client.processes.streamProcessLogs(processId);
   }
 
   async mkdir(
@@ -3128,10 +3118,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       listFiles: (path, options) =>
         this.listFiles(path, { ...options, sessionId }),
       exists: (path) => this.exists(path, { sessionId }),
-
-      // Git operations
-      gitCheckout: (repoUrl, options) =>
-        this.gitCheckout(repoUrl, { ...options, sessionId }),
 
       setEnvVars: async (envVars: Record<string, string | undefined>) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);

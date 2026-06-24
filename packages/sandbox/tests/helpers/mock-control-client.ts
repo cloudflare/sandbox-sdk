@@ -99,9 +99,6 @@ export function createMockControlClient(): Sandbox['client'] {
     ports: {
       watchPort: vi.fn()
     },
-    git: {
-      checkout: vi.fn()
-    },
     utils: {
       ping: vi.fn(),
       getVersion: vi.fn(),

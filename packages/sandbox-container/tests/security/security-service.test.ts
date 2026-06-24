@@ -168,57 +168,6 @@ describe('SecurityService - Simplified Security Model', () => {
     });
   });
 
-  describe('validateGitUrl - Format validation only', () => {
-    test('should allow private repos and self-hosted Git (no allowlist)', () => {
-      // Phase 0: No URL allowlist - users need private repos!
-      const gitUrls = [
-        'https://github.com/user/repo.git',
-        'https://gitlab.com/user/repo.git',
-        'https://bitbucket.org/user/repo.git',
-        'https://git.company.com/user/repo.git', // Self-hosted
-        'https://my-git-server.io/repo.git', // Custom domain
-        'git@github.com:user/repo.git',
-        'git@gitlab.company.com:user/repo.git', // Enterprise GitLab
-        'https://dev.azure.com/org/project/_git/repo' // Azure DevOps
-      ];
-
-      for (const url of gitUrls) {
-        const result = service.validateGitUrl(url);
-        expect(result.isValid).toBe(true);
-        expect(result.data).toBe(url);
-      }
-    });
-
-    test('should reject null bytes (format validation)', () => {
-      const result = service.validateGitUrl(
-        'https://github.com/user\0/repo.git'
-      );
-      expect(result.isValid).toBe(false);
-      expect(result.errors[0].message).toContain('null bytes');
-    });
-
-    test('should reject URLs over 2048 characters (format validation)', () => {
-      const longUrl = `https://github.com/${'a'.repeat(3000)}`;
-      const result = service.validateGitUrl(longUrl);
-      expect(result.isValid).toBe(false);
-      expect(result.errors[0].message).toContain('too long');
-    });
-
-    test('should reject empty URLs', () => {
-      const result = service.validateGitUrl('');
-      expect(result.isValid).toBe(false);
-      expect(result.errors[0].message).toContain('non-empty string');
-    });
-
-    test('should trim whitespace', () => {
-      const result = service.validateGitUrl(
-        '  https://github.com/user/repo.git  '
-      );
-      expect(result.isValid).toBe(true);
-      expect(result.data).toBe('https://github.com/user/repo.git');
-    });
-  });
-
   describe('Helper methods', () => {
     test('generateSecureSessionId should create unique session IDs', () => {
       const id1 = service.generateSecureSessionId();
