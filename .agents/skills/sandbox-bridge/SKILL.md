@@ -109,12 +109,12 @@ curl -s -X DELETE "$SANDBOX_WORKER_URL/v1/sandbox/$SID" \
 
 ## Sessions
 
-Every sandbox has a **default session** that backs exec/file/PTY calls when no `Session-Id` header is set. Sessions isolate two things across commands:
+The bridge does not use the SDK's default shell session for headerless command and file requests. If you omit `Session-Id`, those requests run without reusing shell state. Create an explicit session when you need state to persist across commands. Sessions isolate two things across commands:
 
 - **Working directory** — `cd` in one exec persists for subsequent execs in the same session.
 - **Environment variables** — `export FOO=bar` likewise persists, and `env` passed at session creation seeds the session.
 
-Use named sessions when you need parallel execution contexts in the same sandbox (e.g. a long-running build in one and quick probes in another) without them clobbering each other's `cwd`/env.
+Use named sessions when you need persistent or parallel execution contexts in the same sandbox (for example, a long-running build in one and quick probes in another) without them clobbering each other's `cwd` or environment.
 
 ### Create a session
 
@@ -155,7 +155,7 @@ curl -s -X DELETE "$SANDBOX_WORKER_URL/v1/sandbox/$SID/session/$SESS" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
-The default session cannot be deleted (`502 session_error`). Sessions also disappear when the parent sandbox is destroyed.
+Sessions disappear when the parent sandbox is destroyed.
 
 ## Other Endpoints
 

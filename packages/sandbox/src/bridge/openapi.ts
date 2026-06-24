@@ -371,7 +371,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to a specific session. If omitted, the operation runs without reusing shell state.'
           }
         ],
         requestBody: {
@@ -588,7 +588,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to a specific session. If omitted, the operation runs without reusing shell state.'
           }
         ],
         responses: {
@@ -676,7 +676,7 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+              'Scope this operation to a specific session. If omitted, the operation runs without reusing shell state.'
           }
         ],
         requestBody: {
@@ -797,8 +797,7 @@ export const OPENAPI_SCHEMA = {
             in: 'header',
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
-            description:
-              'Scope this operation to a specific session. Uses the default session if omitted.'
+            description: 'Scope this PTY to a specific session.'
           }
         ],
         responses: {

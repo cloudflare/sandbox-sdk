@@ -79,6 +79,16 @@ function getSandbox<T extends Sandbox<any>>(
   return _getSandbox(ns, containerUUID) as unknown as BridgeSandbox;
 }
 
+/** Bridge routes should not implicitly reuse the SDK's default shell session. */
+function getSandboxWithoutDefaultSession<T extends Sandbox<any>>(
+  ns: DurableObjectNamespace<T>,
+  containerUUID: string
+): BridgeSandbox {
+  return _getSandbox(ns, containerUUID, {
+    enableDefaultSession: false
+  }) as unknown as BridgeSandbox;
+}
+
 function hasEndpoint(
   options: MountBucketRequestOptions
 ): options is MountBucketRequestOptions & { endpoint: string } {
@@ -457,7 +467,10 @@ export function createBridgeApp(
       );
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
     const rawSessionId = c.req.header('Session-Id');
     let executor:
       | BridgeSandbox
@@ -580,7 +593,10 @@ export function createBridgeApp(
       );
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
     const rawSessionId = c.req.header('Session-Id');
     let executor:
       | BridgeSandbox
@@ -638,7 +654,10 @@ export function createBridgeApp(
       );
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
     const rawSessionId = c.req.header('Session-Id');
     let executor:
       | BridgeSandbox
@@ -694,7 +713,10 @@ export function createBridgeApp(
     const options = parseTunnelOptions(await c.req.text());
     if (options instanceof Response) return options;
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     try {
       const tunnel = await sandbox.tunnels.get(port, options);
@@ -711,7 +733,10 @@ export function createBridgeApp(
       return errorJson('Invalid port', 'invalid_request', 400);
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     try {
       await sandbox.tunnels.destroy(port);
@@ -727,7 +752,10 @@ export function createBridgeApp(
   // ------------------------------------------------------------------
 
   app.get(`${apiPrefix}/sandbox/:id/running`, async (c) => {
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     try {
       await sandbox.exec('true');
@@ -750,7 +778,10 @@ export function createBridgeApp(
       return errorJson('WebSocket upgrade required', 'invalid_request', 400);
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     // 2. Parse PtyOptions from query params
     const colsParam = c.req.query('cols');
@@ -813,7 +844,10 @@ export function createBridgeApp(
       }
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     const tmpPath = `/tmp/sandbox-persist-${Date.now()}.tar`;
     const excludeArgs = excludes
@@ -860,7 +894,10 @@ export function createBridgeApp(
   app.post(`${apiPrefix}/sandbox/:id/hydrate`, async (c) => {
     const root = '/workspace';
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     // Read the raw tar bytes from the request body.
     let tarBytes: Uint8Array;
@@ -966,7 +1003,10 @@ export function createBridgeApp(
     const bucketName = resolveMountBucketName(body);
     if (bucketName instanceof Response) return bucketName;
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
     const sdkOptions = toSDKMountOptions(body.options);
 
     try {
@@ -1016,7 +1056,10 @@ export function createBridgeApp(
       );
     }
 
-    const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      c.get('containerUUID')
+    );
 
     try {
       await sandbox.unmountBucket(normalizedPath);
@@ -1084,7 +1127,10 @@ export function createBridgeApp(
 
   app.delete(`${apiPrefix}/sandbox/:id`, async (c) => {
     const containerUUID = c.get('containerUUID');
-    const sandbox = getSandbox(getSandboxNs(c.env), containerUUID);
+    const sandbox = getSandboxWithoutDefaultSession(
+      getSandboxNs(c.env),
+      containerUUID
+    );
 
     try {
       await sandbox.destroy();
