@@ -42,6 +42,7 @@ import {
   TUNNEL_GET_MAX_RECOVERY_ATTEMPTS,
   translateTunnelInterruption
 } from './lifecycle';
+import { randomId } from './random-id';
 import {
   computeOptionsHash,
   META_STORAGE_KEY,
@@ -493,7 +494,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
     }
 
     recovery.quickRun ??= {
-      tunnelId: `quick-${crypto.randomUUID()}`,
+      tunnelId: `quick-${randomId()}`,
       runId: runtimeRunId()
     };
     const { tunnelId, runId } = recovery.quickRun;

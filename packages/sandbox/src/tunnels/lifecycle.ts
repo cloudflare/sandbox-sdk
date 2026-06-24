@@ -6,11 +6,12 @@ import {
   RPCTransportError
 } from '../errors';
 import { SandboxLifetimeChangedError } from '../sandbox-lifetime';
+import { randomId } from './random-id';
 
 export const TUNNEL_GET_MAX_RECOVERY_ATTEMPTS = 2;
 
 export function runtimeRunId(): string {
-  return `run-${crypto.randomUUID()}`;
+  return `run-${randomId()}`;
 }
 
 export function createTunnelInterruptedError(params: {
