@@ -3,16 +3,18 @@ import { CodeBlock, DotBox, GridBox } from '../components/grid';
 import { TextShadow } from '../components/text-shadow';
 
 function generateCode(repo: string, command: string): string {
-  return `<pre class="shiki custom-theme" style="background-color:var(--background);color:var(--foreground);overflow-x:auto" tabindex="0"><code><span class="line"><span style="color:var(--foreground);font-weight:bold">import</span><span style="color:var(--foreground)"> { getSandbox } </span><span style="color:var(--foreground);font-weight:bold">from</span><span style="color:var(--color-orange-800)"> "@cloudflare/sandbox"</span><span style="color:var(--foreground)">;</span></span>
+  return `<pre class="shiki custom-theme" style="background-color:var(--background);color:var(--foreground);overflow-x:auto" tabindex="0"><code><span class="line"><span style="color:var(--foreground);font-weight:bold">import</span><span style="color:var(--foreground)"> { getSandbox, Sandbox </span><span style="color:var(--foreground);font-weight:bold">as</span><span style="color:var(--foreground)"> BaseSandbox } </span><span style="color:var(--foreground);font-weight:bold">from</span><span style="color:var(--color-orange-800)"> "@cloudflare/sandbox"</span><span style="color:var(--foreground)">;</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">import</span><span style="color:var(--foreground)"> { withGit } </span><span style="color:var(--foreground);font-weight:bold">from</span><span style="color:var(--color-orange-800)"> "@cloudflare/sandbox/git"</span><span style="color:var(--foreground)">;</span></span>
 <span class="line"></span>
-<span class="line"><span style="color:var(--color-neutral-400)">// Export the Sandbox class in your Worker</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">export</span><span style="color:var(--foreground)"> { Sandbox } </span><span style="color:var(--foreground);font-weight:bold">from</span><span style="color:var(--color-orange-800)"> "@cloudflare/sandbox"</span><span style="color:var(--foreground)">;</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">export</span><span style="color:var(--foreground);font-weight:bold"> class</span><span style="color:var(--foreground)"> Sandbox </span><span style="color:var(--foreground);font-weight:bold">extends</span><span style="color:var(--foreground)"> BaseSandbox&lt;Env&gt; {</span></span>
+<span class="line"><span style="color:var(--foreground)">  git </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground)"> withGit(</span><span style="color:var(--foreground);font-weight:bold">this</span><span style="color:var(--foreground)">);</span></span>
+<span class="line"><span style="color:var(--foreground)">}</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--foreground);font-weight:bold">export</span><span style="color:var(--foreground);font-weight:bold"> default</span><span style="color:var(--foreground)"> {</span></span>
 <span class="line"><span style="color:var(--foreground)">  async fetch(request</span><span style="color:var(--foreground);font-weight:bold">:</span><span style="color:var(--foreground)"> Request, env</span><span style="color:var(--foreground);font-weight:bold">:</span><span style="color:var(--foreground)"> Env) {</span></span>
 <span class="line"><span style="color:var(--foreground)">    const sandbox </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground)"> getSandbox(env.Sandbox, </span><span style="color:var(--color-orange-800)">"test-env"</span><span style="color:var(--foreground)">);</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">    // Clone a repository</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">    await</span><span style="color:var(--foreground)"> sandbox.gitCheckout(</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">    await</span><span style="color:var(--foreground)"> sandbox.git.checkout(</span></span>
 <span class="line"><span style="color:var(--color-orange-800)">      "${repo}"</span></span>
 <span class="line"><span style="color:var(--foreground)">    );</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">    // Run tests</span></span>
