@@ -1581,8 +1581,7 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
     window.addEventListener('resize', () => fitAddon.fit());
     window.terminalConnect = connect;
     window.terminalDisconnect = () => { ws?.close(); ws = null; };
-    windo
-}w.testCloseWs = () => { ws?.close(); };
+    window.testCloseWs = () => { ws?.close(); };
 
     connect();
   </script>

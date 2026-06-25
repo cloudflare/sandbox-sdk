@@ -25,7 +25,7 @@
  * ```
  */
 
-import { redactCommand, shellEscape } from '@repo/shared';
+import { filterEnvVars, redactCommand, shellEscape } from '@repo/shared';
 import {
   ErrorCode,
   type ErrorResponse,
@@ -313,6 +313,20 @@ export class Git extends SandboxExtension {
     return options.sessionId ?? DISABLE_SESSION_TOKEN;
   }
 
+  /**
+   * Env to attach to a git command. Sessionless git runs in a fresh shell, so
+   * merge in the sandbox-level env vars (tokens, proxy settings) the same way
+   * the Sandbox's own sessionless execution does. A real session already
+   * carries its own env, so nothing extra is injected there.
+   */
+  #execEnv(sessionId: string): Record<string, string> | undefined {
+    if (sessionId !== DISABLE_SESSION_TOKEN) {
+      return undefined;
+    }
+    const env = filterEnvVars(this.envVars);
+    return Object.keys(env).length > 0 ? env : undefined;
+  }
+
   #command(args: string[]): string {
     return args.map((arg) => shellEscape(arg)).join(' ');
   }
@@ -323,7 +337,8 @@ export class Git extends SandboxExtension {
     cwd?: string
   ): Promise<ExecOutcome> {
     const result = await this.client.commands.execute(command, sessionId, {
-      cwd
+      cwd,
+      env: this.#execEnv(sessionId)
     });
     return {
       stdout: result.stdout,

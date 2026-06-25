@@ -16,8 +16,11 @@ export interface GitCheckoutResult {
 export interface GitSessionOptions {
   /**
    * Session to run the git command in. Omit to run sessionless (the command
-   * runs in a fresh, non-persistent shell). Pass a session id to run inside an
-   * existing session so working directory and environment carry over.
+   * runs in a fresh, non-persistent shell). Sessionless commands still inherit
+   * the sandbox-level environment variables (e.g. tokens, proxy settings), so
+   * auth and egress configured on the sandbox keep working. Pass a session id
+   * to run inside an existing session so its working directory and environment
+   * carry over instead.
    */
   sessionId?: string;
 }
