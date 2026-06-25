@@ -62,7 +62,14 @@
     // Target number of pre-warmed containers (0 = disabled, no surprise bills).
     "WARM_POOL_TARGET": "0",
     // How often the pool alarm checks health and replenishes containers (ms).
-    "WARM_POOL_REFRESH_INTERVAL": "10000"
+    "WARM_POOL_REFRESH_INTERVAL": "10000",
+    // Operator-declared instance ceiling. Set this to match
+    // containers[].max_instances above so the pool knows its capacity without
+    // crashing into the limit first. 0 = unknown (auto-learn from platform
+    // errors). Note the effective warm ceiling is max_instances minus any
+    // assigned containers, so warmTarget cannot equal max_instances while
+    // sandboxes are in use.
+    "WARM_POOL_MAX_INSTANCES": "0"
   },
   "preview_urls": false
 }
