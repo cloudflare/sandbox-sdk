@@ -8,8 +8,13 @@
     "enabled": true,
     // Enable distributed tracing so the bridge's custom spans
     // (bridge.<operation>) are recorded alongside automatic instrumentation.
+    // Each span is annotated with the sandbox ID, container UUID, and
+    // operation-specific metadata (command, file path, port, session, etc.).
     "traces": {
-      "enabled": true
+      "enabled": true,
+      // Fraction of requests to trace (0.0–1.0). 1.0 traces everything; lower
+      // it to reduce overhead and cost under high traffic.
+      "head_sampling_rate": 1
     }
   },
   // The Sandbox Durable Object + its container image.
@@ -20,9 +25,9 @@
       // Replace with a custom Dockerfile path if you need extra tooling
       // (e.g. git, Python, Node.js) in the sandbox container.
       "image": "./Dockerfile",
-      // "lite" is a good default for getting started; upgrade to "standard-1"
-      // (4 vCPU / 8 GiB RAM) for production workloads.
-      "instance_type": "lite",
+      // "standard-1" (4 vCPU / 8 GiB RAM) suits production workloads; drop to
+      // "lite" to minimise cost when getting started.
+      "instance_type": "standard-1",
       "max_instances": 3
     }
   ],
