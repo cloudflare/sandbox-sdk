@@ -58,6 +58,8 @@ async function withPool(
     maxInstances?: number | null;
     /** Operator-declared ceiling passed through configure() (Proposal 1). */
     configuredMaxInstances?: number;
+    /** Bounded-parallel batch size passed through configure() (TICKET2). */
+    scaleBatchSize?: number;
     warmContainers?: string[];
     assignments?: [string, string][];
     containerBehavior?: {
@@ -97,7 +99,8 @@ async function withPool(
     await instance.configure({
       warmTarget: opts.warmTarget ?? 0,
       refreshInterval: 60_000,
-      ...(opts.configuredMaxInstances !== undefined ? { maxInstances: opts.configuredMaxInstances } : {})
+      ...(opts.configuredMaxInstances !== undefined ? { maxInstances: opts.configuredMaxInstances } : {}),
+      ...(opts.scaleBatchSize !== undefined ? { scaleBatchSize: opts.scaleBatchSize } : {})
     });
 
     await callback(instance, mock);
@@ -224,6 +227,145 @@ describe('WarmPool', () => {
         async (pool) => {
           await pool.alarm();
           expect(startCount).toBe(0);
+        }
+      );
+    });
+  });
+
+  // ── batched scale-up (TICKET2) ─────────────────────────────────────────
+
+  describe('batched scale-up', () => {
+    /**
+     * Behavior wrapper that records the peak number of concurrent
+     * startAndWaitForPorts calls in flight at once.
+     */
+    function concurrencyTracker() {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let startCount = 0;
+      return {
+        startCount: () => startCount,
+        maxInFlight: () => maxInFlight,
+        behavior: {
+          startAndWaitForPorts: vi.fn(async () => {
+            startCount++;
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            // Yield so siblings in the same batch can also enter.
+            await Promise.resolve();
+            await Promise.resolve();
+            inFlight--;
+          }),
+          getState: vi.fn(async () => ({ status: 'running' as const }))
+        }
+      };
+    }
+
+    it('starts containers in bounded-parallel batches', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 10,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 5,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(10);
+          expect(tracker.startCount()).toBe(10);
+          // Bounded: never more than batch size in flight at once.
+          expect(tracker.maxInFlight()).toBe(5);
+        }
+      );
+    });
+
+    it('batch size of 1 reproduces serial behaviour', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 4,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 1,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          expect((await pool.getStats()).warm).toBe(4);
+          expect(tracker.maxInFlight()).toBe(1);
+        }
+      );
+    });
+
+    it('clamps batch size to a safe maximum', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 30,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 1000,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          // Clamped to the documented max of 20, not 1000.
+          expect(tracker.maxInFlight()).toBe(20);
+        }
+      );
+    });
+
+    it('stops launching batches once capacity is exhausted mid-fill', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 20,
+          scaleBatchSize: 5,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // First batch of 5 succeeds; the second batch hits the cap.
+              if (startCount > 5) {
+                throw new Error(MAX_INSTANCES_ERROR);
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          // 5 succeed, the straddling batch of 5 all fail (bounded overshoot),
+          // then the loop stops — no third batch.
+          expect(startCount).toBe(10);
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(5);
+        }
+      );
+    });
+
+    it('adds only successful UUIDs from a partial-failure batch', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 4,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 5,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // Odd-numbered starts fail with a non-capacity error.
+              if (startCount % 2 === 1) {
+                throw new Error('transient boot failure');
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          // 2 of the 4 attempted succeeded; pool not corrupted.
+          expect(stats.warm).toBe(2);
         }
       );
     });
@@ -583,6 +725,8 @@ describe('WarmPool', () => {
       await withPool(
         {
           warmTarget: 5,
+          // Serial batches isolate the mid-loop capacity stop.
+          scaleBatchSize: 1,
           containerBehavior: {
             startAndWaitForPorts: vi.fn(async () => {
               startCount++;
@@ -830,6 +974,9 @@ describe('WarmPool', () => {
       await withPool(
         {
           warmTarget: 3,
+          // Reactive discovery counts on serial starts; batch size 1 keeps the
+          // inferred ceiling accurate for the learn-by-crashing path.
+          scaleBatchSize: 1,
           containerBehavior: {
             startAndWaitForPorts: vi.fn(async () => {
               totalStarted++;

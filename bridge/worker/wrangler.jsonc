@@ -69,7 +69,11 @@
     // errors). Note the effective warm ceiling is max_instances minus any
     // assigned containers, so warmTarget cannot equal max_instances while
     // sandboxes are in use.
-    "WARM_POOL_MAX_INSTANCES": "0"
+    "WARM_POOL_MAX_INSTANCES": "0",
+    // Number of containers the pool starts in parallel per scale-up batch.
+    // Higher fills the pool faster; too high risks the platform throttling a
+    // cold-start stampede. Clamped to [1, 20]. Default 5.
+    "WARM_POOL_SCALE_BATCH_SIZE": "5"
   },
   "preview_urls": false
 }
