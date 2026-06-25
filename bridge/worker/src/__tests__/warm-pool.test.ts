@@ -56,6 +56,8 @@ async function withPool(
   opts: {
     warmTarget?: number;
     maxInstances?: number | null;
+    /** Operator-declared ceiling passed through configure() (Proposal 1). */
+    configuredMaxInstances?: number;
     warmContainers?: string[];
     assignments?: [string, string][];
     containerBehavior?: {
@@ -94,7 +96,8 @@ async function withPool(
     // Configure
     await instance.configure({
       warmTarget: opts.warmTarget ?? 0,
-      refreshInterval: 60_000
+      refreshInterval: 60_000,
+      ...(opts.configuredMaxInstances !== undefined ? { maxInstances: opts.configuredMaxInstances } : {})
     });
 
     await callback(instance, mock);
@@ -562,6 +565,139 @@ describe('WarmPool', () => {
         async (pool) => {
           const stats = await pool.getStats();
           expect(stats.maxInstances).toBeNull();
+        }
+      );
+    });
+  });
+
+  // ── Configured max_instances (Proposal 1) ──────────────────────────────
+
+  describe('configured max_instances', () => {
+    it('seeds knownMaxInstances from config before any container start', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 100
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(100);
+        }
+      );
+    });
+
+    it('does not require a discovery 502 to learn the ceiling', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 2,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          // Clamped to configured ceiling of 2 — no failed start needed.
+          expect(startCount).toBe(2);
+        }
+      );
+    });
+
+    it('keeps a learned-lower ceiling over a higher configured value', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          maxInstances: 3,
+          configuredMaxInstances: 100
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(3);
+        }
+      );
+    });
+
+    it('keeps a configured-lower ceiling over a higher learned value', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          maxInstances: 50,
+          configuredMaxInstances: 10
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(10);
+        }
+      );
+    });
+
+    it('treats 0 as auto-learn (preserves null ceiling)', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 0
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBeNull();
+        }
+      );
+    });
+
+    it('never starts beyond the configured ceiling in getContainer', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 2,
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {}),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await expect(pool.getContainer('user3')).rejects.toThrow('instance limit reached');
+        }
+      );
+    });
+
+    it('re-seeds the configured ceiling after a successful probe clears it', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 3,
+          maxInstances: 2,
+          configuredMaxInstances: 5,
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          // Probe succeeds, clears the learned limit of 2.
+          await pool.alarm();
+          expect((await pool.getStats()).maxInstances).toBeNull();
+          // Next configure() (every request) re-seeds the configured ceiling.
+          await pool.configure({
+            warmTarget: 3,
+            refreshInterval: 60_000,
+            maxInstances: 5
+          });
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(5);
         }
       );
     });

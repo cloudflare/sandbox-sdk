@@ -23,6 +23,14 @@ export interface WarmPoolConfig {
   warmTarget?: number;
   /** How often to check and replenish warm containers (ms). @default 10000 */
   refreshInterval?: number;
+  /**
+   * Operator-declared max_instances ceiling, mirroring
+   * `containers[].max_instances` in wrangler.jsonc. Seeds the pool's capacity
+   * math so it never blindly attempts doomed starts. 0/undefined = auto-learn
+   * the ceiling reactively from platform errors (legacy behaviour).
+   * @default 0
+   */
+  maxInstances?: number;
 }
 
 export interface PoolStats {
@@ -64,7 +72,8 @@ interface ContainerWithState {
 
 const DEFAULT_CONFIG: Required<WarmPoolConfig> = {
   warmTarget: 0,
-  refreshInterval: 10_000
+  refreshInterval: 10_000,
+  maxInstances: 0
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +201,20 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
   async configure(config: WarmPoolConfig): Promise<void> {
     await this.init();
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Seed the ceiling if the operator declared one. The configured value is an
+    // upper bound the operator promises; the platform may still impose a lower
+    // one, so never clobber a *lower* limit learned from a real capacity error.
+    // Re-seeding here (configure runs on every request) makes a probe-cleared
+    // ceiling self-healing.
+    if (this.config.maxInstances > 0) {
+      this.knownMaxInstances =
+        this.knownMaxInstances === null
+          ? this.config.maxInstances
+          : Math.min(this.knownMaxInstances, this.config.maxInstances);
+      await this.ctx.storage.put('knownMaxInstances', this.knownMaxInstances);
+    }
+
     await this.ctx.storage.put('config', this.config);
   }
 

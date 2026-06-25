@@ -35,7 +35,7 @@ import {
 } from './helpers';
 import { OPENAPI_SCHEMA } from './openapi';
 import { renderOpenApiHtml } from './openapi-html';
-import { primePool } from './pool';
+import { parsePoolConfig, primePool } from './pool';
 import type {
   BridgeEnv,
   ExecRequest,
@@ -392,20 +392,12 @@ export function createBridgeApp(
   app.use(`${apiPrefix}/sandbox/:id/*`, async (c, next) => {
     const sandboxId = c.req.param('id');
 
-    const warmTarget =
-      Number.parseInt((c.env.WARM_POOL_TARGET as string) || '0', 10) || 0;
-    const refreshInterval =
-      Number.parseInt(
-        (c.env.WARM_POOL_REFRESH_INTERVAL as string) || '10000',
-        10
-      ) || 10_000;
-
     const poolNs = getWarmPoolNs(c.env);
     const poolId = poolNs.idFromName('global-pool');
     const poolStub = poolNs.get(poolId);
 
     try {
-      await (poolStub as any).configure({ warmTarget, refreshInterval });
+      await (poolStub as any).configure(parsePoolConfig(c.env));
       const containerUUID = await (poolStub as any).getContainer(sandboxId);
       c.set('containerUUID', containerUUID);
     } catch (err) {
@@ -1195,20 +1187,12 @@ export function createBridgeApp(
   });
 
   app.get(`${apiPrefix}/pool/stats`, async (c) => {
-    const warmTarget =
-      Number.parseInt((c.env.WARM_POOL_TARGET as string) || '0', 10) || 0;
-    const refreshInterval =
-      Number.parseInt(
-        (c.env.WARM_POOL_REFRESH_INTERVAL as string) || '10000',
-        10
-      ) || 10_000;
-
     const poolNs = getWarmPoolNs(c.env);
     const poolId = poolNs.idFromName('global-pool');
     const poolStub = poolNs.get(poolId);
 
     try {
-      await (poolStub as any).configure({ warmTarget, refreshInterval });
+      await (poolStub as any).configure(parsePoolConfig(c.env));
     } catch {
       // Continue — stats should still be readable even if config push fails.
     }
@@ -1218,20 +1202,12 @@ export function createBridgeApp(
   });
 
   app.post(`${apiPrefix}/pool/shutdown-prewarmed`, async (c) => {
-    const warmTarget =
-      Number.parseInt((c.env.WARM_POOL_TARGET as string) || '0', 10) || 0;
-    const refreshInterval =
-      Number.parseInt(
-        (c.env.WARM_POOL_REFRESH_INTERVAL as string) || '10000',
-        10
-      ) || 10_000;
-
     const poolNs = getWarmPoolNs(c.env);
     const poolId = poolNs.idFromName('global-pool');
     const poolStub = poolNs.get(poolId);
 
     try {
-      await (poolStub as any).configure({ warmTarget, refreshInterval });
+      await (poolStub as any).configure(parsePoolConfig(c.env));
     } catch {
       // Continue.
     }
