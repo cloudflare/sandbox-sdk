@@ -54,21 +54,25 @@ rl.on('line', async (line: string) => {
 
     (process.stdout.write as unknown) = (
       chunk: string | Buffer,
-      _encoding?: BufferEncoding,
+      encoding?: BufferEncoding | (() => void),
       callback?: () => void
     ) => {
-      stdout += chunk.toString();
-      if (callback) callback();
+      const enc = typeof encoding === 'string' ? encoding : undefined;
+      const done = typeof encoding === 'function' ? encoding : callback;
+      stdout += typeof chunk === 'string' ? chunk : chunk.toString(enc);
+      if (done) done();
       return true;
     };
 
     (process.stderr.write as unknown) = (
       chunk: string | Buffer,
-      _encoding?: BufferEncoding,
+      encoding?: BufferEncoding | (() => void),
       callback?: () => void
     ) => {
-      stderr += chunk.toString();
-      if (callback) callback();
+      const enc = typeof encoding === 'string' ? encoding : undefined;
+      const done = typeof encoding === 'function' ? encoding : callback;
+      stderr += typeof chunk === 'string' ? chunk : chunk.toString(enc);
+      if (done) done();
       return true;
     };
 

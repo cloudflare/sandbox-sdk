@@ -170,18 +170,18 @@ export abstract class SandboxExtension extends RpcTarget {
 
 /**
  * Recognise the host's `ExtensionTarballRequired` error across the capnweb
- * boundary. capnweb preserves `Error.name`, so the wire-safe contract is the
- * string constant `EXTENSION_TARBALL_REQUIRED`.
+ * boundary. There are two cases:
+ *
+ * 1. capnweb preserves `Error.name`, so the primary wire-safe contract is the
+ *    string constant `EXTENSION_TARBALL_REQUIRED`.
+ * 2. capnweb sometimes re-wraps the error as an `RPCTransportError`, discarding
+ *    `name` but preserving the message text. We fall back to matching the
+ *    message so the tarball retry still fires in that case.
  */
 function isTarballRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const candidate = error as {
-    name?: unknown;
-    message?: unknown;
-    code?: unknown;
-  };
+  const candidate = error as { name?: unknown; message?: unknown };
   if (candidate.name === EXTENSION_TARBALL_REQUIRED) return true;
-  if (candidate.code === EXTENSION_TARBALL_REQUIRED) return true;
   if (typeof candidate.message !== 'string') return false;
   return (
     candidate.message.includes(EXTENSION_TARBALL_REQUIRED) ||

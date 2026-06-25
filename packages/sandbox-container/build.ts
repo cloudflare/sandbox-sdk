@@ -5,6 +5,8 @@
  * - dist/index.js: Legacy JS bundle for backwards compatibility
  */
 
+// This script uses top-level `await` and has no imports, so an empty `export`
+// is required to mark it as an ES module rather than a script.
 export {};
 
 // Build legacy JS bundle for backwards compatibility

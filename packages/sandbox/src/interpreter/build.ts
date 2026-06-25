@@ -1,8 +1,6 @@
-import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
+import { pack as createTarPack } from 'tar-stream';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sidecarDir = join(here, 'sidecar');
@@ -34,12 +32,11 @@ const serverSource = await bundle(join(sidecarDir, 'server.ts'));
 const nodeExecutorSource = await bundle(
   join(sidecarDir, 'executors/javascript/node_executor.ts')
 );
-const pythonExecutorSource = await readFile(
-  join(sidecarDir, 'executors/python/ipython_executor.py'),
-  'utf8'
-);
+const pythonExecutorSource = await Bun.file(
+  join(sidecarDir, 'executors/python/ipython_executor.py')
+).text();
 
-const version = createHash('sha1')
+const version = new Bun.CryptoHasher('sha1')
   .update(serverSource)
   .update(nodeExecutorSource)
   .update(pythonExecutorSource)
@@ -63,25 +60,26 @@ const packageJson = `${JSON.stringify(
   2
 )}\n`;
 
-const tarball = gzipSync(
-  createTarball([
-    { path: 'package/package.json', content: packageJson },
-    { path: 'package/dist/server.mjs', content: serverSource, mode: 0o755 },
-    {
-      path: 'package/dist/executors/javascript/node_executor.mjs',
-      content: nodeExecutorSource,
-      mode: 0o755
-    },
-    {
-      path: 'package/dist/executors/python/ipython_executor.py',
-      content: pythonExecutorSource,
-      mode: 0o755
-    }
-  ])
+const tarball = Bun.gzipSync(
+  Uint8Array.from(
+    await createTarball([
+      { path: 'package/package.json', content: packageJson },
+      { path: 'package/dist/server.mjs', content: serverSource, mode: 0o755 },
+      {
+        path: 'package/dist/executors/javascript/node_executor.mjs',
+        content: nodeExecutorSource,
+        mode: 0o755
+      },
+      {
+        path: 'package/dist/executors/python/ipython_executor.py',
+        content: pythonExecutorSource,
+        mode: 0o755
+      }
+    ])
+  )
 );
-tarball.writeUInt32LE(0, 4);
 
-await writeFile(outFile, tarball);
+await Bun.write(outFile, tarball);
 
 console.log(
   `Wrote ${outFile}\n  version ${version} (${(tarball.length / 1024).toFixed(
@@ -95,62 +93,22 @@ interface TarEntry {
   mode?: number;
 }
 
-function createTarball(entries: TarEntry[]): Buffer {
-  const chunks: Buffer[] = [];
+// `mtime` is pinned to the epoch so the tarball is byte-for-byte reproducible
+// for a given set of sources (the version hash is derived from the sources).
+async function createTarball(entries: TarEntry[]): Promise<Buffer> {
+  const tar = createTarPack();
   for (const entry of entries) {
-    const body = Buffer.isBuffer(entry.content)
-      ? entry.content
-      : Buffer.from(entry.content);
-    chunks.push(createTarHeader(entry.path, body.length, entry.mode ?? 0o644));
-    chunks.push(body);
-    const padding = (512 - (body.length % 512)) % 512;
-    if (padding > 0) chunks.push(Buffer.alloc(padding));
+    const body = Buffer.from(entry.content);
+    tar.entry(
+      { name: entry.path, mode: entry.mode ?? 0o644, mtime: new Date(0) },
+      body
+    );
   }
-  chunks.push(Buffer.alloc(1024));
+  tar.finalize();
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of tar) {
+    chunks.push(Buffer.from(chunk));
+  }
   return Buffer.concat(chunks);
-}
-
-function createTarHeader(path: string, size: number, mode: number): Buffer {
-  const header = Buffer.alloc(512);
-  writeString(header, path, 0, 100);
-  writeOctal(header, mode, 100, 8);
-  writeOctal(header, 0, 108, 8);
-  writeOctal(header, 0, 116, 8);
-  writeOctal(header, size, 124, 12);
-  writeOctal(header, 0, 136, 12);
-  header.fill(0x20, 148, 156);
-  header[156] = '0'.charCodeAt(0);
-  writeString(header, 'ustar', 257, 6);
-  writeString(header, '00', 263, 2);
-  const checksum = header.reduce((sum, byte) => sum + byte, 0);
-  writeOctal(header, checksum, 148, 8);
-  return header;
-}
-
-function writeString(
-  buffer: Buffer,
-  value: string,
-  offset: number,
-  length: number
-): void {
-  buffer.write(
-    value,
-    offset,
-    Math.min(Buffer.byteLength(value), length),
-    'utf8'
-  );
-}
-
-function writeOctal(
-  buffer: Buffer,
-  value: number,
-  offset: number,
-  length: number
-): void {
-  const text = value
-    .toString(8)
-    .padStart(length - 1, '0')
-    .slice(0, length - 1);
-  buffer.write(text, offset, length - 1, 'ascii');
-  buffer[offset + length - 1] = 0;
 }
