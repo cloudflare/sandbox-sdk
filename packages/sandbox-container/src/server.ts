@@ -69,6 +69,7 @@ async function createApplication(): Promise<{
     backupService: container.get('backupService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
+    extensionHost: container.get('extensionHost'),
     sessionManager: container.get('sessionManager'),
     logger
   });
@@ -258,6 +259,7 @@ export async function startServer(): Promise<ServerInstance> {
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
         const tunnelService = app.container.get('tunnelService');
+        const extensionHost = app.container.get('extensionHost');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -269,6 +271,7 @@ export async function startServer(): Promise<ServerInstance> {
         await processService.destroy();
         portService.destroy();
         await tunnelService.destroyAll();
+        await extensionHost.stopAll();
 
         logger.info('Services cleaned up successfully');
       } catch (error) {

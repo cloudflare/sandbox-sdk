@@ -61,6 +61,16 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js"
     },
+    "./extensions": {
+      "types": "./dist/extensions/index.d.ts",
+      "import": "./dist/extensions/index.js",
+      "require": "./dist/extensions/index.js"
+    },
+    "./sidecar": {
+      "types": "./dist/sidecar/index.d.ts",
+      "import": "./dist/sidecar/index.js",
+      "require": "./dist/sidecar/index.js"
+    },
     "./openai": {
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",

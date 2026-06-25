@@ -2,6 +2,8 @@ import type {
   CheckChangesRequest,
   CheckChangesResult,
   ExecutionError,
+  ExtensionConnectRequest,
+  ExtensionHealth,
   FileEncoding,
   FileInfo,
   ListFilesOptions,
@@ -20,6 +22,7 @@ import type {
   ServiceError,
   ServiceResult
 } from '../core/types';
+import type { ExtensionHost } from '../extensions';
 import type { BackupService } from '../services/backup-service';
 import type { FileService } from '../services/file-service';
 import type { GitService } from '../services/git-service';
@@ -43,6 +46,7 @@ export interface SandboxAPIDeps {
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
+  extensionHost: ExtensionHost;
   sessionManager: SessionManager;
   logger: Logger;
 }
@@ -111,6 +115,9 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get tunnels() {
     return new TunnelsRPCAPI(this.#deps.tunnelService);
+  }
+  get extensions() {
+    return new ExtensionsRPCAPI(this.#deps.extensionHost);
   }
 }
 
@@ -1127,5 +1134,44 @@ class TunnelsRPCAPI extends RpcTarget {
 
   async listTunnels(): Promise<TunnelInfo[]> {
     return this.#svc.list();
+  }
+}
+
+// ===========================================================================
+// Extensions (dynamic sidecar bridge)
+// ===========================================================================
+
+/**
+ * Capnweb surface for sidecar extensions.
+ *
+ * `connect` provisions an extension package on first use (keyed by tarball
+ * content hash) and returns the sidecar's capnweb remote main as a stub.
+ * Calls on the stub are proxied through the container's capnweb session into
+ * the sidecar's separate capnweb session — callback parameters (including
+ * streaming handlers) round-trip across both hops via capnweb's cross-session
+ * stub forwarding.
+ *
+ * Identity lives inside the tarball's `package.json`; the host derives `id`,
+ * `version`, `bin`, and readiness timeout from there. The wire payload is
+ * the tarball bytes on first connect per hash; subsequent connects send the
+ * hash alone.
+ */
+class ExtensionsRPCAPI extends RpcTarget {
+  #host: ExtensionHost;
+  constructor(host: ExtensionHost) {
+    super();
+    this.#host = host;
+  }
+
+  async connect(req: ExtensionConnectRequest): Promise<unknown> {
+    return this.#host.connect(req);
+  }
+
+  async health(packageHash: string): Promise<ExtensionHealth> {
+    return this.#host.health(packageHash);
+  }
+
+  async stop(packageHash: string): Promise<void> {
+    await this.#host.stop(packageHash);
   }
 }

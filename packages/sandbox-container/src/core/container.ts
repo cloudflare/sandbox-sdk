@@ -1,5 +1,6 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
+import { ExtensionHost } from '../extensions/extension-host';
 import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
@@ -25,6 +26,7 @@ export interface Dependencies {
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
+  extensionHost: ExtensionHost;
 
   // Infrastructure
   logger: Logger;
@@ -125,6 +127,7 @@ export class Container {
     const tunnelService = new TunnelService(logger, () =>
       this.getControlCallback()
     );
+    const extensionHost = new ExtensionHost(logger);
 
     // Initialize handlers
     const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
@@ -140,6 +143,7 @@ export class Container {
       backupService,
       watchService,
       tunnelService,
+      extensionHost,
 
       // Infrastructure
       logger,

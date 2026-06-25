@@ -73,6 +73,7 @@ import type {
   Logger,
   SandboxBackupAPI,
   SandboxCommandsAPI,
+  SandboxExtensionsAPI,
   SandboxFilesAPI,
   SandboxGitAPI,
   SandboxInterpreterAPI,
@@ -643,6 +644,9 @@ export class ContainerControlClient {
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
+  }
+  get extensions(): SandboxExtensionsAPI {
+    return wrapStub(this.getConnection().rpc().extensions, this.renewActivity);
   }
 
   /**
