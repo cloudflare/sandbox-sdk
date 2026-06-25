@@ -183,6 +183,35 @@ describe('translateRPCError', () => {
     });
   });
 
+  it.each([
+    ['Peer closed WebSocket: 1006 gone'],
+    ['WebSocket connection failed.']
+  ])(
+    'maps in-flight transport loss %s to OperationInterruptedError with operation context',
+    (message) => {
+      let caughtError: unknown;
+      try {
+        translateRPCError(new Error(message), {
+          operation: 'commands.execute'
+        });
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(OperationInterruptedError);
+      expect((caughtError as OperationInterruptedError).code).toBe(
+        ErrorCode.OPERATION_INTERRUPTED
+      );
+      expect((caughtError as OperationInterruptedError).context).toMatchObject({
+        reason: 'runtime_replaced',
+        operation: 'commands.execute',
+        phase: 'rpc_call',
+        admitted: 'unknown',
+        retryable: false
+      });
+    }
+  );
+
   it('re-throws SandboxError subclasses without wrapping as RPCTransportError', () => {
     const originalError = new SandboxError({
       code: ErrorCode.BACKUP_RESTORE_FAILED,

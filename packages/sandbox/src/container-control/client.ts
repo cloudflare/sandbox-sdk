@@ -335,19 +335,29 @@ function buildInterruptedOperationResponse(
   context: RPCTranslationContext
 ): ErrorResponse<OperationInterruptedContext> | null {
   if (!context.operation) return null;
-  if (transportResponse.context.kind !== 'session_disposed') return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'peer_closed' &&
+    kind !== 'connection_failed'
+  ) {
+    return null;
+  }
 
   const interruptedContext: OperationInterruptedContext = {
-    reason: 'transport_disposed',
+    reason:
+      kind === 'session_disposed' ? 'transport_disposed' : 'runtime_replaced',
     operation: context.operation,
     phase: 'rpc_call',
     admitted: 'unknown',
     retryable: false
   };
+  const action =
+    kind === 'session_disposed' ? 'was closing' : 'closed unexpectedly';
 
   return {
     code: ErrorCode.OPERATION_INTERRUPTED,
-    message: `Sandbox operation ${context.operation} was interrupted while the runtime connection was closing`,
+    message: `Sandbox operation ${context.operation} was interrupted while the runtime connection ${action}`,
     context: interruptedContext,
     httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
     suggestion: getSuggestion(
