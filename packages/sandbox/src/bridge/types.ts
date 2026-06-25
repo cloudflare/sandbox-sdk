@@ -79,6 +79,7 @@ export interface BridgeEnv {
   WARM_POOL_TARGET?: string;
   WARM_POOL_REFRESH_INTERVAL?: string;
   WARM_POOL_MAX_INSTANCES?: string;
+  WARM_POOL_SCALE_BATCH_SIZE?: string;
   [key: string]: unknown;
 }
 

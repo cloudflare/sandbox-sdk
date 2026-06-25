@@ -21,8 +21,10 @@ export function parsePoolConfig(env: BridgeEnv): Required<WarmPoolConfig> {
     ) || 10_000;
   const maxInstances =
     Number.parseInt((env.WARM_POOL_MAX_INSTANCES as string) || '0', 10) || 0;
+  const scaleBatchSize =
+    Number.parseInt((env.WARM_POOL_SCALE_BATCH_SIZE as string) || '5', 10) || 5;
 
-  return { warmTarget, refreshInterval, maxInstances };
+  return { warmTarget, refreshInterval, maxInstances, scaleBatchSize };
 }
 
 /**

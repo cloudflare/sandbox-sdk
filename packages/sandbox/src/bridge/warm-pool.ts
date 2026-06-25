@@ -31,6 +31,12 @@ export interface WarmPoolConfig {
    * @default 0
    */
   maxInstances?: number;
+  /**
+   * Number of containers to start in parallel per scale-up batch. Higher
+   * values fill the pool faster but risk the platform throttling a cold-start
+   * stampede. Clamped to [1, MAX_BATCH_SIZE]. @default 5
+   */
+  scaleBatchSize?: number;
 }
 
 export interface PoolStats {
@@ -70,10 +76,16 @@ interface ContainerWithState {
 // Defaults
 // ---------------------------------------------------------------------------
 
+const DEFAULT_BATCH_SIZE = 5;
+
+/** Upper bound on parallel starts per batch to avoid a cold-start stampede. */
+const MAX_BATCH_SIZE = 20;
+
 const DEFAULT_CONFIG: Required<WarmPoolConfig> = {
   warmTarget: 0,
   refreshInterval: 10_000,
-  maxInstances: 0
+  maxInstances: 0,
+  scaleBatchSize: DEFAULT_BATCH_SIZE
 };
 
 // ---------------------------------------------------------------------------
@@ -214,6 +226,13 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
   async configure(config: WarmPoolConfig): Promise<void> {
     await this.init();
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Clamp the batch size to a sane range so a misconfigured var can't
+    // re-introduce the cold-start stampede (or stall scale-up entirely).
+    this.config.scaleBatchSize = Math.min(
+      MAX_BATCH_SIZE,
+      Math.max(1, this.config.scaleBatchSize || DEFAULT_BATCH_SIZE)
+    );
 
     // Seed the ceiling if the operator declared one. The configured value is an
     // upper bound the operator promises; the platform may still impose a lower
@@ -490,25 +509,28 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
         return;
       }
 
+      const batchSize = this.config.scaleBatchSize;
       console.info({
         message: 'Scaling up pool',
         component: 'warm-pool',
         starting: toStart,
         needed: diff,
-        capacity: this.remainingCapacity()
+        capacity: this.remainingCapacity(),
+        batchSize
       });
-      for (let i = 0; i < toStart; i++) {
-        if (this.capacityExhausted) {
-          console.log({
-            message: 'Capacity exhausted mid-loop, stopping further starts',
-            component: 'warm-pool'
-          });
-          break;
+      // Start in bounded-parallel batches: faster fill than one-at-a-time while
+      // re-checking capacity between batches so a straddling batch overshoots
+      // the ceiling by at most batchSize - 1 doomed starts.
+      for (let i = 0; i < toStart && !this.capacityExhausted; i += batchSize) {
+        const n = Math.min(batchSize, toStart - i);
+        const results = await Promise.all(
+          Array.from({ length: n }, () => this.startContainer())
+        );
+        for (const uuid of results) {
+          if (uuid) this.warmContainers.add(uuid);
         }
-        const uuid = await this.startContainer();
-        if (uuid) this.warmContainers.add(uuid);
+        await this.persist();
       }
-      await this.persist();
     } else if (diff < 0) {
       const excess = -diff;
       console.info({
