@@ -251,6 +251,23 @@ export class TunnelService {
       return serviceSuccess({ run: result.data.run, started: false });
     }
 
+    for (const rec of this.tunnels.values()) {
+      if (rec.info.port === port) {
+        return serviceError({
+          message: `Port ${port} already active under legacy tunnel ${rec.info.id}`,
+          code: 'TUNNEL_RUN_CONFLICT',
+          details: { runId, port, activeTunnelId: rec.info.id }
+        });
+      }
+      if (rec.info.id === tunnelId) {
+        return serviceError({
+          message: `Tunnel ${tunnelId} already active under legacy tunnel`,
+          code: 'TUNNEL_RUN_CONFLICT',
+          details: { tunnelId, runId }
+        });
+      }
+    }
+
     for (const rec of this.tunnelRuns.values()) {
       if (rec.request.port === port) {
         return serviceError({

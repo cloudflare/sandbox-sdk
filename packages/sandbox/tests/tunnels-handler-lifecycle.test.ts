@@ -202,6 +202,44 @@ describe('tunnels handler > quick lifecycle recovery', () => {
     });
   });
 
+  it('stops stale legacy quick tunnel records before refreshing them', async () => {
+    const legacy = makeRecord({ id: 'quick-legacy', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': legacy });
+    const fences = makeRuntimeFences();
+    const { tunnels: handler } = createTunnelsHandler({
+      client: client as unknown as Parameters<
+        typeof createTunnelsHandler
+      >[0]['client'],
+      storage,
+      logger: makeLogger(),
+      currentRuntime: fences.currentRuntime,
+      currentLifetime: fences.currentLifetime
+    } as unknown as Parameters<typeof createTunnelsHandler>[0]);
+    client.tunnels.destroyTunnel.mockResolvedValue({ success: true });
+    client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({
+      started: true,
+      run: {
+        tunnelId: request.tunnelId,
+        runId: request.runId,
+        mode: 'quick',
+        port: request.port,
+        url: 'https://fresh.trycloudflare.com',
+        hostname: 'fresh.trycloudflare.com',
+        startedAt: '2026-05-13T00:00:00.000Z'
+      }
+    }));
+
+    const info = await handler.get(8080);
+
+    expect(client.tunnels.destroyTunnel).toHaveBeenCalledWith('quick-legacy');
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+    expect(
+      client.tunnels.destroyTunnel.mock.invocationCallOrder[0]
+    ).toBeLessThan(client.tunnels.ensureTunnelRun.mock.invocationCallOrder[0]);
+    expect(info.hostname).toBe('fresh.trycloudflare.com');
+  });
+
   it('retries quick tunnel provisioning when runtime replacement is detected before commit', async () => {
     const { client, storage, handler, fences } = makeHandler();
     client.tunnels.ensureTunnelRun.mockImplementation(async (request) => ({

@@ -295,6 +295,7 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
               !existing.name &&
               (await this.#quickTunnelRecordIsStale(metaEntry))
             ) {
+              await this.#stopStaleQuickTunnel(existing, metaEntry);
               return await this.#provisionQuickTunnel(port, recovery);
             }
             // Container restart marker: the CF-side tunnel + DNS still
@@ -421,6 +422,24 @@ class TunnelsRpcTarget extends RpcTarget implements TunnelsHandler {
       runtime?.id !== metaEntry.runtimeIdentityID ||
       lifetime.id !== metaEntry.sandboxLifetimeID
     );
+  }
+
+  async #stopStaleQuickTunnel(
+    existing: TunnelInfo,
+    metaEntry?: TunnelMetaEntry
+  ): Promise<void> {
+    try {
+      if (metaEntry?.tunnelRunId) {
+        await this.#host.client.tunnels.stopTunnelRun({
+          tunnelId: existing.id,
+          runId: metaEntry.tunnelRunId
+        });
+      } else {
+        await this.#host.client.tunnels.destroyTunnel(existing.id);
+      }
+    } catch (error) {
+      if (!isTunnelNotFoundError(error)) throw error;
+    }
   }
 
   /**

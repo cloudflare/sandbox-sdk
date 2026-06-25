@@ -884,6 +884,46 @@ describe('TunnelService > ensureTunnelRun', () => {
     expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
   });
 
+  it('returns TUNNEL_RUN_CONFLICT when a legacy tunnel already uses the port', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.runQuickTunnel('quick-legacy', 8080);
+    });
+
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-runtime',
+      runId: 'rid-runtime',
+      mode: 'quick',
+      port: 8080
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
+    expect(fakeProcs).toHaveLength(1);
+  });
+
+  it('returns TUNNEL_RUN_CONFLICT when a legacy tunnel already uses the tunnel id', async () => {
+    const service = new TunnelService(mockLogger);
+
+    await withFakeCloudflared(QUICK_BANNER, async () => {
+      await service.runQuickTunnel('tid-legacy', 8080);
+    });
+
+    const result = await service.ensureTunnelRun({
+      tunnelId: 'tid-legacy',
+      runId: 'rid-runtime',
+      mode: 'quick',
+      port: 9090
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('TUNNEL_RUN_CONFLICT');
+    expect(fakeProcs).toHaveLength(1);
+  });
+
   it('returns TUNNEL_RUN_CONFLICT for different runId on same tunnelId', async () => {
     const service = new TunnelService(mockLogger);
 
