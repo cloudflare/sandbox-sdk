@@ -108,6 +108,15 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
   private capacityExhausted = false;
   private initialized = false;
 
+  /** Guards against overlapping eager refills triggered by concurrent pops. */
+  private refillInFlight = false;
+
+  /**
+   * The currently in-flight eager refill, or null. Exposed for tests to await
+   * the otherwise fire-and-forget refill deterministically.
+   */
+  private refillPromise: Promise<void> | null = null;
+
   // =======================================================================
   // Public RPC methods
   // =======================================================================
@@ -134,6 +143,8 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
       this.warmContainers.delete(containerUUID);
       this.assignments.set(sandboxId, containerUUID);
       await this.persist();
+      // Refill the slot we just consumed without waiting for the alarm tick.
+      this.requestRefill();
       return containerUUID;
     }
 
@@ -147,6 +158,8 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     if (containerUUID) {
       this.assignments.set(sandboxId, containerUUID);
       await this.persist();
+      // Pool was empty — start replenishing toward warmTarget eagerly.
+      this.requestRefill();
       return containerUUID;
     }
 
@@ -241,6 +254,38 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     }
 
     await this.persist();
+  }
+
+  // =======================================================================
+  // Eager refill
+  // =======================================================================
+
+  /**
+   * Kick a non-blocking refill toward warmTarget. Debounced via refillInFlight
+   * so a burst of concurrent pops triggers at most one adjustPool sweep at a
+   * time; capacity is respected because adjustPool clamps to remainingCapacity.
+   * Errors are swallowed so a failed refill never rejects the triggering call.
+   */
+  private requestRefill(): void {
+    if (this.refillInFlight) return;
+    if (this.warmContainers.size >= this.config.warmTarget) return;
+    if (this.remainingCapacity() <= 0) return;
+
+    this.refillInFlight = true;
+    this.refillPromise = (async () => {
+      try {
+        await this.adjustPool();
+      } catch (error) {
+        console.error({
+          message: 'Eager refill failed',
+          component: 'warm-pool',
+          error
+        });
+      } finally {
+        this.refillInFlight = false;
+      }
+    })();
+    this.ctx.waitUntil(this.refillPromise);
   }
 
   // =======================================================================

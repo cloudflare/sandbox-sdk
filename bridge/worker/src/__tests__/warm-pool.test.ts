@@ -359,6 +359,123 @@ describe('WarmPool', () => {
 
   // ── startContainer error detection ─────────────────────────────────────
 
+  describe('eager refill', () => {
+    it('refills the warm pool after a pop without waiting for the alarm', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 2,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2'],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.getContainer('user1');
+          // Wait for the fire-and-forget refill to settle.
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(2);
+          expect(startCount).toBe(1);
+        }
+      );
+    });
+
+    it('debounces concurrent pops to a single in-flight refill', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2', 'w3'],
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              await gate;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          let adjustCount = 0;
+          const wrapped = pool as unknown as {
+            adjustPool: () => Promise<void>;
+            refillPromise: Promise<void> | null;
+          };
+          const orig = wrapped.adjustPool.bind(pool);
+          wrapped.adjustPool = async () => {
+            adjustCount++;
+            return orig();
+          };
+
+          await Promise.all([pool.getContainer('user3'), pool.getContainer('user4')]);
+
+          // Two pops, but only one refill should be in flight.
+          expect(adjustCount).toBe(1);
+
+          release();
+          await wrapped.refillPromise;
+        }
+      );
+    });
+
+    it('eager refill never exceeds remaining capacity', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 3,
+          warmContainers: ['w1'],
+          assignments: [['user1', 'c1']],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          // Pop w1 → warm 0, assigned 2, total 2. Ceiling 3 leaves room for 1.
+          await pool.getContainer('user2');
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+          expect(startCount).toBe(1);
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(1);
+        }
+      );
+    });
+
+    it('refill failure does not reject getContainer', async () => {
+      await withPool(
+        {
+          warmTarget: 2,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2'],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              throw new Error('boom');
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await expect(pool.getContainer('user1')).resolves.toBeDefined();
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+        }
+      );
+    });
+  });
+
   describe('startContainer / error detection', () => {
     it('records knownMaxInstances when max_instances error is thrown', async () => {
       await withPool(
