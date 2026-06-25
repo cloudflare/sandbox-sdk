@@ -31,11 +31,17 @@ import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
 
 /**
- * The slice of the Sandbox an extension captures: just its control `client`.
- * Narrow on purpose \u2014 an extension never holds the whole instance.
+ * The slice of the Sandbox an extension captures: its control `client` and the
+ * sandbox-level environment variables. Narrow on purpose \u2014 an extension never
+ * holds the whole instance.
+ *
+ * `envVars` mirrors what the Sandbox applies to sessionless execution, so an
+ * extension that drives commands through `client` directly can still honour
+ * sandbox-level env (tokens, proxy settings) without an explicit session.
  */
 export type SandboxLike = {
   readonly client: SandboxAPI;
+  readonly envVars?: Record<string, string>;
 };
 
 /**
@@ -87,6 +93,15 @@ export abstract class SandboxExtension extends RpcTarget {
   /** The container control client. Use inside your own methods, lazily. */
   protected get client(): SandboxAPI {
     return this.#sandbox.client;
+  }
+
+  /**
+   * Sandbox-level environment variables. Apply these to sessionless execution
+   * so commands driven straight through `client` still inherit sandbox env
+   * (tokens, proxy settings) the way the Sandbox's own sessionless path does.
+   */
+  protected get envVars(): Record<string, string> {
+    return this.#sandbox.envVars ?? {};
   }
 
   /**

@@ -24,14 +24,16 @@ function createGit(
     command: string,
     sessionId: string,
     options?: unknown
-  ) => ExecResult
+  ) => ExecResult,
+  envVars?: Record<string, string>
 ) {
   const execute = vi.fn(
     async (command: string, sessionId: string, options?: unknown) =>
       execImpl(command, sessionId, options)
   );
   const sandbox = {
-    client: { commands: { execute } }
+    client: { commands: { execute } },
+    envVars
   } as unknown as SandboxLike;
   return { git: withGit(sandbox), execute };
 }
@@ -189,5 +191,38 @@ describe('Git extension', () => {
     }));
 
     expect(await git.listBranches('/workspace/repo')).toEqual(['main', 'dev']);
+  });
+
+  it('merges sandbox env vars into sessionless git commands', async () => {
+    const { git, execute } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      { GITHUB_TOKEN: 'tok', HTTPS_PROXY: 'http://proxy:8080' }
+    );
+
+    await git.checkout('https://github.com/owner/repo.git');
+
+    for (const call of execute.mock.calls) {
+      expect(call[1]).toBe(DISABLE_SESSION_TOKEN);
+      expect((call[2] as { env?: Record<string, string> }).env).toEqual({
+        GITHUB_TOKEN: 'tok',
+        HTTPS_PROXY: 'http://proxy:8080'
+      });
+    }
+  });
+
+  it('does not inject sandbox env vars when a session is provided', async () => {
+    const { git, execute } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      { GITHUB_TOKEN: 'tok' }
+    );
+
+    await git.checkout('https://github.com/owner/repo.git', {
+      sessionId: 'sess-1'
+    });
+
+    for (const call of execute.mock.calls) {
+      expect(call[1]).toBe('sess-1');
+      expect((call[2] as { env?: Record<string, string> }).env).toBeUndefined();
+    }
   });
 });
