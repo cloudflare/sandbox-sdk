@@ -13,6 +13,7 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -27,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -825,6 +827,33 @@ export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
 }
 
 // ============================================================================
+// Container Availability Errors (SDK-side)
+// ============================================================================
+
+/**
+ * Raised when the sandbox container cannot accept an incoming RPC connection.
+ * The container may be starting up, temporarily unhealthy, or was replaced
+ * while the connection attempt was in progress.
+ *
+ * Always retryable: the operation that triggered the connection attempt can
+ * be retried once the container is ready.
+ */
+export class ContainerUnavailableError extends SandboxError<ContainerUnavailableContext> {
+  constructor(errorResponse: ErrorResponse<ContainerUnavailableContext>) {
+    super(errorResponse);
+    this.name = 'ContainerUnavailableError';
+  }
+
+  get reason(): ContainerUnavailableContext['reason'] {
+    return this.context.reason;
+  }
+
+  get retryAfterMs(): number | undefined {
+    return this.context.retryAfterMs;
+  }
+}
+
+// ============================================================================
 // RPC Transport Errors (SDK-side)
 // ============================================================================
 
@@ -855,5 +884,28 @@ export class RPCTransportError extends SandboxError<RPCTransportContext> {
 
   get originalMessage(): string {
     return this.errorResponse.context.originalMessage;
+  }
+}
+
+// ============================================================================
+// Operation Lifecycle Errors
+// ============================================================================
+
+/**
+ * Raised when a sandbox-owned operation was interrupted by a runtime
+ * replacement or sandbox lifetime change after the operation was admitted.
+ * The caller can retry the full operation when `context.retryable` is true.
+ */
+export class OperationInterruptedError extends SandboxError<OperationInterruptedContext> {
+  constructor(
+    errorResponse: ErrorResponse<OperationInterruptedContext>,
+    options?: { cause?: unknown }
+  ) {
+    super(errorResponse, options);
+    this.name = 'OperationInterruptedError';
+  }
+
+  get reason(): OperationInterruptedContext['reason'] {
+    return this.context.reason;
   }
 }

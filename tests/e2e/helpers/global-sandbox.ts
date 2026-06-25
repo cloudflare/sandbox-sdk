@@ -6,6 +6,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import {
+  isDurableObjectCodeUpdateReset,
+  isPlatformTransientError
+} from '../../../packages/sandbox/src/platform-errors';
 import { createSandboxId, createTestHeaders } from './test-fixtures';
 
 export type SandboxType =
@@ -35,6 +39,30 @@ export interface CreateTestSandboxOptions {
   sleepAfter?: string | number;
 }
 
+interface SandboxInitFailureBody {
+  code?: unknown;
+  error?: unknown;
+}
+
+const SANDBOX_INIT_ATTEMPTS = 3;
+
+function isRetryableSandboxInitFailure(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as SandboxInitFailureBody;
+    return (
+      parsed.code === 'CONTAINER_UNAVAILABLE' ||
+      parsed.code === 'OPERATION_INTERRUPTED' ||
+      isPlatformTransientError(parsed.error)
+    );
+  } catch {
+    return isDurableObjectCodeUpdateReset(body);
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Create an isolated sandbox for a test file.
  * Each call creates a new container instance.
@@ -59,15 +87,29 @@ export async function createTestSandbox(
     return h;
   };
 
-  // Initialize the container with a simple command
-  const initResponse = await fetch(`${workerUrl}/api/execute`, {
-    method: 'POST',
-    headers: makeHeaders(),
-    body: JSON.stringify({ command: initCommand })
-  });
+  for (let attempt = 1; attempt <= SANDBOX_INIT_ATTEMPTS; attempt += 1) {
+    // Initialize the container with a side-effect-free command. The helper can
+    // retry lifecycle interruptions here because `echo ready` is test-owned and
+    // idempotent; tests that pass a mutating init command should handle their
+    // own retry semantics.
+    const initResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: makeHeaders(),
+      body: JSON.stringify({ command: initCommand })
+    });
 
-  if (!initResponse.ok) {
+    if (initResponse.ok) break;
+
     const body = await initResponse.text().catch(() => '<unreadable>');
+    if (
+      initCommand === 'echo ready' &&
+      attempt < SANDBOX_INIT_ATTEMPTS &&
+      isRetryableSandboxInitFailure(body)
+    ) {
+      await delay(250 * attempt);
+      continue;
+    }
+
     throw new Error(
       `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
     );

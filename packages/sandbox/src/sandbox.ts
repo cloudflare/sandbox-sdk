@@ -59,6 +59,11 @@ import {
   BACKUP_ALLOWED_PREFIXES,
   normalizeBackupExcludePattern
 } from '@repo/shared/backup';
+import {
+  getHttpStatus,
+  getSuggestion,
+  type OperationInterruptedContext
+} from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
 import { type ExecuteResponse, SandboxClient } from './clients';
@@ -77,6 +82,7 @@ import {
   CustomDomainRequiredError,
   ErrorCode,
   InvalidBackupConfigError,
+  OperationInterruptedError,
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
@@ -86,6 +92,7 @@ import {
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
+import { isPlatformTransientError } from './platform-errors';
 import {
   forwardPreviewRequest,
   type PreviewTCPPort
@@ -104,6 +111,10 @@ import {
   sanitizeSandboxId,
   validatePort
 } from './security';
+import {
+  isSessionInitInvalidated,
+  SessionInitInvalidatedError
+} from './session-init';
 import { parseSSEStream } from './sse-parser';
 import {
   buildS3fsSource,
@@ -619,6 +630,65 @@ function applySandboxConfiguration(
   return Promise.all(operations).then(() => undefined);
 }
 
+function createPlatformInterruptedError(
+  error: unknown,
+  operation: string
+): OperationInterruptedError | null {
+  if (!isPlatformTransientError(error)) return null;
+
+  const context: OperationInterruptedContext = {
+    reason: 'runtime_replaced',
+    operation,
+    phase: 'durable_object_call',
+    admitted: 'unknown',
+    retryable: false
+  };
+
+  return new OperationInterruptedError(
+    {
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: `Sandbox operation ${operation} was interrupted while the platform was updating the sandbox runtime`,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+      suggestion: getSuggestion(
+        ErrorCode.OPERATION_INTERRUPTED,
+        context as unknown as Record<string, unknown>
+      ),
+      timestamp: new Date().toISOString()
+    },
+    { cause: error }
+  );
+}
+
+function translatePlatformInterruption(
+  error: unknown,
+  operation: string
+): never {
+  throw createPlatformInterruptedError(error, operation) ?? error;
+}
+
+function withSandboxOperationContext<TArgs extends unknown[], TResult>(
+  operation: string,
+  fn: (...args: TArgs) => TResult
+): (...args: TArgs) => TResult {
+  return (...args: TArgs): TResult => {
+    try {
+      const result = fn(...args);
+      if (
+        result != null &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        return (result as unknown as Promise<unknown>).catch((error: unknown) =>
+          translatePlatformInterruption(error, operation)
+        ) as TResult;
+      }
+      return result;
+    } catch (error) {
+      translatePlatformInterruption(error, operation);
+    }
+  };
+}
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -816,7 +886,10 @@ export function getSandbox<T extends Sandbox<any>>(
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
-        return (...args: unknown[]) => stub.callTunnels(method, args);
+        return withSandboxOperationContext(
+          `sandbox.tunnels.${method}`,
+          (...args: unknown[]) => stub.callTunnels(method, args)
+        );
       }
     })
   };
@@ -827,7 +900,14 @@ export function getSandbox<T extends Sandbox<any>>(
   return new Proxy(stub, {
     get(target, prop) {
       if (typeof prop === 'string' && prop in enhancedMethods) {
-        return enhancedMethods[prop as keyof typeof enhancedMethods];
+        const method = enhancedMethods[prop as keyof typeof enhancedMethods];
+        if (typeof method === 'function') {
+          return withSandboxOperationContext(
+            `sandbox.${prop}`,
+            method as (...args: unknown[]) => unknown
+          );
+        }
+        return method;
       }
       // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
       return target[prop];
@@ -3522,6 +3602,36 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSessionInit = init;
     try {
       return await promise;
+    } catch (err) {
+      // Retry once when the container generation was advanced (by onStop)
+      // while the initial createSession RPC was in flight. The fresh
+      // generation is captured after the failed attempt so the retry
+      // targets the new container.
+      if (isSessionInitInvalidated(err)) {
+        // Fast path: a concurrent caller may have already initialized the
+        // session by the time we get here.
+        if (this.defaultSession === sessionId) return this.defaultSession;
+        // Join an in-flight init for the current generation that was started
+        // by a concurrent caller rather than starting a parallel one. The guard
+        // `freshPending !== init` prevents joining the same slot that just
+        // failed (which would return an already-rejected promise).
+        const freshPending = this.defaultSessionInit;
+        if (
+          freshPending != null &&
+          freshPending !== init &&
+          freshPending.sessionId === sessionId &&
+          freshPending.generation === this.containerGeneration
+        ) {
+          return freshPending.promise;
+        }
+        // No concurrent init exists: start a fresh one with the current
+        // generation.
+        return await this.initializeDefaultSession(
+          sessionId,
+          this.containerGeneration
+        );
+      }
+      throw err;
     } finally {
       // Identity guard: only clear the slot if it still holds this
       // attempt. A newer mismatching caller or an onStop may have
@@ -3562,9 +3672,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Fail the attempt so the next caller starts fresh against the new
     // container.
     if (generation !== this.containerGeneration) {
-      throw new Error(
-        'Default session initialization was invalidated by a container stop'
-      );
+      throw new SessionInitInvalidatedError();
     }
 
     // Durable storage is the cross-eviction source of truth for the default

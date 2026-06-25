@@ -17,6 +17,7 @@
 import {
   ContainerProxy,
   getSandbox,
+  isPlatformTransientError,
   proxyToSandbox,
   Sandbox
 } from '@cloudflare/sandbox';
@@ -120,6 +121,9 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   // Command errors
   CommandNotFoundError: { status: 404, code: 'COMMAND_NOT_FOUND' },
   CommandError: { status: 500, code: 'COMMAND_EXECUTION_ERROR' },
+  // Runtime lifecycle errors
+  ContainerUnavailableError: { status: 503, code: 'CONTAINER_UNAVAILABLE' },
+  OperationInterruptedError: { status: 409, code: 'OPERATION_INTERRUPTED' },
   // Process errors
   ProcessNotFoundError: { status: 404, code: 'PROCESS_NOT_FOUND' },
   ProcessError: { status: 500, code: 'PROCESS_ERROR' },
@@ -1298,6 +1302,29 @@ console.log('Terminal server on port ' + port);
       // Cloudflare RPC strips custom error classes, converting them to generic Error
       // but preserves the class name in the message as "ClassName: actual message"
       if (error instanceof Error) {
+        if (isPlatformTransientError(error)) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Sandbox operation was interrupted while the platform reset the sandbox runtime',
+              code: 'OPERATION_INTERRUPTED',
+              context: {
+                reason: 'runtime_replaced',
+                operation: 'test-worker.request',
+                phase: 'durable_object_call',
+                admitted: 'unknown',
+                retryable: false
+              },
+              suggestion:
+                'Retry only if the operation is idempotent, or verify sandbox state before retrying.'
+            }),
+            {
+              status: 409,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+
         let errorName = error.name;
         let errorMessage = error.message;
 

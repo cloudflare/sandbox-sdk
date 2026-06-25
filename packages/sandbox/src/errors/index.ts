@@ -47,6 +47,7 @@ export type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorCodeType,
   ErrorResponse,
@@ -61,6 +62,8 @@ export type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
+  OperationInterruptedReason,
   OperationType,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -91,6 +94,8 @@ export {
   CommandError,
   // Command Errors
   CommandNotFoundError,
+  // Container Availability Errors (SDK-side)
+  ContainerUnavailableError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,
@@ -111,6 +116,8 @@ export {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  // Operation Lifecycle Errors
+  OperationInterruptedError,
   PermissionDeniedError,
   // Port Errors
   PortAlreadyExposedError,

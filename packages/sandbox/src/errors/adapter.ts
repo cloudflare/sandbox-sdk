@@ -13,6 +13,7 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
+  ContainerUnavailableContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -27,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -48,6 +50,7 @@ import {
   CodeExecutionError,
   CommandError,
   CommandNotFoundError,
+  ContainerUnavailableError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,
@@ -65,6 +68,7 @@ import {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  OperationInterruptedError,
   PermissionDeniedError,
   PortAlreadyExposedError,
   PortError,
@@ -285,6 +289,21 @@ export function createErrorFromResponse(
     case ErrorCode.CODE_EXECUTION_ERROR:
       return new CodeExecutionError(
         errorResponse as unknown as ErrorResponse<CodeExecutionContext>
+      );
+
+    // Operation lifecycle errors — raised by the SDK when a sandbox-owned
+    // operation is interrupted by a runtime replacement or lifetime change.
+    case ErrorCode.OPERATION_INTERRUPTED:
+      return new OperationInterruptedError(
+        errorResponse as unknown as ErrorResponse<OperationInterruptedContext>,
+        options
+      );
+
+    // Container availability errors (SDK-side, raised when the sandbox
+    // container cannot accept the incoming RPC connection).
+    case ErrorCode.CONTAINER_UNAVAILABLE:
+      return new ContainerUnavailableError(
+        errorResponse as unknown as ErrorResponse<ContainerUnavailableContext>
       );
 
     // RPC Transport Errors (SDK-side, raised by translateRPCError on

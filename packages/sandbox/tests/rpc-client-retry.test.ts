@@ -1,3 +1,5 @@
+import type { ErrorResponse } from '@repo/shared/errors';
+import { ErrorCode } from '@repo/shared/errors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -11,12 +13,28 @@ interface CapturedOptions {
   retryTimeoutMs?: number;
 }
 
+interface CapturedRPCMain {
+  commands: {
+    execute: (
+      command: string,
+      sessionId: string,
+      options?: { timeoutMs?: number }
+    ) => Promise<unknown>;
+  };
+}
+
 const captured: {
   options: CapturedOptions[];
   setRetryTimeoutCalls: number[];
+  rpcMain: CapturedRPCMain;
 } = {
   options: [],
-  setRetryTimeoutCalls: []
+  setRetryTimeoutCalls: [],
+  rpcMain: {
+    commands: {
+      execute: async () => ({ success: true })
+    }
+  }
 };
 
 vi.mock('../src/container-control/connection', () => ({
@@ -35,18 +53,27 @@ vi.mock('../src/container-control/connection', () => ({
     }
     disconnect() {}
     rpc() {
-      return new Proxy({}, { get: () => ({}) });
+      return captured.rpcMain;
     }
     async connect() {}
   }
 }));
 
-import { ContainerControlClient } from '../src/container-control/client';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
+import { OperationInterruptedError, SandboxError } from '../src/errors/classes';
 
 describe('ContainerControlClient retry timeout wiring', () => {
   beforeEach(() => {
     captured.options.length = 0;
     captured.setRetryTimeoutCalls.length = 0;
+    captured.rpcMain = {
+      commands: {
+        execute: async () => ({ success: true })
+      }
+    };
     vi.useFakeTimers();
   });
 
@@ -91,6 +118,29 @@ describe('ContainerControlClient retry timeout wiring', () => {
     expect(captured.setRetryTimeoutCalls).toEqual([45_000]);
   });
 
+  it('attaches operation context to interrupted RPC method calls', async () => {
+    captured.rpcMain.commands.execute = async () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() }
+    });
+
+    await expect(
+      client.commands.execute('echo ready', 'default')
+    ).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: {
+        reason: 'transport_disposed',
+        operation: 'commands.execute',
+        phase: 'rpc_call',
+        admitted: 'unknown',
+        retryable: false
+      }
+    });
+  });
+
   it('caches setRetryTimeoutMs() calls made before any connection is created', () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() }
@@ -105,5 +155,84 @@ describe('ContainerControlClient retry timeout wiring', () => {
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBe(15_000);
+  });
+});
+
+describe('translateRPCError', () => {
+  it('maps session-disposed RPC errors to OperationInterruptedError with operation context', () => {
+    let caughtError: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'commands.execute' }
+      );
+    } catch (e) {
+      caughtError = e;
+    }
+
+    expect(caughtError).toBeInstanceOf(OperationInterruptedError);
+    expect((caughtError as OperationInterruptedError).code).toBe(
+      ErrorCode.OPERATION_INTERRUPTED
+    );
+    expect((caughtError as OperationInterruptedError).context).toMatchObject({
+      reason: 'transport_disposed',
+      operation: 'commands.execute',
+      phase: 'rpc_call',
+      admitted: 'unknown',
+      retryable: false
+    });
+  });
+
+  it.each([
+    ['Peer closed WebSocket: 1006 gone'],
+    ['WebSocket connection failed.']
+  ])(
+    'maps in-flight transport loss %s to OperationInterruptedError with operation context',
+    (message) => {
+      let caughtError: unknown;
+      try {
+        translateRPCError(new Error(message), {
+          operation: 'commands.execute'
+        });
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(OperationInterruptedError);
+      expect((caughtError as OperationInterruptedError).code).toBe(
+        ErrorCode.OPERATION_INTERRUPTED
+      );
+      expect((caughtError as OperationInterruptedError).context).toMatchObject({
+        reason: 'runtime_replaced',
+        operation: 'commands.execute',
+        phase: 'rpc_call',
+        admitted: 'unknown',
+        retryable: false
+      });
+    }
+  );
+
+  it('re-throws SandboxError subclasses without wrapping as RPCTransportError', () => {
+    const originalError = new SandboxError({
+      code: ErrorCode.BACKUP_RESTORE_FAILED,
+      message: 'Restore interrupted',
+      context: { dir: '/workspace', backupId: 'bk-1' },
+      httpStatus: 500,
+      timestamp: new Date().toISOString()
+    } as ErrorResponse<{ dir: string; backupId: string }>);
+
+    let caughtError: unknown;
+    try {
+      translateRPCError(originalError);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    // The same instance must be re-thrown unchanged, not a freshly
+    // constructed error that loses context or changes identity.
+    expect(caughtError).toBe(originalError);
+    expect((caughtError as Error).constructor.name).not.toBe(
+      'RPCTransportError'
+    );
   });
 });

@@ -89,11 +89,13 @@ import {
   type ErrorResponse,
   getHttpStatus,
   getSuggestion,
+  type OperationInterruptedContext,
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
+import { SandboxError } from '../errors/classes';
 import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
@@ -162,7 +164,21 @@ interface RPCErrorPayload {
  * The JSON-fallback branch can be removed once all older container images are
  * no longer in service.
  */
-export function translateRPCError(error: unknown): never {
+export interface RPCTranslationContext {
+  /** Public operation name, e.g. `commands.execute` or `files.writeFile`. */
+  operation?: string;
+}
+
+export function translateRPCError(
+  error: unknown,
+  context: RPCTranslationContext = {}
+): never {
+  // Preserve locally-created SDK errors. These already carry the correct
+  // code, context, and HTTP status. Re-wrapping them would create a new
+  // instance with an empty context (no `details` property) and lose the
+  // original structured information.
+  if (error instanceof SandboxError) throw error;
+
   if (error instanceof Error) {
     // Format (1): propagated error properties. Distinguish from arbitrary
     // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
@@ -210,13 +226,16 @@ export function translateRPCError(error: unknown): never {
         timestamp: new Date().toISOString()
       });
     }
-    // Map capnweb / DeferredTransport messages onto a typed RPCTransportError
-    // so consumers get structured `code` and `kind` fields.
-    // Preserve the underlying capnweb/transport Error as `cause` so callers
-    // can reach the original via `err.cause` (and it shows up in toString /
-    // toJSON output) without having to substring-match the message.
+    // Map capnweb / DeferredTransport messages onto structured lifecycle
+    // errors so consumers can branch on public SDK contracts instead of
+    // substring-matching transport internals.
+    const transportResponse = buildTransportErrorResponse(error);
+    const interruptedResponse = buildInterruptedOperationResponse(
+      transportResponse,
+      context
+    );
     throw createErrorFromResponse(
-      buildTransportErrorResponse(error) as unknown as ErrorResponse,
+      (interruptedResponse ?? transportResponse) as unknown as ErrorResponse,
       { cause: error }
     );
   }
@@ -311,6 +330,44 @@ function buildTransportErrorResponse(
   };
 }
 
+function buildInterruptedOperationResponse(
+  transportResponse: ErrorResponse<RPCTransportContext>,
+  context: RPCTranslationContext
+): ErrorResponse<OperationInterruptedContext> | null {
+  if (!context.operation) return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'peer_closed' &&
+    kind !== 'connection_failed'
+  ) {
+    return null;
+  }
+
+  const interruptedContext: OperationInterruptedContext = {
+    reason:
+      kind === 'session_disposed' ? 'transport_disposed' : 'runtime_replaced',
+    operation: context.operation,
+    phase: 'rpc_call',
+    admitted: 'unknown',
+    retryable: false
+  };
+  const action =
+    kind === 'session_disposed' ? 'was closing' : 'closed unexpectedly';
+
+  return {
+    code: ErrorCode.OPERATION_INTERRUPTED,
+    message: `Sandbox operation ${context.operation} was interrupted while the runtime connection ${action}`,
+    context: interruptedContext,
+    httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+    suggestion: getSuggestion(
+      ErrorCode.OPERATION_INTERRUPTED,
+      interruptedContext as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  };
+}
+
 /**
  * Wrap a capnweb RPC stub so that every method call translates errors
  * from the JSON wire format into typed SandboxError instances and signals
@@ -326,7 +383,11 @@ function buildTransportErrorResponse(
  * settles — capnweb keeps the export alive until the stream ends. The
  * busy/idle poll on `getStats()` is the source of truth for that.
  */
-function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
+function wrapStub<T extends object>(
+  stub: T,
+  domain: string,
+  onCallStarted: () => void
+): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -335,6 +396,8 @@ function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
       // stubs are Proxies that interpret .apply as an RPC property access.
       return (...args: unknown[]) => {
         onCallStarted();
+        const operation =
+          typeof prop === 'string' ? `${domain}.${prop}` : domain;
         try {
           const result = Reflect.apply(
             value as (...a: unknown[]) => unknown,
@@ -347,11 +410,13 @@ function wrapStub<T extends object>(stub: T, onCallStarted: () => void): T {
             result != null &&
             typeof (result as { then?: unknown }).then === 'function'
           ) {
-            return (result as Promise<unknown>).catch(translateRPCError);
+            return (result as Promise<unknown>).catch((err: unknown) =>
+              translateRPCError(err, { operation })
+            );
           }
           return result;
         } catch (err) {
-          translateRPCError(err);
+          translateRPCError(err, { operation });
         }
       };
     }
@@ -593,37 +658,70 @@ export class ContainerControlClient {
   // type machinery out of .d.ts output.
 
   get commands(): SandboxCommandsAPI {
-    return wrapStub(this.getConnection().rpc().commands, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().commands,
+      'commands',
+      this.renewActivity
+    );
   }
   get files(): SandboxFilesAPI {
     return wrapStub(
       this.getConnection().rpc().files,
+      'files',
       this.renewActivity
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
-    return wrapStub(this.getConnection().rpc().processes, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().processes,
+      'processes',
+      this.renewActivity
+    );
   }
   get ports(): SandboxPortsAPI {
-    return wrapStub(this.getConnection().rpc().ports, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().ports,
+      'ports',
+      this.renewActivity
+    );
   }
   get git(): SandboxGitAPI {
-    return wrapStub(this.getConnection().rpc().git, this.renewActivity);
+    return wrapStub(this.getConnection().rpc().git, 'git', this.renewActivity);
   }
   get utils(): SandboxUtilsAPI {
-    return wrapStub(this.getConnection().rpc().utils, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().utils,
+      'utils',
+      this.renewActivity
+    );
   }
   get backup(): SandboxBackupAPI {
-    return wrapStub(this.getConnection().rpc().backup, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().backup,
+      'backup',
+      this.renewActivity
+    );
   }
   get watch(): SandboxWatchAPI {
-    return wrapStub(this.getConnection().rpc().watch, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().watch,
+      'watch',
+      this.renewActivity
+    );
   }
   get tunnels(): SandboxTunnelsAPI {
-    return wrapStub(this.getConnection().rpc().tunnels, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().tunnels,
+      'tunnels',
+      this.renewActivity
+    );
   }
   get interpreter(): SandboxInterpreterAPI {
-    return wrapStub(this.getConnection().rpc().interpreter, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().interpreter,
+      'interpreter',
+      this.renewActivity
+    );
   }
 
   /**

@@ -44,6 +44,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PORT_IN_USE]: 409,
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
+  [ErrorCode.OPERATION_INTERRUPTED]: 409,
 
   // 410 Gone
   [ErrorCode.SESSION_DESTROYED]: 410,
@@ -71,6 +72,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
   [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
   [ErrorCode.RPC_TRANSPORT_ERROR]: 503,
+  [ErrorCode.CONTAINER_UNAVAILABLE]: 503,
 
   // 408 Request Timeout
   [ErrorCode.PROCESS_READY_TIMEOUT]: 408,

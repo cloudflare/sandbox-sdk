@@ -1,3 +1,4 @@
+import { ErrorCode } from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSandbox } from '../src/sandbox';
@@ -70,6 +71,26 @@ describe('getSandbox', () => {
       sandboxName: {
         name: 'test-sandbox',
         normalizeId: undefined
+      }
+    });
+  });
+
+  it('maps Durable Object code-update resets to OperationInterruptedError for enhanced methods', async () => {
+    const mockNamespace = {} as any;
+    mockStub.exec = vi.fn(async () => {
+      throw new Error('Durable Object reset because its code was updated.');
+    });
+    const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+    await expect(sandbox.exec('echo ready')).rejects.toMatchObject({
+      name: 'OperationInterruptedError',
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      context: {
+        reason: 'runtime_replaced',
+        operation: 'sandbox.exec',
+        phase: 'durable_object_call',
+        admitted: 'unknown',
+        retryable: false
       }
     });
   });
