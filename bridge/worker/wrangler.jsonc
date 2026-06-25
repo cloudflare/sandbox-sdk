@@ -5,7 +5,12 @@
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    // Enable distributed tracing so the bridge's custom spans
+    // (bridge.<operation>) are recorded alongside automatic instrumentation.
+    "traces": {
+      "enabled": true
+    }
   },
   // The Sandbox Durable Object + its container image.
   // Bump the migration tag whenever new_sqlite_classes changes.
