@@ -37,6 +37,16 @@ describe('platform error classifiers', () => {
     expect(isPlatformTransientError({ retryable: true })).toBe(true);
   });
 
+  it('detects Durable Object storage startup resets as transient platform errors', () => {
+    expect(
+      isPlatformTransientError(
+        new Error(
+          'Internal error while starting up Durable Object storage caused object to be reset; reference = l51j3fqjqid9m3ee24uls1ui'
+        )
+      )
+    ).toBe(true);
+  });
+
   it('does not treat namespace deletion or overload as transient operation interruption', () => {
     expect(
       isPlatformTransientError(

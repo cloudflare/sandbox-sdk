@@ -17,7 +17,7 @@
 import {
   ContainerProxy,
   getSandbox,
-  isDurableObjectCodeUpdateReset,
+  isPlatformTransientError,
   proxyToSandbox,
   Sandbox
 } from '@cloudflare/sandbox';
@@ -1302,11 +1302,11 @@ console.log('Terminal server on port ' + port);
       // Cloudflare RPC strips custom error classes, converting them to generic Error
       // but preserves the class name in the message as "ClassName: actual message"
       if (error instanceof Error) {
-        if (isDurableObjectCodeUpdateReset(error)) {
+        if (isPlatformTransientError(error)) {
           return new Response(
             JSON.stringify({
               error:
-                'Sandbox operation was interrupted while the platform was updating the sandbox runtime',
+                'Sandbox operation was interrupted while the platform reset the sandbox runtime',
               code: 'OPERATION_INTERRUPTED',
               context: {
                 reason: 'runtime_replaced',

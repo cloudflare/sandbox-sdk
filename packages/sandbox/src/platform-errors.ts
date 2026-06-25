@@ -1,6 +1,8 @@
 const SUPERSEDED_ISOLATE_PATTERN =
   /reset because its code was updated|this script has been upgraded/i;
 const CONNECTION_LOST_PATTERN = /network connection lost/i;
+const DO_STORAGE_STARTUP_RESET_PATTERN =
+  /internal error while starting up durable object storage caused object to be reset/i;
 
 function errorMessageOf(error: unknown): string {
   return error instanceof Error
@@ -56,6 +58,7 @@ export function isPlatformTransientError(error: unknown): boolean {
     const message = errorMessageOf(candidate);
     if (SUPERSEDED_ISOLATE_PATTERN.test(message)) return true;
     if (CONNECTION_LOST_PATTERN.test(message)) return true;
+    if (DO_STORAGE_STARTUP_RESET_PATTERN.test(message)) return true;
     if (isErrorRetryable(candidate)) return true;
   }
   return false;

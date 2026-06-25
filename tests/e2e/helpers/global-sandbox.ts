@@ -6,7 +6,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { isDurableObjectCodeUpdateReset } from '../../../packages/sandbox/src/platform-errors';
+import {
+  isDurableObjectCodeUpdateReset,
+  isPlatformTransientError
+} from '../../../packages/sandbox/src/platform-errors';
 import { createSandboxId, createTestHeaders } from './test-fixtures';
 
 export type SandboxType =
@@ -49,7 +52,7 @@ function isRetryableSandboxInitFailure(body: string): boolean {
     return (
       parsed.code === 'CONTAINER_UNAVAILABLE' ||
       parsed.code === 'OPERATION_INTERRUPTED' ||
-      isDurableObjectCodeUpdateReset(parsed.error)
+      isPlatformTransientError(parsed.error)
     );
   } catch {
     return isDurableObjectCodeUpdateReset(body);
