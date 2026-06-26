@@ -2,20 +2,20 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type { OpenCodeHandle } from './lifecycle';
 import type { OpencodeOptions } from './types';
 
-type OpencodeClientFactory = (options: {
+type OpenCodeClientFactory = (options: {
   baseUrl: string;
   fetch: typeof fetch;
   directory?: string;
 }) => OpencodeClient;
 
-let createSdkClient: OpencodeClientFactory | undefined;
+let createSDKClient: OpenCodeClientFactory | undefined;
 
-async function loadSdk(): Promise<OpencodeClientFactory> {
-  if (createSdkClient) return createSdkClient;
+async function loadSDK(): Promise<OpenCodeClientFactory> {
+  if (createSDKClient) return createSDKClient;
   try {
     const sdk = await import('@opencode-ai/sdk/v2/client');
-    createSdkClient = sdk.createOpencodeClient as OpencodeClientFactory;
-    return createSdkClient;
+    createSDKClient = sdk.createOpencodeClient as OpenCodeClientFactory;
+    return createSDKClient;
   } catch {
     throw new Error(
       '@opencode-ai/sdk is required for OpenCode integration. ' +
@@ -43,7 +43,7 @@ export async function createOpenCodeClient<TClient = OpencodeClient>(
   const config = await handle.config();
   const directory = options?.directory ?? config.directory;
 
-  const factory = await loadSdk();
+  const factory = await loadSDK();
   const client = factory({
     baseUrl: server.url,
     fetch: (input, init) => handle.fetch(new Request(input, init)),
