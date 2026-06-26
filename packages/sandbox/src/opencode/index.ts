@@ -1,35 +1,59 @@
 /**
- * OpenCode integration for Cloudflare Sandbox
+ * OpenCode integration for Cloudflare Sandbox.
  *
- * Use `createOpencode()` to start an OpenCode server in a Sandbox container
- * and get an SDK client for programmatic access or web UI proxying.
+ * Attach a durable lifecycle handle to a Sandbox subclass and build a typed
+ * SDK client from either the Worker stub or inside the DO.
  *
- * @example Programmatic SDK
+ * @example Worker
  * ```typescript
  * import { getSandbox } from '@cloudflare/sandbox'
- * import { createOpencode } from '@cloudflare/sandbox/opencode'
+ * import { createOpenCodeProxy, createOpenCodeClient } from '@cloudflare/sandbox/opencode'
  *
- * const sandbox = getSandbox(env.Sandbox, 'my-agent')
- * const { client, server } = await createOpencode(sandbox, {
- *   directory: '/home/user/my-project',
- *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
+ * export default createOpenCodeProxy(
+ *   (env) => getSandbox(env.Sandbox, 'my-sandbox')
+ * )({
+ *   async fetch(request, env) {
+ *     const sandbox = getSandbox(env.Sandbox, 'my-sandbox')
+ *     const client = await createOpenCodeClient(sandbox.opencode)
+ *     await client.session.create()
+ *     return Response.json({ ok: true })
+ *   }
  * })
+ * ```
  *
- * // Use SDK client
- * const session = await client.session.create()
+ * @example Durable Object
+ * ```typescript
+ * import { Sandbox, withOpenCode } from '@cloudflare/sandbox/opencode'
  *
- * // Or proxy to web UI
- * return sandbox.containerFetch(request, server.port)
+ * class MySandbox extends Sandbox {
+ *   opencode = withOpenCode(this)
+ * }
  * ```
  *
  * @packageDocumentation
  */
 
+export { createOpenCodeClient } from './client';
+export {
+  type OpenCodeConfig,
+  OpenCodeHandle,
+  type OpenCodeServerInfo,
+  type OpenCodeStatus,
+  reEnsureOpenCodeHandles,
+  withOpenCode
+} from './lifecycle';
+// Lower-level helpers retained for direct use and back-compat.
 export {
   createOpencode,
   createOpencodeServer,
   proxyToOpencode,
   proxyToOpencodeServer
 } from './opencode';
+export {
+  createOpenCodeProxy,
+  type OpenCodeProxyOptions,
+  tryProxyOpenCode
+} from './proxy';
+export { Sandbox } from './sandbox';
 export type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 export { OpencodeStartupError } from './types';
