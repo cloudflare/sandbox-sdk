@@ -1,27 +1,15 @@
-// packages/sandbox/tests/opencode/opencode.test.ts
+// packages/sandbox/tests/opencode/server.test.ts
 import type { ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  createOpencode,
+  createOpencodeServer,
   proxyToOpencode,
   proxyToOpencodeServer
 } from '../../src/opencode/opencode';
 import type { OpencodeServer } from '../../src/opencode/types';
-import { OpencodeStartupError } from '../../src/opencode/types';
 import type { Sandbox } from '../../src/sandbox';
 
-// Mock the dynamic import of @opencode-ai/sdk/v2/client
-vi.mock('@opencode-ai/sdk/v2/client', () => ({
-  createOpencodeClient: vi.fn().mockReturnValue({ session: {} })
-}));
-
-/**
- * Minimal mock for `SandboxProcess` (the post-unification handle).
- *
- * Mirrors the public shape used by `packages/sandbox/src/opencode/opencode.ts`:
- * `waitForPort`, `kill`, `getLogs`, `status()` (callable now), `id`,
- * `command`, `startTime`, plus an `exitCode` promise that `close()` awaits.
- */
+/** Minimal mock for SandboxProcess methods used by OpenCode integration */
 interface MockProcess {
   id: string;
   command: string;
@@ -34,14 +22,7 @@ interface MockProcess {
   waitForLog: ReturnType<typeof vi.fn>;
 }
 
-/**
- * Minimal mock for Sandbox methods used by OpenCode integration.
- *
- * - `exec` replaces the legacy `startProcess`. To preserve test ergonomics
- *   we keep a `vi.fn()` and the per-test assertions read its calls.
- * - `getProcess` is the new re-attach primitive used by the "reuse existing
- *   process" path in opencode.ts.
- */
+/** Minimal mock for Sandbox methods used by OpenCode integration. */
 interface MockSandbox {
   exec: ReturnType<typeof vi.fn>;
   getProcess: ReturnType<typeof vi.fn>;
@@ -79,7 +60,7 @@ function createMockSandbox(overrides: Partial<MockSandbox> = {}): MockSandbox {
   };
 }
 
-describe('createOpencode', () => {
+describe('createOpencodeServer', () => {
   let mockSandbox: MockSandbox;
   let mockProcess: MockProcess;
 
@@ -95,30 +76,35 @@ describe('createOpencode', () => {
   });
 
   it('should start OpenCode server on default port 4096', async () => {
-    const result = await createOpencode(mockSandbox as unknown as Sandbox);
+    const result = await createOpencodeServer(
+      mockSandbox as unknown as Sandbox
+    );
 
     expect(mockSandbox.exec).toHaveBeenCalledWith(
       'opencode serve --port 4096 --hostname 0.0.0.0',
       expect.any(Object)
     );
-    expect(result.server.port).toBe(4096);
-    expect(result.server.url).toBe('http://localhost:4096');
+    expect(result.port).toBe(4096);
+    expect(result.url).toBe('http://localhost:4096');
   });
 
   it('should start OpenCode server on custom port', async () => {
-    const result = await createOpencode(mockSandbox as unknown as Sandbox, {
-      port: 8080
-    });
+    const result = await createOpencodeServer(
+      mockSandbox as unknown as Sandbox,
+      {
+        port: 8080
+      }
+    );
 
     expect(mockSandbox.exec).toHaveBeenCalledWith(
       'opencode serve --port 8080 --hostname 0.0.0.0',
       expect.any(Object)
     );
-    expect(result.server.port).toBe(8080);
+    expect(result.port).toBe(8080);
   });
 
   it('should start OpenCode server in specified directory', async () => {
-    await createOpencode(mockSandbox as unknown as Sandbox, {
+    await createOpencodeServer(mockSandbox as unknown as Sandbox, {
       directory: '/home/user/project'
     });
 
@@ -132,7 +118,7 @@ describe('createOpencode', () => {
     const config = {
       provider: { anthropic: { options: { apiKey: 'test-key' } } }
     };
-    await createOpencode(mockSandbox as unknown as Sandbox, { config });
+    await createOpencodeServer(mockSandbox as unknown as Sandbox, { config });
 
     expect(mockSandbox.exec).toHaveBeenCalledWith(
       expect.any(String),
@@ -151,7 +137,7 @@ describe('createOpencode', () => {
         openai: { options: { apiKey: 'openai-key' } }
       }
     };
-    await createOpencode(mockSandbox as unknown as Sandbox, { config });
+    await createOpencodeServer(mockSandbox as unknown as Sandbox, { config });
 
     expect(mockSandbox.exec).toHaveBeenCalledWith(
       expect.any(String),
@@ -166,7 +152,7 @@ describe('createOpencode', () => {
   });
 
   it('should pass custom env vars to the process', async () => {
-    await createOpencode(mockSandbox as unknown as Sandbox, {
+    await createOpencodeServer(mockSandbox as unknown as Sandbox, {
       env: {
         OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
         TRACEPARENT: '00-abc123-def456-01'
@@ -190,7 +176,7 @@ describe('createOpencode', () => {
         anthropic: { options: { apiKey: 'config-key' } }
       }
     };
-    await createOpencode(mockSandbox as unknown as Sandbox, {
+    await createOpencodeServer(mockSandbox as unknown as Sandbox, {
       config,
       env: {
         ANTHROPIC_API_KEY: 'custom-override-key'
@@ -208,7 +194,7 @@ describe('createOpencode', () => {
   });
 
   it('should wait for port to be ready', async () => {
-    await createOpencode(mockSandbox as unknown as Sandbox);
+    await createOpencodeServer(mockSandbox as unknown as Sandbox);
 
     expect(mockProcess.waitForPort).toHaveBeenCalledWith(4096, {
       mode: 'http',
@@ -218,19 +204,21 @@ describe('createOpencode', () => {
     });
   });
 
-  it('should return client and server', async () => {
-    const result = await createOpencode(mockSandbox as unknown as Sandbox);
+  it('should return server metadata', async () => {
+    const result = await createOpencodeServer(
+      mockSandbox as unknown as Sandbox
+    );
 
-    expect(result.client).toBeDefined();
-    expect(result.server).toBeDefined();
-    expect(result.server.port).toBe(4096);
-    expect(result.server.url).toBe('http://localhost:4096');
+    expect(result.port).toBe(4096);
+    expect(result.url).toBe('http://localhost:4096');
   });
 
   it('should provide close method that kills process', async () => {
-    const result = await createOpencode(mockSandbox as unknown as Sandbox);
+    const result = await createOpencodeServer(
+      mockSandbox as unknown as Sandbox
+    );
 
-    await result.server.close();
+    await result.close();
 
     expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -243,7 +231,7 @@ describe('createOpencode', () => {
     });
 
     await expect(
-      createOpencode(mockSandbox as unknown as Sandbox)
+      createOpencodeServer(mockSandbox as unknown as Sandbox)
     ).rejects.toThrow(/Server crashed/);
   });
 
@@ -255,12 +243,14 @@ describe('createOpencode', () => {
       });
       mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
 
-      const result = await createOpencode(mockSandbox as unknown as Sandbox);
+      const result = await createOpencodeServer(
+        mockSandbox as unknown as Sandbox
+      );
 
       // Should not start a new process
       expect(mockSandbox.exec).not.toHaveBeenCalled();
       // Server should be valid (process is internal, not exposed)
-      expect(result.server.port).toBe(4096);
+      expect(result.port).toBe(4096);
     });
 
     it('should wait for starting process to be ready', async () => {
@@ -270,7 +260,7 @@ describe('createOpencode', () => {
       });
       mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
 
-      await createOpencode(mockSandbox as unknown as Sandbox);
+      await createOpencodeServer(mockSandbox as unknown as Sandbox);
 
       // Should not start a new process
       expect(mockSandbox.exec).not.toHaveBeenCalled();
@@ -290,7 +280,7 @@ describe('createOpencode', () => {
       });
       mockSandbox.listProcesses.mockResolvedValue([completedProcess]);
 
-      await createOpencode(mockSandbox as unknown as Sandbox);
+      await createOpencodeServer(mockSandbox as unknown as Sandbox);
 
       // Should start a new process since existing one completed
       expect(mockSandbox.exec).toHaveBeenCalled();
@@ -303,7 +293,9 @@ describe('createOpencode', () => {
       });
       mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
 
-      await createOpencode(mockSandbox as unknown as Sandbox, { port: 8080 });
+      await createOpencodeServer(mockSandbox as unknown as Sandbox, {
+        port: 8080
+      });
 
       // Should start new process on different port
       expect(mockSandbox.exec).toHaveBeenCalledWith(
@@ -325,7 +317,7 @@ describe('createOpencode', () => {
       mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
 
       await expect(
-        createOpencode(mockSandbox as unknown as Sandbox)
+        createOpencodeServer(mockSandbox as unknown as Sandbox)
       ).rejects.toThrow(/Startup failed/);
     });
   });
@@ -337,7 +329,7 @@ describe('createOpencode', () => {
       ['null', { provider: null }],
       ['number', { provider: 42 }]
     ])('should handle provider as %s without crashing', async (_, config) => {
-      await createOpencode(mockSandbox as unknown as Sandbox, {
+      await createOpencodeServer(mockSandbox as unknown as Sandbox, {
         config: config as never
       });
 
