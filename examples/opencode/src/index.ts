@@ -5,11 +5,14 @@
  * 1. Web UI - Browse to / for the full OpenCode web experience
  * 2. Programmatic - POST to /api/test for SDK-based automation
  */
-import { ContainerProxy, getSandbox } from '@cloudflare/sandbox';
+import {
+  Sandbox as BaseSandbox,
+  ContainerProxy,
+  getSandbox
+} from '@cloudflare/sandbox';
 import {
   createOpenCodeClient,
   createOpenCodeProxy,
-  Sandbox as OpenCodeSandbox,
   withOpenCode
 } from '@cloudflare/sandbox/opencode';
 import type { Config, Part } from '@opencode-ai/sdk/v2';
@@ -17,18 +20,15 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 export { ContainerProxy };
 
-export class Sandbox extends OpenCodeSandbox<Env> {
+export class Sandbox extends BaseSandbox<Env> {
   interceptHttps = true;
-  // Pass this.ctx.storage so the OpenCode server is recovered after a DO
+  // Pass storage so the OpenCode server config is recovered after a DO
   // eviction (cold start), not just a container restart.
-  opencode = withOpenCode(
-    this,
-    {
-      directory: '/home/user/agents',
-      config: getConfig()
-    },
-    this.ctx.storage
-  );
+  opencode = withOpenCode(this, {
+    directory: '/home/user/agents',
+    config: getConfig(),
+    storage: this.ctx.storage
+  });
 }
 
 const PROXY_INJECTED_API_KEY = 'proxy-injected';
