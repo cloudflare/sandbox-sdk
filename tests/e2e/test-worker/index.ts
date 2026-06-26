@@ -23,9 +23,14 @@ import {
 } from '@cloudflare/sandbox';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 import {
-  createOpencodeServer,
-  proxyToOpencodeServer
+  Sandbox as OpenCodeSandbox,
+  withOpenCode
 } from '@cloudflare/sandbox/opencode';
+
+// OpenCode-aware Sandbox with a lifecycle handle for the OpenCode e2e tests.
+class Sandbox extends OpenCodeSandbox<Env> {
+  opencode = withOpenCode(this, { port: 4096 });
+}
 
 import type {
   BucketDeleteResponse,
@@ -358,36 +363,18 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/opencode/proxy-server/global-health' &&
         request.method === 'GET'
       ) {
-        let server:
-          | Awaited<ReturnType<typeof createOpencodeServer>>
-          | undefined;
+        const opencodeRequest = new Request(
+          `${url.origin}/global/health${url.search}`,
+          request
+        );
 
-        try {
-          server = await createOpencodeServer(sandbox, {
-            port: 4096
-          });
+        const response = await sandbox.opencode.fetch(opencodeRequest);
+        const body = await response.arrayBuffer();
 
-          const opencodeRequest = new Request(
-            `${url.origin}/global/health${url.search}`,
-            request
-          );
-
-          const response = await proxyToOpencodeServer(
-            opencodeRequest,
-            sandbox,
-            server
-          );
-          const body = await response.arrayBuffer();
-
-          return new Response(body, {
-            status: response.status,
-            headers: response.headers
-          });
-        } finally {
-          if (server) {
-            await server.close();
-          }
-        }
+        return new Response(body, {
+          status: response.status,
+          headers: response.headers
+        });
       }
 
       // Session management
