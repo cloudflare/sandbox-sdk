@@ -1,8 +1,7 @@
 import type { Config } from '@opencode-ai/sdk/v2';
-import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
-import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
+import type { OpencodeOptions, OpencodeServer } from './types';
 import { OpencodeStartupError } from './types';
 
 // Lazy logger creation to avoid global scope restrictions in Workers
@@ -22,29 +21,6 @@ const OPENCODE_SERVE = (port: number) =>
 function buildOpencodeCommand(port: number, directory?: string): string {
   const serve = OPENCODE_SERVE(port);
   return directory ? `cd ${directory} && ${serve}` : serve;
-}
-
-type OpencodeClientFactory = (options: {
-  baseUrl: string;
-  fetch: typeof fetch;
-  directory?: string;
-}) => OpencodeClient;
-
-// Dynamic import to handle peer dependency
-let createOpencodeClient: OpencodeClientFactory | undefined;
-
-async function ensureSdkLoaded(): Promise<void> {
-  if (createOpencodeClient) return;
-
-  try {
-    const sdk = await import('@opencode-ai/sdk/v2/client');
-    createOpencodeClient = sdk.createOpencodeClient as OpencodeClientFactory;
-  } catch {
-    throw new Error(
-      '@opencode-ai/sdk is required for OpenCode integration. ' +
-        'Install it with: npm install @opencode-ai/sdk'
-    );
-  }
 }
 
 /**
@@ -331,80 +307,6 @@ export async function createOpencodeServer(
     url: `http://localhost:${port}`,
     close: () => process.kill()
   };
-}
-
-/**
- * Creates an OpenCode server inside a Sandbox container and returns a typed SDK client.
- *
- * This function is API-compatible with OpenCode's own createOpencode(), but uses
- * Sandbox process management instead of Node.js spawn. The returned client uses
- * a custom fetch adapter to route requests through the Sandbox container.
- *
- * If an OpenCode server is already running on the specified port, this function
- * will reuse it instead of starting a new one.
- *
- * @param sandbox - The Sandbox instance to run OpenCode in
- * @param options - Configuration options
- * @returns Promise resolving to { client, server }
- *
- * @example
- * ```typescript
- * import { getSandbox } from '@cloudflare/sandbox'
- * import { createOpencode } from '@cloudflare/sandbox/opencode'
- *
- * const sandbox = getSandbox(env.Sandbox, 'my-agent')
- * const { client, server } = await createOpencode(sandbox, {
- *   directory: '/home/user/my-project',
- *   config: {
- *     provider: {
- *       anthropic: {
- *         options: { apiKey: env.ANTHROPIC_KEY }
- *       },
- *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
- *       // 'cloudflare-ai-gateway': {
- *       //   options: {
- *       //     accountId: env.CF_ACCOUNT_ID,
- *       //     gatewayId: env.CF_GATEWAY_ID,
- *       //     apiToken: env.CF_API_TOKEN
- *       //   },
- *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
- *       // }
- *     }
- *   },
- *   // Optional: Pass additional environment variables (e.g., for OTEL telemetry)
- *   env: {
- *     OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
- *     TRACEPARENT: '00-abc123-def456-01'
- *   }
- * })
- *
- * // Use the SDK client for programmatic access
- * const session = await client.session.create()
- *
- * // When done
- * await server.close()
- * ```
- */
-export async function createOpencode<TClient = OpencodeClient>(
-  sandbox: Sandbox<unknown>,
-  options?: OpencodeOptions
-): Promise<OpencodeResult<TClient>> {
-  await ensureSdkLoaded();
-
-  const server = await createOpencodeServer(sandbox, options);
-
-  const clientFactory = createOpencodeClient;
-  if (!clientFactory) {
-    throw new Error('OpenCode SDK client unavailable.');
-  }
-
-  const client = clientFactory({
-    baseUrl: server.url,
-    fetch: (input, init?) =>
-      sandbox.containerFetch(new Request(input, init), server.port)
-  });
-
-  return { client: client as TClient, server };
 }
 
 /**

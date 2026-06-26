@@ -42,18 +42,11 @@ export {
   reEnsureOpenCodeHandles,
   withOpenCode
 } from './lifecycle';
-// Lower-level helpers retained for direct use and back-compat.
-export {
-  createOpencode,
-  createOpencodeServer,
-  proxyToOpencode,
-  proxyToOpencodeServer
-} from './opencode';
 export {
   createOpenCodeProxy,
   type OpenCodeProxyOptions,
   tryProxyOpenCode
 } from './proxy';
 export { Sandbox } from './sandbox';
-export type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
+export type { OpencodeOptions, OpencodeServer } from './types';
 export { OpencodeStartupError } from './types';
