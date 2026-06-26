@@ -52,4 +52,26 @@ describe('reEnsureOpenCodeHandles', () => {
 
     await expect(reEnsureOpenCodeHandles(sandbox)).resolves.toBeUndefined();
   });
+
+  it('does not reject when a handle fails to re-ensure', async () => {
+    const sandbox = createMockSandbox();
+    const handle = withOpenCode(sandbox);
+    vi.spyOn(handle, 'onContainerStart').mockRejectedValue(
+      new Error('opencode binary missing')
+    );
+
+    await expect(reEnsureOpenCodeHandles(sandbox)).resolves.toBeUndefined();
+  });
+
+  it('attempts every handle even if one fails', async () => {
+    const sandbox = createMockSandbox();
+    const failing = withOpenCode(sandbox);
+    const healthy = withOpenCode(sandbox);
+    vi.spyOn(failing, 'onContainerStart').mockRejectedValue(new Error('boom'));
+    const healthySpy = vi.spyOn(healthy, 'onContainerStart');
+
+    await reEnsureOpenCodeHandles(sandbox);
+
+    expect(healthySpy).toHaveBeenCalledOnce();
+  });
 });

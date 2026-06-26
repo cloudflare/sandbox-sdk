@@ -1,4 +1,5 @@
 import { RpcTarget } from 'cloudflare:workers';
+import { createLogger } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import { createOpencodeServer } from './opencode';
 import type { OpencodeOptions, OpencodeServer } from './types';
@@ -150,11 +151,30 @@ export function withOpenCode(
  * Re-ensure every OpenCode handle registered for a sandbox. Called from the
  * OpenCode-aware `Sandbox` base's `onStart` so durable servers come back after
  * a container sleep or rollout. No-op for sandboxes with no handles.
+ *
+ * Best-effort: a handle that fails to re-ensure (e.g. a missing binary or a
+ * container that is not ready) is logged and skipped so it never poisons the
+ * container's `onStart`. Every handle is attempted regardless of the others.
  */
 export async function reEnsureOpenCodeHandles(
   sandbox: Sandbox<unknown>
 ): Promise<void> {
   const handles = handleRegistry.get(sandbox);
   if (!handles) return;
-  await Promise.all([...handles].map((handle) => handle.onContainerStart()));
+  const results = await Promise.allSettled(
+    [...handles].map((handle) => handle.onContainerStart())
+  );
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      createLogger({
+        component: 'sandbox-do',
+        operation: 'opencode'
+      }).error(
+        'Failed to re-ensure OpenCode server on container start',
+        result.reason instanceof Error
+          ? result.reason
+          : new Error(String(result.reason))
+      );
+    }
+  }
 }
