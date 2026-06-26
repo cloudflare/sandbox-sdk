@@ -66,6 +66,9 @@ import {
 } from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { AwsClient } from 'aws4fetch';
+import type { RestoreLifecycleContext } from './backup/restore-lifecycle';
+import { RestoreLifecycleRunner } from './backup/restore-lifecycle';
+import type { BackupRestoreOperationResult } from './backup/restore-operation-store';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import { ContainerControlClient } from './container-control';
 import {
@@ -106,6 +109,7 @@ import {
 } from './preview-proxy-protocol';
 import { isLocalhostPattern } from './preview-url';
 import { proxyTerminal } from './pty';
+import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
   SandboxSecurityError,
   sanitizeSandboxId,
@@ -983,6 +987,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private activeMounts: Map<string, MountInfo> = new Map();
   private mountOperationQueue: Promise<void> = Promise.resolve();
   private currentRuntime: CurrentRuntimeIdentity;
+  private currentLifetime: CurrentSandboxLifetime;
   private transport: SandboxTransport = 'http';
 
   /**
@@ -1204,6 +1209,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.getState(),
       () => this.ctx.container?.running === true
     );
+
+    this.currentLifetime = new CurrentSandboxLifetime(this.ctx.storage);
 
     // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
@@ -2713,6 +2720,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // the container.
       await this.ctx.storage.delete(PORT_TOKENS_STORAGE_KEY);
       await this.clearActivePreviewPorts();
+      // Rotate sandbox lifetime before clearing runtime state so that
+      // in-flight operations can detect the lifetime change and abort.
+      await this.currentLifetime.rotate();
       await this.currentRuntime.clear();
 
       // Unmount all mounted buckets and cleanup (requires an active connection
@@ -6990,18 +7000,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Concurrent backup/restore calls on the same sandbox are serialized.
    */
   async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
-    if (backup.localBucket) {
-      return await this.enqueueBackupOp(() =>
-        this.doRestoreBackupLocal(backup)
-      );
+    if (!backup.localBucket) {
+      this.requireBackupBucket();
     }
-    this.requireBackupBucket();
-    return await this.enqueueBackupOp(() => this.doRestoreBackup(backup));
+    return await this.enqueueBackupOp(() =>
+      this.doRestoreBackupWithRecovery(backup)
+    );
+  }
+
+  private async doRestoreBackupWithRecovery(
+    backup: DirectoryBackup
+  ): Promise<BackupRestoreOperationResult> {
+    const runner = new RestoreLifecycleRunner({
+      storage: this.ctx.storage,
+      currentRuntime: this.currentRuntime,
+      currentLifetime: this.currentLifetime
+    });
+
+    return await runner.execute({
+      backupId: backup.id,
+      dir: backup.dir,
+      attempt: async (lifecycle) => {
+        if (backup.localBucket) {
+          return await this.doRestoreBackupLocal(backup, lifecycle);
+        }
+        return await this.doRestoreBackup(backup, lifecycle);
+      }
+    });
   }
 
   private async doRestoreBackup(
-    backup: DirectoryBackup
-  ): Promise<RestoreBackupResult> {
+    backup: DirectoryBackup,
+    lifecycle: RestoreLifecycleContext
+  ): Promise<BackupRestoreOperationResult> {
     const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
     this.requirePresignedURLSupport();
@@ -7100,6 +7131,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -7144,6 +7176,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      await lifecycle.archiveReady(archiveHead.size);
+
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
@@ -7160,13 +7194,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      outcome = 'success';
-
-      return {
-        success: true,
+      const result = {
+        success: true as const,
         dir,
         id
       };
+      await lifecycle.verify(result);
+
+      outcome = 'success';
+
+      return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id && backupSession) {
@@ -7199,8 +7236,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * unsquashfs for extraction instead of squashfuse + fuse-overlayfs.
    */
   private async doRestoreBackupLocal(
-    backup: DirectoryBackup
-  ): Promise<RestoreBackupResult> {
+    backup: DirectoryBackup,
+    lifecycle: RestoreLifecycleContext
+  ): Promise<BackupRestoreOperationResult> {
     const restoreStartTime = Date.now();
     const { id, dir } = backup;
 
@@ -7265,6 +7303,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ttl: number;
         createdAt: string;
         dir: string;
+        sizeBytes?: number;
       }>();
 
       // Check TTL with 60-second buffer
@@ -7310,8 +7349,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp: new Date().toISOString()
         });
       }
+      const archiveSize = metadata.sizeBytes;
 
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Ensure backup directory exists
@@ -7371,6 +7412,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
+      await lifecycle.archiveReady(archiveSize);
+
       // Step 3: Extract archive using unsquashfs (no FUSE needed)
       const extractResult = await this.execWithSession(
         `/usr/bin/unsquashfs -f -d ${shellEscape(dir)} ${shellEscape(archivePath)}`,
@@ -7388,6 +7431,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
+      const result = {
+        success: true as const,
+        dir,
+        id
+      };
+      await lifecycle.verify(result);
+
       // Clean up archive after extraction (no FUSE mount holds it open)
       await this.execWithSession(
         `rm -f ${shellEscape(archivePath)}`,
@@ -7397,11 +7447,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       outcome = 'success';
 
-      return {
-        success: true,
-        dir,
-        id
-      };
+      return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id && backupSession) {
