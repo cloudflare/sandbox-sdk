@@ -1,0 +1,81 @@
+// Test fixture worker for OpenCode DO-eviction tests.
+//
+// Re-exports the SDK worker surface and adds a Durable Object with an OpenCode
+// lifecycle handle wired to real `ctx.storage`. The eviction test drives this
+// DO through its namespace binding so persisted desired-state can be checked
+// across a genuine eviction.
+//
+// The container is not available in the Workers test runtime, so the fixture
+// stubs the container-touching sandbox methods (`startProcess`/`getProcess`)
+// while leaving `ctx.storage` real — exactly the surface the persistence layer
+// exercises.
+
+import { DurableObject } from 'cloudflare:workers';
+import {
+  type OpenCodeHandle,
+  withOpenCode
+} from '../../src/opencode/lifecycle';
+import type { Sandbox } from '../../src/sandbox';
+
+interface StartedProcess {
+  command: string;
+  options: { processId?: string };
+}
+
+/**
+ * Durable Object exposing an OpenCode handle backed by real DO storage. The
+ * captured "sandbox" is a stub: process operations are recorded in memory, so
+ * the test can assert what a cold-start re-ensure would spawn without a
+ * container.
+ */
+export class OpenCodeFixture extends DurableObject {
+  #handle: OpenCodeHandle;
+  #started: StartedProcess[] = [];
+
+  constructor(ctx: DurableObjectState, env: never) {
+    super(ctx, env);
+
+    const sandbox = {
+      startProcess: async (
+        command: string,
+        options: { processId?: string } = {}
+      ) => {
+        this.#started.push({ command, options });
+        return {
+          id: options.processId ?? 'proc',
+          command,
+          status: 'running',
+          startTime: new Date(),
+          waitForPort: async () => {},
+          kill: async () => {},
+          getLogs: async () => ({ stdout: '', stderr: '' })
+        };
+      },
+      getProcess: async () => null,
+      listProcesses: async () => [],
+      containerFetch: async () => new Response('ok')
+    } as unknown as Sandbox;
+
+    this.#handle = withOpenCode(sandbox, { directory: '/agents' }, ctx.storage);
+  }
+
+  /** Start (and persist) the server with the given options. */
+  async start(options?: { port?: number; directory?: string }): Promise<void> {
+    await this.#handle.ensure(options);
+  }
+
+  /** Simulate the base Sandbox's onStart re-ensure after a (cold) start. */
+  async reEnsure(): Promise<void> {
+    await this.#handle.onContainerStart();
+  }
+
+  /** Commands the stub sandbox was asked to start, in order. */
+  startedCommands(): string[] {
+    return this.#started.map((entry) => entry.command);
+  }
+
+  /** Raw persisted desired-state, read straight from DO storage. */
+  async persistedState(): Promise<unknown> {
+    return this.ctx.storage.get('opencode:desired-state:0');
+  }
+}
