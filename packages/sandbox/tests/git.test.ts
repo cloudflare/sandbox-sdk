@@ -25,7 +25,8 @@ function createGit(
     sessionId: string,
     options?: unknown
   ) => ExecResult,
-  envVars?: Record<string, string>
+  envVars?: Record<string, string>,
+  registerGitAuthInterceptor?: SandboxLike['registerGitAuthInterceptor']
 ) {
   const execute = vi.fn(
     async (command: string, sessionId: string, options?: unknown) =>
@@ -33,7 +34,8 @@ function createGit(
   );
   const sandbox = {
     client: { commands: { execute } },
-    envVars
+    envVars,
+    registerGitAuthInterceptor
   } as unknown as SandboxLike;
   return { git: withGit(sandbox), execute };
 }
@@ -208,6 +210,108 @@ describe('Git extension', () => {
         HTTPS_PROXY: 'http://proxy:8080'
       });
     }
+  });
+
+  it('does not require ContainerProxy when auth is not configured', async () => {
+    const { git, execute } = createGit(() => ({
+      stdout: 'main\n',
+      stderr: '',
+      exitCode: 0
+    }));
+
+    await git.checkout('https://github.com/owner/repo.git');
+
+    expect(execute).toHaveBeenCalled();
+  });
+
+  it('registers git auth interception when auth matches the checkout host', async () => {
+    const registerGitAuthInterceptor = vi.fn(async () => {});
+    const execute = vi.fn(
+      async (_command: string, _sessionId: string, _options?: unknown) => ({
+        stdout: 'main\n',
+        stderr: '',
+        exitCode: 0
+      })
+    );
+    const sandbox = {
+      client: { commands: { execute } },
+      registerGitAuthInterceptor
+    } as unknown as SandboxLike;
+    const git = withGit(sandbox, {
+      auth: { github: { token: 'secret-token' } }
+    });
+
+    await git.checkout('https://github.com/owner/repo.git');
+
+    expect(registerGitAuthInterceptor).toHaveBeenCalledWith({
+      hosts: { 'github.com': { token: 'secret-token' } }
+    });
+  });
+
+  it('registers only the checkout host credentials', async () => {
+    const registerGitAuthInterceptor = vi.fn(async () => {});
+    const { git } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerGitAuthInterceptor
+    );
+
+    await git.checkout('https://github.com/owner/repo.git', {
+      auth: {
+        github: { token: 'github-token' },
+        gitlab: { token: 'gitlab-token' }
+      }
+    });
+
+    expect(registerGitAuthInterceptor).toHaveBeenCalledWith({
+      hosts: { 'github.com': { token: 'github-token' } }
+    });
+  });
+
+  it('does not register git auth interception when auth is disabled per checkout', async () => {
+    const registerGitAuthInterceptor = vi.fn(async () => {});
+    const { git } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerGitAuthInterceptor
+    );
+    const configuredGit = withGit(
+      {
+        client: {
+          commands: {
+            execute: vi.fn(async () => ({
+              stdout: 'main\n',
+              stderr: '',
+              exitCode: 0
+            }))
+          }
+        },
+        registerGitAuthInterceptor
+      } as unknown as SandboxLike,
+      { auth: { github: { token: 'secret-token' } } }
+    );
+
+    await git.checkout('https://github.com/owner/repo.git', { auth: false });
+    await configuredGit.checkout('https://github.com/owner/repo.git', {
+      auth: false
+    });
+
+    expect(registerGitAuthInterceptor).not.toHaveBeenCalled();
+  });
+
+  it('throws an obvious ContainerProxy error when auth is configured without interception support', async () => {
+    const { git, execute } = createGit(() => ({
+      stdout: 'main\n',
+      stderr: '',
+      exitCode: 0
+    }));
+
+    await expect(
+      git.checkout('https://github.com/owner/repo.git', {
+        auth: { github: { token: 'secret-token' } }
+      })
+    ).rejects.toThrow(/exporting ContainerProxy/);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('does not inject sandbox env vars when a session is provided', async () => {

@@ -13,6 +13,7 @@ export { MountLifecycle, type MountLifecycleSnapshot } from './lifecycle';
 export type { BucketMountDestroyCleanupResult } from './lifecycle-cleanup';
 export { MountOperationQueue } from './operation-queue';
 export {
+  configureGitAuthInterceptor,
   configureR2EgressOutbound,
   configureS3CredentialProxyOutbound,
   type EgressContainerState,

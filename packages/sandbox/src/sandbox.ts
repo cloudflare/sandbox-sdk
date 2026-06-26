@@ -70,6 +70,7 @@ import {
 } from './errors';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
+import type { GitAuthInterceptorParams } from './git/types';
 import { isPlatformTransientError } from './platform-errors';
 import { isPreviewProxyRequest } from './preview/protocol';
 import {
@@ -93,6 +94,7 @@ import {
 import { parseSSEStream } from './sse-parser';
 import {
   BucketMountService,
+  configureGitAuthInterceptor,
   ContainerProxy,
   type EgressContainerState,
   type MountOutboundHost
@@ -3205,6 +3207,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     fault: BackupRestoreTestFault | null
   ): Promise<void> {
     await this.backupService.setRestoreFaultForTesting(fault);
+  }
+
+  async registerGitAuthInterceptor(
+    params: GitAuthInterceptorParams
+  ): Promise<void> {
+    await configureGitAuthInterceptor(this.getMountOutboundHost(), params);
   }
 
   private getMountOutboundHost(): MountOutboundHost {

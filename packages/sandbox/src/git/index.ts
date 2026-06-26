@@ -51,12 +51,17 @@ import {
 import type {
   GitCheckoutOptions,
   GitCheckoutResult,
+  GitExtensionOptions,
+  GitHostAuth,
   GitSessionOptions
 } from './types.js';
 
 export type {
+  GitAuthConfig,
   GitCheckoutOptions,
   GitCheckoutResult,
+  GitExtensionOptions,
+  GitHostAuth,
   GitSessionOptions
 } from './types.js';
 export { withGit as default };
@@ -73,8 +78,11 @@ interface ExecOutcome {
  * control sub-API and translates failures into the SDK's typed git errors.
  */
 export class Git extends SandboxExtension {
-  constructor(sandbox: SandboxLike) {
+  readonly #options: GitExtensionOptions;
+
+  constructor(sandbox: SandboxLike, options: GitExtensionOptions = {}) {
     super(sandbox);
+    this.#options = options;
   }
 
   /**
@@ -115,6 +123,8 @@ export class Git extends SandboxExtension {
     if (!pathValidation.isValid) {
       this.#throwValidation('targetDir', pathValidation.errors, 'INVALID_PATH');
     }
+
+    await this.#configureAuth(repoUrl, options.auth);
 
     const sessionId = this.#sessionId(options);
     const cloneCommand = this.#command(
@@ -309,6 +319,58 @@ export class Git extends SandboxExtension {
 
   // --- internals -----------------------------------------------------------
 
+  async #configureAuth(
+    repoUrl: string,
+    authOverride: GitCheckoutOptions['auth']
+  ): Promise<void> {
+    const hosts = this.#authHosts(authOverride);
+    if (Object.keys(hosts).length === 0) {
+      return;
+    }
+
+    const hostname = new URL(repoUrl).hostname;
+    if (!hosts[hostname]) {
+      return;
+    }
+
+    if (!this.gitAuthInterceptor) {
+      this.#throwError(
+        ErrorCode.VALIDATION_FAILED,
+        'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.',
+        {
+          repository: redactCommand(repoUrl),
+          host: hostname
+        }
+      );
+    }
+
+    await this.gitAuthInterceptor({ hosts: { [hostname]: hosts[hostname] } });
+  }
+
+  #authHosts(
+    authOverride: GitCheckoutOptions['auth']
+  ): Record<string, GitHostAuth> {
+    if (authOverride === false) {
+      return {};
+    }
+    const config = authOverride ?? this.#options.auth;
+    if (!config) {
+      return {};
+    }
+
+    const hosts: Record<string, GitHostAuth> = { ...(config.hosts ?? {}) };
+    if (config.github) {
+      hosts['github.com'] = config.github;
+    }
+    if (config.gitlab) {
+      hosts['gitlab.com'] = config.gitlab;
+    }
+    if (config.bitbucket) {
+      hosts['bitbucket.org'] = config.bitbucket;
+    }
+    return hosts;
+  }
+
   #sessionId(options: GitSessionOptions): string {
     return options.sessionId ?? DISABLE_SESSION_TOKEN;
   }
@@ -376,6 +438,9 @@ export class Git extends SandboxExtension {
 }
 
 /** Factory — the consumer-facing API. */
-export function withGit(sandbox: SandboxLike): Git {
-  return new Git(sandbox);
+export function withGit(
+  sandbox: SandboxLike,
+  options: GitExtensionOptions = {}
+): Git {
+  return new Git(sandbox, options);
 }

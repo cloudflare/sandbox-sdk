@@ -1,4 +1,5 @@
 import type { Logger } from '@repo/shared';
+import type { GitAuthInterceptorParams } from '../../git/types';
 import { InvalidMountConfigError } from '../errors';
 import type { S3CredentialProxyParams } from '../types';
 import {
@@ -21,7 +22,10 @@ export type EgressContainerState = DurableObjectState<{}> & {
           string,
           {
             method: string;
-            params: R2EgressParams | S3CredentialProxyParams;
+            params:
+              | R2EgressParams
+              | S3CredentialProxyParams
+              | GitAuthInterceptorParams;
           }
         >;
       };
@@ -103,6 +107,56 @@ export async function configureR2EgressOutbound(
   }
 
   await ctx.container.interceptOutboundHttp('r2.internal', fetcher);
+}
+
+export async function configureGitAuthInterceptor(
+  host: MountOutboundHost,
+  params: GitAuthInterceptorParams
+): Promise<void> {
+  const ctx = host.ctx;
+  if (!ctx.container?.interceptOutboundHttp) {
+    throw new InvalidMountConfigError(
+      'Git extension authentication requires container outbound interception support'
+    );
+  }
+  if (!ctx.exports?.ContainerProxy) {
+    throw new InvalidMountConfigError(
+      'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.'
+    );
+  }
+
+  installSDKOutboundHandlers(host.constructorRef);
+
+  const hostOverrides: Record<
+    string,
+    { method: string; params: GitAuthInterceptorParams }
+  > = {};
+  for (const outboundHost of Object.keys(params.hosts)) {
+    hostOverrides[outboundHost] = { method: 'gitCredentialProxy', params };
+    await host.setOutboundByHost<GitAuthInterceptorParams>(
+      outboundHost,
+      'gitCredentialProxy',
+      params
+    );
+  }
+
+  const fetcher = ctx.exports.ContainerProxy({
+    props: {
+      enableInternet: host.enableInternet,
+      containerId: ctx.id.toString(),
+      className: CONTAINER_PROXY_CLASS_NAME,
+      outboundByHostOverrides: hostOverrides
+    }
+  });
+  if (!isFetcher(fetcher)) {
+    throw new InvalidMountConfigError(
+      'Git extension authentication requires ContainerProxy to return a valid Fetcher'
+    );
+  }
+
+  for (const outboundHost of Object.keys(params.hosts)) {
+    await ctx.container.interceptOutboundHttp(outboundHost, fetcher);
+  }
 }
 
 export async function configureS3CredentialProxyOutbound(

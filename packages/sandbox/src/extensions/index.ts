@@ -25,6 +25,7 @@ import type {
   SandboxAPI
 } from '@repo/shared';
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
+import type { GitAuthInterceptorParams } from '../git/types.js';
 
 // Re-export the wire types so consumers can author extensions from this
 // subpath without reaching into `@repo/shared` directly.
@@ -42,6 +43,9 @@ export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
 export type SandboxLike = {
   readonly client: SandboxAPI;
   readonly envVars?: Record<string, string>;
+  registerGitAuthInterceptor?: (
+    params: GitAuthInterceptorParams
+  ) => Promise<void>;
 };
 
 /**
@@ -102,6 +106,15 @@ export abstract class SandboxExtension extends RpcTarget {
    */
   protected get envVars(): Record<string, string> {
     return this.#sandbox.envVars ?? {};
+  }
+
+  protected get gitAuthInterceptor():
+    | ((params: GitAuthInterceptorParams) => Promise<void>)
+    | undefined {
+    const register = this.#sandbox.registerGitAuthInterceptor;
+    return register
+      ? (params) => register.call(this.#sandbox, params)
+      : undefined;
   }
 
   /**

@@ -2,6 +2,8 @@ import {
   ContainerProxy as BaseContainerProxy,
   type OutboundHandlerContext
 } from '@cloudflare/containers';
+import { gitCredentialProxyHandler } from '../../git/credential-proxy-handler';
+import type { GitAuthInterceptorParams } from '../../git/types';
 import type { S3CredentialProxyParams } from '../types';
 import { type R2EgressParams, r2EgressHandler } from './r2-egress-handler';
 import { s3CredentialProxyHandler } from './s3-credential-proxy-handler';
@@ -19,7 +21,8 @@ export type OutboundHandlerRegistry = {
 
 export const SDK_OUTBOUND_HANDLERS = {
   r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
+  s3CredentialProxyMount: s3CredentialProxyHandler,
+  gitCredentialProxy: gitCredentialProxyHandler
 };
 
 export function installSDKOutboundHandlers(constructorRef: Function): void {
@@ -64,6 +67,12 @@ export class ContainerProxy extends BaseContainerProxy {
           request,
           this.env as Cloudflare.Env,
           handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
+        );
+      case 'gitCredentialProxy':
+        return gitCredentialProxyHandler(
+          request,
+          this.env as Cloudflare.Env,
+          handlerCtx as OutboundHandlerContext<GitAuthInterceptorParams>
         );
       default:
         return super.fetch(request);
