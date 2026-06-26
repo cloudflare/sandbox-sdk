@@ -5199,6 +5199,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
+      currentRuntime: this.currentRuntime,
+      currentLifetime: this.currentLifetime,
       getNamedTunnelConfig: async () => {
         const envObj = this.env as Record<string, unknown>;
         const token = getEnvString(envObj, 'CLOUDFLARE_API_TOKEN');

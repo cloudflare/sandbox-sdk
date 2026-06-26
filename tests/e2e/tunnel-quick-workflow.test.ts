@@ -115,7 +115,7 @@ console.log("Server listening on port " + server.port);
       expect(tunnel.port).toBe(TUNNEL_TEST_PORT);
       expect(tunnel.url).toMatch(/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/);
       expect(tunnel.hostname).toMatch(/\.trycloudflare\.com$/);
-      expect(tunnel.id).toMatch(/^quick-[0-9a-f]{8}$/);
+      expect(tunnel.id).toMatch(/^quick-[0-9a-z]{20}$/);
 
       try {
         // 3. Idempotency: a second get() for the same port returns the
