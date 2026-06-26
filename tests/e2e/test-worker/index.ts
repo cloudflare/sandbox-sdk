@@ -22,15 +22,7 @@ import {
   proxyToSandbox
 } from '@cloudflare/sandbox';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
-import {
-  Sandbox as OpenCodeSandbox,
-  withOpenCode
-} from '@cloudflare/sandbox/opencode';
-
-// OpenCode-aware Sandbox with a lifecycle handle for the OpenCode e2e tests.
-class Sandbox extends OpenCodeSandbox<Env> {
-  opencode = withOpenCode(this, { port: 4096 }, this.ctx.storage);
-}
+import { withOpenCode } from '@cloudflare/sandbox/opencode';
 
 import type {
   BucketDeleteResponse,
@@ -47,9 +39,10 @@ import type {
   WebSocketInitResponse
 } from './types';
 
-// Sandbox subclass wiring the code interpreter extension.
+// Sandbox subclass wiring the code interpreter and OpenCode extensions.
 export class Sandbox extends BaseSandbox<Env> {
   interpreter = withInterpreter(this);
+  opencode = withOpenCode(this, { port: 4096, storage: this.ctx.storage });
 }
 
 // Export Sandbox class with different names for each container type
@@ -369,9 +362,8 @@ console.log('Echo server on port ' + port);
         );
 
         const response = await sandbox.opencode.fetch(opencodeRequest);
-        const body = await response.arrayBuffer();
 
-        return new Response(body, {
+        return new Response(response.body, {
           status: response.status,
           headers: response.headers
         });
