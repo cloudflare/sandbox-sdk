@@ -104,18 +104,18 @@ export default createOpenCodeProxy((env: Env) =>
 
     // Programmatic SDK test endpoint
     if (request.method === 'POST' && url.pathname === '/api/test') {
-      return handleSdkTest(sandbox);
+      return handleSDKTest(sandbox);
     }
 
-    // Everything else: proxy to the OpenCode server (ensured on demand).
-    return sandbox.opencode.fetch(request);
+    // The OpenCode web UI is handled by createOpenCodeProxy above.
+    return new Response('Not found', { status: 404 });
   }
 });
 
 /**
  * Test the programmatic SDK access
  */
-async function handleSdkTest(sandbox: Sandbox): Promise<Response> {
+async function handleSDKTest(sandbox: Sandbox): Promise<Response> {
   try {
     // Get typed SDK client from the lifecycle handle (ensures the server).
     const client = await createOpenCodeClient<OpencodeClient>(sandbox.opencode);
