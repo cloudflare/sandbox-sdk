@@ -8,16 +8,18 @@ import type { Sandbox } from '../../src/sandbox';
 
 function createMockSandbox() {
   return {
-    startProcess: vi.fn().mockResolvedValue({
+    exec: vi.fn().mockResolvedValue({
       id: 'proc-1',
       command: 'opencode serve --port 4096 --hostname 0.0.0.0',
-      status: 'running',
       startTime: new Date(),
+      exitCode: Promise.resolve(0),
       waitForPort: vi.fn().mockResolvedValue(undefined),
-      kill: vi.fn().mockResolvedValue(undefined),
-      getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+      kill: vi.fn(),
+      getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+      status: vi.fn().mockResolvedValue('running')
     }),
     listProcesses: vi.fn().mockResolvedValue([]),
+    getProcess: vi.fn().mockResolvedValue(null),
     containerFetch: vi.fn().mockResolvedValue(new Response('ok'))
   } as unknown as Sandbox;
 }
@@ -71,7 +73,7 @@ describe('OpenCode desired-state persistence', () => {
 
     await revived.onContainerStart();
 
-    expect(second.startProcess).toHaveBeenCalledWith(
+    expect(second.exec).toHaveBeenCalledWith(
       'cd /agents && opencode serve --port 8080 --hostname 0.0.0.0',
       expect.any(Object)
     );
@@ -83,7 +85,7 @@ describe('OpenCode desired-state persistence', () => {
 
     await handle.onContainerStart();
 
-    expect(sandbox.startProcess).not.toHaveBeenCalled();
+    expect(sandbox.exec).not.toHaveBeenCalled();
   });
 
   it('works without storage (in-memory only)', async () => {
@@ -107,7 +109,7 @@ describe('OpenCode desired-state persistence', () => {
     await b2.onContainerStart();
 
     const commands = (
-      second.startProcess as ReturnType<typeof vi.fn>
+      second.exec as ReturnType<typeof vi.fn>
     ).mock.calls.map((call) => call[0]);
     expect(commands).toContain('opencode serve --port 4096 --hostname 0.0.0.0');
     expect(commands).toContain('opencode serve --port 5000 --hostname 0.0.0.0');

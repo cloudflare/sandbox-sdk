@@ -1,5 +1,4 @@
 import type { Config } from '@opencode-ai/sdk/v2';
-import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger, type SandboxProcess } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpencodeOptions, OpencodeServer } from './types';
@@ -24,26 +23,26 @@ function buildOpencodeCommand(port: number, directory?: string): string {
   return directory ? `cd ${directory} && ${serve}` : serve;
 }
 
+/** Stable process id for the OpenCode server on a given port. */
+function defaultProcessId(port: number): string {
+  return `opencode-${port}`;
+}
+
 /**
- * Find an existing OpenCode server process running on the specified port.
- * Returns the process if found and still active, null otherwise.
- * Matches by the serve command pattern since directory prefix may vary.
+ * Find the OpenCode server by its stable process id. Returns the process if it
+ * is still active, null otherwise. A direct lookup avoids scanning every
+ * process in the container.
  */
 async function findExistingOpencodeProcess(
   sandbox: Sandbox<unknown>,
-  port: number
+  processId: string
 ): Promise<SandboxProcess | null> {
-  const processes = await sandbox.listProcesses();
-  const serveCommand = OPENCODE_SERVE(port);
+  const process = await sandbox.getProcess(processId);
+  if (!process) return null;
 
-  // Re-attach (via `getProcess`) so the returned handle has live
-  // replay-then-tail streams; the snapshot from `listProcesses` has
-  // `stdout`/`stderr` set to `null`.
-  for (const snapshot of processes) {
-    if (!snapshot.command.includes(serveCommand)) continue;
-    const status = await snapshot.status();
-    if (status !== 'starting' && status !== 'running') continue;
-    return (await sandbox.getProcess(snapshot.id)) ?? snapshot;
+  const status = await process.status();
+  if (status === 'starting' || status === 'running') {
+    return process;
   }
 
   return null;
@@ -58,12 +57,12 @@ async function findExistingOpencodeProcess(
 async function ensureOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
 ): Promise<SandboxProcess> {
-  // Check if OpenCode is already running on this port
-  const existingProcess = await findExistingOpencodeProcess(sandbox, port);
+  const existingProcess = await findExistingOpencodeProcess(sandbox, processId);
   if (existingProcess) {
     // Reuse existing process - wait for it to be ready if still starting
     if ((await existingProcess.status()) === 'starting') {
@@ -99,6 +98,7 @@ async function ensureOpencodeServer(
     return await startOpencodeServer(
       sandbox,
       port,
+      processId,
       directory,
       config,
       customEnv
@@ -106,7 +106,7 @@ async function ensureOpencodeServer(
   } catch (startupError) {
     // Startup failed - check if another concurrent request started the server
     // This handles the race condition where multiple requests try to start simultaneously
-    const retryProcess = await findExistingOpencodeProcess(sandbox, port);
+    const retryProcess = await findExistingOpencodeProcess(sandbox, processId);
     if (retryProcess) {
       getLogger().debug(
         'Startup failed but found concurrent process, reusing',
@@ -147,6 +147,7 @@ async function ensureOpencodeServer(
 async function startOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
@@ -213,6 +214,7 @@ async function startOpencodeServer(
 
   const command = buildOpencodeCommand(port, directory);
   const process = await sandbox.exec(command, {
+    processId,
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
@@ -296,9 +298,11 @@ export async function createOpencodeServer(
   options?: OpencodeOptions
 ): Promise<OpencodeServer> {
   const port = options?.port ?? DEFAULT_PORT;
+  const processId = options?.processId ?? defaultProcessId(port);
   const process = await ensureOpencodeServer(
     sandbox,
     port,
+    processId,
     options?.directory,
     options?.config,
     options?.env

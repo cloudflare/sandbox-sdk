@@ -241,12 +241,15 @@ describe('createOpencodeServer', () => {
         command: 'opencode serve --port 4096 --hostname 0.0.0.0',
         status: 'running'
       });
-      mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
+      mockSandbox.getProcess.mockResolvedValue(existingProcess);
 
       const result = await createOpencodeServer(
         mockSandbox as unknown as Sandbox
       );
 
+      // Should look up by stable id, not scan all processes
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
+      expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
       // Should not start a new process
       expect(mockSandbox.exec).not.toHaveBeenCalled();
       // Server should be valid (process is internal, not exposed)
@@ -258,7 +261,7 @@ describe('createOpencodeServer', () => {
         command: 'opencode serve --port 4096 --hostname 0.0.0.0',
         status: 'starting'
       });
-      mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
+      mockSandbox.getProcess.mockResolvedValue(startingProcess);
 
       await createOpencodeServer(mockSandbox as unknown as Sandbox);
 
@@ -278,7 +281,7 @@ describe('createOpencodeServer', () => {
         command: 'opencode serve --port 4096 --hostname 0.0.0.0',
         status: 'completed'
       });
-      mockSandbox.listProcesses.mockResolvedValue([completedProcess]);
+      mockSandbox.getProcess.mockResolvedValue(completedProcess);
 
       await createOpencodeServer(mockSandbox as unknown as Sandbox);
 
@@ -287,16 +290,14 @@ describe('createOpencodeServer', () => {
     });
 
     it('should start new process on different port', async () => {
-      const existingProcess = createMockProcess({
-        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
-        status: 'running'
-      });
-      mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
+      // No process exists under the port-8080 id.
+      mockSandbox.getProcess.mockResolvedValue(null);
 
       await createOpencodeServer(mockSandbox as unknown as Sandbox, {
         port: 8080
       });
 
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-8080');
       // Should start new process on different port
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         'opencode serve --port 8080 --hostname 0.0.0.0',
@@ -314,7 +315,7 @@ describe('createOpencodeServer', () => {
         stdout: '',
         stderr: 'Startup failed'
       });
-      mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
+      mockSandbox.getProcess.mockResolvedValue(startingProcess);
 
       await expect(
         createOpencodeServer(mockSandbox as unknown as Sandbox)

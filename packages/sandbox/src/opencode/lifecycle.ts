@@ -40,8 +40,9 @@ function isContainerUnavailable(error: unknown): boolean {
   return (error as { name?: unknown }).name === 'ContainerUnavailableError';
 }
 
-function serveCommand(port: number): string {
-  return `opencode serve --port ${port} --hostname 0.0.0.0`;
+/** Stable process id for the OpenCode server on a given port. */
+function defaultProcessId(port: number): string {
+  return `opencode-${port}`;
 }
 
 /**
@@ -103,16 +104,14 @@ export class OpenCodeHandle extends RpcTarget {
     this.#server = undefined;
   }
 
-  /** Report whether an OpenCode server is currently running on its port. */
+  /** Report whether the named OpenCode server is currently running. */
   async status(): Promise<OpenCodeStatus> {
-    const port = this.#lastOptions?.port ?? this.#defaults.port ?? DEFAULT_PORT;
-    const command = serveCommand(port);
-    const processes = await this.#sandbox.listProcesses();
-    const running = processes.some(
-      (proc) =>
-        proc.command.includes(command) &&
-        (proc.status === 'running' || proc.status === 'starting')
-    );
+    const resolved = { ...this.#defaults, ...this.#lastOptions };
+    const port = resolved.port ?? DEFAULT_PORT;
+    const processId = resolved.processId ?? defaultProcessId(port);
+    const proc = await this.#sandbox.getProcess(processId);
+    const status = proc ? await proc.status() : null;
+    const running = status === 'running' || status === 'starting';
     return { running, port, url: `http://localhost:${port}` };
   }
 
