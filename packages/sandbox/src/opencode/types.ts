@@ -1,10 +1,10 @@
 import type { Config } from '@opencode-ai/sdk/v2';
-import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
+import { ErrorCode, type OpenCodeStartupContext } from '@repo/shared/errors';
 
 /**
  * Configuration options for starting OpenCode server
  */
-export interface OpencodeOptions {
+export interface OpenCodeOptions {
   /** Port for OpenCode server (default: 4096) */
   port?: number;
   /** Working directory for OpenCode (default: container's cwd) */
@@ -23,7 +23,7 @@ export interface OpencodeOptions {
 /**
  * Server lifecycle management
  */
-export interface OpencodeServer {
+export interface OpenCodeServer {
   /** Port the server is running on */
   port: number;
   /** Base URL for SDK client (http://localhost:{port}) */
@@ -35,17 +35,17 @@ export interface OpencodeServer {
 /**
  * Error thrown when OpenCode server fails to start
  */
-export class OpencodeStartupError extends Error {
+export class OpenCodeStartupError extends Error {
   public readonly code = ErrorCode.OPENCODE_STARTUP_FAILED;
-  public readonly context: OpencodeStartupContext;
+  public readonly context: OpenCodeStartupContext;
 
   constructor(
     message: string,
-    context: OpencodeStartupContext,
+    context: OpenCodeStartupContext,
     options?: ErrorOptions
   ) {
     super(message, options);
-    this.name = 'OpencodeStartupError';
+    this.name = 'OpenCodeStartupError';
     this.context = context;
   }
 }

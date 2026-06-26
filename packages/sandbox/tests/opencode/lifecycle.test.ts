@@ -1,4 +1,3 @@
-// packages/sandbox/tests/opencode/lifecycle.test.ts
 import type { ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerUnavailableError, ErrorCode } from '../../src/errors';
@@ -84,7 +83,7 @@ describe('withOpenCode', () => {
     it('starts the server and returns rpc-safe metadata', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
-      const server = await handle.ensure();
+      const server = await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         'opencode serve --port 4096 --hostname 0.0.0.0',
@@ -96,7 +95,7 @@ describe('withOpenCode', () => {
     it('starts the server under a stable named process id', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
-      await handle.ensure();
+      await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         expect.any(String),
@@ -109,7 +108,7 @@ describe('withOpenCode', () => {
         processId: 'my-opencode'
       });
 
-      await handle.ensure();
+      await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         expect.any(String),
@@ -122,7 +121,7 @@ describe('withOpenCode', () => {
         directory: '/home/user/agents'
       });
 
-      await handle.ensure();
+      await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         'cd /home/user/agents && opencode serve --port 4096 --hostname 0.0.0.0',
@@ -135,7 +134,7 @@ describe('withOpenCode', () => {
         port: 4096
       });
 
-      await handle.ensure({ port: 8080 });
+      await handle.start({ port: 8080 });
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         'opencode serve --port 8080 --hostname 0.0.0.0',
@@ -147,7 +146,7 @@ describe('withOpenCode', () => {
       mockSandbox.getProcess.mockResolvedValue(createMockProcess());
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
-      const server = await handle.ensure();
+      const server = await handle.start();
 
       expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
       expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
@@ -162,7 +161,7 @@ describe('withOpenCode', () => {
         .mockResolvedValueOnce(mockProcess);
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
-      const server = await handle.ensure();
+      const server = await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledTimes(2);
       expect(server.port).toBe(4096);
@@ -172,7 +171,7 @@ describe('withOpenCode', () => {
   describe('stop', () => {
     it('kills the running server process', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
-      await handle.ensure();
+      await handle.start();
 
       await handle.stop();
 
@@ -236,27 +235,19 @@ describe('withOpenCode', () => {
     });
   });
 
-  describe('onContainerStart', () => {
-    it('re-ensures the last-used configuration', async () => {
+  describe('start reuse of last-used options', () => {
+    it('reuses the last-used configuration on a bare start()', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
-      await handle.ensure({ port: 8080 });
+      await handle.start({ port: 8080 });
       mockSandbox.exec.mockClear();
       mockSandbox.getProcess.mockResolvedValue(null);
 
-      await handle.onContainerStart();
+      await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
         'opencode serve --port 8080 --hostname 0.0.0.0',
         expect.any(Object)
       );
-    });
-
-    it('does nothing if the server was never started', async () => {
-      const handle = withOpenCode(mockSandbox as unknown as Sandbox);
-
-      await handle.onContainerStart();
-
-      expect(mockSandbox.exec).not.toHaveBeenCalled();
     });
   });
 });

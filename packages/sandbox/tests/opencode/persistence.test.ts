@@ -1,10 +1,12 @@
-// packages/sandbox/tests/opencode/persistence.test.ts
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type OpenCodeStateStorage,
   withOpenCode
 } from '../../src/opencode/lifecycle';
 import type { Sandbox } from '../../src/sandbox';
+
+// SandboxExtension stores the sandbox via a private field reached through a
+// prototype getter, so the cast to Sandbox is sufficient for these unit tests.
 
 function createMockSandbox() {
   return {
@@ -48,11 +50,11 @@ describe('OpenCode desired-state persistence', () => {
     storage = createFakeStorage();
   });
 
-  it('persists resolved options on ensure', async () => {
+  it('persists resolved options on start', async () => {
     const sandbox = createMockSandbox();
-    const handle = withOpenCode(sandbox, { directory: '/agents' }, storage);
+    const handle = withOpenCode(sandbox, { directory: '/agents', storage });
 
-    await handle.ensure({ port: 8080 });
+    await handle.start({ port: 8080 });
 
     expect(storage.put).toHaveBeenCalled();
     const persisted = [...storage.map.values()][0];
@@ -62,16 +64,17 @@ describe('OpenCode desired-state persistence', () => {
   it('recovers persisted desired-state on a cold start', async () => {
     // First instance starts a server, persisting its resolved options.
     const first = createMockSandbox();
-    await withOpenCode(first, {}, storage).ensure({
+    await withOpenCode(first, { storage }).start({
       port: 8080,
       directory: '/agents'
     });
 
     // Fresh instance (cold DO) shares the same storage but no in-memory state.
+    // A bare start() recovers the persisted runtime override.
     const second = createMockSandbox();
-    const revived = withOpenCode(second, {}, storage);
+    const revived = withOpenCode(second, { storage });
 
-    await revived.onContainerStart();
+    await revived.start();
 
     expect(second.exec).toHaveBeenCalledWith(
       'cd /agents && opencode serve --port 8080 --hostname 0.0.0.0',
@@ -79,34 +82,37 @@ describe('OpenCode desired-state persistence', () => {
     );
   });
 
-  it('does not start a server on cold start when nothing was persisted', async () => {
+  it('falls back to defaults on a cold start when nothing was persisted', async () => {
     const sandbox = createMockSandbox();
-    const handle = withOpenCode(sandbox, {}, storage);
+    const handle = withOpenCode(sandbox, { directory: '/defaults', storage });
 
-    await handle.onContainerStart();
+    await handle.start();
 
-    expect(sandbox.exec).not.toHaveBeenCalled();
+    expect(sandbox.exec).toHaveBeenCalledWith(
+      'cd /defaults && opencode serve --port 4096 --hostname 0.0.0.0',
+      expect.any(Object)
+    );
   });
 
   it('works without storage (in-memory only)', async () => {
     const sandbox = createMockSandbox();
     const handle = withOpenCode(sandbox, { directory: '/agents' });
 
-    await expect(handle.ensure()).resolves.toMatchObject({ port: 4096 });
+    await expect(handle.start()).resolves.toMatchObject({ port: 4096 });
   });
 
   it('keys handles separately so two servers both recover', async () => {
     const first = createMockSandbox();
-    const a = withOpenCode(first, {}, storage);
-    const b = withOpenCode(first, {}, storage);
-    await a.ensure({ port: 4096 });
-    await b.ensure({ port: 5000 });
+    const a = withOpenCode(first, { storage });
+    const b = withOpenCode(first, { storage });
+    await a.start({ port: 4096 });
+    await b.start({ port: 5000 });
 
     const second = createMockSandbox();
-    const a2 = withOpenCode(second, {}, storage);
-    const b2 = withOpenCode(second, {}, storage);
-    await a2.onContainerStart();
-    await b2.onContainerStart();
+    const a2 = withOpenCode(second, { storage });
+    const b2 = withOpenCode(second, { storage });
+    await a2.start();
+    await b2.start();
 
     const commands = (
       second.exec as ReturnType<typeof vi.fn>

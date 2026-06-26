@@ -6,8 +6,8 @@
 // across a genuine eviction.
 //
 // The container is not available in the Workers test runtime, so the fixture
-// stubs the container-touching sandbox methods (`startProcess`/`getProcess`)
-// while leaving `ctx.storage` real — exactly the surface the persistence layer
+// stubs the container-touching sandbox methods (`exec`/`getProcess`) while
+// leaving `ctx.storage` real — exactly the surface the persistence layer
 // exercises.
 
 import { DurableObject } from 'cloudflare:workers';
@@ -36,37 +36,40 @@ export class OpenCodeFixture extends DurableObject {
     super(ctx, env);
 
     const sandbox = {
-      startProcess: async (
-        command: string,
-        options: { processId?: string } = {}
-      ) => {
+      exec: async (command: string, options: { processId?: string } = {}) => {
         this.#started.push({ command, options });
         return {
           id: options.processId ?? 'proc',
           command,
-          status: 'running',
           startTime: new Date(),
+          exitCode: Promise.resolve(0),
           waitForPort: async () => {},
-          kill: async () => {},
-          getLogs: async () => ({ stdout: '', stderr: '' })
+          kill: () => {},
+          getLogs: async () => ({ stdout: '', stderr: '' }),
+          status: async () => 'running'
         };
       },
       getProcess: async () => null,
       listProcesses: async () => [],
-      containerFetch: async () => new Response('ok')
+      containerFetch: async () => new Response('ok'),
+      // SandboxExtension captures `client`; never touched in these tests.
+      client: {}
     } as unknown as Sandbox;
 
-    this.#handle = withOpenCode(sandbox, { directory: '/agents' }, ctx.storage);
+    this.#handle = withOpenCode(sandbox, {
+      directory: '/agents',
+      storage: ctx.storage
+    });
   }
 
   /** Start (and persist) the server with the given options. */
   async start(options?: { port?: number; directory?: string }): Promise<void> {
-    await this.#handle.ensure(options);
+    await this.#handle.start(options);
   }
 
-  /** Simulate the base Sandbox's onStart re-ensure after a (cold) start. */
-  async reEnsure(): Promise<void> {
-    await this.#handle.onContainerStart();
+  /** A bare start() after a cold start recovers persisted desired-state. */
+  async coldStart(): Promise<void> {
+    await this.#handle.start();
   }
 
   /** Commands the stub sandbox was asked to start, in order. */

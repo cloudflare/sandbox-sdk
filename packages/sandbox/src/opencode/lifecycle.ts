@@ -1,8 +1,7 @@
-import { RpcTarget } from 'cloudflare:workers';
-import { createLogger } from '@repo/shared';
+import { SandboxExtension, type SandboxLike } from '../extensions';
 import type { Sandbox } from '../sandbox';
-import { createOpencodeServer } from './opencode';
-import type { OpencodeOptions, OpencodeServer } from './types';
+import { createOpenCodeServer } from './opencode';
+import type { OpenCodeOptions, OpenCodeServer } from './types';
 
 const DEFAULT_PORT = 4096;
 
@@ -25,11 +24,18 @@ export interface OpenCodeStatus extends OpenCodeServerInfo {
 
 /**
  * The slice of `DurableObjectStorage` the handle uses to persist desired-state.
- * Pass `this.ctx.storage` from the Sandbox subclass to survive DO eviction.
+ * Pass `this.ctx.storage` so the server config survives a Durable Object
+ * eviction (cold start) and is recovered lazily on the next `start()`.
  */
 export interface OpenCodeStateStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+}
+
+/** Options for {@link withOpenCode}: server defaults plus optional storage. */
+export interface WithOpenCodeOptions extends OpenCodeOptions {
+  /** Persist desired-state here so it survives DO eviction. */
+  storage?: OpenCodeStateStorage;
 }
 
 const STATE_KEY_PREFIX = 'opencode:desired-state:';
@@ -49,27 +55,30 @@ function defaultProcessId(port: number): string {
  * DO-resident lifecycle handle for an OpenCode server. Owns the durable
  * `opencode serve` process: start/reuse, stop, status, and request proxying.
  *
- * It is an {@link RpcTarget} so the DO stub naturally exposes it as
- * `sandbox.opencode` without any changes to sandbox core. `createOpenCodeClient`
- * consumes the same handle from either the Worker stub or the in-DO object.
+ * It extends {@link SandboxExtension}, so the DO stub exposes it as
+ * `sandbox.opencode` and method calls dispatch through `callExtension` — the
+ * same path the interpreter extension uses. `createOpenCodeClient` consumes the
+ * same handle from either the Worker stub or the in-DO object.
  *
- * Construction is lazy — no RPC fires until a method is called.
+ * The server starts lazily: nothing runs until `start()` (or `fetch()`, which
+ * calls it) is invoked. To start optimistically, call `opencode.start()` from
+ * your Sandbox subclass's `onStart`.
  */
-export class OpenCodeHandle extends RpcTarget {
+export class OpenCodeHandle extends SandboxExtension {
   readonly #sandbox: Sandbox<unknown>;
-  readonly #defaults: OpencodeOptions;
+  readonly #defaults: OpenCodeOptions;
   readonly #storage: OpenCodeStateStorage | undefined;
   readonly #stateKey: string;
-  #server: OpencodeServer | undefined;
-  #lastOptions: OpencodeOptions | undefined;
+  #server: OpenCodeServer | undefined;
+  #lastOptions: OpenCodeOptions | undefined;
 
   constructor(
     sandbox: Sandbox<unknown>,
-    defaults: OpencodeOptions = {},
+    defaults: OpenCodeOptions = {},
     storage?: OpenCodeStateStorage,
     stateIndex = 0
   ) {
-    super();
+    super(sandbox as SandboxLike);
     this.#sandbox = sandbox;
     this.#defaults = defaults;
     this.#storage = storage;
@@ -77,20 +86,24 @@ export class OpenCodeHandle extends RpcTarget {
   }
 
   /**
-   * Start or reuse the OpenCode server. Returns RPC-safe metadata. Retries
-   * once on a transient `CONTAINER_UNAVAILABLE` (e.g. a rollout in flight).
+   * Start or reuse the OpenCode server, returning RPC-safe metadata. With no
+   * options it reuses the last-used config, recovering persisted desired-state
+   * after a cold start. Retries once on a transient `CONTAINER_UNAVAILABLE`
+   * (e.g. a rollout in flight).
    */
-  async ensure(options?: OpencodeOptions): Promise<OpenCodeServerInfo> {
-    const resolved = { ...this.#defaults, ...options };
+  async start(options?: OpenCodeOptions): Promise<OpenCodeServerInfo> {
+    const recovered =
+      options ?? this.#lastOptions ?? (await this.#loadPersisted());
+    const resolved = { ...this.#defaults, ...recovered };
     this.#lastOptions = resolved;
     await this.#persist(resolved);
 
-    let server: OpencodeServer;
+    let server: OpenCodeServer;
     try {
-      server = await createOpencodeServer(this.#sandbox, resolved);
+      server = await createOpenCodeServer(this.#sandbox, resolved);
     } catch (error) {
       if (!isContainerUnavailable(error)) throw error;
-      server = await createOpencodeServer(this.#sandbox, resolved);
+      server = await createOpenCodeServer(this.#sandbox, resolved);
     }
 
     this.#server = server;
@@ -125,98 +138,48 @@ export class OpenCodeHandle extends RpcTarget {
   }
 
   /**
-   * Ensure the server then route a request into the container. This is the
-   * transport the SDK client's `fetch` adapter uses, so it works identically
-   * from the Worker stub (one RPC hop) or in-DO (local).
+   * Start the server then route a request into the container. This is the
+   * transport the SDK client's `fetch` adapter and the Worker proxy use, so it
+   * works identically from the Worker stub (one RPC hop) or in-DO (local).
    */
   async fetch(request: Request): Promise<Response> {
-    const server = await this.ensure();
+    const server = await this.start();
     return this.#sandbox.containerFetch(request, server.port);
   }
 
-  /**
-   * Re-ensure the server after a container (re)start. Called from the
-   * OpenCode-aware `Sandbox` base's `onStart`. No-op until the server has been
-   * started at least once, so a cold DO doesn't spawn an unconfigured server.
-   */
-  async onContainerStart(): Promise<void> {
-    const options = this.#lastOptions ?? (await this.#loadPersisted());
-    if (!options) return;
-    await this.ensure(options);
-  }
-
   /** Persist resolved desired-state so a cold DO can recover it. Best-effort. */
-  async #persist(options: OpencodeOptions): Promise<void> {
+  async #persist(options: OpenCodeOptions): Promise<void> {
     if (!this.#storage) return;
     await this.#storage.put(this.#stateKey, options);
   }
 
   /** Read persisted desired-state, if any, after a DO eviction. */
-  async #loadPersisted(): Promise<OpencodeOptions | undefined> {
+  async #loadPersisted(): Promise<OpenCodeOptions | undefined> {
     if (!this.#storage) return undefined;
-    return this.#storage.get<OpencodeOptions>(this.#stateKey);
+    return this.#storage.get<OpenCodeOptions>(this.#stateKey);
   }
 }
 
 /**
- * Tracks the handles created for each sandbox so the OpenCode-aware `Sandbox`
- * base can re-ensure them on container start without knowing the field name the
- * user chose. Keyed weakly so handles are collected with their sandbox.
+ * Assigns each handle a stable per-sandbox index so its persisted state key is
+ * deterministic across DO reconstruction (field initializers run in the same
+ * order each time). Keyed weakly so it is collected with the sandbox.
  */
-const handleRegistry = new WeakMap<Sandbox<unknown>, Set<OpenCodeHandle>>();
+const stateIndexCounter = new WeakMap<Sandbox<unknown>, number>();
 
 /**
  * Factory — attach as a field on a Sandbox subclass:
- * `opencode = withOpenCode(this, defaults, this.ctx.storage)`.
+ * `opencode = withOpenCode(this, { directory, config, storage: this.ctx.storage })`.
  *
- * Pass `this.ctx.storage` to persist desired-state so the server is recovered
- * after a DO eviction (cold start), not just a container restart. The
- * per-sandbox registration order keys each handle's state deterministically, so
- * a rebuilt DO with the same field-initializer order recovers each server.
+ * Pass `storage` to persist desired-state so the server is recovered after a DO
+ * eviction (cold start). The server starts lazily on first use.
  */
 export function withOpenCode(
   sandbox: Sandbox<unknown>,
-  defaults?: OpencodeOptions,
-  storage?: OpenCodeStateStorage
+  options: WithOpenCodeOptions = {}
 ): OpenCodeHandle {
-  let handles = handleRegistry.get(sandbox);
-  if (!handles) {
-    handles = new Set();
-    handleRegistry.set(sandbox, handles);
-  }
-  const handle = new OpenCodeHandle(sandbox, defaults, storage, handles.size);
-  handles.add(handle);
-  return handle;
-}
-
-/**
- * Re-ensure every OpenCode handle registered for a sandbox. Called from the
- * OpenCode-aware `Sandbox` base's `onStart` so durable servers come back after
- * a container sleep or rollout. No-op for sandboxes with no handles.
- *
- * Best-effort: a handle that fails to re-ensure (e.g. a missing binary or a
- * container that is not ready) is logged and skipped so it never poisons the
- * container's `onStart`. Every handle is attempted regardless of the others.
- */
-export async function reEnsureOpenCodeHandles(
-  sandbox: Sandbox<unknown>
-): Promise<void> {
-  const handles = handleRegistry.get(sandbox);
-  if (!handles) return;
-  const results = await Promise.allSettled(
-    [...handles].map((handle) => handle.onContainerStart())
-  );
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      createLogger({
-        component: 'sandbox-do',
-        operation: 'opencode'
-      }).error(
-        'Failed to re-ensure OpenCode server on container start',
-        result.reason instanceof Error
-          ? result.reason
-          : new Error(String(result.reason))
-      );
-    }
-  }
+  const { storage, ...defaults } = options;
+  const index = stateIndexCounter.get(sandbox) ?? 0;
+  stateIndexCounter.set(sandbox, index + 1);
+  return new OpenCodeHandle(sandbox, defaults, storage, index);
 }
