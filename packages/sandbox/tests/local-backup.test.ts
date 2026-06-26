@@ -2,10 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connect, Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
 
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
-
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
     const url = new URL(request.url);

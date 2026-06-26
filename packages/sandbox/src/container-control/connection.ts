@@ -14,7 +14,6 @@ import type {
   SandboxControlCallback,
   SandboxFilesAPI,
   SandboxGitAPI,
-  SandboxInterpreterAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxUtilsAPI,

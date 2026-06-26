@@ -221,6 +221,7 @@ describe('Sessionless Execution Workflow', () => {
     const headerReadMarker = await executeCommand(
       workerUrl,
       headerSessionHeaders,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: bash parameter expansion, not a JS template
       'printf "${HEADER_SESSION_MARKER:-missing}"'
     );
     expect(headerReadMarker.success).toBe(true);
@@ -229,6 +230,7 @@ describe('Sessionless Execution Workflow', () => {
     const implicitReadMarker = await executeCommand(
       workerUrl,
       headers,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: bash parameter expansion, not a JS template
       'printf "${HEADER_SESSION_MARKER:-missing}"'
     );
     expect(implicitReadMarker.success).toBe(true);

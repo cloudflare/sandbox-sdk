@@ -17,7 +17,13 @@
     "@openai/agents": "^0.3.3",
     "@opencode-ai/sdk": "^1.1.40",
     "@repo/shared": "*",
+    "@types/acorn": "^4.0.6",
+    "@types/bun": "^1.3.6",
+    "@types/tar-stream": "^3.1.4",
     "@xterm/xterm": "^6.0.0",
+    "acorn": "^8.14.0",
+    "async-mutex": "^0.5.0",
+    "tar-stream": "^3.2.0",
     "wrangler": "^4.102.0"
   },
   "peerDependencies": {
@@ -44,12 +50,14 @@
     "durable objects"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsdown --config tsdown.config.ts",
+    "build": "rm -rf dist && npm run build:sidecar && tsdown --config tsdown.config.ts",
+    "build:sidecar": "bun run src/interpreter/build.ts",
     "check": "biome check && npm run typecheck",
     "fix": "biome check --fix && npm run typecheck",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sidecar.json",
     "docker:local": "scripts/docker-local.sh",
     "test": "vitest run --config vitest.config.ts \"$@\"",
+    "test:sidecar": "bun test src/interpreter/sidecar",
     "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
     "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
     "test:e2e:browser": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && npx playwright install chromium && playwright test --config tests/e2e/browser/playwright.config.ts",
@@ -70,6 +78,11 @@
       "types": "./dist/sidecar/index.d.ts",
       "import": "./dist/sidecar/index.js",
       "require": "./dist/sidecar/index.js"
+    },
+    "./interpreter": {
+      "types": "./dist/interpreter/index.d.ts",
+      "import": "./dist/interpreter/index.js",
+      "require": "./dist/interpreter/index.js"
     },
     "./openai": {
       "types": "./dist/openai/index.d.ts",

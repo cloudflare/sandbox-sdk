@@ -1,18 +1,23 @@
-import { getSandbox } from '@cloudflare/sandbox';
+import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
+import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 import { generateText, stepCountIs, tool } from 'ai';
 import { createWorkersAI } from 'workers-ai-provider';
 import { z } from 'zod';
 
-export { Sandbox } from '@cloudflare/sandbox';
+export class Sandbox extends BaseSandbox<Env> {
+  interpreter = withInterpreter(this);
+}
 
 const API_PATH = '/run';
-const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8' as const;
+const MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct' as const;
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
   const sandbox = getSandbox(env.Sandbox, sandboxId.toString().slice(0, 63));
-  const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
-  const result = await sandbox.runCode(code, {
+  const pythonCtx = await sandbox.interpreter.createCodeContext({
+    language: 'python'
+  });
+  const result = await sandbox.interpreter.runCode(code, {
     context: pythonCtx
   });
 
@@ -51,15 +56,21 @@ async function handleAIRequest(input: string, env: Env): Promise<string> {
         inputSchema: z.object({
           code: z.string().describe('The Python code to execute')
         }),
-        execute: async ({ code }) => {
-          return executePythonCode(env, code);
-        }
+        execute: async ({ code }) => executePythonCode(env, code)
       })
     },
+    prepareStep: ({ stepNumber }) => ({
+      toolChoice:
+        stepNumber === 0 ? { type: 'tool', toolName: 'execute_python' } : 'auto'
+    }),
     stopWhen: stepCountIs(5)
   });
 
-  return result.text || 'No response generated';
+  const toolOutput = result.toolResults.at(-1)?.output;
+  const output =
+    result.text || (typeof toolOutput === 'string' ? toolOutput : '');
+
+  return output || 'No response generated';
 }
 
 export default {

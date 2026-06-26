@@ -138,13 +138,17 @@ export abstract class SandboxExtension extends RpcTarget {
       })) as object;
     } catch (error) {
       if (!isTarballRequiredError(error)) throw error;
-      return (await api.connect({
-        packageHash,
-        tarball: pkg.tarball,
-        bin: pkg.bin,
-        readinessTimeoutMs: pkg.readinessTimeoutMs,
-        allowInstallScripts: pkg.allowInstallScripts
-      })) as object;
+      try {
+        return (await api.connect({
+          packageHash,
+          tarball: pkg.tarball,
+          bin: pkg.bin,
+          readinessTimeoutMs: pkg.readinessTimeoutMs,
+          allowInstallScripts: pkg.allowInstallScripts
+        })) as object;
+      } catch (retryError) {
+        throw createSidecarProvisioningError(packageHash, retryError);
+      }
     }
   }
 
@@ -166,13 +170,41 @@ export abstract class SandboxExtension extends RpcTarget {
 
 /**
  * Recognise the host's `ExtensionTarballRequired` error across the capnweb
- * boundary. capnweb preserves `Error.name`, so the wire-safe contract is the
- * string constant `EXTENSION_TARBALL_REQUIRED`.
+ * boundary. There are two cases:
+ *
+ * 1. capnweb preserves `Error.name`, so the primary wire-safe contract is the
+ *    string constant `EXTENSION_TARBALL_REQUIRED`.
+ * 2. capnweb sometimes re-wraps the error as an `RPCTransportError`, discarding
+ *    `name` but preserving the message text. We fall back to matching the
+ *    message so the tarball retry still fires in that case.
  */
 function isTarballRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const name = (error as { name?: unknown }).name;
-  return name === EXTENSION_TARBALL_REQUIRED;
+  const candidate = error as { name?: unknown; message?: unknown };
+  if (candidate.name === EXTENSION_TARBALL_REQUIRED) return true;
+  if (typeof candidate.message !== 'string') return false;
+  return (
+    candidate.message.includes(EXTENSION_TARBALL_REQUIRED) ||
+    /Extension package '[0-9a-f]{64}' is not provisioned/.test(
+      candidate.message
+    )
+  );
+}
+
+function createSidecarProvisioningError(
+  packageHash: string,
+  cause: unknown
+): Error {
+  const causeMessage =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === 'string'
+        ? cause
+        : String(cause);
+  return new Error(
+    `Failed to provision sandbox sidecar package '${packageHash}'. The sidecar tarball was sent to the container, but the container could not install or start it. Check that the extension build generated a valid npm-style .tgz, that the .tgz is included in the Worker bundle, and that the sidecar package declares a valid package.json bin/sandboxExtension entry. Cause: ${causeMessage}`,
+    { cause }
+  );
 }
 
 /**

@@ -15,11 +15,12 @@
  */
 
 import {
+  Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
-  proxyToSandbox,
-  Sandbox
+  proxyToSandbox
 } from '@cloudflare/sandbox';
+import { withInterpreter } from '@cloudflare/sandbox/interpreter';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -40,10 +41,14 @@ import type {
   WebSocketInitResponse
 } from './types';
 
+// Sandbox subclass wiring the code interpreter extension.
+export class Sandbox extends BaseSandbox<Env> {
+  interpreter = withInterpreter(this);
+}
+
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
 export { ContainerProxy };
-export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
@@ -181,8 +186,13 @@ async function parseBody(request: Request): Promise<any> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Route requests to exposed container ports via their preview URLs
-    const proxyResponse = await proxyToSandbox(request, env);
+    // Route requests to exposed container ports via their preview URLs.
+    // Cast: the Sandbox subclass widens the namespace type beyond the base
+    // `proxyToSandbox` signature (DurableObjectNamespace is invariant).
+    const proxyResponse = await proxyToSandbox(
+      request,
+      env as unknown as Parameters<typeof proxyToSandbox>[1]
+    );
     if (proxyResponse) return proxyResponse;
 
     const url = new URL(request.url);
@@ -973,7 +983,7 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/code/context/create' &&
         request.method === 'POST'
       ) {
-        const context = await executor.createCodeContext(body);
+        const context = await sandbox.interpreter.createCodeContext(body);
         return new Response(JSON.stringify(context), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -984,7 +994,7 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/code/context/list' &&
         request.method === 'GET'
       ) {
-        const contexts = await executor.listCodeContexts();
+        const contexts = await sandbox.interpreter.listCodeContexts();
         return new Response(JSON.stringify(contexts), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -997,7 +1007,7 @@ console.log('Echo server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const contextId = pathParts[4]; // /api/code/context/:id
-        await executor.deleteCodeContext(contextId);
+        await sandbox.interpreter.deleteCodeContext(contextId);
         return new Response(JSON.stringify({ success: true, contextId }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1005,10 +1015,48 @@ console.log('Echo server on port ' + port);
 
       // Code Interpreter - Execute Code
       if (url.pathname === '/api/code/execute' && request.method === 'POST') {
-        const execution = await executor.runCode(body.code, body.options || {});
+        const execution = await sandbox.interpreter.runCode(
+          body.code,
+          body.options || {}
+        );
         return new Response(JSON.stringify(execution), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      // Code Interpreter - Execute Code with callbacks through the Worker proxy.
+      // The callbacks are defined here in the Worker and passed to runCode on the
+      // getSandbox() stub, so they cross the Worker->DO boundary as jsRPC stubs.
+      if (
+        url.pathname === '/api/code/execute/callbacks' &&
+        request.method === 'POST'
+      ) {
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        const results: unknown[] = [];
+        let error: unknown;
+        const execution = await sandbox.interpreter.runCode(body.code, {
+          ...(body.options || {}),
+          onStdout: (message) => {
+            stdout.push(message.text);
+          },
+          onStderr: (message) => {
+            stderr.push(message.text);
+          },
+          onResult: (result) => {
+            results.push(result.text ?? null);
+          },
+          onError: (err) => {
+            error = err;
+          }
+        });
+        return new Response(
+          JSON.stringify({
+            callbacks: { stdout, stderr, results, error },
+            execution
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
       }
 
       // Code Interpreter - Execute Code with Streaming
@@ -1016,7 +1064,7 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/code/execute/stream' &&
         request.method === 'POST'
       ) {
-        const stream = await executor.runCodeStream(
+        const stream = await sandbox.interpreter.runCodeStream(
           body.code,
           body.options || {}
         );

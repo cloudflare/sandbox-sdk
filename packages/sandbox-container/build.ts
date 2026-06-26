@@ -3,13 +3,11 @@
  * Produces:
  * - dist/sandbox: Standalone binary for /sandbox entrypoint
  * - dist/index.js: Legacy JS bundle for backwards compatibility
- * - dist/runtime/executors/javascript/node_executor.js: JS executor
  */
 
-import { mkdir } from 'node:fs/promises';
-
-// Ensure output directories exist
-await mkdir('dist/runtime/executors/javascript', { recursive: true });
+// This script uses top-level `await` and has no imports, so an empty `export`
+// is required to mark it as an ES module rather than a script.
+export {};
 
 // Build legacy JS bundle for backwards compatibility
 // Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
@@ -34,29 +32,6 @@ if (!legacyResult.success) {
 
 console.log(
   `  dist/index.js (${(legacyResult.outputs[0].size / 1024).toFixed(1)} KB)`
-);
-
-console.log('Building JavaScript executor...');
-
-// Bundle the JS executor (runs on Node or Bun for code interpreter)
-const executorResult = await Bun.build({
-  entrypoints: ['src/runtime/executors/javascript/node_executor.ts'],
-  outdir: 'dist/runtime/executors/javascript',
-  target: 'node',
-  minify: true,
-  sourcemap: 'external'
-});
-
-if (!executorResult.success) {
-  console.error('Executor build failed:');
-  for (const log of executorResult.logs) {
-    console.error(log);
-  }
-  process.exit(1);
-}
-
-console.log(
-  `  dist/runtime/executors/javascript/node_executor.js (${(executorResult.outputs[0].size / 1024).toFixed(1)} KB)`
 );
 
 console.log('Building standalone binaries...');

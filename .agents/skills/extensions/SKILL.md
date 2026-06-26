@@ -37,9 +37,10 @@ nothing else.
 
 ## The golden path
 
-Always follow this shape: a class extending `SandboxExtension`, a
-`withX(sandbox)` factory, and (to call from a Worker) a delegate method on the
-Sandbox subclass.
+Always follow this shape: a class extending `SandboxExtension` and a
+`withX(sandbox)` factory. Worker code can call the extension directly as a
+nested namespace (`sandbox.<field>.<method>(...)`); a delegate method on the
+Sandbox subclass is now optional, not required.
 
 ```typescript
 import {
@@ -86,16 +87,16 @@ class Interpreter extends SandboxExtension {
 export const withInterpreter = (s: SandboxLike) => new Interpreter(s);
 ```
 
-Wire it onto a Sandbox subclass and expose a delegate (see _Calling from a
-Worker_):
+Wire it onto a Sandbox subclass. Worker code calls it directly (see _Calling
+from a Worker_):
 
 ```typescript
 export class Sandbox extends BaseSandbox<Env> {
   claudeCode = withClaudeCode(this);
-  ask(prompt: string, sessionId: string) {
-    return this.claudeCode.ask(prompt, sessionId);
-  }
 }
+
+// Worker: sandbox.claudeCode.ask(...) works directly.
+// A delegate (sandbox.ask(...)) is optional if you want a flatter API.
 ```
 
 ## Rules (do not deviate)
@@ -200,32 +201,42 @@ main.
 
 ## Calling an extension from a Worker
 
-Extension methods are not directly callable as `sandbox.myExt.method()`
-from a Worker: property pipelining through the DO stub is **broken under
-the current vite-plugin runtime** (see `TunnelsRpcTarget` in
-`packages/sandbox/src/tunnels/tunnels-handler.ts`). `SandboxExtension`
-keeps the `RpcTarget` shape ready for when that lifts, but **do not rely
-on it today**.
-
-Expose extension behavior to the Worker with a **delegate method** on the
-Sandbox subclass. `getSandbox()` returns a Proxy that forwards any
-non-enhanced public DO method to the stub, so a thin method is
-automatically callable:
+Extension methods are directly callable as `sandbox.<field>.<method>(...)`
+from a Worker. `getSandbox()` returns a Proxy: when you access an unknown
+property it hands back a callable/nested proxy, and a nested call routes
+through `stub.callExtension(<field>, <method>, args)`, a top-level DO
+dispatch method. This sidesteps capnweb property-pipelining limits while
+preserving the nice nested API.
 
 ```typescript
 export class Sandbox extends BaseSandbox<Env> {
   claudeCode = withClaudeCode(this);
-  // sandbox.claudeCode.ask(...) → NO. sandbox.ask(...) → YES.
-  ask(prompt: string, sessionId: string) {
-    return this.claudeCode.ask(prompt, sessionId);
-  }
 }
+
+// Worker: both forms work.
+await sandbox.claudeCode.ask(prompt, sessionId); // direct nested call
 ```
 
-For a full `sandbox.myExt.*` surface, mirror the `callTunnels` dispatch +
-Proxy pattern in `packages/sandbox/src/sandbox.ts`. **Inside** the DO
-(`this.claudeCode.ask()`) it is a plain local call — the caveat only
-concerns the DO→Worker hop.
+`Sandbox.callExtension(name, method, args)` resolves the field on the DO,
+verifies it is a real `SandboxExtension`, and only dispatches methods
+defined on the concrete extension class — inherited base methods like
+`sidecar()` are **not** callable from a Worker. Adding a delegate method
+(`sandbox.ask(...)`) is still fine if you want a flatter surface, but it is
+optional. **Inside** the DO (`this.claudeCode.ask()`) it is always a plain
+local call.
+
+### Return values must be RPC-safe
+
+Extension methods run inside the DO, so their return values cross the
+Worker/DO boundary and get serialized. Return structured-clone-friendly
+data (plain objects, arrays, primitives, `ReadableStream`), **not** class
+instances — returning a class instance throws `DataCloneError` at runtime.
+This is why the interpreter's `runCode()` returns a plain `ExecutionResult`
+(via `Execution.toJSON()`) rather than the `Execution` instance it builds
+internally. If you genuinely need live methods on the returned object, the
+`RpcTarget` escape hatch keeps them callable as remote stubs at the cost of
+an extra round-trip per call and stub lifecycle management; prefer plain
+data for one-shot results.
 
 ## Streaming
 
@@ -236,7 +247,19 @@ concerns the DO→Worker hop.
   retry plumbing. The shared TypeScript interface is the contract.
 - Returning a stream across the DO→Worker boundary still must use a
   `ReadableStream` (transferable). Prefer accumulating server-side and
-  returning a plain result where possible.
+  returning a plain, cloneable result where possible (see _Return values
+  must be RPC-safe_).
+- **Callback parameters cross as jsRPC stubs.** When a Worker calls
+  `sandbox.<ext>.<method>(arg, fn)` directly, `fn` is passed in the
+  `callExtension` `args` array and crosses the Worker→DO hop. Cloudflare
+  jsRPC stubs the function and routes each call back to the Worker — it is
+  **not** structured-cloned (that would throw `DataCloneError`). This is a
+  supported feature, but it is an implicit dependency on jsRPC function
+  stubs for `unknown[]` args. Each invocation is a round-trip, so prefer a
+  returned `ReadableStream` for high-volume streaming to a Worker. Inside
+  the DO, the same callback is a plain local call. The interpreter's
+  `runCode` callbacks exercise this path in
+  `tests/e2e/code-interpreter-workflow.test.ts`.
 
 ## Wire protocol (hash-first connect)
 
@@ -280,8 +303,9 @@ restarted transparently on the next `sidecar()` call.
    (`rpc-types.ts`) or in the extension's own typed-interface module
    compiled into both ends. Rebuild with `npm run build -w @repo/shared`
    before typechecking dependents.
-4. **Worker exposure**: add delegate method(s) on the consumer Sandbox
-   subclass (never direct field pipelining).
+4. **Worker exposure**: direct nested calls (`sandbox.<field>.<method>`)
+   work via `callExtension` dispatch; ensure methods return RPC-safe data,
+   not class instances. Delegate methods on the subclass are optional.
 5. **Unit test** `packages/sandbox/tests/<name>.test.ts`: mock
    `sandbox.client.<subApi>` (or `client.extensions` for sidecars);
    assert lazy construction (no RPC in constructor), input validation,
@@ -343,9 +367,10 @@ Design rationale: `docs/EXTENSION_ARCHITECTURE_V2.md` (context only).
 - `packages/sandbox/src/extensions/index.ts` — `SandboxExtension`.
 - `packages/sandbox/src/sidecar/index.ts` — sidecar author helper.
 - `packages/sandbox/tests/extensions.test.ts` — reference SDK unit tests.
+- `packages/sandbox/src/sandbox.ts` — `getSandbox()` Proxy (nested-call
+  trap) + `Sandbox.callExtension()` dispatch (concrete-method-only).
 - `packages/sandbox/src/tunnels/tunnels-handler.ts` — `RpcTarget` +
-  `callTunnels` dispatch precedent and the Worker-pipelining caveat.
-- `packages/sandbox/src/sandbox.ts` — `getSandbox()` Proxy + `callTunnels`.
+  `callTunnels` dispatch precedent.
 - `packages/sandbox/package.json` (`exports`) + `tsdown.config.ts` —
   subpath wiring (`./extensions`, `./sidecar`).
 - `packages/sandbox-container/src/extensions/` — `ExtensionHost`,

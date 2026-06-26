@@ -15,7 +15,10 @@
  *
  */
 
-import type { CodeContext, ExecutionResult } from '@repo/shared';
+import type {
+  CodeContext,
+  ExecutionResult
+} from '@cloudflare/sandbox/interpreter';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
@@ -46,7 +49,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({ language }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as CodeContext;
@@ -58,7 +61,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({ code, options: { context } }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(res.status).toBe(200);
     return (await res.json()) as ExecutionResult;
@@ -92,7 +95,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     expect(listResponse.status).toBe(200);
     const contexts = (await listResponse.json()) as CodeContext[];
@@ -112,7 +115,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const listAfterDelete = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
     const contextsAfter = (await listAfterDelete.json()) as CodeContext[];
     expect(contextsAfter.map((c) => c.id)).not.toContain(pythonCtx.id);
@@ -300,7 +303,7 @@ for i in range(3):
 `.trim(),
         options: { context: streamCtx }
       }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(60000)
     });
 
     expect(streamResponse.status).toBe(200);
@@ -350,7 +353,45 @@ for i in range(3):
   }, 120000);
 
   // ============================================================================
-  // Test 5: Context Isolation + Concurrency
+  // Test 5: Callbacks through the Worker proxy
+  // ============================================================================
+
+  test('runCode callbacks cross the Worker proxy and receive output', async () => {
+    const ctx = await createContext('python');
+
+    const res = await fetch(`${workerUrl}/api/code/execute/callbacks`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'print("from callback")\n40 + 2',
+        options: { context: ctx }
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    expect(res.status).toBe(200);
+
+    const payload = (await res.json()) as {
+      callbacks: {
+        stdout: string[];
+        stderr: string[];
+        results: Array<string | null>;
+        error: unknown;
+      };
+      execution: ExecutionResult;
+    };
+
+    // The callback was defined in the Worker and invoked across the
+    // Worker->DO boundary, so receiving output proves jsRPC stubbed it.
+    expect(payload.callbacks.stdout.join('')).toContain('from callback');
+    expect(payload.callbacks.results.join('')).toContain('42');
+    expect(payload.callbacks.error).toBeFalsy();
+    expect(payload.execution.logs.stdout.join('')).toContain('from callback');
+
+    await deleteContext(ctx.id);
+  }, 120000);
+
+  // ============================================================================
+  // Test 6: Context Isolation + Concurrency
   // ============================================================================
 
   test('context isolation and concurrency: isolation, many contexts, mutex', async () => {

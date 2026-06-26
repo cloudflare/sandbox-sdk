@@ -1,15 +1,12 @@
 import type {
   CheckChangesRequest,
   CheckChangesResult,
-  ExecutionError,
   ExtensionConnectRequest,
   ExtensionHealth,
   FileEncoding,
   FileInfo,
   ListFilesOptions,
   Logger,
-  OutputMessage,
-  Result,
   SandboxAPI,
   TunnelInfo,
   WatchRequest
@@ -26,11 +23,6 @@ import type { ExtensionHost } from '../extensions';
 import type { BackupService } from '../services/backup-service';
 import type { FileService } from '../services/file-service';
 import type { GitService } from '../services/git-service';
-import type {
-  Context,
-  ExecutionEvent,
-  InterpreterService
-} from '../services/interpreter-service';
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
@@ -42,7 +34,6 @@ export interface SandboxAPIDeps {
   fileService: FileService;
   portService: PortService;
   gitService: GitService;
-  interpreterService: InterpreterService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
@@ -100,9 +91,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get git() {
     return new GitRPCAPI(this.#deps.gitService);
-  }
-  get interpreter() {
-    return new InterpreterRPCAPI(this.#deps.interpreterService);
   }
   get utils() {
     return new UtilsRPCAPI(this.#deps.sessionManager);
@@ -763,162 +751,6 @@ class GitRPCAPI extends RpcTarget {
       targetDir: data.path,
       timestamp: new Date().toISOString()
     };
-  }
-}
-
-// ===========================================================================
-// Code Interpreter
-// ===========================================================================
-
-class InterpreterRPCAPI extends RpcTarget {
-  #svc: InterpreterService;
-  constructor(svc: InterpreterService) {
-    super();
-    this.#svc = svc;
-  }
-
-  async createCodeContext(options?: {
-    language?: string;
-    cwd?: string;
-  }): Promise<{
-    id: string;
-    language: string;
-    cwd: string;
-    createdAt: Date;
-    lastUsed: Date;
-  }> {
-    const result = await this.#svc.createContext(options || {});
-    const ctx = extractData<Context>(result);
-    return {
-      id: ctx.id,
-      language: ctx.language,
-      cwd: ctx.cwd,
-      createdAt: new Date(ctx.createdAt),
-      lastUsed: new Date(ctx.lastUsed)
-    };
-  }
-
-  async streamCode(
-    contextId: string,
-    code: string,
-    language?: string
-  ): Promise<ReadableStream<Uint8Array>> {
-    const result = await this.#svc.executeCodeEvents(contextId, code, language);
-    const events = extractData<ExecutionEvent[]>(result);
-    const encoder = new TextEncoder();
-
-    return new ReadableStream({
-      start(controller) {
-        for (const event of events) {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-          );
-        }
-        controller.close();
-      }
-    });
-  }
-
-  /**
-   * Execute code and dispatch results via callbacks.
-   *
-   * capnweb stubs the callback functions so calls route back to the
-   * caller transparently.
-   */
-  async runCodeStream(
-    contextId: string | undefined,
-    code: string,
-    language: string | undefined,
-    callbacks: {
-      onStdout?: (output: OutputMessage) => void | Promise<void>;
-      onStderr?: (output: OutputMessage) => void | Promise<void>;
-      onResult?: (result: Result) => void | Promise<void>;
-      onError?: (error: ExecutionError) => void | Promise<void>;
-    },
-    _timeoutMs?: number
-  ): Promise<void> {
-    const result = await this.#svc.executeCodeEvents(
-      contextId ?? '',
-      code,
-      language
-    );
-    const events = extractData<ExecutionEvent[]>(result);
-
-    for (const event of events) {
-      await this.#dispatchEvent(event, callbacks);
-    }
-  }
-
-  async #dispatchEvent(
-    event: ExecutionEvent,
-    cb: {
-      onStdout?: (output: OutputMessage) => void | Promise<void>;
-      onStderr?: (output: OutputMessage) => void | Promise<void>;
-      onResult?: (result: Result) => void | Promise<void>;
-      onError?: (error: ExecutionError) => void | Promise<void>;
-    }
-  ): Promise<void> {
-    switch (event.type) {
-      case 'stdout':
-        await cb.onStdout?.({
-          text: event.text,
-          timestamp: Date.now()
-        });
-        break;
-      case 'stderr':
-        await cb.onStderr?.({
-          text: event.text,
-          timestamp: Date.now()
-        });
-        break;
-      case 'result':
-        // Send as a plain object — capnweb cannot serialize class instances.
-        await cb.onResult?.({
-          text: event.text as string | undefined,
-          html: event.html as string | undefined,
-          png: event.png as string | undefined,
-          jpeg: event.jpeg as string | undefined,
-          svg: event.svg as string | undefined,
-          latex: event.latex as string | undefined,
-          markdown: event.markdown as string | undefined,
-          javascript: event.javascript as string | undefined,
-          json: event.json as string | undefined,
-          data: event.data as Record<string, unknown> | undefined
-        } as Result);
-        break;
-      case 'error':
-        await cb.onError?.({
-          name: event.ename,
-          message: event.evalue,
-          traceback: event.traceback
-        });
-        break;
-    }
-  }
-
-  async listCodeContexts(): Promise<
-    Array<{
-      id: string;
-      language: string;
-      cwd: string;
-      createdAt: Date;
-      lastUsed: Date;
-    }>
-  > {
-    const result = await this.#svc.listContexts();
-    const contexts = extractData<Context[]>(result);
-    return contexts.map((c) => ({
-      id: c.id,
-      language: c.language,
-      cwd: c.cwd,
-      createdAt: new Date(c.createdAt),
-      lastUsed: new Date(c.lastUsed)
-    }));
-  }
-
-  async deleteCodeContext(contextId: string): Promise<void> {
-    const result = await this.#svc.deleteContext(contextId);
-    throwIfError(result);
   }
 }
 

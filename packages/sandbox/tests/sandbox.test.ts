@@ -1,4 +1,4 @@
-import { Container } from '@cloudflare/containers';
+import { Container, getContainer } from '@cloudflare/containers';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
@@ -9,13 +9,9 @@ import {
   PortNotExposedError,
   ProcessNotFoundError
 } from '../src/errors';
-import { connect, Sandbox } from '../src/sandbox';
+import { SandboxExtension, type SandboxLike } from '../src/extensions';
+import { connect, getSandbox, Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
-
-// Mock dependencies before imports
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
-}));
 
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
@@ -280,6 +276,87 @@ describe('Sandbox - Automatic Session Management', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('extension dispatch', () => {
+    class TestExtension extends SandboxExtension {
+      readonly prefix: string;
+
+      constructor(sandbox: SandboxLike, prefix: string) {
+        super(sandbox);
+        this.prefix = prefix;
+      }
+
+      run(input: string): string {
+        return `${this.prefix}:${input}`;
+      }
+    }
+
+    it('dispatches extension methods through the Worker-side nested proxy', async () => {
+      const callExtension = vi.fn(
+        async (extensionName: string, method: string, args: unknown[]) => ({
+          extensionName,
+          method,
+          args
+        })
+      );
+      const topLevelCall = vi.fn(async (...args: unknown[]) => ({ args }));
+      vi.mocked(getContainer).mockReturnValue(
+        new Proxy(
+          { callExtension },
+          {
+            get: (target, prop) => {
+              if (prop === 'callExtension') return target.callExtension;
+              return topLevelCall;
+            }
+          }
+        ) as unknown as ReturnType<typeof getContainer>
+      );
+
+      const proxied = getSandbox(
+        {} as DurableObjectNamespace<Sandbox>,
+        'extension-proxy-test'
+      ) as unknown as {
+        interpreter: { runCode(code: string): Promise<unknown> };
+        topLevelMethod(value: string): Promise<unknown>;
+      };
+      topLevelCall.mockClear();
+
+      await expect(proxied.interpreter.runCode('print(1)')).resolves.toEqual({
+        extensionName: 'interpreter',
+        method: 'runCode',
+        args: ['print(1)']
+      });
+      expect(topLevelCall).not.toHaveBeenCalled();
+
+      await expect(proxied.topLevelMethod('ok')).resolves.toEqual({
+        args: ['ok']
+      });
+      expect(topLevelCall).toHaveBeenCalledWith('ok');
+    });
+
+    it('dispatches only real SandboxExtension instances inside the DO', async () => {
+      Object.assign(sandbox, {
+        testExtension: new TestExtension(
+          sandbox as unknown as SandboxLike,
+          'ran'
+        ),
+        notExtension: { run: () => 'nope' }
+      });
+
+      await expect(
+        sandbox.callExtension('testExtension', 'run', ['ok'])
+      ).resolves.toBe('ran:ok');
+      await expect(
+        sandbox.callExtension('notExtension', 'run', [])
+      ).rejects.toThrow(/Unknown sandbox extension/);
+      await expect(
+        sandbox.callExtension('testExtension', 'missing', [])
+      ).rejects.toThrow(/Unknown extension method/);
+      await expect(
+        sandbox.callExtension('testExtension', 'sidecar', [])
+      ).rejects.toThrow(/Unknown extension method/);
+    });
   });
 
   describe('default session management', () => {

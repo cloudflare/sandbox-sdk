@@ -1,3 +1,11 @@
+/**
+ * Public, user-facing types for the code interpreter extension.
+ *
+ * These were previously part of `@repo/shared` and the core SDK surface. They
+ * now live entirely inside the `@cloudflare/sandbox/interpreter` extension so
+ * the core SDK carries no interpreter-specific types.
+ */
+
 // Context Management
 export interface CreateContextOptions {
   /**
@@ -93,9 +101,11 @@ export interface RunCodeOptions {
   onStderr?: (output: OutputMessage) => void | Promise<void>;
 
   /**
-   * Callback for execution results (charts, tables, etc)
+   * Callback for execution results (charts, tables, etc).
+   * Receives plain `ResultData` so it stays serializable when the callback
+   * crosses the Worker/DO boundary.
    */
-  onResult?: (result: Result) => void | Promise<void>;
+  onResult?: (result: ResultData) => void | Promise<void>;
 
   /**
    * Callback for execution errors
@@ -116,8 +126,8 @@ export interface OutputMessage {
   timestamp: number;
 }
 
-// Execution Results
-export interface Result {
+// Serializable result data (no methods, safe to send across RPC)
+export interface ResultData {
   /**
    * Plain text representation
    */
@@ -172,7 +182,10 @@ export interface Result {
    * Raw data object
    */
   data?: any;
+}
 
+// Execution Results
+export interface Result extends ResultData {
   /**
    * Available output formats
    */
@@ -256,19 +269,7 @@ export interface ExecutionResult {
   };
   error?: ExecutionError;
   executionCount?: number;
-  results: Array<{
-    text?: string;
-    html?: string;
-    png?: string;
-    jpeg?: string;
-    svg?: string;
-    latex?: string;
-    markdown?: string;
-    javascript?: string;
-    json?: any;
-    chart?: ChartData;
-    data?: any;
-  }>;
+  results: ResultData[];
 }
 
 // Execution Result Container
@@ -310,21 +311,26 @@ export class Execution {
       logs: this.logs,
       error: this.error,
       executionCount: this.executionCount,
-      results: this.results.map((result) => ({
-        text: result.text,
-        html: result.html,
-        png: result.png,
-        jpeg: result.jpeg,
-        svg: result.svg,
-        latex: result.latex,
-        markdown: result.markdown,
-        javascript: result.javascript,
-        json: result.json,
-        chart: result.chart,
-        data: result.data
-      }))
+      results: this.results.map((result) => toResultData(result))
     };
   }
+}
+
+// Project a Result into plain, RPC-safe data.
+export function toResultData(result: Result): ResultData {
+  return {
+    text: result.text,
+    html: result.html,
+    png: result.png,
+    jpeg: result.jpeg,
+    svg: result.svg,
+    latex: result.latex,
+    markdown: result.markdown,
+    javascript: result.javascript,
+    json: result.json,
+    chart: result.chart,
+    data: result.data
+  };
 }
 
 // Implementation of Result
@@ -341,7 +347,6 @@ export class ResultImpl implements Result {
   chart?: ChartData;
   data?: any;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw SSE data has dynamic shape
   constructor(raw: any) {
     this.text = raw.text || raw.data?.['text/plain'];
     this.html = raw.html || raw.data?.['text/html'];
@@ -371,3 +376,18 @@ export class ResultImpl implements Result {
     return fmts;
   }
 }
+
+/**
+ * Wire-level execution event emitted by the sidecar over the bridge as a
+ * streaming `evt` frame, mirrored from the container interpreter service.
+ */
+export type InterpreterExecutionEvent =
+  | { type: 'stdout'; text: string }
+  | { type: 'stderr'; text: string }
+  | {
+      type: 'result';
+      metadata: Record<string, unknown>;
+      [key: string]: unknown;
+    }
+  | { type: 'execution_complete'; execution_count: number }
+  | { type: 'error'; ename: string; evalue: string; traceback: string[] };

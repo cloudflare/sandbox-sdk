@@ -6,7 +6,7 @@ import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import * as util from 'node:util';
 import * as vm from 'node:vm';
-import type { RichOutput } from '../../process-pool';
+import type { RichOutput } from '../../pool';
 import { transformForAsyncExecution } from '../shared/code-transformer';
 import { isThenable } from '../shared/thenable';
 
@@ -52,23 +52,27 @@ rl.on('line', async (line: string) => {
     let stdout = '';
     let stderr = '';
 
-    (process.stdout.write as any) = (
+    (process.stdout.write as unknown) = (
       chunk: string | Buffer,
-      encoding?: BufferEncoding,
+      encoding?: BufferEncoding | (() => void),
       callback?: () => void
     ) => {
-      stdout += chunk.toString();
-      if (callback) callback();
+      const enc = typeof encoding === 'string' ? encoding : undefined;
+      const done = typeof encoding === 'function' ? encoding : callback;
+      stdout += typeof chunk === 'string' ? chunk : chunk.toString(enc);
+      if (done) done();
       return true;
     };
 
-    (process.stderr.write as any) = (
+    (process.stderr.write as unknown) = (
       chunk: string | Buffer,
-      encoding?: BufferEncoding,
+      encoding?: BufferEncoding | (() => void),
       callback?: () => void
     ) => {
-      stderr += chunk.toString();
-      if (callback) callback();
+      const enc = typeof encoding === 'string' ? encoding : undefined;
+      const done = typeof encoding === 'function' ? encoding : callback;
+      stderr += typeof chunk === 'string' ? chunk : chunk.toString(enc);
+      if (done) done();
       return true;
     };
 

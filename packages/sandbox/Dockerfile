@@ -186,11 +186,8 @@ COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 # Copy standalone binary
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
 
-# Set up container server directory for executors
+# Set up container server directory
 WORKDIR /container-server
-
-# Copy bundled JavaScript executor (runs on Node or Bun for code interpreter)
-COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
 
 # Copy legacy JS bundle for backwards compatibility
 # Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
@@ -245,14 +242,13 @@ RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
 # Set Python 3.11 as default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
 
-# Install Python packages for data science and code interpreter
+# Install Python packages for data science and the code interpreter extension.
+# The interpreter runtime itself is provisioned by the @cloudflare/sandbox/interpreter
+# extension; this image only provides the Python toolchain it relies on.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --no-cache-dir matplotlib numpy pandas ipython
 
-# Copy Python executor
-COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
-
-# Enable all interpreter pools
+# Pre-warm pool sizes consumed by the interpreter extension sidecar
 ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
@@ -318,7 +314,6 @@ COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container
 
 WORKDIR /container-server
 
-COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
 COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
 RUN mkdir -p /workspace

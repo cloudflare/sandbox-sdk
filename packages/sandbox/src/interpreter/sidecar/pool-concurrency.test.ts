@@ -8,12 +8,18 @@
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { createNoOpLogger } from '@repo/shared';
 import {
   type InterpreterLanguage,
   type InterpreterProcess,
-  ProcessPoolManager
-} from '../../src/runtime/process-pool';
+  ProcessPoolManager,
+  type SidecarLogger
+} from './pool';
+
+const noopLogger: SidecarLogger = {
+  debug() {},
+  warn() {},
+  error() {}
+};
 
 let mockIdCounter = 0;
 
@@ -70,7 +76,7 @@ function createTestPool(
     for (const k of maxEnvKeys) process.env[k] = String(opts.maxProcesses);
   }
 
-  const pool = new ProcessPoolManager({}, createNoOpLogger());
+  const pool = new ProcessPoolManager({}, noopLogger);
 
   for (let i = 0; i < allKeys.length; i++) {
     if (saved[i] === undefined) delete process.env[allKeys[i]];

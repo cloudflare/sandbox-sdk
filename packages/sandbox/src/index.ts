@@ -8,13 +8,10 @@ export type {
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
-  CodeContext,
-  CreateContextOptions,
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecutionResult,
   ExecutionSession,
   FileChunk,
   FileMetadata,
@@ -35,7 +32,6 @@ export type {
   QuickTunnelInfo,
   RemoteMountBucketOptions,
   RestoreBackupResult,
-  RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -64,8 +60,6 @@ export {
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
-// Export interpreter functionality
-export { CodeInterpreter } from './interpreter.js';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';

@@ -11,13 +11,10 @@ import type {
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
-  CodeContext,
-  CreateContextOptions,
   DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecutionResult,
   ExecutionSession,
   FileEncoding,
   ISandbox,
@@ -35,7 +32,6 @@ import type {
   ReadFileStreamResult,
   RemoteMountBucketOptions,
   RestoreBackupResult,
-  RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -82,8 +78,8 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
+import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
-import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
 import {
   forwardPreviewRequest,
@@ -338,6 +334,11 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
   createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
   getSession: (sessionId: string) => Promise<ExecutionSession>;
+  callExtension: (
+    extensionName: string,
+    method: string,
+    args: unknown[]
+  ) => Promise<unknown>;
   execWithSessionToken: (
     command: string,
     sessionId: string,
@@ -814,10 +815,61 @@ export function getSandbox<T extends Sandbox<any>>(
       if (typeof prop === 'string' && prop in enhancedMethods) {
         return enhancedMethods[prop as keyof typeof enhancedMethods];
       }
+      if (typeof prop !== 'string' || prop === 'then') {
+        // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+        return target[prop];
+      }
       // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
-      return target[prop];
+      const value = target[prop];
+      // Plain data properties (e.g. sleepAfter) pass through unchanged.
+      if (value !== undefined && typeof value !== 'function') {
+        return value;
+      }
+      // Methods and extension namespaces become a callable proxy: invoking it
+      // forwards to the stub method (sandbox.method(...)), while a nested
+      // access dispatches sandbox.<ext>.<method>(...) through callExtension.
+      return new Proxy(
+        (...args: unknown[]) => {
+          // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+          return target[prop](...args);
+        },
+        {
+          get: (_, method) => {
+            if (typeof method !== 'string' || method === 'then') {
+              return undefined;
+            }
+            return (...args: unknown[]) =>
+              stub.callExtension(prop, method, args);
+          }
+        }
+      );
     }
   }) as T;
+}
+
+function getConcreteExtensionMethod(
+  extension: SandboxExtension,
+  method: string
+): ((...args: unknown[]) => unknown) | undefined {
+  const ownValue = (extension as unknown as Record<string, unknown>)[method];
+  if (Object.hasOwn(extension, method) && typeof ownValue === 'function') {
+    return ownValue as (...args: unknown[]) => unknown;
+  }
+
+  let prototype = Object.getPrototypeOf(extension) as object | null;
+  while (
+    prototype &&
+    prototype !== SandboxExtension.prototype &&
+    prototype !== Object.prototype
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
+    if (typeof descriptor?.value === 'function') {
+      return descriptor.value as (...args: unknown[]) => unknown;
+    }
+    prototype = Object.getPrototypeOf(prototype) as object | null;
+  }
+
+  return undefined;
 }
 
 function enhanceSession(
@@ -851,7 +903,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: ContainerControlClient;
 
-  private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   // Tunnels namespace handler. Lazily constructed on first access via the
   // `tunnels` getter; holds an in-memory map of tunnels created through
@@ -975,6 +1026,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error(`sandbox.tunnels missing method: ${method}`);
     }
     return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
+
+  async callExtension(
+    extensionName: string,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    if (method === 'constructor' || method === 'then') {
+      throw new Error(`Unknown extension method: ${extensionName}.${method}`);
+    }
+    const extension = (this as unknown as Record<string, unknown>)[
+      extensionName
+    ];
+    if (!(extension instanceof SandboxExtension)) {
+      throw new Error(`Unknown sandbox extension: ${extensionName}`);
+    }
+    const fn = getConcreteExtensionMethod(extension, method);
+    if (!fn) {
+      throw new Error(`Unknown extension method: ${extensionName}.${method}`);
+    }
+    return fn.apply(extension, args);
   }
 
   /**
@@ -1152,8 +1224,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     this.client = this.createClient();
-
-    this.codeInterpreter = new CodeInterpreter(() => this.client.interpreter);
 
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
@@ -5531,19 +5601,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       },
 
-      // Code interpreter methods - delegate to sandbox's code interpreter
-      createCodeContext: (options) =>
-        this.codeInterpreter.createCodeContext(options),
-      runCode: async (code, options) => {
-        const execution = await this.codeInterpreter.runCode(code, options);
-        return execution.toJSON();
-      },
-      runCodeStream: (code, options) =>
-        this.codeInterpreter.runCodeStream(code, options),
-      listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
-      deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId),
-
       // Bucket mounting - sandbox-level operations
       mountBucket: (bucket, mountPath, options) =>
         this.mountBucket(bucket, mountPath, options),
@@ -5553,39 +5610,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       createBackup: (options) => this.createBackup(options),
       restoreBackup: (backup: DirectoryBackup) => this.restoreBackup(backup)
     };
-  }
-
-  // ============================================================================
-  // Code interpreter methods - delegate to CodeInterpreter wrapper
-  // ============================================================================
-
-  async createCodeContext(
-    options?: CreateContextOptions
-  ): Promise<CodeContext> {
-    return this.codeInterpreter.createCodeContext(options);
-  }
-
-  async runCode(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ExecutionResult> {
-    const execution = await this.codeInterpreter.runCode(code, options);
-    return execution.toJSON();
-  }
-
-  async runCodeStream(
-    code: string,
-    options?: RunCodeOptions
-  ): Promise<ReadableStream> {
-    return this.codeInterpreter.runCodeStream(code, options);
-  }
-
-  async listCodeContexts(): Promise<CodeContext[]> {
-    return this.codeInterpreter.listCodeContexts();
-  }
-
-  async deleteCodeContext(contextId: string): Promise<void> {
-    return this.codeInterpreter.deleteCodeContext(contextId);
   }
 
   // ============================================================================
