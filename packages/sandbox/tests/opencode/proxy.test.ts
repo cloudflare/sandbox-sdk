@@ -1,15 +1,14 @@
-// packages/sandbox/tests/opencode/proxy.test.ts
 import { describe, expect, it, vi } from 'vitest';
+import type { OpenCodeHandle } from '../../src/opencode/lifecycle';
 import { createOpenCodeProxy } from '../../src/opencode/proxy';
-import type { Sandbox } from '../../src/sandbox';
 
-interface MockSandbox {
-  containerFetch: ReturnType<typeof vi.fn>;
+interface MockHandle {
+  fetch: ReturnType<typeof vi.fn>;
 }
 
-function createMockSandbox(): MockSandbox {
+function createMockHandle(): MockHandle {
   return {
-    containerFetch: vi.fn().mockResolvedValue(new Response('proxied'))
+    fetch: vi.fn().mockResolvedValue(new Response('proxied'))
   };
 }
 
@@ -24,7 +23,7 @@ function req(input: string, init?: RequestInit): Request<unknown, never> {
 describe('createOpenCodeProxy', () => {
   it('is curried: resolve first, then wrap the handler', () => {
     const wrap = createOpenCodeProxy(
-      () => createMockSandbox() as unknown as Sandbox
+      () => createMockHandle() as unknown as OpenCodeHandle
     );
     expect(typeof wrap).toBe('function');
 
@@ -32,11 +31,32 @@ describe('createOpenCodeProxy', () => {
     expect(typeof handler.fetch).toBe('function');
   });
 
-  it('handles the web-UI route with a redirect (does not forward)', async () => {
-    const sandbox = createMockSandbox();
-    const userFetch = vi.fn();
-    const handler = createOpenCodeProxy(() => sandbox as unknown as Sandbox)({
-      fetch: userFetch
+  it('returns the user handler response for its own routes', async () => {
+    const handle = createMockHandle();
+    const userFetch = vi
+      .fn()
+      .mockResolvedValue(new Response('user', { status: 200 }));
+    const handler = createOpenCodeProxy(
+      () => handle as unknown as OpenCodeHandle
+    )({ fetch: userFetch });
+
+    const response = await handler.fetch?.(
+      req('http://example.com/api/test', { method: 'POST' }),
+      env,
+      ctx
+    );
+
+    expect(userFetch).toHaveBeenCalledOnce();
+    expect(await response?.text()).toBe('user');
+    expect(handle.fetch).not.toHaveBeenCalled();
+  });
+
+  it('redirects the web-UI handshake when the handler 404s', async () => {
+    const handle = createMockHandle();
+    const handler = createOpenCodeProxy(
+      () => handle as unknown as OpenCodeHandle
+    )({
+      fetch: vi.fn().mockResolvedValue(new Response('nope', { status: 404 }))
     });
 
     const response = await handler.fetch?.(
@@ -49,56 +69,74 @@ describe('createOpenCodeProxy', () => {
     expect(response?.headers.get('location')).toBe(
       'http://example.com/?url=http%3A%2F%2Fexample.com'
     );
-    expect(userFetch).not.toHaveBeenCalled();
+    // A redirect needs no server, so the handle is not touched.
+    expect(handle.fetch).not.toHaveBeenCalled();
   });
 
-  it('forwards non-web-UI requests to the user handler', async () => {
-    const sandbox = createMockSandbox();
-    const userFetch = vi.fn().mockResolvedValue(new Response('user'));
-    const handler = createOpenCodeProxy(() => sandbox as unknown as Sandbox)({
-      fetch: userFetch
+  it('ensures + proxies post-handshake web-UI requests via the handle', async () => {
+    const handle = createMockHandle();
+    const handler = createOpenCodeProxy(
+      () => handle as unknown as OpenCodeHandle
+    )({
+      fetch: vi.fn().mockResolvedValue(new Response('nope', { status: 404 }))
     });
 
-    const request = req('http://example.com/api/test', { method: 'POST' });
-    const response = await handler.fetch?.(request, env, ctx);
+    // GET /?url=... (post-redirect) must reach the container via the handle,
+    // which ensures the server is running first.
+    await handler.fetch?.(
+      req('http://example.com/?url=http://example.com', {
+        headers: { accept: 'text/html' }
+      }),
+      env,
+      ctx
+    );
 
-    expect(userFetch).toHaveBeenCalledOnce();
-    expect(await response?.text()).toBe('user');
-    expect(sandbox.containerFetch).not.toHaveBeenCalled();
+    expect(handle.fetch).toHaveBeenCalledOnce();
   });
 
-  it('resolves the sandbox lazily, once per request', async () => {
-    const resolve = vi.fn(() => createMockSandbox() as unknown as Sandbox);
+  it('ensures + proxies web-UI asset requests when the handler 404s', async () => {
+    const handle = createMockHandle();
+    const handler = createOpenCodeProxy(
+      () => handle as unknown as OpenCodeHandle
+    )({
+      fetch: vi.fn().mockResolvedValue(new Response(null, { status: 404 }))
+    });
+
+    await handler.fetch?.(req('http://example.com/app.js'), env, ctx);
+
+    expect(handle.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('falls through to the proxy when there is no handler fetch', async () => {
+    const handle = createMockHandle();
+    const handler = createOpenCodeProxy(
+      () => handle as unknown as OpenCodeHandle
+    )({});
+
+    await handler.fetch?.(req('http://example.com/app.js'), env, ctx);
+
+    expect(handle.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('resolves the handle lazily, only when proxying', async () => {
+    const resolve = vi.fn(
+      () => createMockHandle() as unknown as OpenCodeHandle
+    );
     const handler = createOpenCodeProxy(resolve)({
-      fetch: vi.fn().mockResolvedValue(new Response('user'))
+      fetch: vi
+        .fn()
+        .mockResolvedValueOnce(new Response('user', { status: 200 }))
+        .mockResolvedValueOnce(new Response(null, { status: 404 }))
     });
 
     expect(resolve).not.toHaveBeenCalled();
 
+    // Handler owns this one -> no resolve.
     await handler.fetch?.(req('http://example.com/api/a'), env, ctx);
-    await handler.fetch?.(req('http://example.com/api/b'), env, ctx);
+    expect(resolve).not.toHaveBeenCalled();
 
-    expect(resolve).toHaveBeenCalledTimes(2);
-  });
-
-  it('restricts the handled surface to a configured route prefix', async () => {
-    const sandbox = createMockSandbox();
-    const userFetch = vi.fn().mockResolvedValue(new Response('user'));
-    const handler = createOpenCodeProxy(() => sandbox as unknown as Sandbox, {
-      route: '/opencode'
-    })({ fetch: userFetch });
-
-    // HTML GET outside the route -> forwarded, not redirected.
-    const outside = await handler.fetch?.(
-      req('http://example.com/', { headers: { accept: 'text/html' } }),
-      env,
-      ctx
-    );
-    expect(userFetch).toHaveBeenCalledOnce();
-    expect(await outside?.text()).toBe('user');
-
-    // Request inside the route -> proxied to the container.
-    await handler.fetch?.(req('http://example.com/opencode/app.js'), env, ctx);
-    expect(sandbox.containerFetch).toHaveBeenCalled();
+    // Handler 404s -> proxy resolves the handle.
+    await handler.fetch?.(req('http://example.com/app.js'), env, ctx);
+    expect(resolve).toHaveBeenCalledOnce();
   });
 });

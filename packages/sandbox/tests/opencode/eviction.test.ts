@@ -1,5 +1,3 @@
-// packages/sandbox/tests/opencode/eviction.test.ts
-//
 // Exercises OpenCode desired-state persistence across a real Durable Object
 // eviction using the cloudflare:test evictDurableObject helper.
 
@@ -28,17 +26,17 @@ describe('OpenCode desired-state survives DO eviction', () => {
     // Evict the DO from memory, simulating the production cold-start path.
     await evictDurableObject(first);
 
-    // Fresh incarnation: no in-memory #lastOptions. Re-ensure must recover the
-    // persisted desired-state and respawn the same server.
+    // Fresh incarnation: no in-memory state. A bare start() must recover the
+    // persisted runtime override and respawn the same server.
     const revived = fixtures.get(id);
-    await revived.reEnsure();
+    await revived.coldStart();
 
     expect(await revived.startedCommands()).toContain(
       'cd /agents && opencode serve --port 8080 --hostname 0.0.0.0'
     );
   });
 
-  it('does not respawn when nothing was ever persisted', async () => {
+  it('falls back to defaults on a cold start with no persisted override', async () => {
     const id = fixtures.idFromName('evict-empty');
     const handle = fixtures.get(id);
     // Bring the instance into memory without persisting any desired-state.
@@ -46,9 +44,13 @@ describe('OpenCode desired-state survives DO eviction', () => {
 
     await evictDurableObject(handle);
 
+    // A bare start() on a cold DO with nothing persisted uses the factory
+    // defaults (directory '/agents', default port).
     const revived = fixtures.get(id);
-    await revived.reEnsure();
+    await revived.coldStart();
 
-    expect(await revived.startedCommands()).toEqual([]);
+    expect(await revived.startedCommands()).toContain(
+      'cd /agents && opencode serve --port 4096 --hostname 0.0.0.0'
+    );
   });
 });

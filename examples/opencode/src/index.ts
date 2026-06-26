@@ -93,10 +93,10 @@ const getConfig = (): Config => ({
   }
 });
 
-// createOpenCodeProxy owns the OpenCode web-UI handshake (the ?url= redirect);
-// every other request falls through to the wrapped handler below.
-export default createOpenCodeProxy((env: Env) =>
-  getSandbox(env.Sandbox, 'opencode')
+// The wrapped handler runs first; any 404 falls through to createOpenCodeProxy,
+// which serves the OpenCode web UI (handshake redirect + ensure-and-forward).
+export default createOpenCodeProxy(
+  (env: Env) => getSandbox(env.Sandbox, 'opencode').opencode
 )({
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);

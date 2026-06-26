@@ -1,6 +1,6 @@
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type { OpenCodeHandle } from './lifecycle';
-import type { OpencodeOptions } from './types';
+import type { OpenCodeOptions } from './types';
 
 type OpenCodeClientFactory = (options: {
   baseUrl: string;
@@ -37,9 +37,9 @@ async function loadSDK(): Promise<OpenCodeClientFactory> {
  */
 export async function createOpenCodeClient<TClient = OpencodeClient>(
   handle: OpenCodeHandle,
-  options?: OpencodeOptions
+  options?: OpenCodeOptions
 ): Promise<TClient> {
-  const server = await handle.ensure(options);
+  const server = await handle.start(options);
   const config = await handle.config();
   const directory = options?.directory ?? config.directory;
 

@@ -1,4 +1,3 @@
-// packages/sandbox/tests/opencode/client.test.ts
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpenCodeClient } from '../../src/opencode/client';
 import type { OpenCodeHandle } from '../../src/opencode/lifecycle';
@@ -11,14 +10,14 @@ vi.mock('@opencode-ai/sdk/v2/client', () => ({
 }));
 
 interface MockHandle {
-  ensure: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
   config: ReturnType<typeof vi.fn>;
   fetch: ReturnType<typeof vi.fn>;
 }
 
 function createMockHandle(overrides: Partial<MockHandle> = {}): MockHandle {
   return {
-    ensure: vi
+    start: vi
       .fn()
       .mockResolvedValue({ port: 4096, url: 'http://localhost:4096' }),
     config: vi.fn().mockResolvedValue({ port: 4096 }),
@@ -38,7 +37,7 @@ describe('createOpenCodeClient', () => {
 
     await createOpenCodeClient(handle as unknown as OpenCodeHandle);
 
-    expect(handle.ensure).toHaveBeenCalledOnce();
+    expect(handle.start).toHaveBeenCalledOnce();
   });
 
   it('builds the client against the resolved server url', async () => {
@@ -88,7 +87,7 @@ describe('createOpenCodeClient', () => {
       directory: '/override'
     });
 
-    expect(handle.ensure).toHaveBeenCalledWith({ directory: '/override' });
+    expect(handle.start).toHaveBeenCalledWith({ directory: '/override' });
     expect(createOpencodeClientMock).toHaveBeenCalledWith(
       expect.objectContaining({ directory: '/override' })
     );

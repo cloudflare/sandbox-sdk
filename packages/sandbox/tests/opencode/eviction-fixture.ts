@@ -53,20 +53,25 @@ export class OpenCodeFixture extends DurableObject {
       },
       getProcess: async () => null,
       listProcesses: async () => [],
-      containerFetch: async () => new Response('ok')
+      containerFetch: async () => new Response('ok'),
+      // SandboxExtension captures `client`; never touched in these tests.
+      client: {}
     } as unknown as Sandbox;
 
-    this.#handle = withOpenCode(sandbox, { directory: '/agents' }, ctx.storage);
+    this.#handle = withOpenCode(sandbox, {
+      directory: '/agents',
+      storage: ctx.storage
+    });
   }
 
   /** Start (and persist) the server with the given options. */
   async start(options?: { port?: number; directory?: string }): Promise<void> {
-    await this.#handle.ensure(options);
+    await this.#handle.start(options);
   }
 
-  /** Simulate the base Sandbox's onStart re-ensure after a (cold) start. */
-  async reEnsure(): Promise<void> {
-    await this.#handle.onContainerStart();
+  /** A bare start() after a cold start recovers persisted desired-state. */
+  async coldStart(): Promise<void> {
+    await this.#handle.start();
   }
 
   /** Commands the stub sandbox was asked to start, in order. */

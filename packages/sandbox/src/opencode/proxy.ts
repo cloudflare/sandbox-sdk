@@ -1,87 +1,79 @@
-import type { Sandbox } from '../sandbox';
-import { proxyToOpencode } from './opencode';
-
-const DEFAULT_PORT = 4096;
+import type { OpenCodeHandle } from './lifecycle';
 
 /** Configuration for {@link createOpenCodeProxy}. */
 export interface OpenCodeProxyOptions {
-  /**
-   * Path prefix the proxy owns. When set, any request under this prefix is
-   * handled (web-UI redirect for HTML loads, otherwise proxied to the
-   * container); everything else forwards to the wrapped handler. When unset,
-   * the proxy owns only the OpenCode web-UI `?url=` handshake.
-   */
-  route?: string;
-  /** Port the OpenCode server listens on (default 4096). */
-  port?: number;
-}
-
-/** Decide whether a request falls within the proxy's owned surface. */
-function inScope(
-  url: URL,
-  request: Request,
-  route: string | undefined
-): boolean {
-  if (route) {
-    return url.pathname === route || url.pathname.startsWith(`${route}/`);
-  }
-  // Default scope: the web-UI handshake only (HTML GET still needing ?url=).
-  if (request.method !== 'GET') return false;
-  if (url.searchParams.has('url')) return false;
-  const accept = request.headers.get('accept') || '';
-  return accept.includes('text/html') || url.pathname === '/';
+  /** Origin the OpenCode web UI should call back through. Defaults to the request origin. */
+  callbackOrigin?: string;
 }
 
 /**
- * Handle an OpenCode request, or return `null` to signal "not mine — forward".
+ * Proxy a request to the OpenCode web UI through a lifecycle handle.
  *
- * Reuses the terminal {@link proxyToOpencode} primitive for the `?url=`
- * redirect handshake and container forwarding.
+ * For an initial HTML page load that still lacks the `?url=` parameter, returns
+ * a redirect that adds it (so the OpenCode frontend calls back through the
+ * proxy instead of `127.0.0.1:4096`). Every other request is routed through
+ * `handle.fetch`, which ensures the server is running before forwarding into the
+ * container.
  */
-export function tryProxyOpenCode(
+export function proxyToOpenCodeUI(
   request: Request,
-  sandbox: Sandbox<unknown>,
+  handle: OpenCodeHandle,
   options?: OpenCodeProxyOptions
-): Response | Promise<Response> | null {
+): Response | Promise<Response> {
   const url = new URL(request.url);
-  if (!inScope(url, request, options?.route)) return null;
-  const port = options?.port ?? DEFAULT_PORT;
-  return proxyToOpencode(request, sandbox, {
-    port,
-    url: `http://localhost:${port}`,
-    close: async () => {}
-  });
+
+  // OpenCode's frontend defaults its API base to 127.0.0.1:4096; the ?url=
+  // parameter overrides that. Only redirect initial HTML GET loads — redirecting
+  // a POST would drop the body.
+  if (!url.searchParams.has('url') && request.method === 'GET') {
+    const accept = request.headers.get('accept') || '';
+    const isHtmlRequest = accept.includes('text/html') || url.pathname === '/';
+    if (isHtmlRequest) {
+      url.searchParams.set('url', options?.callbackOrigin ?? url.origin);
+      return Response.redirect(url.toString(), 302);
+    }
+  }
+
+  // Ensure-then-forward: the handle starts the server on demand before proxying.
+  return handle.fetch(request);
 }
 
 /**
  * Curried Worker fetch wrapper for OpenCode.
  *
- * `createOpenCodeProxy(resolve, options?)` captures a lazy per-request sandbox
- * resolver and returns a function that wraps the user's worker entrypoint. At
- * request time it handles the OpenCode web-UI route (the `?url=` handshake plus
- * an optional `route` prefix) or forwards to the wrapped handler.
+ * `createOpenCodeProxy(resolve, options?)` captures a lazy per-request resolver
+ * for the OpenCode lifecycle handle (`sandbox.opencode`) and returns a function
+ * that wraps the user's worker entrypoint.
+ *
+ * The wrapped handler runs first. If it returns a 404 (or has no `fetch`), the
+ * request falls through to the OpenCode web-UI proxy — the redirect handshake
+ * for HTML loads and an ensure-then-forward into the container for everything
+ * else. A 404 from the user handler is the "not mine, proxy it" signal, so the
+ * handler only needs to own its own routes and `return new Response('Not
+ * found', { status: 404 })` for the rest.
  *
  * ```ts
  * export default createOpenCodeProxy(
- *   (env) => getSandbox(env.Sandbox, 'my-sandbox')
+ *   (env) => getSandbox(env.Sandbox, 'my-sandbox').opencode
  * )({
- *   fetch(request, env) { return new Response('hello'); }
+ *   async fetch(request, env) {
+ *     // handle your own routes, else:
+ *     return new Response('Not found', { status: 404 });
+ *   }
  * });
  * ```
  */
 export function createOpenCodeProxy<Env>(
-  resolve: (env: Env) => Sandbox<unknown>,
+  resolve: (env: Env) => OpenCodeHandle,
   options?: OpenCodeProxyOptions
 ): (handler: ExportedHandler<Env>) => ExportedHandler<Env> {
   return (handler) => ({
     async fetch(request, env, ctx) {
-      const sandbox = resolve(env);
-      const handled = await tryProxyOpenCode(request, sandbox, options);
-      if (handled) return handled;
-      if (!handler.fetch) {
-        return new Response('Not found', { status: 404 });
+      if (handler.fetch) {
+        const response = await handler.fetch(request, env, ctx);
+        if (response.status !== 404) return response;
       }
-      return handler.fetch(request, env, ctx);
+      return proxyToOpenCodeUI(request, resolve(env), options);
     }
   });
 }
