@@ -124,10 +124,37 @@ export class OpenCodeHandle extends RpcTarget {
   }
 }
 
+/**
+ * Tracks the handles created for each sandbox so the OpenCode-aware `Sandbox`
+ * base can re-ensure them on container start without knowing the field name the
+ * user chose. Keyed weakly so handles are collected with their sandbox.
+ */
+const handleRegistry = new WeakMap<Sandbox<unknown>, Set<OpenCodeHandle>>();
+
 /** Factory — attach as a field on a Sandbox subclass: `opencode = withOpenCode(this)`. */
 export function withOpenCode(
   sandbox: Sandbox<unknown>,
   defaults?: OpencodeOptions
 ): OpenCodeHandle {
-  return new OpenCodeHandle(sandbox, defaults);
+  const handle = new OpenCodeHandle(sandbox, defaults);
+  let handles = handleRegistry.get(sandbox);
+  if (!handles) {
+    handles = new Set();
+    handleRegistry.set(sandbox, handles);
+  }
+  handles.add(handle);
+  return handle;
+}
+
+/**
+ * Re-ensure every OpenCode handle registered for a sandbox. Called from the
+ * OpenCode-aware `Sandbox` base's `onStart` so durable servers come back after
+ * a container sleep or rollout. No-op for sandboxes with no handles.
+ */
+export async function reEnsureOpenCodeHandles(
+  sandbox: Sandbox<unknown>
+): Promise<void> {
+  const handles = handleRegistry.get(sandbox);
+  if (!handles) return;
+  await Promise.all([...handles].map((handle) => handle.onContainerStart()));
 }
