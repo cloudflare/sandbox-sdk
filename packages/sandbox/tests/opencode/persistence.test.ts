@@ -18,6 +18,7 @@ function createMockSandbox() {
       getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     }),
     listProcesses: vi.fn().mockResolvedValue([]),
+    getProcess: vi.fn().mockResolvedValue(null),
     containerFetch: vi.fn().mockResolvedValue(new Response('ok'))
   } as unknown as Sandbox;
 }

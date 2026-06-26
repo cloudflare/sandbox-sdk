@@ -23,27 +23,25 @@ function buildOpencodeCommand(port: number, directory?: string): string {
   return directory ? `cd ${directory} && ${serve}` : serve;
 }
 
+/** Stable process id for the OpenCode server on a given port. */
+function defaultProcessId(port: number): string {
+  return `opencode-${port}`;
+}
+
 /**
- * Find an existing OpenCode server process running on the specified port.
- * Returns the process if found and still active, null otherwise.
- * Matches by the serve command pattern since directory prefix may vary.
+ * Find the OpenCode server by its stable process id. Returns the process if it
+ * is still active, null otherwise. A direct lookup avoids scanning every
+ * process in the container.
  */
 async function findExistingOpencodeProcess(
   sandbox: Sandbox<unknown>,
-  port: number
+  processId: string
 ): Promise<Process | null> {
-  const processes = await sandbox.listProcesses();
-  const serveCommand = OPENCODE_SERVE(port);
-
-  for (const proc of processes) {
-    // Match commands that contain the serve command (with or without cd prefix)
-    if (proc.command.includes(serveCommand)) {
-      if (proc.status === 'starting' || proc.status === 'running') {
-        return proc;
-      }
-    }
+  const proc = await sandbox.getProcess(processId);
+  if (!proc) return null;
+  if (proc.status === 'starting' || proc.status === 'running') {
+    return proc;
   }
-
   return null;
 }
 
@@ -56,12 +54,13 @@ async function findExistingOpencodeProcess(
 async function ensureOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
 ): Promise<Process> {
-  // Check if OpenCode is already running on this port
-  const existingProcess = await findExistingOpencodeProcess(sandbox, port);
+  // Check if OpenCode is already running under its stable process id
+  const existingProcess = await findExistingOpencodeProcess(sandbox, processId);
   if (existingProcess) {
     // Reuse existing process - wait for it to be ready if still starting
     if (existingProcess.status === 'starting') {
@@ -97,6 +96,7 @@ async function ensureOpencodeServer(
     return await startOpencodeServer(
       sandbox,
       port,
+      processId,
       directory,
       config,
       customEnv
@@ -104,7 +104,7 @@ async function ensureOpencodeServer(
   } catch (startupError) {
     // Startup failed - check if another concurrent request started the server
     // This handles the race condition where multiple requests try to start simultaneously
-    const retryProcess = await findExistingOpencodeProcess(sandbox, port);
+    const retryProcess = await findExistingOpencodeProcess(sandbox, processId);
     if (retryProcess) {
       getLogger().debug(
         'Startup failed but found concurrent process, reusing',
@@ -145,6 +145,7 @@ async function ensureOpencodeServer(
 async function startOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
@@ -211,6 +212,7 @@ async function startOpencodeServer(
 
   const command = buildOpencodeCommand(port, directory);
   const process = await sandbox.startProcess(command, {
+    processId,
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
@@ -294,9 +296,11 @@ export async function createOpencodeServer(
   options?: OpencodeOptions
 ): Promise<OpencodeServer> {
   const port = options?.port ?? DEFAULT_PORT;
+  const processId = options?.processId ?? defaultProcessId(port);
   const process = await ensureOpencodeServer(
     sandbox,
     port,
+    processId,
     options?.directory,
     options?.config,
     options?.env

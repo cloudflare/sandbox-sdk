@@ -18,6 +18,7 @@ interface MockProcess {
 interface MockSandbox {
   startProcess: ReturnType<typeof vi.fn>;
   listProcesses: ReturnType<typeof vi.fn>;
+  getProcess: ReturnType<typeof vi.fn>;
   containerFetch: ReturnType<typeof vi.fn>;
 }
 
@@ -38,6 +39,7 @@ function createMockSandbox(overrides: Partial<MockSandbox> = {}): MockSandbox {
   return {
     startProcess: vi.fn(),
     listProcesses: vi.fn().mockResolvedValue([]),
+    getProcess: vi.fn().mockResolvedValue(null),
     containerFetch: vi.fn().mockResolvedValue(new Response('ok')),
     ...overrides
   };
@@ -84,6 +86,30 @@ describe('withOpenCode', () => {
       expect(server).toEqual({ port: 4096, url: 'http://localhost:4096' });
     });
 
+    it('starts the server under a stable named process id', async () => {
+      const handle = withOpenCode(mockSandbox as unknown as Sandbox);
+
+      await handle.ensure();
+
+      expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ processId: 'opencode-4096' })
+      );
+    });
+
+    it('honors a custom process id', async () => {
+      const handle = withOpenCode(mockSandbox as unknown as Sandbox, {
+        processId: 'my-opencode'
+      });
+
+      await handle.ensure();
+
+      expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ processId: 'my-opencode' })
+      );
+    });
+
     it('applies factory default options', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox, {
         directory: '/home/user/agents'
@@ -110,12 +136,14 @@ describe('withOpenCode', () => {
       );
     });
 
-    it('reuses an already-running server', async () => {
-      mockSandbox.listProcesses.mockResolvedValue([createMockProcess()]);
+    it('reuses an already-running named server without scanning', async () => {
+      mockSandbox.getProcess.mockResolvedValue(createMockProcess());
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
       const server = await handle.ensure();
 
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
+      expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
       expect(mockSandbox.startProcess).not.toHaveBeenCalled();
       expect(server.port).toBe(4096);
     });
@@ -153,12 +181,14 @@ describe('withOpenCode', () => {
   });
 
   describe('status', () => {
-    it('reports running when a matching process exists', async () => {
-      mockSandbox.listProcesses.mockResolvedValue([createMockProcess()]);
+    it('reports running via a named-process lookup', async () => {
+      mockSandbox.getProcess.mockResolvedValue(createMockProcess());
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
       const status = await handle.status();
 
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
+      expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
       expect(status).toEqual({
         running: true,
         port: 4096,
@@ -166,7 +196,7 @@ describe('withOpenCode', () => {
       });
     });
 
-    it('reports not running when no matching process exists', async () => {
+    it('reports not running when the named process is absent', async () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
       const status = await handle.status();
@@ -204,7 +234,7 @@ describe('withOpenCode', () => {
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
       await handle.ensure({ port: 8080 });
       mockSandbox.startProcess.mockClear();
-      mockSandbox.listProcesses.mockResolvedValue([]);
+      mockSandbox.getProcess.mockResolvedValue(null);
 
       await handle.onContainerStart();
 
