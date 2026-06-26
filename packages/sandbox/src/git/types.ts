@@ -12,6 +12,27 @@ export interface GitCheckoutResult {
   exitCode?: number;
 }
 
+export interface GitHostAuth {
+  token: string;
+  username?: string;
+  type?: 'basic' | 'bearer';
+}
+
+export interface GitAuthConfig {
+  github?: GitHostAuth;
+  gitlab?: GitHostAuth;
+  bitbucket?: GitHostAuth;
+  hosts?: Record<string, GitHostAuth>;
+}
+
+export interface GitAuthInterceptorParams {
+  hosts: Record<string, GitHostAuth>;
+}
+
+export interface GitExtensionOptions {
+  auth?: GitAuthConfig;
+}
+
 /** Options shared by every git extension method. */
 export interface GitSessionOptions {
   /**
@@ -35,4 +56,5 @@ export interface GitCheckoutOptions extends GitSessionOptions {
   depth?: number;
   /** Maximum wall-clock time for the git clone subprocess, in milliseconds. */
   cloneTimeoutMs?: number;
+  auth?: GitAuthConfig | false;
 }

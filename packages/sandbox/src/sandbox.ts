@@ -83,6 +83,8 @@ import {
 } from './errors';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
+import { gitCredentialProxyHandler } from './git/credential-proxy-handler';
+import type { GitAuthInterceptorParams } from './git/types';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { isPlatformTransientError } from './platform-errors';
 import {
@@ -233,7 +235,10 @@ type EgressContainerState = DurableObjectState<{}> & {
           string,
           {
             method: string;
-            params: R2EgressParams | S3CredentialProxyParams;
+            params:
+              | R2EgressParams
+              | S3CredentialProxyParams
+              | GitAuthInterceptorParams;
           }
         >;
       };
@@ -273,7 +278,8 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
   ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
 ).outboundHandlers = {
   r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
+  s3CredentialProxyMount: s3CredentialProxyHandler,
+  gitCredentialProxy: gitCredentialProxyHandler
 };
 
 /**
@@ -316,6 +322,13 @@ export class ContainerProxy extends BaseContainerProxy {
           request,
           this.env as Cloudflare.Env,
           handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
+        );
+      }
+      if (override.method === 'gitCredentialProxy') {
+        return gitCredentialProxyHandler(
+          request,
+          this.env as Cloudflare.Env,
+          handlerCtx as OutboundHandlerContext<GitAuthInterceptorParams>
         );
       }
     }
@@ -5079,6 +5092,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     fault: BackupRestoreTestFault | null
   ): Promise<void> {
     await this.backupService.setRestoreFaultForTesting(fault);
+  }
+
+  async registerGitAuthInterceptor(
+    params: GitAuthInterceptorParams
+  ): Promise<void> {
+    const ctx = this.ctx as EgressContainerState;
+    if (!ctx.container?.interceptOutboundHttp) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires container outbound interception support'
+      );
+    }
+    if (!ctx.exports?.ContainerProxy) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.'
+      );
+    }
+
+    const registry = this.constructor as unknown as OutboundHandlerRegistry;
+    registry.outboundHandlers = {
+      ...registry.outboundHandlers,
+      gitCredentialProxy: gitCredentialProxyHandler
+    };
+
+    const hostOverrides: Record<
+      string,
+      { method: string; params: GitAuthInterceptorParams }
+    > = {};
+    for (const host of Object.keys(params.hosts)) {
+      hostOverrides[host] = { method: 'gitCredentialProxy', params };
+      await this.setOutboundByHost<GitAuthInterceptorParams>(
+        host,
+        'gitCredentialProxy',
+        params
+      );
+    }
+
+    const fetcher = ctx.exports.ContainerProxy({
+      props: {
+        enableInternet: this.enableInternet,
+        containerId: this.ctx.id.toString(),
+        className: CONTAINER_PROXY_CLASS_NAME,
+        outboundByHostOverrides: hostOverrides
+      }
+    });
+    if (!isFetcher(fetcher)) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires ContainerProxy to return a valid Fetcher'
+      );
+    }
+
+    for (const host of Object.keys(params.hosts)) {
+      await ctx.container.interceptOutboundHttp(host, fetcher);
+    }
   }
 
   private async configureR2EgressOutbound(
