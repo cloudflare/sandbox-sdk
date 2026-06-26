@@ -95,12 +95,14 @@ export class Shell implements OpenAIShell {
         exitCode: 0
       };
       try {
-        const result = await this.sandbox.exec(command, {
-          timeout: action.timeoutMs,
-          cwd: this.cwd
-        });
-        stdout = result.stdout;
-        stderr = result.stderr;
+        const result = await this.sandbox
+          .exec(command, {
+            timeout: action.timeoutMs,
+            cwd: this.cwd
+          })
+          .output({ encoding: 'utf8' });
+        stdout = result.stdout as string;
+        stderr = result.stderr as string;
         exitCode = result.exitCode;
         // exec returns a result even for failed commands, so check success field
         // Timeout would be indicated by a specific error or exit code

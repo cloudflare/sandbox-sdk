@@ -35,11 +35,12 @@ Sandbox.outboundByHost = {
 
 interface CmdOutput {
   success: boolean;
-  stdout: string;
-  stderr: string;
+  stdout: string | ArrayBuffer;
+  stderr: string | ArrayBuffer;
 }
 // helper to read the outputs from `.exec` results
-const getOutput = (res: CmdOutput) => (res.success ? res.stdout : res.stderr);
+const getOutput = (res: CmdOutput): string =>
+  String(res.success ? res.stdout : res.stderr);
 
 // Wrap a string as a single-quoted POSIX shell argument so user input
 // can't break out of the command line.
@@ -94,11 +95,13 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     const cmd = `claude --print --permission-mode bypassPermissions --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} ${shellQuote(task)}`;
 
     const logs = getOutput(
-      await sandbox.exec(cmd, {
-        env: { IS_SANDBOX: '1', ...placeholderAuthVars(env) }
-      })
+      await sandbox
+        .exec(cmd, {
+          env: { IS_SANDBOX: '1', ...placeholderAuthVars(env) }
+        })
+        .output()
     );
-    const diff = getOutput(await sandbox.exec('git diff'));
+    const diff = getOutput(await sandbox.exec('git diff').output());
 
     return Response.json({ logs, diff });
   } catch {

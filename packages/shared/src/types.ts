@@ -1,4 +1,4 @@
-import type { SandboxTerminal, TerminalOptions } from './pty-types';
+import type { PtyOptions } from './pty-types';
 
 /**
  * Represents a disposable resource with a cleanup function.
@@ -35,7 +35,38 @@ export interface BaseExecOptions {
 }
 
 // Command execution types
+
+/**
+ * @deprecated Use `SandboxExecOptions` instead. Will be removed in a future
+ * release once all callers migrate to `sandbox.exec(cmd, options)` returning
+ * a `SandboxProcessPromise`. See `docs/spikes/EXEC_UNIFICATION.md`.
+ */
 export interface ExecOptions extends BaseExecOptions {
+  /**
+   * Enable real-time output streaming via callbacks
+   */
+  stream?: boolean;
+
+  /**
+   * Callback for real-time output data
+   */
+  onOutput?: (stream: 'stdout' | 'stderr', data: string) => void;
+
+  /**
+   * Callback when command completes (only when stream: true)
+   */
+  onComplete?: (result: ExecResult) => void;
+
+  /**
+   * Callback for execution errors
+   */
+  onError?: (error: Error) => void;
+
+  /**
+   * AbortSignal for cancelling execution
+   */
+  signal?: AbortSignal;
+
   /**
    * Whether this command was initiated by the user or by internal
    * infrastructure (backup, bucket mount, env setup, etc.).
@@ -44,6 +75,10 @@ export interface ExecOptions extends BaseExecOptions {
   origin?: 'user' | 'internal';
 }
 
+/**
+ * @deprecated Use `SandboxExecOutput` (returned by
+ * `SandboxProcess.output()`) instead. Will be removed alongside `ExecOptions`.
+ */
 export interface ExecResult {
   /**
    * Whether the command succeeded (exitCode === 0)
@@ -190,6 +225,7 @@ export interface PortWatchEvent {
 }
 
 // Background process types
+
 export interface ProcessQueryOptions {
   /**
    * Optional session ID used to bind returned process handles to an explicit session.
@@ -197,11 +233,16 @@ export interface ProcessQueryOptions {
   sessionId?: string;
 }
 
+/**
+ * @deprecated Use `SandboxExecOptions` with `processId` set instead. The
+ * unified `sandbox.exec()` returns the same `SandboxProcess` handle whether
+ * the caller wants a foreground or background process.
+ */
 export interface ProcessOptions extends BaseExecOptions {
   /**
    * Optional session ID to run the background process in.
    *
-   * When omitted, the process starts without persistent session state.
+   * When omitted, the sandbox's default execution policy applies.
    */
   sessionId?: string;
 
@@ -257,6 +298,12 @@ export function isTerminalStatus(status: ProcessStatus): boolean {
   );
 }
 
+/**
+ * @deprecated Use `SandboxProcess` instead. The unified handle has the same
+ * `id`/`pid`/`command`/`status`/`startTime`/`sessionId` fields plus
+ * `stdin`/`stdout`/`stderr` streams, an `exitCode` promise, `output()` and
+ * `kill()` that mirror the `ctx.container.exec()` contract.
+ */
 export interface Process {
   /**
    * Unique process identifier
@@ -301,7 +348,7 @@ export interface Process {
   /**
    * Kill the process
    */
-  kill(): Promise<void>;
+  kill(signal?: string): Promise<void>;
 
   /**
    * Get current process status (refreshed)
@@ -354,6 +401,12 @@ export interface Process {
 }
 
 // Streaming event types
+
+/**
+ * @deprecated Internal SSE frame type. Consumers should read
+ * `SandboxProcess.stdout` / `.stderr` (raw byte streams) instead of parsing
+ * SSE frames. Retained while the legacy `execStream` HTTP route exists.
+ */
 export interface ExecEvent {
   type: 'start' | 'stdout' | 'stderr' | 'complete' | 'error';
   timestamp: string;
@@ -366,6 +419,10 @@ export interface ExecEvent {
   pid?: number; // Present on 'start' event
 }
 
+/**
+ * @deprecated Internal SSE frame type for `streamProcessLogs`. Consumers
+ * should read `SandboxProcess.stdout` / `.stderr` instead.
+ */
 export interface LogEvent {
   type: 'stdout' | 'stderr' | 'exit' | 'error';
   timestamp: string;
@@ -373,6 +430,280 @@ export interface LogEvent {
   processId: string;
   sessionId?: string;
   exitCode?: number;
+}
+
+/**
+ * @deprecated Use `SandboxExecOptions` with `stdout: 'pipe'` instead and
+ * consume `SandboxProcess.stdout` directly.
+ */
+export interface StreamOptions extends BaseExecOptions {
+  /**
+   * Optional session ID to run the streaming command in.
+   *
+   * When omitted, the sandbox's default execution policy applies.
+   */
+  sessionId?: string;
+
+  /**
+   * Buffer size for streaming output
+   */
+  bufferSize?: number;
+
+  /**
+   * AbortSignal for cancelling stream
+   */
+  signal?: AbortSignal;
+}
+
+// ---------------------------------------------------------------------------
+// Unified exec surface (mirrors `ctx.container.exec()` from workers-types).
+//
+// See `docs/spikes/EXEC_UNIFICATION.md` for the design.
+//
+// These types are *additive* at this stage. The legacy `ExecOptions`,
+// `ProcessOptions`, `StreamOptions`, `ExecResult`, and `Process` types above
+// are still the source of truth for runtime behavior. They will be
+// deprecated and removed in a follow-up step that migrates the implementation
+// onto the new surface.
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for `sandbox.exec(cmd, options)`.
+ *
+ * Mirrors `ContainerExecOptions` from
+ * `@cloudflare/workers-types/experimental` (`cwd`, `env`, `stdin`, `stdout`,
+ * `stderr`) with sandbox-specific extensions for sessions, named process
+ * ids, timeouts, and cancellation.
+ *
+ * Notable differences from the runtime contract:
+ * - `env` values may be `undefined` (treated as "not configured"). The
+ *   container API requires `Record<string, string>`; the SDK strips
+ *   `undefined` entries before forwarding.
+ * - `stdin` additionally accepts a plain `string` for convenience.
+ * - `user` is not yet supported (no session-backend story).
+ */
+export interface SandboxExecOptions {
+  // ---- mirrors ContainerExecOptions ----
+
+  /** Working directory for command execution. */
+  cwd?: string;
+
+  /**
+   * Environment variables for this command invocation.
+   *
+   * Values temporarily override session-level/container-level env for the
+   * duration of the command but do not persist after it completes.
+   * Undefined values are skipped (treated as "not configured").
+   */
+  env?: Record<string, string | undefined>;
+
+  /**
+   * Standard input source.
+   *
+   * - `"pipe"` — `SandboxProcess.stdin` is a `WritableStream<Uint8Array>` the
+   *   caller can write to.
+   * - `ReadableStream<Uint8Array>` — the stream is piped into the command.
+   * - `string` — convenience: the string is utf-8 encoded and piped in.
+   * - omitted — stdin is closed.
+   */
+  stdin?: ReadableStream<Uint8Array> | string | 'pipe';
+
+  /**
+   * Standard output disposition.
+   *
+   * - `"pipe"` (default) — `SandboxProcess.stdout` exposes a
+   *   `ReadableStream<Uint8Array>` of the output.
+   * - `"ignore"` — output is discarded; `SandboxProcess.stdout` is `null`.
+   */
+  stdout?: 'pipe' | 'ignore';
+
+  /**
+   * Standard error disposition.
+   *
+   * - `"pipe"` (default) — `SandboxProcess.stderr` exposes a
+   *   `ReadableStream<Uint8Array>` of the error output.
+   * - `"ignore"` — stderr is discarded; `SandboxProcess.stderr` is `null`.
+   * - `"combined"` — stderr is merged into stdout; `SandboxProcess.stderr`
+   *   is `null`.
+   */
+  stderr?: 'pipe' | 'ignore' | 'combined';
+
+  // ---- sandbox-specific extensions ----
+
+  /**
+   * Session ID providing working-directory and environment scope.
+   *
+   * When omitted, the sandbox's default execution policy applies (typically
+   * the persistent default session).
+   */
+  sessionId?: string;
+
+  /**
+   * Client-chosen process id for later re-attach via
+   * `sandbox.getProcess(id)`.
+   *
+   * When omitted, a UUID is generated.
+   */
+  processId?: string;
+
+  /**
+   * Whether to remove the process record on exit.
+   *
+   * Defaults to:
+   * - `false` when `processId` is provided (re-attach is expected).
+   * - `true` for anonymous processes.
+   */
+  autoCleanup?: boolean;
+
+  /**
+   * Wall-clock timeout in milliseconds. When the timeout fires the
+   * implementation sends `SIGTERM`; `exitCode` resolves with the resulting
+   * code (typically `143` / `-15`).
+   */
+  timeout?: number;
+
+  /**
+   * External cancellation signal. Aborting triggers `kill()` and propagates
+   * to in-flight stream consumers.
+   */
+  signal?: AbortSignal;
+
+  /**
+   * Whether this command was initiated by the user or by internal
+   * infrastructure (backup, bucket mount, env setup, etc.).
+   *
+   * Sandbox-only; not part of the containers contract. Defaults to
+   * `'user'` when omitted.
+   */
+  origin?: 'user' | 'internal';
+}
+
+/**
+ * Buffered output returned by `SandboxProcess.output()`.
+ *
+ * Mirrors `ExecOutput` from the containers contract (`stdout`, `stderr`,
+ * `exitCode`) with sandbox-specific telemetry fields preserved from the
+ * legacy `ExecResult` so existing callers can migrate without losing
+ * information.
+ *
+ * `stdout` / `stderr` are `string` by default (utf-8) or `ArrayBuffer`
+ * when `output({ encoding: 'buffer' })` is requested.
+ */
+export interface SandboxExecOutput {
+  /** Standard output content. utf-8 string by default, `ArrayBuffer` if requested. */
+  stdout: string | ArrayBuffer;
+  /** Standard error content. utf-8 string by default, `ArrayBuffer` if requested. */
+  stderr: string | ArrayBuffer;
+  /** Process exit code. */
+  exitCode: number;
+  /** True iff `exitCode === 0`. */
+  success: boolean;
+  /** Execution duration in milliseconds, measured by the SDK. */
+  duration: number;
+  /** Command that was executed (display form). */
+  command: string;
+  /** ISO timestamp when the command started. */
+  timestamp: string;
+  /** Session ID, if the command ran in a session. */
+  sessionId?: string;
+}
+
+/**
+ * Unified process handle returned (resolved) by `sandbox.exec()`.
+ *
+ * The first nine members are a superset of `ExecProcess` from the
+ * containers runtime contract (`stdin`, `stdout`, `stderr`, `pid`,
+ * `exitCode`, `output()`, `kill()`). The remaining members are
+ * sandbox-specific extensions for log replay, named processes, and the
+ * existing `waitFor*` helpers.
+ *
+ * On re-attach (via `sandbox.getProcess(id)`):
+ * - `stdin` is `null` (the original writer owns the pipe).
+ * - `stdout`/`stderr` are replay-then-tail streams sourced from the
+ *   per-process log file.
+ */
+export interface SandboxProcess {
+  // ---- ExecProcess parity ----
+
+  readonly stdin: WritableStream<Uint8Array> | null;
+  readonly stdout: ReadableStream<Uint8Array> | null;
+  readonly stderr: ReadableStream<Uint8Array> | null;
+  readonly pid: number;
+  readonly exitCode: Promise<number>;
+
+  /**
+   * Drain stdout/stderr and await exit. Mirrors `ExecProcess.output()`.
+   *
+   * Default encoding is utf-8 strings; pass `{ encoding: 'buffer' }` to get
+   * `ArrayBuffer` instead (matches the containers contract).
+   */
+  output(options?: {
+    encoding?: 'utf8' | 'buffer';
+  }): Promise<SandboxExecOutput>;
+
+  /**
+   * Send a signal to the process.
+   *
+   * Defaults to `SIGTERM` (15). Numeric is canonical to match the
+   * containers contract; the string form (`"SIGTERM"`, `"SIGKILL"`, …) is
+   * accepted as a deprecated alias for one release.
+   */
+  kill(signal?: number | string): void;
+
+  // ---- sandbox-specific extensions ----
+
+  /** Stable sandbox process id (survives re-attach). */
+  readonly id: string;
+
+  /** Command that was executed (display form). */
+  readonly command: string;
+
+  /** Session ID, if the command was scoped to a session. */
+  readonly sessionId?: string;
+
+  /** When the process started. */
+  readonly startTime: Date;
+
+  /** Current status snapshot. Cheap; uses local state where possible. */
+  status(): Promise<ProcessStatus>;
+
+  /** Replay buffered logs (post-exit or mid-flight). */
+  getLogs(): Promise<{ stdout: string; stderr: string }>;
+
+  /** Wait for a log pattern to appear in stdout/stderr. */
+  waitForLog(
+    pattern: string | RegExp,
+    timeoutMs?: number
+  ): Promise<WaitForLogResult>;
+
+  /** Wait for a TCP port (or HTTP endpoint) to become ready. */
+  waitForPort(port: number, options?: WaitForPortOptions): Promise<void>;
+
+  /** Wait for the process to exit. */
+  waitForExit(timeoutMs?: number): Promise<WaitForExitResult>;
+}
+
+/**
+ * The thenable returned by `sandbox.exec(cmd, options)`.
+ *
+ * Resolves to a `SandboxProcess` (so `await sandbox.exec(cmd)` works as
+ * expected) and additionally exposes the convenience members directly so
+ * callers can write `await sandbox.exec(cmd).output()` / `.text()` /
+ * `.json()` / `.kill()` without an extra `await`.
+ *
+ * Modeled on `Bun.spawn()` / `Deno.Command`.
+ */
+export interface SandboxProcessPromise extends Promise<SandboxProcess> {
+  /** Equivalent to `(await this).output(options)`. */
+  output(options?: {
+    encoding?: 'utf8' | 'buffer';
+  }): Promise<SandboxExecOutput>;
+  /** Sugar for `(await this.output({ encoding: 'utf8' })).stdout` as a string. */
+  text(): Promise<string>;
+  /** Sugar for `JSON.parse(await this.text())`. */
+  json<T = unknown>(): Promise<T>;
+  /** Equivalent to `(await this).kill(signal)`. */
+  kill(signal?: number | string): Promise<void>;
 }
 
 // Session management types
@@ -432,6 +763,17 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
+
+  /**
+   * When true (the default), implicit operations automatically create and reuse
+   * a persistent default shell session. Set to false to run implicit top-level
+   * operations sessionlessly, where each command spawns a fresh process with no
+   * shared shell state. Explicit per-call session IDs continue to work normally
+   * when this is false.
+   *
+   * Default: true
+   */
+  enableDefaultSession?: boolean;
 
   /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
@@ -723,8 +1065,8 @@ export interface WatchOptions {
   exclude?: string[];
 
   /**
-   * Session to run the watch in. Provide this when watch behavior should be
-   * scoped to an explicit session context.
+   * Session to run the watch in.
+   * If omitted, the default session is used.
    */
   sessionId?: string;
 }
@@ -922,26 +1264,25 @@ export interface ExecutionSession {
   /** Unique session identifier */
   readonly id: string;
 
-  // Command execution
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /**
+   * Session-scoped exec primitive. See `ISandbox.exec`.
+   *
+   * Caller-provided `options.sessionId` is ignored — this wrapper pins
+   * execution to the session that produced it.
+   */
+  exec(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): SandboxProcessPromise;
 
-  // Background process management
-  startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
-  getProcess(
-    id: string,
-    options?: ProcessQueryOptions
-  ): Promise<Process | null>;
-  killProcess(id: string): Promise<void>;
+  /** Session-scoped buffered execution helper. See `ISandbox.run`. */
+  run(command: string, options?: ExecOptions): Promise<ExecResult>;
+
+  // Background process management (session-scoped)
+  getProcess(id: string): Promise<SandboxProcess | null>;
+  listProcesses(): Promise<SandboxProcess[]>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
-  getProcessLogs(
-    id: string
-  ): Promise<{ stdout: string; stderr: string; processId: string }>;
-  streamProcessLogs(
-    processId: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<ReadableStream<Uint8Array>>;
 
   // File operations
   writeFile(
@@ -1003,6 +1344,9 @@ export interface ExecutionSession {
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
   restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+
+  // Terminal access (browser WebSocket passthrough)
+  terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
 // Backup types
@@ -1234,49 +1578,96 @@ export type MountBucketOptions =
 
 // Main Sandbox interface
 export interface ISandbox {
-  // Command execution
-  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /**
+   * Execute a command in the sandbox.
+   *
+   * Mirrors the `ctx.container.exec()` contract from the Cloudflare
+   * Containers runtime, with sandbox-specific extensions for sessions,
+   * named process ids, and re-attach.
+   *
+   * Returns a `SandboxProcessPromise` — a thenable that resolves to a
+   * `SandboxProcess` (`stdin` / `stdout` / `stderr` / `exitCode` /
+   * `kill()` / `output()` plus sandbox extensions) and exposes
+   * `.output()` / `.text()` / `.json()` / `.kill()` directly for the
+   * common "run a command" case:
+   *
+   * @example
+   * // Buffered result
+   * const { stdout } = await sandbox.exec("npm test").output();
+   *
+   * @example
+   * // Long-running, with re-attach by id
+   * const dev = await sandbox.exec("npm run dev", { processId: "dev" });
+   * await dev.waitForPort(3000);
+   *
+   * @example
+   * // Stream stdout straight to the client
+   * const proc = await sandbox.exec(["python", "train.py"]);
+   * return new Response(proc.stdout);
+   */
+  exec(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): SandboxProcessPromise;
+
+  /**
+   * Buffered, session-state-preserving execution helper.
+   *
+   * Uses the foreground session execution path, so shell state changes
+   * (`cd`, aliases, functions, exports) persist across calls. Prefer
+   * `exec()` for the containers-compatible process handle; use `run()`
+   * when you explicitly want buffered session-shell semantics.
+   */
+  run(
+    command: string,
+    options?: ExecOptions & { sessionId?: string }
+  ): Promise<ExecResult>;
 
   // Background process management
-  startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
+
+  /**
+   * Re-attach to an existing process by id.
+   *
+   * The returned `SandboxProcess`'s `stdin` is `null` and `stdout`/`stderr`
+   * are replay-then-tail streams sourced from the per-process log file.
+   * Mirrors `ExecProcess` ownership semantics where a non-owner has
+   * nullable pipes.
+   *
+   * Returns `null` if no such process exists.
+   */
   getProcess(
     id: string,
     options?: ProcessQueryOptions
-  ): Promise<Process | null>;
-  killProcess(id: string): Promise<void>;
-  killAllProcesses(): Promise<number>;
+  ): Promise<SandboxProcess | null>;
 
-  // Streaming operations
-  streamProcessLogs(
-    processId: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<ReadableStream<Uint8Array>>;
+  /**
+   * Snapshot of all known processes.
+   *
+   * Snapshot entries have `stdin`/`stdout`/`stderr` set to `null`; call
+   * `getProcess(id)` to acquire a re-attached handle with live streams.
+   */
+  listProcesses(options?: ProcessQueryOptions): Promise<SandboxProcess[]>;
+
+  killAllProcesses(): Promise<number>;
 
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
-  getProcessLogs(
-    id: string
-  ): Promise<{ stdout: string; stderr: string; processId: string }>;
 
   // File operations
   writeFile(
     path: string,
     content: string | ReadableStream<Uint8Array>,
-    options?: { encoding?: string; sessionId?: string }
+    options?: { encoding?: string }
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
-    options: { encoding: 'none'; sessionId?: string }
+    options: { encoding: 'none' }
   ): Promise<ReadFileStreamResult>;
   readFile(
     path: string,
-    options?: { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string }
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
-  readFileStream(
-    path: string,
-    options?: { sessionId?: string }
-  ): Promise<ReadableStream<Uint8Array>>;
+  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
     options?: WatchOptions
@@ -1285,23 +1676,12 @@ export interface ISandbox {
     path: string,
     options?: CheckChangesOptions
   ): Promise<CheckChangesResult>;
-  mkdir(
-    path: string,
-    options?: { recursive?: boolean; sessionId?: string }
-  ): Promise<MkdirResult>;
-  deleteFile(
-    path: string,
-    options?: { sessionId?: string }
-  ): Promise<DeleteFileResult>;
-  renameFile(
-    oldPath: string,
-    newPath: string,
-    options?: { sessionId?: string }
-  ): Promise<RenameFileResult>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
+  deleteFile(path: string): Promise<DeleteFileResult>;
+  renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
-    destinationPath: string,
-    options?: { sessionId?: string }
+    destinationPath: string
   ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
   exists(
@@ -1353,9 +1733,6 @@ export interface ISandbox {
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;
-
-  // Terminal resources
-  terminal(options?: TerminalOptions): SandboxTerminal;
 }
 
 // Type guards for runtime validation

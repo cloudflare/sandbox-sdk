@@ -61,11 +61,12 @@ Sandbox.outboundByHost = {
 
 interface CmdOutput {
   success: boolean;
-  stdout: string;
-  stderr: string;
+  stdout: string | ArrayBuffer;
+  stderr: string | ArrayBuffer;
 }
 // helper to read the outputs from `.exec` results
-const getOutput = (res: CmdOutput) => (res.success ? res.stdout : res.stderr);
+const getOutput = (res: CmdOutput): string =>
+  String(res.success ? res.stdout : res.stderr);
 
 // Wrap a string as a single-quoted POSIX shell argument so user input
 // can't break out of the command line.
@@ -149,8 +150,8 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     const prompt = `${EXTRA_SYSTEM}\n\nTask: ${task}`;
     const cmd = `codex exec --dangerously-bypass-approvals-and-sandbox ${shellQuote(prompt)}`;
 
-    const logs = getOutput(await sandbox.exec(cmd));
-    const diff = getOutput(await sandbox.exec('git diff'));
+    const logs = getOutput(await sandbox.exec(cmd).output());
+    const diff = getOutput(await sandbox.exec('git diff').output());
 
     return Response.json({ logs, diff });
   } catch {

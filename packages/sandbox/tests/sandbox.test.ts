@@ -373,31 +373,24 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     it('ignores legacy streaming exec options at runtime', async () => {
-      expect('executeStream' in sandbox.client.commands).toBe(false);
-
       await sandbox.exec('echo test', {
         stream: true,
         onOutput: vi.fn()
       } as unknown as Parameters<typeof sandbox.exec>[1]);
 
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith('echo test');
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
+        'echo test'
+      );
     });
 
     it('runs implicit exec without creating a default session', async () => {
-      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
-        success: true,
-        stdout: 'test output',
-        stderr: '',
-        exitCode: 0,
-        command: 'echo test',
-        timestamp: new Date().toISOString()
-      } as any);
-
       const result = await sandbox.exec('echo test');
 
       expect(result.sessionId).toBeUndefined();
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith('echo test');
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
+        'echo test'
+      );
     });
 
     it('runs infrastructure exec without creating a default session', async () => {
@@ -448,7 +441,7 @@ describe('Sandbox - Automatic Session Management', () => {
         timeout: 5000
       });
 
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'echo $OPTION',
         {
           timeoutMs: 5000,
@@ -501,76 +494,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
-    it('allows explicit session IDs through typed ISandbox APIs', async () => {
-      const typedSandbox: ISandbox = sandbox;
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [],
-        timestamp: new Date().toISOString()
-      } as any);
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: null,
-        timestamp: new Date().toISOString()
-      } as any);
-
-      await typedSandbox.listProcesses({ sessionId: 'typed-session' });
-      await typedSandbox.getProcess('typed-proc', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.writeFile('/typed.txt', 'content', {
-        sessionId: 'typed-session',
-        encoding: 'utf8'
-      });
-      await typedSandbox.readFile('/typed.txt', {
-        sessionId: 'typed-session',
-        encoding: 'utf8'
-      });
-      await typedSandbox.readFile('/typed.bin', {
-        sessionId: 'typed-session',
-        encoding: 'none'
-      });
-      await typedSandbox.readFileStream('/typed.txt', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.mkdir('/typed-dir', {
-        sessionId: 'typed-session',
-        recursive: true
-      });
-      await typedSandbox.deleteFile('/typed.txt', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.renameFile('/typed-old.txt', '/typed-new.txt', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.moveFile('/typed-src.txt', '/typed-dest.txt', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.listFiles('/typed-dir', {
-        sessionId: 'typed-session'
-      });
-      await typedSandbox.exists('/typed.txt', { sessionId: 'typed-session' });
-
-      const assertProcessControlTypes = async (
-        typedProcess: Process,
-        typedAPI: ISandbox
-      ) => {
-        await typedProcess.kill();
-        await typedAPI.killProcess('typed-proc');
-        // @ts-expect-error process kill does not accept a signal argument
-        await typedProcess.kill('SIGTERM');
-        // @ts-expect-error sandbox killProcess does not accept a signal argument
-        await typedAPI.killProcess('typed-proc', 'SIGTERM');
-      };
-
-      expect(assertProcessControlTypes).toBeTypeOf('function');
-      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
-        '/typed.txt',
-        'content',
-        { sessionId: 'typed-session', encoding: 'utf8' }
-      );
-    });
-
     it('should reject empty explicit session IDs', async () => {
       await expect(
         sandbox.listFiles('/workspace', { sessionId: '' })
@@ -582,18 +505,9 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     it('should not expose session IDs on sessionless exec results', async () => {
-      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
-        success: true,
-        stdout: 'sessionless',
-        stderr: '',
-        exitCode: 0,
-        command: 'printf sessionless',
-        timestamp: new Date().toISOString()
-      } as any);
-
       const result = await sandbox.exec('printf sessionless');
 
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'printf sessionless'
       );
       expect(result.sessionId).toBeUndefined();
@@ -607,15 +521,15 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
-      const firstExecSessionId = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[0][1];
+      const firstExecOptions = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[0][1];
       const fileOptions = vi.mocked(sandbox.client.files.writeFile).mock
         .calls[0][2];
-      const secondExecSessionId = vi.mocked(sandbox.client.commands.execute)
+      const secondExecOptions = vi.mocked(sandbox.client.processes.startProcess)
         .mock.calls[1][1];
 
-      expect(firstExecSessionId).toBe(undefined);
-      expect(secondExecSessionId).toBe(undefined);
+      expect(firstExecOptions).toBe(undefined);
+      expect(secondExecOptions).toBe(undefined);
       expect(fileOptions).toEqual({ encoding: undefined });
     });
 
@@ -642,14 +556,14 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      const process = await sandbox.startProcess('sleep 10');
+      const process = await sandbox.exec('sleep 10');
       const processes = await sandbox.listProcesses();
 
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10', {}]);
+      ).toEqual(['sleep 10']);
 
       // listProcesses is sandbox-scoped - no sessionId parameter
       const listProcessesCall = vi.mocked(
@@ -714,12 +628,11 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      await sandbox.startProcess('sleep 10', {
+      await sandbox.exec('sleep 10', {
         processId: 'proc-options',
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
         timeout: 1000,
-        encoding: 'utf8',
         autoCleanup: false
       });
 
@@ -730,7 +643,6 @@ describe('Sandbox - Automatic Session Management', () => {
           env: { TEST_ENV: '1' },
           cwd: '/workspace/app',
           timeoutMs: 1000,
-          encoding: 'utf8',
           autoCleanup: false
         }
       );
@@ -810,13 +722,13 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      const started = await sandbox.startProcess('sleep 10');
+      const started = await sandbox.exec('sleep 10');
       const listed = await sandbox.listProcesses();
       const fetched = await sandbox.getProcess('proc-none');
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10', {}]);
+      ).toEqual(['sleep 10']);
       expect(
         vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
       ).toEqual([]);
@@ -863,13 +775,13 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      const process = await sandbox.startProcess('sleep 10');
+      const process = await sandbox.exec('sleep 10');
       const processes = await sandbox.listProcesses();
       const fetched = await sandbox.getProcess('proc-sessionless');
 
       expect(
         vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10', {}]);
+      ).toEqual(['sleep 10']);
       expect(process.sessionId).toBeUndefined();
       expect(processes[0].sessionId).toBeUndefined();
       expect(fetched?.sessionId).toBeUndefined();
@@ -910,7 +822,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.writeFile('/one.txt', 'one');
       await sandbox.writeFile('/two.txt', 'two');
 
-expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
         1,
         '/one.txt',
@@ -975,7 +887,7 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
       expect(session.id).toBe('custom-session-123');
       expect(session.exec).toBeInstanceOf(Function);
-      expect(session.startProcess).toBeInstanceOf(Function);
+      expect(session.exec).toBeInstanceOf(Function);
       expect(session.writeFile).toBeInstanceOf(Function);
       expect(session.gitCheckout).toBeInstanceOf(Function);
     });
@@ -991,7 +903,7 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
       await session.exec('echo test');
 
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'echo test',
         { sessionId: 'isolated-session' }
       );
@@ -1016,10 +928,10 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       await session1.exec('echo build');
       await session2.exec('echo test');
 
-      const session1Options = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[0][1];
-      const session2Options = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[1][1];
+      const session1Options = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[0][1];
+      const session2Options = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[1][1];
 
       expect(session1Options?.sessionId).toBe('session-1');
       expect(session2Options?.sessionId).toBe('session-2');
@@ -1042,12 +954,12 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
       await sandbox.exec('echo implicit-again');
 
-      const implicitOptions1 = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[0][1];
-      const explicitOptions = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[1][1];
-      const implicitOptions2 = vi.mocked(sandbox.client.commands.execute).mock
-        .calls[2][1];
+      const implicitOptions1 = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[0][1];
+      const explicitOptions = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[1][1];
+      const implicitOptions2 = vi.mocked(sandbox.client.processes.startProcess)
+        .mock.calls[2][1];
 
       expect(implicitOptions1).toBe(undefined);
       expect(explicitOptions?.sessionId).toBe('explicit-session');
@@ -1166,9 +1078,10 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
 
     it('should execute command with session context', async () => {
       await session.exec('pwd');
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith('pwd', {
-        sessionId: 'test-session'
-      });
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
+        'pwd',
+        { sessionId: 'test-session' }
+      );
     });
 
     it('should start process with session context', async () => {
@@ -1183,11 +1096,10 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
         }
       } as any);
 
-      await session.startProcess('sleep 10', {
+      await session.exec('sleep 10', {
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
         timeout: 1000,
-        encoding: 'utf8',
         autoCleanup: false
       });
 
@@ -1198,7 +1110,6 @@ expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
           env: { TEST_ENV: '1' },
           cwd: '/workspace/app',
           timeoutMs: 1000,
-          encoding: 'utf8',
           autoCleanup: false
         }
       );

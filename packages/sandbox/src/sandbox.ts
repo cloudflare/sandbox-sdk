@@ -32,7 +32,10 @@ import type {
   ReadFileStreamResult,
   RemoteMountBucketOptions,
   RestoreBackupResult,
+  SandboxExecOptions,
   SandboxOptions,
+  SandboxProcess,
+  SandboxProcessPromise,
   SandboxTerminal,
   SessionOptions,
   TerminalCreateOptions,
@@ -94,6 +97,13 @@ import {
   PREVIEW_PROXY_TOKEN_HEADER
 } from './preview-proxy-protocol';
 import { isLocalhostPattern } from './preview-url';
+import {
+  createSandboxProcessPromise,
+  resolveStdinForRpc,
+  type SandboxProcessDeps,
+  SandboxProcessImpl,
+  toRpcSandboxProcess
+} from './process';
 import { createSandboxTerminal, proxyTerminal } from './pty';
 import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
@@ -343,7 +353,29 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   ) => Promise<unknown>;
   createTerminal: (options: TerminalCreateOptions) => Promise<void>;
   destroyTerminal: (id: string) => Promise<void>;
-  exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
+  /**
+   * Unified exec primitive. Returns the resolved `SandboxProcess` (the
+   * client-side `enhancedMethods.exec` wraps this in a
+   * `SandboxProcessPromise` so the thenable convenience methods are
+   * available at the call site).
+   */
+  exec: (
+    command: string | string[],
+    options?: SandboxExecOptions
+  ) => Promise<SandboxProcess>;
+  getProcess: (
+    id: string,
+    sessionId?: string
+  ) => Promise<SandboxProcess | null>;
+  run: (
+    command: string,
+    options?: ExecOptions & { sessionId?: string }
+  ) => Promise<ExecResult>;
+  runWithSessionToken: (
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ) => Promise<ExecResult>;
 };
 
 const sandboxConfigurationCache = new WeakMap<
@@ -681,19 +713,25 @@ export function getSandbox<T extends Sandbox<any>>(
 
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
-    exec: (command: string, execOptions?: ExecOptions) =>
-      stub.exec(command, execOptions),
-    startProcess: (command: string, processOptions?: ProcessOptions) =>
-      stub.startProcess(command, processOptions),
-    listProcesses: (options?: ProcessQueryOptions) =>
-      options?.sessionId === undefined
-        ? stub.listProcesses()
-        : stub.listProcesses({ sessionId: options.sessionId }),
+
+    // Unified exec (mirrors `ctx.container.exec()` contract). Wrapped in
+    // `createSandboxProcessPromise` so callers get the Bun.spawn-style
+    // thenable that exposes `.output()` / `.text()` / `.json()` / `.kill()`
+    // directly on the returned promise.
+    exec: (command: string | string[], execOptions?: SandboxExecOptions) =>
+      createSandboxProcessPromise(stub.exec(command, execOptions)),
+    run: (
+      command: string,
+      runOptions?: ExecOptions & { sessionId?: string }
+    ) => stub.run(command, runOptions),
     getProcess: (id: string, options?: ProcessQueryOptions) =>
       options?.sessionId === undefined
         ? stub.getProcess(id)
         : stub.getProcess(id, { sessionId: options.sessionId }),
-
+    listProcesses: (options?: ProcessQueryOptions) =>
+      options?.sessionId === undefined
+        ? stub.listProcesses()
+        : stub.listProcesses({ sessionId: options.sessionId }),
     writeFile: (
       path: string,
       content: string | ReadableStream<Uint8Array>,
@@ -3369,8 +3407,181 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    return this.executeCommand(command, undefined, options);
+  // -------------------------------------------------------------------------
+  // Unified exec surface (mirrors `ctx.container.exec()` from workers-types).
+  // -------------------------------------------------------------------------
+
+  exec(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): SandboxProcessPromise {
+    return createSandboxProcessPromise(
+      this.spawnSandboxProcess(command, options)
+    );
+  }
+
+  /**
+   * Buffered, session-state-preserving execution helper. Uses the foreground
+   * session command path, preserving shell state such as cwd, aliases,
+   * functions, and exported variables.
+   */
+  async run(
+    command: string,
+    options?: ExecOptions & { sessionId?: string }
+  ): Promise<ExecResult> {
+    return this.executeCommand(command, options?.sessionId, options);
+  }
+
+  async runWithSessionToken(
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    this.validateExplicitSessionId(sessionId);
+    return this.executeCommand(command, sessionId, options);
+  }
+
+  /**
+   * Internal: start a process via `client.processes.startProcess` and
+   * construct a `SandboxProcess` handle that demultiplexes the log stream
+   * into `stdout` / `stderr` and resolves `exitCode` on the `exit` event.
+   */
+  private async spawnSandboxProcess(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): Promise<SandboxProcess> {
+    if (options?.sessionId !== undefined) {
+      this.validateExplicitSessionId(options.sessionId);
+    }
+    if (options?.signal?.aborted) {
+      throw new Error('Operation was aborted');
+    }
+
+    // Wire-level command sent to the container's session shell. Strings pass
+    // through verbatim (the container already shell-executes them); arrays
+    // get shell-quoted so argv-form input survives the shell hop. The two
+    // shapes produce the same command on the wire as `ctx.container.exec()`
+    // would interpret — future iteration can move array-form straight to
+    // `ctx.container.exec(argv, ...)` without going through the shell.
+    const display = Array.isArray(command)
+      ? command.map((arg) => shellEscape(arg)).join(' ')
+      : command;
+
+    const session = this.validateOptionalSessionId(options?.sessionId);
+    const processSession = session;
+
+    const executionOptions = this.buildExecutionRequestOptions(session, {
+      timeout: options?.timeout,
+      env: options?.env,
+      cwd: options?.cwd,
+      origin: options?.origin
+    });
+
+    // Resolve the caller-supplied `stdin` (`"pipe"` | `ReadableStream` |
+    // `string` | undefined) into the pair of streams the wire & SDK need:
+    //   - `stdinSource`: a `ReadableStream<Uint8Array>` passed across RPC
+    //     to the container, which pumps it into the per-command FIFO.
+    //   - `stdinWriter`: the `WritableStream<Uint8Array>` exposed to the
+    //     caller as `proc.stdin` when they asked for `"pipe"`.
+    const { stdinSource, stdinWriter } = resolveStdinForRpc(options?.stdin);
+
+    // Normalize to `undefined` when no options were provided. Keeps wire
+    // compatibility with the legacy `execWithSession` shape and avoids
+    // sending a noisy empty object across RPC.
+    const hasProcessOption =
+      session !== undefined ||
+      options?.processId !== undefined ||
+      options?.autoCleanup !== undefined ||
+      stdinSource !== undefined;
+    const requestOptions =
+      executionOptions === undefined && !hasProcessOption
+        ? undefined
+        : {
+            ...executionOptions,
+            ...(session !== undefined && { sessionId: session }),
+            ...(options?.processId !== undefined && {
+              processId: options.processId
+            }),
+            ...(options?.autoCleanup !== undefined && {
+              autoCleanup: options.autoCleanup
+            }),
+            ...(stdinSource !== undefined && { stdin: stdinSource })
+          };
+
+    const response = requestOptions
+      ? await this.client.processes.startProcess(display, requestOptions)
+      : await this.client.processes.startProcess(display);
+
+    const stderrMode = options?.stderr ?? 'pipe';
+    const stdoutMode = options?.stdout ?? 'pipe';
+
+    const proc = new SandboxProcessImpl(
+      {
+        id: response.processId,
+        pid: response.pid ?? -1,
+        command: response.command ?? display,
+        sessionId: processSession,
+        startTime: new Date(),
+        status: 'running' as ProcessStatus,
+        ownership: 'owner',
+        stdout: stdoutMode,
+        stderr: stderrMode,
+        stdin: stdinWriter
+      },
+      this.buildSandboxProcessDeps()
+    );
+    // Wrap in a plain object literal that workerd can serialize across
+    // the DO RPC boundary. See `toRpcSandboxProcess` for the rationale.
+    const procDto: SandboxProcess = toRpcSandboxProcess(proc);
+
+    // Wire AbortSignal → kill (best-effort; matches `ExecProcess` lifetime).
+    if (options?.signal) {
+      const onAbort = () => proc.kill(15 /* SIGTERM */);
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    // Wall-clock timeout → SIGTERM. Container-side already has its own
+    // timeoutMs honored via executionOptions; this is the SDK-side belt to
+    // make `proc.exitCode` settle even if the container is wedged.
+    if (options?.timeout && Number.isFinite(options.timeout)) {
+      const handle = setTimeout(() => proc.kill(15), options.timeout);
+      void proc.exitCode.finally(() => clearTimeout(handle));
+    }
+
+    return procDto;
+  }
+
+  private buildSandboxProcessDeps(): SandboxProcessDeps {
+    // Keep these tied to the live `this` so re-entrant RPCs use the same
+    // capnweb session as the spawn that produced the handle.
+    return {
+      openLogStream: (id) => this.client.processes.streamProcessLogs(id),
+      readLogs: async (id) => {
+        const r = await this.client.processes.getProcessLogs(id);
+        return { stdout: r.stdout, stderr: r.stderr };
+      },
+      fetchStatus: async (id) => {
+        try {
+          const r = await this.client.processes.getProcess(id);
+          return r.process?.status ?? 'error';
+        } catch (error) {
+          if (error instanceof ProcessNotFoundError) return 'error';
+          throw error;
+        }
+      },
+      killProcess: async (id) => {
+        // Container-side `killProcess` does not yet honor a signal arg;
+        // when it does, route the number through here.
+        await this.client.processes.killProcess(id);
+      },
+      waitForPort: (id, command, port, opts) =>
+        this.waitForPortReady(id, command, port, opts),
+      waitForLogPattern: (id, command, pattern, timeout) =>
+        this.waitForLogPattern(id, command, pattern, timeout),
+      waitForProcessExit: (id, command, timeout) =>
+        this.waitForProcessExit(id, command, timeout)
+    };
   }
 
   /**
@@ -3418,6 +3629,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
 
       execOutcome = { exitCode: result.exitCode, success: result.success };
+
       return result;
     } catch (error) {
       execError = error instanceof Error ? error : new Error(String(error));
@@ -3455,74 +3667,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Create a Process domain object from HTTP client DTO
-   * Centralizes process object creation with bound methods
-   * This eliminates duplication across startProcess, listProcesses, getProcess, and session wrappers
-   */
-  private createProcessFromDTO(
-    data: {
-      id: string;
-      pid?: number;
-      command: string;
-      status: ProcessStatus;
-      startTime: string | Date;
-      endTime?: string | Date;
-      exitCode?: number;
-    },
-    sessionId?: string
-  ): Process {
-    return {
-      id: data.id,
-      pid: data.pid,
-      command: data.command,
-      status: data.status,
-      startTime:
-        typeof data.startTime === 'string'
-          ? new Date(data.startTime)
-          : data.startTime,
-      endTime: data.endTime
-        ? typeof data.endTime === 'string'
-          ? new Date(data.endTime)
-          : data.endTime
-        : undefined,
-      exitCode: data.exitCode,
-      sessionId,
-
-      kill: async () => {
-        await this.killProcess(data.id);
-      },
-
-      getStatus: async () => {
-        const current = await this.getProcess(data.id);
-        return current?.status || 'error';
-      },
-
-      getLogs: async () => {
-        const logs = await this.getProcessLogs(data.id);
-        return { stdout: logs.stdout, stderr: logs.stderr };
-      },
-
-      waitForLog: async (
-        pattern: string | RegExp,
-        timeout?: number
-      ): Promise<WaitForLogResult> => {
-        return this.waitForLogPattern(data.id, data.command, pattern, timeout);
-      },
-
-      waitForPort: async (
-        port: number,
-        options?: WaitForPortOptions
-      ): Promise<void> => {
-        await this.waitForPortReady(data.id, data.command, port, options);
-      },
-
-      waitForExit: async (timeout?: number): Promise<WaitForExitResult> => {
-        return this.waitForProcessExit(data.id, data.command, timeout);
-      }
-    };
-  }
-
-  /**
    * Wait for a log pattern to appear in process output
    */
   private async waitForLogPattern(
@@ -3538,7 +3682,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // First check existing logs
     try {
-      const existingLogs = await this.getProcessLogs(processId);
+      const existingLogs =
+        await this.client.processes.getProcessLogs(processId);
       // Ensure existing logs end with newline for proper line separation from streamed output
       collectedStdout = existingLogs.stdout;
       if (collectedStdout && !collectedStdout.endsWith('\n')) {
@@ -3569,7 +3714,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Stream new logs and check for pattern
-    const stream = await this.streamProcessLogs(processId);
+    const stream = await this.client.processes.streamProcessLogs(processId);
 
     // Set up timeout if specified
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -3763,7 +3908,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     timeout?: number
   ): Promise<WaitForExitResult> {
-    const stream = await this.streamProcessLogs(processId);
+    const stream = await this.client.processes.streamProcessLogs(processId);
 
     // Set up timeout if specified
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -3909,182 +4054,71 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
-  // Background process management
-  async startProcess(
-    command: string,
-    options?: ProcessOptions
-  ): Promise<Process> {
-    // Use the new HttpClient method to start the process
-    try {
-      const session = this.validateOptionalSessionId(options?.sessionId);
-      const executionOptions = this.buildExecutionRequestOptions(session, {
-        timeout: options?.timeout,
-        env: options?.env,
-        cwd: options?.cwd
-      });
-      const requestOptions = {
-        ...executionOptions,
-        ...(session !== undefined && { sessionId: session }),
-        ...(options?.processId !== undefined && {
-          processId: options.processId
-        }),
-        ...(options?.encoding !== undefined && { encoding: options.encoding }),
-        ...(options?.autoCleanup !== undefined && {
-          autoCleanup: options.autoCleanup
-        })
-      };
+  // Background process management ----------------------------------------
 
-      const response = await this.client.processes.startProcess(
-        command,
-        requestOptions
-      );
-
-      const processObj = this.createProcessFromDTO(
-        {
-          id: response.processId,
-          pid: response.pid,
-          command: response.command,
-          status: 'running' as ProcessStatus,
-          startTime: new Date(),
-          endTime: undefined,
-          exitCode: undefined
-        },
-        session
-      );
-
-      // Call onStart callback if provided
-      if (options?.onStart) {
-        options.onStart(processObj);
-      }
-
-      // Start background streaming if output/exit callbacks are provided
-      if (options?.onOutput || options?.onExit) {
-        // Fire and forget - don't await, let it run in background
-        this.startProcessCallbackStream(response.processId, options).catch(
-          () => {
-            // Error already handled in startProcessCallbackStream
-          }
-        );
-      }
-
-      return processObj;
-    } catch (error) {
-      if (options?.onError && error instanceof Error) {
-        options.onError(error);
-      }
-
-      throw error;
-    }
-  }
-
-  /**
-   * Start background streaming for process callbacks
-   * Opens SSE stream to container and routes events to callbacks
-   */
-  private async startProcessCallbackStream(
-    processId: string,
-    options: ProcessOptions
-  ): Promise<void> {
-    try {
-      const stream = await this.client.processes.streamProcessLogs(processId);
-
-      for await (const event of parseSSEStream<{
-        type: string;
-        data?: string;
-        exitCode?: number;
-        processId?: string;
-      }>(stream)) {
-        switch (event.type) {
-          case 'stdout':
-            if (event.data && options.onOutput) {
-              options.onOutput('stdout', event.data);
-            }
-            break;
-          case 'stderr':
-            if (event.data && options.onOutput) {
-              options.onOutput('stderr', event.data);
-            }
-            break;
-          case 'exit':
-          case 'complete':
-            if (options.onExit) {
-              options.onExit(event.exitCode ?? null);
-            }
-            return; // Stream complete
-        }
-      }
-
-      // If we get here without a complete event, something went wrong
-      throw new Error('Stream ended without completion event');
-    } catch (error) {
-      // Call onError if streaming fails
-      if (options.onError && error instanceof Error) {
-        options.onError(error);
-      }
-      // Don't rethrow - background streaming failure shouldn't crash the caller
-      this.logger.error(
-        'Background process streaming failed',
-        error instanceof Error ? error : new Error(String(error)),
-        { processId }
-      );
-    }
-  }
-
-  async listProcesses(options?: ProcessQueryOptions): Promise<Process[]> {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    const response = await this.client.processes.listProcesses();
-
-    return response.processes.map((processData) =>
-      this.createProcessFromDTO(
-        {
-          id: processData.id,
-          pid: processData.pid,
-          command: processData.command,
-          status: processData.status,
-          startTime: processData.startTime,
-          endTime: processData.endTime,
-          exitCode: processData.exitCode
-        },
-        session
-      )
-    );
-  }
-
+  /** Re-attach to an existing process by id. */
   async getProcess(
     id: string,
     options?: ProcessQueryOptions
-  ): Promise<Process | null> {
+  ): Promise<SandboxProcess | null> {
     const session = this.validateOptionalSessionId(options?.sessionId);
     try {
       const response = await this.client.processes.getProcess(id);
-
-      if (!response.process) {
-        return null;
-      }
-
-      const processData = response.process;
-      return this.createProcessFromDTO(
-        {
-          id: processData.id,
-          pid: processData.pid,
-          command: processData.command,
-          status: processData.status,
-          startTime: processData.startTime,
-          endTime: processData.endTime,
-          exitCode: processData.exitCode
-        },
-        session
+      if (!response.process) return null;
+      const data = response.process;
+      return toRpcSandboxProcess(
+        new SandboxProcessImpl(
+          {
+            id: data.id,
+            pid: data.pid ?? -1,
+            command: data.command,
+            sessionId: session,
+            startTime:
+              typeof data.startTime === 'string'
+                ? new Date(data.startTime)
+                : (data.startTime ?? new Date()),
+            status: data.status,
+            ownership: 'attached',
+            stdout: 'pipe',
+            stderr: 'pipe',
+            stdin: null
+          },
+          this.buildSandboxProcessDeps()
+        )
       );
     } catch (error) {
-      if (error instanceof ProcessNotFoundError) {
-        return null;
-      }
+      if (error instanceof ProcessNotFoundError) return null;
       throw error;
     }
   }
 
-  async killProcess(id: string): Promise<void> {
-    await this.client.processes.killProcess(id);
+  /** Return lightweight process snapshots. */
+  async listProcesses(options?: ProcessQueryOptions): Promise<SandboxProcess[]> {
+    const session = this.validateOptionalSessionId(options?.sessionId);
+    const response = await this.client.processes.listProcesses();
+    const deps = this.buildSandboxProcessDeps();
+    return response.processes.map((data) =>
+      toRpcSandboxProcess(
+        new SandboxProcessImpl(
+          {
+            id: data.id,
+            pid: data.pid ?? -1,
+            command: data.command,
+            sessionId: session,
+            startTime:
+              typeof data.startTime === 'string'
+                ? new Date(data.startTime)
+                : (data.startTime ?? new Date()),
+            status: data.status,
+            ownership: 'attached',
+            stdout: 'ignore',
+            stderr: 'ignore',
+            stdin: null
+          },
+          deps
+        )
+      )
+    );
   }
 
   async killAllProcesses(): Promise<number> {
@@ -4093,34 +4127,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async cleanupCompletedProcesses(): Promise<number> {
-    // Not yet implemented - requires container endpoint
+    // Not yet implemented — requires container endpoint.
     return 0;
-  }
-
-  async getProcessLogs(
-    id: string
-  ): Promise<{ stdout: string; stderr: string; processId: string }> {
-    const response = await this.client.processes.getProcessLogs(id);
-    return {
-      stdout: response.stdout,
-      stderr: response.stderr,
-      processId: response.processId
-    };
-  }
-
-  /**
-   * Stream logs from a background process as a ReadableStream.
-   */
-  async streamProcessLogs(
-    processId: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<ReadableStream<Uint8Array>> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    return this.client.processes.streamProcessLogs(processId);
   }
 
   async gitCheckout(
@@ -4860,14 +4868,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  // ============================================================================
-  // Session Management - Advanced Use Cases
-  // ============================================================================
-
-  /**
-   * Create isolated execution session for advanced use cases
-   * Returns ExecutionSession with full sandbox API bound to specific session
-   */
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
     const sessionId = options?.id || `session-${Date.now()}`;
 
@@ -4949,24 +4949,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.ctx.storage.get<string | null>('containerPlacementId');
   }
 
+
   private getSessionWrapper(sessionId: string): ExecutionSession {
+    // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
       id: sessionId,
+      terminal: null as unknown as ExecutionSession['terminal'],
 
-      exec: (command, options) =>
+      // Unified exec (mirrors `ctx.container.exec()` contract). Session-scoped:
+      // caller-provided `options.sessionId` is overridden by this wrapper's
+      // sessionId to enforce session pinning.
+      exec: (
+        command: string | string[],
+        execOptions?: SandboxExecOptions
+      ) =>
+        createSandboxProcessPromise(
+          this.spawnSandboxProcess(command, { ...execOptions, sessionId })
+        ),
+
+      run: (command, options) =>
         this.executeCommand(command, sessionId, options),
 
       // Process management
-      startProcess: (command, options) =>
-        this.startProcess(command, { ...options, sessionId }),
       listProcesses: () => this.listProcesses({ sessionId }),
       getProcess: (id) => this.getProcess(id, { sessionId }),
-      killProcess: (id) => this.killProcess(id),
       killAllProcesses: () => this.killAllProcesses(),
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
-      getProcessLogs: (id) => this.getProcessLogs(id),
-      streamProcessLogs: (processId, options) =>
-        this.streamProcessLogs(processId, options),
 
       // File operations - pass sessionId via options
       writeFile: (path, content, options) =>

@@ -47,6 +47,12 @@ export interface ExecutionOptions {
 export interface ProcessStreamStartOptions extends ExecutionOptions {
   onEvent: (event: ExecEvent) => Promise<void>;
   commandId: string;
+  /**
+   * Optional standard input stream piped into the spawned command. The
+   * stream is consumed by the container side; bytes flow until the stream
+   * ends or the command exits.
+   */
+  stdin?: ReadableStream<Uint8Array>;
 }
 
 export interface ProcessStreamStartResult {
@@ -321,6 +327,7 @@ export class ExecutionService {
         cwd: options.cwd,
         env: options.env,
         timeoutMs: options.timeoutMs,
+        stdin: options.stdin,
         onOutput: async (chunk) => {
           await startEventSent.promise;
           await options.onEvent({

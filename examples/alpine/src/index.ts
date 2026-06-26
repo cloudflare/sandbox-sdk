@@ -9,7 +9,7 @@ export default {
     const sandbox = getSandbox(env.Sandbox, 'my-sandbox');
 
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"');
+      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"').output();
       return Response.json({
         output: result.stdout,
         error: result.stderr,

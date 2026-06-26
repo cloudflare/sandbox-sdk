@@ -149,6 +149,14 @@ export interface ProcessStartOptions {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  origin?: 'user' | 'internal';
+  /**
+   * Optional standard input stream piped into the spawned process.
+   * Bytes flow into the per-command stdin FIFO (session-backed exec)
+   * or directly into the process stdin (sessionless exec) until the
+   * stream ends, at which point the command sees EOF on stdin.
+   */
+  stdin?: ReadableStream<Uint8Array>;
 }
 
 export interface SandboxProcessesAPI {

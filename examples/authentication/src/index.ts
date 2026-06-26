@@ -25,14 +25,18 @@ export default {
     if (url.pathname === '/test/anthropic') {
       const sandbox = getSandbox(env.Sandbox, 'test-sandbox');
 
-      const result = await sandbox.exec(`
+      const result = await sandbox
+        .exec(
+          `
         curl -s "https://api.anthropic.com/v1/messages" \
           -H "Content-Type: application/json" \
           -H "x-api-key: placeholder" \
           -H "anthropic-version: 2023-06-01" \
           -H "Accept-Encoding: identity" \
           -d '{"model":"claude-haiku-4-5-20251001","max_tokens":20,"messages":[{"role":"user","content":"Say hi"}]}'
-      `);
+      `
+        )
+        .output();
 
       return Response.json({
         success: result.exitCode === 0,
@@ -43,11 +47,15 @@ export default {
     if (url.pathname === '/test/github') {
       const sandbox = getSandbox(env.Sandbox, 'test-sandbox');
 
-      const result = await sandbox.exec(`
+      const result = await sandbox
+        .exec(
+          `
         cd /tmp && rm -rf sandbox-scm-test
         git clone https://github.com/ghostwriternr/sandbox-scm-test 2>&1
         ls sandbox-scm-test
-      `);
+      `
+        )
+        .output();
 
       return Response.json({
         success: result.exitCode === 0,
@@ -66,10 +74,14 @@ export default {
           -d '${testContent}'
       `);
 
-      const readResult = await sandbox.exec(`
+      const readResult = await sandbox
+        .exec(
+          `
         curl -s "http://r2.worker/${bucket}/test-file.txt" \
           -H "Accept-Encoding: identity"
-      `);
+      `
+        )
+        .output();
 
       return Response.json({
         success: readResult.exitCode === 0 && readResult.stdout === testContent,

@@ -164,11 +164,12 @@ async function ensureCodexRunning(
 ): Promise<string> {
   const procs = await sandbox.listProcesses();
   const existing = procs.find((p) => p.id === 'codex-app-server');
-  if (
-    existing &&
-    (existing.status === 'running' || existing.status === 'starting')
-  )
-    return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
+  if (existing) {
+    const status = await existing.status();
+    if (status === 'running' || status === 'starting') {
+      return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
+    }
+  }
 
   const codexWsToken = generateCapabilityToken();
 
@@ -178,7 +179,7 @@ async function ensureCodexRunning(
   });
   await sandbox.writeFile(CODEX_WS_TOKEN_FILE, codexWsToken);
 
-  const proc = await sandbox.startProcess(
+  const proc = await sandbox.exec(
     `bash -lc "codex app-server --listen ws://0.0.0.0:${CODEX_WS_PORT} --ws-auth capability-token --ws-token-file ${CODEX_WS_TOKEN_FILE}"`,
     { processId: 'codex-app-server' }
   );

@@ -165,12 +165,20 @@ async function createBackupSandbox(params?: {
       stdout: string;
       stderr: string;
       exitCode: number;
+      success: boolean;
+      command: string;
+      duration: number;
+      timestamp: string;
     }>;
   };
   vi.spyOn(sandboxInternals, 'executeCommand').mockResolvedValue({
     stdout: '42',
     stderr: '',
-    exitCode: 0
+    exitCode: 0,
+    success: true,
+    command: 'du -sb /workspace/project',
+    duration: 0,
+    timestamp: '2026-06-15T12:00:00.000Z'
   });
   vi.spyOn(sandbox.client.backup, 'restoreArchive').mockResolvedValue({
     success: true,

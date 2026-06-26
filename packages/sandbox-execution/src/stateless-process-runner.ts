@@ -15,6 +15,8 @@ export type StatelessProcessStartOptions = {
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
   onOutput?: (chunk: StdioChunk) => void | Promise<void>;
+  /** Optional stdin stream piped into the spawned process. */
+  stdin?: ReadableStream<Uint8Array>;
 };
 
 export type StatelessProcessResult = {
@@ -71,7 +73,7 @@ function spawnProcess(
   return Bun.spawn([BASH_PATH, '-c', command], {
     cwd: options.cwd ?? DEFAULT_CWD,
     env: buildEnv(options.env),
-    stdin: 'ignore',
+    stdin: options.stdin ?? 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
     detached: true

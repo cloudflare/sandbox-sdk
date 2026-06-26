@@ -138,20 +138,22 @@ export class CompilerDO implements DurableObject {
           await sandbox.writeFile('/workspace/validator.ts', body.schemaCode);
 
           // Bundle with esbuild (using pre-installed dependencies from /base)
-          const bundleResult = await sandbox.exec(
-            'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js',
-            {
-              timeout: 60000,
-              cwd: '/workspace'
-            }
-          );
+          const bundleResult = await sandbox
+            .exec(
+              'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js',
+              {
+                timeout: 60000,
+                cwd: '/workspace'
+              }
+            )
+            .output();
           timings.bundle = Date.now() - compileStart;
 
           if (!bundleResult.success) {
             return Response.json(
               {
                 error: 'Build failed',
-                details: bundleResult.stderr
+                details: bundleResult.stderr as string
               } satisfies ErrorResponse,
               { status: 400 }
             );

@@ -124,6 +124,13 @@ export interface ProcessOptions {
   encoding?: string;
   autoCleanup?: boolean;
   origin?: 'user' | 'internal';
+  /**
+   * Optional standard input stream piped into the spawned process. Bytes
+   * are written to a per-command FIFO (or directly into the process's
+   * stdin in sessionless mode) until the stream ends, at which point the
+   * command's stdin sees EOF.
+   */
+  stdin?: ReadableStream<Uint8Array>;
 }
 
 export interface CommandResult {

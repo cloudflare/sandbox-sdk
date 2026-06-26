@@ -11,7 +11,7 @@ export default {
 
     // Execute a shell command
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"');
+      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"').output();
       return Response.json({
         output: result.stdout,
         error: result.stderr,

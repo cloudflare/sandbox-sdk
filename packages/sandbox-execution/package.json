@@ -1,5 +1,6 @@
 {
   "name": "@repo/sandbox-execution",
+  "version": "0.0.0",
   "type": "module",
   "private": true,
   "exports": {

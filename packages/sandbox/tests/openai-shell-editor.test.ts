@@ -41,10 +41,19 @@ describe('Shell', () => {
   });
 
   it('runs commands and collects results', async () => {
-    const execMock = vi.fn().mockResolvedValue({
-      stdout: 'hello\n',
-      stderr: '',
-      exitCode: 0
+    // The Shell now calls `sandbox.exec(cmd, opts).output({ encoding: 'utf8' })`.
+    // Mock returns a `SandboxProcessPromise`-shaped object whose `.output()`
+    // resolves to the buffered exec output. Test logic unchanged.
+    const execMock = vi.fn().mockReturnValue({
+      output: vi.fn().mockResolvedValue({
+        stdout: 'hello\n',
+        stderr: '',
+        exitCode: 0,
+        success: true,
+        duration: 0,
+        command: 'echo hello',
+        timestamp: new Date().toISOString()
+      })
     });
 
     const mockSandbox: MockSandbox = { exec: execMock };
@@ -75,7 +84,11 @@ describe('Shell', () => {
 
   it('halts subsequent commands after a timeout error', async () => {
     const timeoutError = new Error('Command timed out');
-    const execMock = vi.fn().mockRejectedValue(timeoutError);
+    // `.output()` on the returned thenable rejects with the timeout error;
+    // the surrounding shell error-handling path is unchanged.
+    const execMock = vi.fn().mockReturnValue({
+      output: vi.fn().mockRejectedValue(timeoutError)
+    });
 
     const mockSandbox: MockSandbox = { exec: execMock };
     const shell = new Shell(mockSandbox as unknown as Sandbox);

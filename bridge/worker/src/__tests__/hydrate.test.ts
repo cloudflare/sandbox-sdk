@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockEnv, createMockSandbox, sandboxUrl } from './helpers';
+import { asMockExecPromise, createMockEnv, createMockSandbox, makeMockExecProcess, sandboxUrl } from './helpers';
 
 const mockSandbox = createMockSandbox();
 vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
@@ -20,7 +20,12 @@ function makeTarBody(): Uint8Array {
 describe('POST /v1/sandbox/:id/hydrate — hardcoded root, shell-quoted commands', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    // After the unified exec refactor the bridge calls
+    // `sandbox.exec(cmd).output()`; mock returns a `MockExecProcessPromise`
+    // whose `.output()` resolves to a successful exit-0 result.
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { exitCode: 0 })))
+    );
     mockSandbox.writeFile.mockResolvedValue(undefined);
   });
 

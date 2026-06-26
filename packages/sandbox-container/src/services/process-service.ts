@@ -149,6 +149,7 @@ export class ProcessService {
           timeoutMs: options.timeoutMs,
           env: options.env,
           origin: options.origin,
+          stdin: options.stdin,
           commandId: processRecordData.id,
           onEvent: async (event) => {
             // Route events to process record listeners.
