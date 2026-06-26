@@ -167,7 +167,7 @@ import {
 
 // OpenCode-aware Sandbox with a lifecycle handle for the OpenCode e2e tests.
 class Sandbox extends OpenCodeSandbox<Env> {
-  opencode = withOpenCode(this, { port: 4096 });
+  opencode = withOpenCode(this, { port: 4096 }, this.ctx.storage);
 }
 
 import type {

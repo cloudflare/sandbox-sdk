@@ -19,10 +19,16 @@ export { ContainerProxy };
 
 export class Sandbox extends OpenCodeSandbox<Env> {
   interceptHttps = true;
-  opencode = withOpenCode(this, {
-    directory: '/home/user/agents',
-    config: getConfig()
-  });
+  // Pass this.ctx.storage so the OpenCode server is recovered after a DO
+  // eviction (cold start), not just a container restart.
+  opencode = withOpenCode(
+    this,
+    {
+      directory: '/home/user/agents',
+      config: getConfig()
+    },
+    this.ctx.storage
+  );
 }
 
 const PROXY_INJECTED_API_KEY = 'proxy-injected';

@@ -23,6 +23,17 @@ export interface OpenCodeStatus extends OpenCodeServerInfo {
   running: boolean;
 }
 
+/**
+ * The slice of `DurableObjectStorage` the handle uses to persist desired-state.
+ * Pass `this.ctx.storage` from the Sandbox subclass to survive DO eviction.
+ */
+export interface OpenCodeStateStorage {
+  get<T>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+}
+
+const STATE_KEY_PREFIX = 'opencode:desired-state:';
+
 /** Recognise the retryable container-unavailable error across RPC. */
 function isContainerUnavailable(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
@@ -46,13 +57,22 @@ function serveCommand(port: number): string {
 export class OpenCodeHandle extends RpcTarget {
   readonly #sandbox: Sandbox<unknown>;
   readonly #defaults: OpencodeOptions;
+  readonly #storage: OpenCodeStateStorage | undefined;
+  readonly #stateKey: string;
   #server: OpencodeServer | undefined;
   #lastOptions: OpencodeOptions | undefined;
 
-  constructor(sandbox: Sandbox<unknown>, defaults: OpencodeOptions = {}) {
+  constructor(
+    sandbox: Sandbox<unknown>,
+    defaults: OpencodeOptions = {},
+    storage?: OpenCodeStateStorage,
+    stateIndex = 0
+  ) {
     super();
     this.#sandbox = sandbox;
     this.#defaults = defaults;
+    this.#storage = storage;
+    this.#stateKey = `${STATE_KEY_PREFIX}${stateIndex}`;
   }
 
   /**
@@ -62,6 +82,7 @@ export class OpenCodeHandle extends RpcTarget {
   async ensure(options?: OpencodeOptions): Promise<OpenCodeServerInfo> {
     const resolved = { ...this.#defaults, ...options };
     this.#lastOptions = resolved;
+    await this.#persist(resolved);
 
     let server: OpencodeServer;
     try {
@@ -120,8 +141,21 @@ export class OpenCodeHandle extends RpcTarget {
    * started at least once, so a cold DO doesn't spawn an unconfigured server.
    */
   async onContainerStart(): Promise<void> {
-    if (!this.#lastOptions) return;
-    await this.ensure(this.#lastOptions);
+    const options = this.#lastOptions ?? (await this.#loadPersisted());
+    if (!options) return;
+    await this.ensure(options);
+  }
+
+  /** Persist resolved desired-state so a cold DO can recover it. Best-effort. */
+  async #persist(options: OpencodeOptions): Promise<void> {
+    if (!this.#storage) return;
+    await this.#storage.put(this.#stateKey, options);
+  }
+
+  /** Read persisted desired-state, if any, after a DO eviction. */
+  async #loadPersisted(): Promise<OpencodeOptions | undefined> {
+    if (!this.#storage) return undefined;
+    return this.#storage.get<OpencodeOptions>(this.#stateKey);
   }
 }
 
@@ -132,17 +166,26 @@ export class OpenCodeHandle extends RpcTarget {
  */
 const handleRegistry = new WeakMap<Sandbox<unknown>, Set<OpenCodeHandle>>();
 
-/** Factory — attach as a field on a Sandbox subclass: `opencode = withOpenCode(this)`. */
+/**
+ * Factory — attach as a field on a Sandbox subclass:
+ * `opencode = withOpenCode(this, defaults, this.ctx.storage)`.
+ *
+ * Pass `this.ctx.storage` to persist desired-state so the server is recovered
+ * after a DO eviction (cold start), not just a container restart. The
+ * per-sandbox registration order keys each handle's state deterministically, so
+ * a rebuilt DO with the same field-initializer order recovers each server.
+ */
 export function withOpenCode(
   sandbox: Sandbox<unknown>,
-  defaults?: OpencodeOptions
+  defaults?: OpencodeOptions,
+  storage?: OpenCodeStateStorage
 ): OpenCodeHandle {
-  const handle = new OpenCodeHandle(sandbox, defaults);
   let handles = handleRegistry.get(sandbox);
   if (!handles) {
     handles = new Set();
     handleRegistry.set(sandbox, handles);
   }
+  const handle = new OpenCodeHandle(sandbox, defaults, storage, handles.size);
   handles.add(handle);
   return handle;
 }
