@@ -35,6 +35,10 @@ jobs:
           node-version: 24
           cache: 'npm'
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
       - uses: actions/cache/restore@v5
         id: nm-cache
         with:
