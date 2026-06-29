@@ -39,7 +39,7 @@ export interface BaseExecOptions {
 /**
  * @deprecated Use `SandboxExecOptions` instead. Will be removed in a future
  * release once all callers migrate to `sandbox.exec(cmd, options)` returning
- * a `SandboxProcessPromise`. See `docs/spikes/EXEC_UNIFICATION.md`.
+ * a `SandboxProcessPromise`. See `docs/EXEC_MIGRATION.md`.
  */
 export interface ExecOptions extends BaseExecOptions {
   /**
@@ -458,13 +458,11 @@ export interface StreamOptions extends BaseExecOptions {
 // ---------------------------------------------------------------------------
 // Unified exec surface (mirrors `ctx.container.exec()` from workers-types).
 //
-// See `docs/spikes/EXEC_UNIFICATION.md` for the design.
+// See `docs/EXEC_MIGRATION.md` for migration guidance.
 //
-// These types are *additive* at this stage. The legacy `ExecOptions`,
-// `ProcessOptions`, `StreamOptions`, `ExecResult`, and `Process` types above
-// are still the source of truth for runtime behavior. They will be
-// deprecated and removed in a follow-up step that migrates the implementation
-// onto the new surface.
+// Legacy `ExecOptions`, `ProcessOptions`, `StreamOptions`, `ExecResult`, and
+// `Process` types above are retained for compatibility while callers migrate
+// to the unified process-handle surface.
 // ---------------------------------------------------------------------------
 
 /**
@@ -549,9 +547,9 @@ export interface SandboxExecOptions {
   /**
    * Whether to remove the process record on exit.
    *
-   * Defaults to:
-   * - `false` when `processId` is provided (re-attach is expected).
-   * - `true` for anonymous processes.
+   * Currently retained for compatibility with legacy process options. Process
+   * records are kept so `output()`, `getLogs()`, and re-attach can read logs;
+   * callers can use `cleanupCompletedProcesses()` to remove completed records.
    */
   autoCleanup?: boolean;
 
@@ -642,11 +640,11 @@ export interface SandboxProcess {
   }): Promise<SandboxExecOutput>;
 
   /**
-   * Send a signal to the process.
+   * Terminate the process.
    *
-   * Defaults to `SIGTERM` (15). Numeric is canonical to match the
-   * containers contract; the string form (`"SIGTERM"`, `"SIGKILL"`, …) is
-   * accepted as a deprecated alias for one release.
+   * Defaults to `SIGTERM` (15). The signal parameter is accepted for
+   * containers-contract compatibility, but the current container control path
+   * treats termination as SIGTERM.
    */
   kill(signal?: number | string): void;
 

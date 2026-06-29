@@ -3571,8 +3571,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       },
       killProcess: async (id) => {
-        // Container-side `killProcess` does not yet honor a signal arg;
-        // when it does, route the number through here.
         await this.client.processes.killProcess(id);
       },
       waitForPort: (id, command, port, opts) =>

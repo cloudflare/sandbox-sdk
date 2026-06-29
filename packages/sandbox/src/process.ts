@@ -6,7 +6,7 @@
  * waitForExit) into a single handle whose shape mirrors `ExecProcess` from
  * the Cloudflare Containers runtime contract.
  *
- * See `docs/spikes/EXEC_UNIFICATION.md` for the design.
+ * See `docs/EXEC_MIGRATION.md` for migration guidance.
  */
 
 import type {
@@ -36,11 +36,8 @@ export interface SandboxProcessDeps {
   readLogs(processId: string): Promise<{ stdout: string; stderr: string }>;
   /** Fetch the current `ProcessStatus`. */
   fetchStatus(processId: string): Promise<ProcessStatus>;
-  /**
-   * Kill the process via the container.
-   * Signal is the POSIX number; callers pre-normalise from string form.
-   */
-  killProcess(processId: string, signal: number): Promise<void>;
+  /** Terminate the process via the container. */
+  killProcess(processId: string): Promise<void>;
   /** Wait for a port to become ready, scoped to the process lifetime. */
   waitForPort(
     processId: string,
@@ -447,9 +444,9 @@ export class SandboxProcessImpl implements SandboxProcess {
   // ---- ExecProcess parity --------------------------------------------------
 
   kill(signal: number | string = 15 /* SIGTERM */): void {
-    const num = normalizeSignal(signal);
+    normalizeSignal(signal);
     // Fire-and-forget to match the synchronous `ExecProcess.kill` shape.
-    void this.deps.killProcess(this.id, num).catch(() => {
+    void this.deps.killProcess(this.id).catch(() => {
       /* swallow; container-side already logs */
     });
   }
