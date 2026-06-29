@@ -351,7 +351,7 @@ export class BackupService {
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
-        backupSession
+        { sessionId: backupSession }
       );
 
       if (!restoreResult.success) {
@@ -522,7 +522,9 @@ export class BackupService {
           timestamp: new Date().toISOString()
         });
       }
-      await this.client.files.writeFileStream(archivePath, body, backupSession);
+      await this.client.files.writeFileStream(archivePath, body, {
+        sessionId: backupSession
+      });
 
       await lifecycle.archiveReady(metadata.sizeBytes);
 

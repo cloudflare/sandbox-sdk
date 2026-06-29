@@ -732,7 +732,11 @@ export class ContainerControlClient {
     );
   }
   get terminals(): SandboxTerminalsAPI {
-    return wrapStub(this.getConnection().rpc().terminals, this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().terminals,
+      'terminals',
+      this.renewActivity
+    );
   }
   get extensions(): SandboxExtensionsAPI {
     return wrapStub(

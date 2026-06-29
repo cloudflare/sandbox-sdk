@@ -177,8 +177,8 @@ export class BackupCreator {
       const createResult = await this.client.backup.createArchive(
         dir,
         archivePath,
-        backupSession,
         {
+          sessionId: backupSession,
           gitignore,
           excludes: normalizedExcludes,
           compression: resolvedCompression
@@ -381,8 +381,8 @@ export class BackupCreator {
       const createResult = await this.client.backup.createArchive(
         dir,
         archivePath,
-        backupSession,
         {
+          sessionId: backupSession,
           gitignore,
           excludes: normalizedExcludes,
           compression: resolvedCompression
@@ -410,7 +410,7 @@ export class BackupCreator {
       // buffering the whole archive in Worker memory.
       const archiveStream = await this.client.files.readFileStream(
         archivePath,
-        backupSession
+        { sessionId: backupSession }
       );
       const sseDecoded = new ReadableStream<Uint8Array>({
         async start(controller) {

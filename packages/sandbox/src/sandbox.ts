@@ -367,7 +367,6 @@ const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
 // header, preventing the outbound proxy from stalling waiting for a 100 response.
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
-
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -383,7 +382,6 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
-
 
 /**
  * Tagged template literal that shell-escapes every interpolated value.
@@ -1111,7 +1109,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger,
       getClient: () => this.client,
       execWithSession: (command, sessionId, options) =>
-        this.execWithSession(command, sessionId, options),
+        this.executeCommand(command, sessionId, options),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime
     });
