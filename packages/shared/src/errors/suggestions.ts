@@ -101,10 +101,14 @@ export function getSuggestion(
     case ErrorCode.CONTAINER_UNAVAILABLE: {
       const reason = context.reason as string | undefined;
       switch (reason) {
-        case 'provisioning':
-          return 'The container is still being provisioned. Retry the operation in a moment.';
-        case 'container_restarted':
-          return 'The container restarted while the SDK was preparing the default session. Retry the operation to use the new container.';
+        case 'container_starting':
+          return 'The container is still starting. Retry the operation in a moment.';
+        case 'container_unhealthy':
+          return 'The container is temporarily unhealthy. Retry the operation in a moment.';
+        case 'container_replaced':
+          return 'The container runtime was replaced. Retry the operation to use the new container.';
+        case 'rpc_upgrade_failed':
+          return 'The container did not accept the RPC connection before the retry budget expired. Retry the operation in a moment.';
         default:
           return 'The container is not ready yet. Retry the operation in a moment.';
       }

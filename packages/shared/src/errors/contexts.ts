@@ -240,14 +240,29 @@ export interface InternalErrorContext {
   [key: string]: unknown; // Allow extension
 }
 
-export type ContainerUnavailableReason =
-  | 'provisioning'
-  | 'startup'
-  | 'container_restarted';
-
+/**
+ * Container availability error context. Surfaced when the sandbox container
+ * cannot accept the incoming RPC connection. The container may be starting
+ * up, undergoing a runtime replacement, or temporarily unhealthy. The
+ * caller should retry the same operation.
+ */
 export interface ContainerUnavailableContext {
-  reason?: ContainerUnavailableReason;
-  sessionId?: string;
+  /**
+   * Categorical reason distinguishing startup unavailability from runtime
+   * replacement and exhausted upgrade retries.
+   */
+  reason:
+    | 'container_starting'
+    | 'container_unhealthy'
+    | 'container_replaced'
+    | 'rpc_upgrade_failed';
+  /**
+   * Always true — this error represents a transient unavailability, not a
+   * permanent failure. Callers should retry the same operation.
+   */
+  retryable: true;
+  /** Suggested delay in milliseconds before the next retry attempt. */
+  retryAfterMs?: number;
 }
 
 export type OperationInterruptedReason =

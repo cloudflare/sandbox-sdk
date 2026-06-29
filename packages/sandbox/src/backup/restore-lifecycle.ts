@@ -190,7 +190,7 @@ export class RestoreLifecycleRunner {
           throw error;
         }
 
-        if (error.context.reason === 'sandbox_lifetime_changed') {
+        if (!error.context.retryable) {
           throw error;
         }
 

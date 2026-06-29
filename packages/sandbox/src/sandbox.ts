@@ -50,6 +50,11 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
+import {
+  getHttpStatus,
+  getSuggestion,
+  type OperationInterruptedContext
+} from '@repo/shared/errors';
 import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import {
   type BackupRestoreTestFault,
@@ -66,6 +71,7 @@ import {
   ContainerUnavailableError,
   CustomDomainRequiredError,
   ErrorCode,
+  OperationInterruptedError,
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
@@ -74,6 +80,7 @@ import {
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
 import { LocalMountSyncManager } from './local-mount-sync';
+import { isPlatformTransientError } from './platform-errors';
 import {
   forwardPreviewRequest,
   type PreviewTCPPort
@@ -563,6 +570,62 @@ function applySandboxConfiguration(
   return Promise.all(operations).then(() => undefined);
 }
 
+function createPlatformInterruptedError(
+  error: unknown,
+  operation: string
+): OperationInterruptedError | null {
+  if (!isPlatformTransientError(error)) return null;
+
+  const context: OperationInterruptedContext = {
+    reason: 'runtime_replaced',
+    operation,
+    phase: 'durable_object_call',
+    admitted: 'unknown',
+    retryable: false
+  };
+
+  return new OperationInterruptedError({
+    code: ErrorCode.OPERATION_INTERRUPTED,
+    message: `Sandbox operation ${operation} was interrupted while the platform was updating the sandbox runtime`,
+    context,
+    httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+    suggestion: getSuggestion(
+      ErrorCode.OPERATION_INTERRUPTED,
+      context as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  });
+}
+
+function translatePlatformInterruption(
+  error: unknown,
+  operation: string
+): never {
+  throw createPlatformInterruptedError(error, operation) ?? error;
+}
+
+function withSandboxOperationContext<TArgs extends unknown[], TResult>(
+  operation: string,
+  fn: (...args: TArgs) => TResult
+): (...args: TArgs) => TResult {
+  return (...args: TArgs): TResult => {
+    try {
+      const result = fn(...args);
+      if (
+        result != null &&
+        typeof (result as { then?: unknown }).then === 'function'
+      ) {
+        return (result as unknown as Promise<unknown>).catch((error: unknown) =>
+          translatePlatformInterruption(error, operation)
+        ) as TResult;
+      }
+      return result;
+    } catch (error) {
+      translatePlatformInterruption(error, operation);
+    }
+  };
+}
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -760,7 +823,10 @@ export function getSandbox<T extends Sandbox<any>>(
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
-        return (...args: unknown[]) => stub.callTunnels(method, args);
+        return withSandboxOperationContext(
+          `sandbox.tunnels.${method}`,
+          (...args: unknown[]) => stub.callTunnels(method, args)
+        );
       }
     })
   };
@@ -771,7 +837,14 @@ export function getSandbox<T extends Sandbox<any>>(
   return new Proxy(stub, {
     get(target, prop) {
       if (typeof prop === 'string' && prop in enhancedMethods) {
-        return enhancedMethods[prop as keyof typeof enhancedMethods];
+        const method = enhancedMethods[prop as keyof typeof enhancedMethods];
+        if (typeof method === 'function') {
+          return withSandboxOperationContext(
+            `sandbox.${prop}`,
+            method as (...args: unknown[]) => unknown
+          );
+        }
+        return method;
       }
       if (typeof prop !== 'string' || prop === 'then') {
         // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
@@ -2787,7 +2860,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             code: ErrorCode.CONTAINER_UNAVAILABLE,
             message:
               'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { reason: 'provisioning' },
+            context: { reason: 'container_starting', retryable: true },
             httpStatus: 503,
             timestamp: new Date().toISOString(),
             suggestion:
@@ -2855,7 +2928,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           const errorBody: ErrorResponse = {
             code: ErrorCode.CONTAINER_UNAVAILABLE,
             message: 'Container is starting. Please retry in a moment.',
-            context: { reason: 'startup' },
+            context: { reason: 'container_starting', retryable: true },
             httpStatus: 503,
             timestamp: new Date().toISOString(),
             suggestion:
@@ -2880,7 +2953,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const errorBody: ErrorResponse = {
           code: ErrorCode.CONTAINER_UNAVAILABLE,
           message: 'Container is starting. Please retry in a moment.',
-          context: { reason: 'startup' },
+          context: { reason: 'container_starting', retryable: true },
           httpStatus: 503,
           timestamp: new Date().toISOString(),
           suggestion:
@@ -3376,7 +3449,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private isDefaultSessionInitContainerRestart(error: unknown): boolean {
     return (
       error instanceof ContainerUnavailableError &&
-      error.context.reason === 'container_restarted'
+      error.context.reason === 'container_replaced'
     );
   }
 
@@ -3414,7 +3487,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         code: ErrorCode.CONTAINER_UNAVAILABLE,
         message:
           'Container restarted while the default session was being initialized.',
-        context: { reason: 'container_restarted', sessionId },
+        context: { reason: 'container_replaced', retryable: true },
         httpStatus: 503,
         timestamp: new Date().toISOString(),
         suggestion:

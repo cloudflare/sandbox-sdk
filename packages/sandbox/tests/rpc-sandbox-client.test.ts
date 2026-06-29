@@ -324,7 +324,7 @@ describe('translateRPCError', () => {
     const original = new ContainerUnavailableError({
       code: ErrorCode.CONTAINER_UNAVAILABLE,
       message: 'Container is starting. Please retry in a moment.',
-      context: { reason: 'startup' },
+      context: { reason: 'container_starting', retryable: true },
       httpStatus: 503,
       timestamp: new Date().toISOString()
     });
@@ -339,7 +339,7 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(ContainerUnavailableError);
     expect(thrown).toMatchObject({
       code: ErrorCode.CONTAINER_UNAVAILABLE,
-      context: { reason: 'startup' }
+      context: { reason: 'container_starting', retryable: true }
     });
   });
 

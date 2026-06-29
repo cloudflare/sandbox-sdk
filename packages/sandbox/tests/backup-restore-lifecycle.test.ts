@@ -82,6 +82,30 @@ function createDisposedRPCError(): RPCTransportError {
   });
 }
 
+function createNonRetryableInterruptedError(
+  backupId: string,
+  dir: string
+): OperationInterruptedError {
+  return new OperationInterruptedError({
+    code: ErrorCode.OPERATION_INTERRUPTED,
+    message: 'Restore was interrupted after unknown admission',
+    httpStatus: 409,
+    context: {
+      reason: 'runtime_replaced',
+      operation: 'backup.restore',
+      operationId: crypto.randomUUID(),
+      operationKey: `restore:${backupId}:${dir}`,
+      idempotencyKey: `restore:${backupId}:${dir}`,
+      backupId,
+      dir,
+      phase: 'archive_ready',
+      admitted: 'unknown',
+      retryable: false
+    },
+    timestamp: '2026-06-15T12:00:00.000Z'
+  });
+}
+
 async function createBackupSandbox(params?: {
   storageMap?: Map<string, StoredValue>;
   bucket?: ReturnType<typeof createBackupBucket>;
@@ -189,6 +213,57 @@ describe('backup restore lifecycle', () => {
       },
       completedAt: expect.any(String)
     });
+  });
+
+  it('initializes the backup session before capturing cold-start runtime identity', async () => {
+    const order: string[] = [];
+    const storageMap = new Map<string, StoredValue>();
+    const { sandbox } = await createBackupSandbox({
+      storageMap,
+      storageHooks: {
+        onPut: (key) => {
+          if (key === 'currentRuntimeIdentity') {
+            order.push('runtimeReady');
+          }
+        }
+      }
+    });
+    storageMap.delete('currentRuntimeIdentity');
+    vi.spyOn(sandbox.client.utils, 'createSession').mockImplementationOnce(
+      async () => {
+        order.push('createSession');
+        return {
+          success: true,
+          id: 'backup-session',
+          message: 'Created'
+        } as never;
+      }
+    );
+
+    await sandbox.restoreBackup({
+      id: crypto.randomUUID(),
+      dir: '/workspace/project'
+    });
+
+    expect(order.slice(0, 2)).toEqual(['createSession', 'runtimeReady']);
+  });
+
+  it('does not retry non-retryable restore interruptions', async () => {
+    const { sandbox } = await createBackupSandbox();
+    const backupId = crypto.randomUUID();
+    const interruption = createNonRetryableInterruptedError(
+      backupId,
+      '/workspace/project'
+    );
+    const restoreArchiveSpy = vi
+      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .mockRejectedValueOnce(interruption)
+      .mockResolvedValueOnce({ success: true, dir: '/workspace/project' });
+
+    await expect(
+      sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' })
+    ).rejects.toBe(interruption);
+    expect(restoreArchiveSpy).toHaveBeenCalledTimes(1);
   });
 
   it('recovers internally when the first restore attempt loses the RPC transport', async () => {

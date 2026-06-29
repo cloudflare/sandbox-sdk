@@ -29,11 +29,15 @@ vi.mock('@cloudflare/containers', () => {
 
 type StoredValue = unknown;
 
-function createStorage(initial = new Map<string, StoredValue>()) {
+function createStorage(
+  initial = new Map<string, StoredValue>(),
+  hooks?: { onPut?: (key: string, value: StoredValue) => void }
+) {
   return {
     get: vi.fn(async (key: string) => initial.get(key)),
     put: vi.fn(async (key: string, value: StoredValue) => {
       initial.set(key, value);
+      hooks?.onPut?.(key, value);
     }),
     delete: vi.fn(async (key: string) => {
       initial.delete(key);
@@ -99,7 +103,9 @@ function createMockR2Bucket() {
   };
 }
 
-async function createLocalRestoreSandbox() {
+async function createLocalRestoreSandbox(params?: {
+  storageHooks?: { onPut?: (key: string, value: StoredValue) => void };
+}) {
   const storageMap = new Map<string, StoredValue>();
   storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
   storageMap.set('sandbox:lifetime', {
@@ -127,7 +133,7 @@ async function createLocalRestoreSandbox() {
   );
 
   const ctx = {
-    storage: createStorage(storageMap),
+    storage: createStorage(storageMap, params?.storageHooks),
     blockConcurrencyWhile: vi.fn(<T>(callback: () => Promise<T>) => callback()),
     waitUntil: vi.fn(),
     id: {
@@ -202,6 +208,38 @@ describe('local backup restore lifecycle', () => {
       },
       result
     });
+  });
+
+  it('initializes the backup session before capturing cold-start runtime identity', async () => {
+    const order: string[] = [];
+    const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox({
+      storageHooks: {
+        onPut: (key) => {
+          if (key === 'currentRuntimeIdentity') {
+            order.push('runtimeReady');
+          }
+        }
+      }
+    });
+    storageMap.delete('currentRuntimeIdentity');
+    vi.spyOn(sandbox.client.utils, 'createSession').mockImplementationOnce(
+      async () => {
+        order.push('createSession');
+        return {
+          success: true,
+          id: 'backup-session',
+          message: 'Created'
+        } as never;
+      }
+    );
+
+    await sandbox.restoreBackup({
+      id: backupId,
+      dir: '/workspace/project',
+      localBucket: true
+    });
+
+    expect(order.slice(0, 2)).toEqual(['createSession', 'runtimeReady']);
   });
 
   it('does not mark the local archive ready before stream upload completes', async () => {

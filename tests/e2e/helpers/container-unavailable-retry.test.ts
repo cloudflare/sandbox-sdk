@@ -10,7 +10,7 @@ describe('container unavailable fetch retry', () => {
       JSON.stringify({
         code: 'CONTAINER_UNAVAILABLE',
         message: 'Container is starting',
-        context: { reason: 'startup' },
+        context: { reason: 'container_starting', retryable: true },
         httpStatus: 503,
         timestamp: new Date().toISOString()
       }),

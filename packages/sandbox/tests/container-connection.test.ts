@@ -390,7 +390,7 @@ describe('ContainerControlConnection', () => {
         const assertion = expect(connectPromise).rejects.toMatchObject({
           name: 'ContainerUnavailableError',
           code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'startup' }
+          context: { reason: 'rpc_upgrade_failed', retryable: true }
         });
 
         // Run all timers — connect() must settle even with fake timers.
@@ -410,7 +410,7 @@ describe('ContainerControlConnection', () => {
         JSON.stringify({
           code: ErrorCode.CONTAINER_UNAVAILABLE,
           message: 'Container is starting. Please retry in a moment.',
-          context: { reason: 'startup' },
+          context: { reason: 'container_starting', retryable: true },
           httpStatus: 503,
           timestamp: new Date().toISOString(),
           suggestion: 'Retry the operation in a moment.'
@@ -443,7 +443,36 @@ describe('ContainerControlConnection', () => {
       expect(thrown).toMatchObject({
         name: 'ContainerUnavailableError',
         code: ErrorCode.CONTAINER_UNAVAILABLE,
-        context: { reason: 'startup' }
+        context: { reason: 'container_starting', retryable: true }
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('fills defaults for partial container unavailable upgrade bodies', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              code: ErrorCode.CONTAINER_UNAVAILABLE,
+              message: 'Container is replacing its runtime.'
+            }),
+            {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        );
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 0
+      });
+
+      await expect(conn.connect()).rejects.toMatchObject({
+        name: 'ContainerUnavailableError',
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        context: { reason: 'container_replaced', retryable: true }
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -463,7 +492,7 @@ describe('ContainerControlConnection', () => {
       await expect(rpcCall).rejects.toMatchObject({
         name: 'ContainerUnavailableError',
         code: ErrorCode.CONTAINER_UNAVAILABLE,
-        context: { reason: 'startup' }
+        context: { reason: 'container_starting', retryable: true }
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -497,7 +526,7 @@ describe('ContainerControlConnection', () => {
       await expect(conn.connect()).rejects.toMatchObject({
         name: 'ContainerUnavailableError',
         code: ErrorCode.CONTAINER_UNAVAILABLE,
-        context: { reason: 'startup' }
+        context: { reason: 'rpc_upgrade_failed', retryable: true }
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -546,7 +575,7 @@ describe('ContainerControlConnection', () => {
         const assertion = expect(connectPromise).rejects.toMatchObject({
           name: 'ContainerUnavailableError',
           code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'startup' }
+          context: { reason: 'rpc_upgrade_failed', retryable: true }
         });
 
         await vi.advanceTimersByTimeAsync(60_000);

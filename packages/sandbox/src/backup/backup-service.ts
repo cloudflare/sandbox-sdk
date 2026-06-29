@@ -300,9 +300,8 @@ export class BackupService {
         });
       }
 
-      await lifecycle.runtimeReady(archiveHead.size);
-
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady(archiveHead.size);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -499,9 +498,8 @@ export class BackupService {
         });
       }
 
-      await lifecycle.runtimeReady(metadata.sizeBytes);
-
       backupSession = await this.ensureBackupSession();
+      await lifecycle.runtimeReady(metadata.sizeBytes);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
       // Ensure backup directory exists
