@@ -18,6 +18,7 @@ import {
   Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
+  isPlatformTransientError,
   proxyToSandbox
 } from '@cloudflare/sandbox';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
@@ -70,6 +71,7 @@ interface Env {
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   BACKUP_BUCKET_NAME?: string;
+  SANDBOX_ENABLE_TEST_HOOKS?: string;
   DEPLOY_HASH?: string;
 }
 
@@ -117,6 +119,7 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   InvalidBackupConfigError: { status: 400, code: 'INVALID_BACKUP_CONFIG' },
   BackupCreateError: { status: 500, code: 'BACKUP_CREATE_FAILED' },
   BackupRestoreError: { status: 500, code: 'BACKUP_RESTORE_FAILED' },
+  OperationInterruptedError: { status: 409, code: 'OPERATION_INTERRUPTED' },
   // File errors
   FileNotFoundError: { status: 404, code: 'FILE_NOT_FOUND' },
   FileExistsError: { status: 409, code: 'FILE_EXISTS' },
@@ -1077,6 +1080,25 @@ console.log('Echo server on port ' + port);
         });
       }
 
+      // Test-only backup restore fault configuration.
+      // The next normal /api/backup/restore call consumes this out-of-band setup.
+      if (
+        url.pathname === '/api/test/faults/backup-restore' &&
+        request.method === 'POST'
+      ) {
+        if (env.SANDBOX_ENABLE_TEST_HOOKS !== 'true') {
+          return new Response(
+            JSON.stringify({ error: 'Sandbox test hooks are not enabled' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        await sandbox.__setBackupRestoreFaultForTesting(body);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Backup - Create backup
       if (url.pathname === '/api/backup/create' && request.method === 'POST') {
         const backup = await sandbox.createBackup(body);
@@ -1219,6 +1241,29 @@ console.log('Echo server on port ' + port);
       // Cloudflare RPC strips custom error classes, converting them to generic Error
       // but preserves the class name in the message as "ClassName: actual message"
       if (error instanceof Error) {
+        if (isPlatformTransientError(error)) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Sandbox operation was interrupted while the platform reset the sandbox runtime',
+              code: 'OPERATION_INTERRUPTED',
+              context: {
+                reason: 'runtime_replaced',
+                operation: 'test-worker.request',
+                phase: 'durable_object_call',
+                admitted: 'unknown',
+                retryable: false
+              },
+              suggestion:
+                'Retry only if the operation is idempotent, or verify sandbox state before retrying.'
+            }),
+            {
+              status: 409,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+
         let errorName = error.name;
         let errorMessage = error.message;
 

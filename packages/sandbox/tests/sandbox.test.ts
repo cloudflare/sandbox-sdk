@@ -1006,7 +1006,7 @@ describe('Sandbox - Automatic Session Management', () => {
         await expect(inflight).rejects.toMatchObject({
           code: ErrorCode.CONTAINER_UNAVAILABLE,
           context: {
-            reason: 'container_restarted',
+            reason: 'container_replaced',
             sessionId: 'sandbox-default'
           }
         });
@@ -2922,7 +2922,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const { backupSandbox } = await createBackupSandbox();
 
       const url = (
-        backupSandbox as unknown as {
+        (backupSandbox as any).backupService.transfer as {
           getBackupObjectURL: (
             accountId: string,
             bucketName: string,
@@ -2950,7 +2950,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
 
       const url = (
-        backupSandbox as unknown as {
+        (backupSandbox as any).backupService.transfer as {
           getBackupObjectURL: (
             accountId: string,
             bucketName: string,
@@ -3032,9 +3032,10 @@ describe('Sandbox - Automatic Session Management', () => {
           sizeBytes: 42,
           archivePath: '/var/backups/mock.sqsh'
         });
-      vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
-        undefined
-      );
+      vi.spyOn(
+        (backupSandbox as any).backupService.transfer,
+        'uploadBackupPresigned'
+      ).mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '',
         stderr: '',
@@ -3080,9 +3081,10 @@ describe('Sandbox - Automatic Session Management', () => {
           sizeBytes: 42,
           archivePath: '/var/backups/mock.sqsh'
         });
-      vi.spyOn(backupSandbox as any, 'uploadBackupPresigned').mockResolvedValue(
-        undefined
-      );
+      vi.spyOn(
+        (backupSandbox as any).backupService.transfer,
+        'uploadBackupPresigned'
+      ).mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '',
         stderr: '',
@@ -3178,7 +3180,10 @@ describe('Sandbox - Automatic Session Management', () => {
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
       const downloadBackupParallelSpy = vi
-        .spyOn(backupSandbox as any, 'downloadBackupParallel')
+        .spyOn(
+          (backupSandbox as any).backupService.transfer,
+          'downloadBackupParallel'
+        )
         .mockResolvedValue(undefined);
       vi.spyOn(backupSandbox as any, 'execWithSession').mockResolvedValue({
         stdout: '0',
@@ -3225,11 +3230,13 @@ describe('Sandbox - Automatic Session Management', () => {
         })
         .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
       vi.spyOn(
-        backupSandbox as any,
+        (backupSandbox as any).backupService.transfer,
         'generatePresignedGetURL'
       ).mockResolvedValue('https://example.com/archive');
 
-      await (backupSandbox as any).downloadBackupParallel(
+      await (
+        backupSandbox as any
+      ).backupService.transfer.downloadBackupParallel(
         '/var/backups/test.sqsh',
         'backups/test/data.sqsh',
         expectedSize,

@@ -20,7 +20,12 @@ import type {
   SandboxWatchAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { ErrorCode, type ErrorResponse } from '@repo/shared/errors';
+import {
+  ErrorCode,
+  type ErrorResponse,
+  getHttpStatus,
+  getSuggestion
+} from '@repo/shared/errors';
 import {
   RpcSession,
   type RpcStub,
@@ -46,6 +51,15 @@ export interface ContainerFetchStub {
   fetch(request: Request): Promise<Response>;
 }
 
+interface StructuredErrorBody {
+  code?: string;
+  message?: string;
+  context?: Record<string, unknown>;
+  httpStatus?: number;
+  timestamp?: string;
+  suggestion?: string;
+}
+
 function isErrorResponse(value: unknown): value is ErrorResponse {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Partial<ErrorResponse>;
@@ -58,6 +72,29 @@ function isErrorResponse(value: unknown): value is ErrorResponse {
     typeof candidate.context === 'object' &&
     candidate.context !== null
   );
+}
+
+function normalizeContainerUnavailableReason(
+  reason: unknown
+):
+  | 'container_starting'
+  | 'container_unhealthy'
+  | 'container_replaced'
+  | 'rpc_upgrade_failed' {
+  switch (reason) {
+    case 'container_starting':
+    case 'container_unhealthy':
+    case 'container_replaced':
+    case 'rpc_upgrade_failed':
+      return reason;
+    case 'provisioning':
+    case 'startup':
+      return 'container_starting';
+    case 'container_restarted':
+      return 'container_replaced';
+    default:
+      return 'container_replaced';
+  }
 }
 
 export interface ContainerControlConnectionOptions {
@@ -254,20 +291,29 @@ export class ContainerControlConnection {
       const response = await this.fetchUpgradeWithRetry();
 
       if (response.status !== 101) {
+        const containerUnavailable =
+          await this.parseContainerUnavailableUpgradeError(response);
+        if (containerUnavailable) {
+          throw createErrorFromResponse(containerUnavailable);
+        }
         const structuredError =
           await this.parseStructuredUpgradeError(response);
         if (structuredError) {
           throw createErrorFromResponse(structuredError);
         }
         if (isRetryableWebSocketUpgradeResponse(response)) {
+          const context = {
+            reason: 'rpc_upgrade_failed' as const,
+            retryable: true as const
+          };
           throw createErrorFromResponse({
             code: ErrorCode.CONTAINER_UNAVAILABLE,
-            message: 'Container is starting. Please retry in a moment.',
-            context: { reason: 'startup' },
-            httpStatus: 503,
+            message:
+              'Container was unavailable after exhausting upgrade retry budget.',
+            context,
+            httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
             timestamp: new Date().toISOString(),
-            suggestion:
-              'The container is not ready yet. Retry the operation in a moment.'
+            suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context)
           });
         }
         throw new Error(
@@ -310,18 +356,57 @@ export class ContainerControlConnection {
   private async parseStructuredUpgradeError(
     response: Response
   ): Promise<ErrorResponse | null> {
+    const body = await this.parseJSONBody(response);
+    if (!isErrorResponse(body)) return null;
+    return body;
+  }
+
+  private async parseContainerUnavailableUpgradeError(
+    response: Response
+  ): Promise<ErrorResponse | null> {
+    const body = await this.parseJSONBody(response);
+    if (!body || body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
+
+    const reason = normalizeContainerUnavailableReason(body.context?.reason);
+    const context = {
+      reason,
+      retryable: true as const,
+      ...(typeof body.context?.retryAfterMs === 'number' && {
+        retryAfterMs: body.context.retryAfterMs
+      })
+    };
+
+    return {
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: body.message ?? 'Container is unavailable',
+      context,
+      httpStatus:
+        typeof body.httpStatus === 'number'
+          ? body.httpStatus
+          : getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+      timestamp:
+        typeof body.timestamp === 'string'
+          ? body.timestamp
+          : new Date().toISOString(),
+      suggestion:
+        typeof body.suggestion === 'string'
+          ? body.suggestion
+          : getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context)
+    };
+  }
+
+  private async parseJSONBody(
+    response: Response
+  ): Promise<StructuredErrorBody | null> {
     const contentType = response.headers.get('Content-Type') ?? '';
     if (!contentType.includes('application/json')) return null;
 
-    let body: unknown;
     try {
-      body = await response.clone().json();
+      const body = (await response.clone().json()) as StructuredErrorBody;
+      return body && typeof body === 'object' ? body : null;
     } catch {
       return null;
     }
-
-    if (!isErrorResponse(body)) return null;
-    return body;
   }
 
   /**

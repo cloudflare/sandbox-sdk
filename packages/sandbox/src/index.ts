@@ -60,6 +60,10 @@ export {
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
+export {
+  isDurableObjectCodeUpdateReset,
+  isPlatformTransientError
+} from './platform-errors';
 export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';

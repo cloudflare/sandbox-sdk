@@ -60,10 +60,11 @@ async function cleanupDir(
  * - Only runs in CI environment with proper bindings
  */
 describe('Backup Workflow E2E', () => {
-  const isCI = !!process.env.TEST_WORKER_URL;
+  const shouldRunBackupE2E =
+    !!process.env.TEST_WORKER_URL || process.env.RUN_BACKUP_E2E === 'true';
 
-  if (!isCI) {
-    test.skip('Skipping - requires CI environment with BACKUP_BUCKET binding', () => {});
+  if (!shouldRunBackupE2E) {
+    test.skip('Skipping - requires BACKUP_BUCKET binding', () => {});
     return;
   }
 
@@ -190,6 +191,78 @@ describe('Backup Workflow E2E', () => {
       // Cleanup (unmounts FUSE overlay if present, then removes directory)
       await cleanupDir(workerUrl, headers, TEST_DIR);
     }, 60000);
+
+    test('should recover restore after configured lifecycle fault', async () => {
+      if (!backupBucketAvailable) return;
+
+      const faultDir = `/workspace/backup-fault-${crypto.randomUUID().slice(0, 8)}`;
+      const faultFile = 'fault-file.txt';
+      const faultContent = `Fault recovery content - ${crypto.randomUUID()}`;
+
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `mkdir -p ${faultDir} && printf %s ${JSON.stringify(faultContent)} > ${faultDir}/${faultFile}`
+        })
+      });
+      expect(setupResponse.ok).toBe(true);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          dir: faultDir,
+          name: 'e2e-fault-recovery-backup',
+          ttl: 3600,
+          localBucket: true
+        })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await cleanupDir(workerUrl, headers, faultDir);
+
+      const faultResponse = await fetch(
+        `${workerUrl}/api/test/faults/backup-restore`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            phase: 'after_archive_ready',
+            mode: 'transport_disposed',
+            times: 1
+          })
+        }
+      );
+      expect(faultResponse.ok).toBe(true);
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: backup.id,
+          dir: faultDir,
+          localBucket: true
+        })
+      });
+      if (!restoreResponse.ok) {
+        throw new Error(`restore failed: ${await restoreResponse.text()}`);
+      }
+      const restoreResult = (await restoreResponse.json()) as RestoreResponse;
+      expect(restoreResult.success).toBe(true);
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `cat ${faultDir}/${faultFile}` })
+      });
+      expect(verifyResponse.ok).toBe(true);
+      const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
+      expect(verifyResult.stdout).toContain(faultContent);
+
+      await cleanupDir(workerUrl, headers, faultDir);
+    }, 120000);
   });
 
   describe('Backup excludes', () => {

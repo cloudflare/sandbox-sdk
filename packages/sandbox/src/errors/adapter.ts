@@ -28,6 +28,7 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -67,6 +68,7 @@ import {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  OperationInterruptedError,
   PermissionDeniedError,
   PortAlreadyExposedError,
   PortError,
@@ -292,6 +294,11 @@ export function createErrorFromResponse(
     case ErrorCode.CONTAINER_UNAVAILABLE:
       return new ContainerUnavailableError(
         errorResponse as unknown as ErrorResponse<ContainerUnavailableContext>
+      );
+
+    case ErrorCode.OPERATION_INTERRUPTED:
+      return new OperationInterruptedError(
+        errorResponse as unknown as ErrorResponse<OperationInterruptedContext>
       );
 
     // RPC Transport Errors (SDK-side, raised by translateRPCError on

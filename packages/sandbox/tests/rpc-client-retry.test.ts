@@ -41,7 +41,47 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
-import { ContainerControlClient } from '../src/container-control/client';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
+
+describe('translateRPCError operation interruption mapping', () => {
+  function translateWithOperation(error: Error): never {
+    return (
+      translateRPCError as (
+        error: unknown,
+        context: { operation: string }
+      ) => never
+    )(error, { operation: 'commands.execute' });
+  }
+
+  it.each([
+    ['Peer closed WebSocket: 1006 runtime replaced', 'runtime_replaced'],
+    ['WebSocket connection failed.', 'runtime_replaced'],
+    [
+      'RPC session was shut down by disposing the main stub',
+      'transport_disposed'
+    ]
+  ])(
+    'maps in-flight transport loss %s to OPERATION_INTERRUPTED',
+    (message, reason) => {
+      expect(() => translateWithOperation(new Error(message))).toThrowError(
+        expect.objectContaining({
+          name: 'OperationInterruptedError',
+          code: 'OPERATION_INTERRUPTED',
+          context: expect.objectContaining({
+            reason,
+            operation: 'commands.execute',
+            phase: 'rpc_call',
+            admitted: 'unknown',
+            retryable: false
+          })
+        })
+      );
+    }
+  );
+});
 
 describe('ContainerControlClient retry timeout wiring', () => {
   beforeEach(() => {

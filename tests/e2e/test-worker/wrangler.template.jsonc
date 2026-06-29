@@ -7,6 +7,7 @@
 
   "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
+    "SANDBOX_ENABLE_TEST_HOOKS": "true",
     "BACKUP_BUCKET_NAME": "sandbox-e2e-test"
   },
   "observability": {
