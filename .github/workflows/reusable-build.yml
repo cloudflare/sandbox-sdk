@@ -236,7 +236,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR (for build cache)
         if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
@@ -249,7 +249,7 @@ jobs:
 
       - name: Build Docker images (bake)
         if: ${{ !inputs.skip_docker && steps.docker-path.outputs.build == 'true' }}
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           TAG: ${{ inputs.image_tag }}
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
