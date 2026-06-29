@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+  CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
 
 jobs:
   # --- Authorization gate (includes label management for fork PRs) ---
