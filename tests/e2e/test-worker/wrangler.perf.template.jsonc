@@ -3,7 +3,7 @@
   "main": "index.ts",
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
-  "account_id": "b8afc92c7a87f699592038b756153d22",
+  "account_id": "f247f1834dc181db8bea7fb28bbc13b4",
 
   "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
