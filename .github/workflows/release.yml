@@ -227,6 +227,8 @@ jobs:
             --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
             --version "${{ needs.build.outputs.version }}" \
             --docker-hub
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Publish Docker images to CF Registry Library
         if: steps.changesets.outputs.published == 'true'
@@ -250,6 +252,8 @@ jobs:
             echo "## ✅ CF Registry Library publish succeeded"
             printf "Published \`registry.cloudflare.com/library/sandbox:%s\` (+ variants)\n" "$VERSION"
           } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Warn if library publish failed
         if: steps.library-publish.outcome == 'failure'
