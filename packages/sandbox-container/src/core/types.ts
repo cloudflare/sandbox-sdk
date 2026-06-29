@@ -1,3 +1,5 @@
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
+
 export type ValidationResult<T = unknown> =
   | {
       isValid: true;
@@ -64,8 +66,28 @@ export type ProcessStatus =
   | 'killed'
   | 'error';
 
+export type ExecutionTarget =
+  | { kind: 'sessionless' }
+  | { kind: 'session'; sessionId: string };
+
+export function resolveExecutionTarget(sessionId?: string): ExecutionTarget {
+  if (sessionId === undefined || sessionId === LEGACY_SESSIONLESS_SESSION_ID) {
+    return { kind: 'sessionless' };
+  }
+
+  if (sessionId.trim().length === 0) {
+    throw new Error('sessionId must not be empty or whitespace');
+  }
+
+  return { kind: 'session', sessionId };
+}
+
+export function getExecutionTargetDisplayName(target: ExecutionTarget): string {
+  return target.kind === 'session' ? target.sessionId : 'sessionless';
+}
+
 export interface ProcessCommandHandle {
-  sessionId: string;
+  target: ExecutionTarget;
   commandId: string;
   pid?: number;
 }

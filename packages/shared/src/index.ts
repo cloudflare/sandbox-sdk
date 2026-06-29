@@ -40,7 +40,11 @@ export {
 export type {
   PtyControlMessage,
   PtyOptions,
-  PtyStatusMessage
+  PtyStatusMessage,
+  SandboxTerminal,
+  TerminalConnectOptions,
+  TerminalCreateOptions,
+  TerminalOptions
 } from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
@@ -67,6 +71,9 @@ export type {
   WriteFileRequest
 } from './request-types.js';
 export type {
+  BackupCreateArchiveOptions,
+  BackupRestoreArchiveOptions,
+  CommandExecuteOptions,
   EnsureNamedTunnelRunRequest,
   EnsureQuickTunnelRunRequest,
   EnsureTunnelRunRequest,
@@ -75,10 +82,17 @@ export type {
   ExtensionHealth,
   ExtensionPackage,
   ExtensionRegistration,
+  FileSessionOptions,
+  GitCheckoutOptions,
+  MkdirOptions,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,
+  ProcessStartOptions,
   QuickTunnelInfo,
   QuickTunnelRunSnapshot,
+  ReadFileBinaryOptions,
+  ReadFileOptions,
+  ReadFileStreamOptions,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -88,9 +102,11 @@ export type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
+  SessionCreateOptions,
   StopTunnelRunRequest,
   StopTunnelRunResult,
   TunnelInfo,
@@ -98,7 +114,8 @@ export type {
   TunnelRunExitEvent,
   TunnelRunIdentity,
   TunnelRunMode,
-  TunnelRunSnapshot
+  TunnelRunSnapshot,
+  WriteFileOptions
 } from './rpc-types.js';
 // RPC interface types (shared between SDK and container)
 export { EXTENSION_TARBALL_REQUIRED } from './rpc-types.js';
@@ -160,6 +177,7 @@ export type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessOptions,
+  ProcessQueryOptions,
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
@@ -176,7 +194,6 @@ export type {
   SessionDeleteResult,
   SessionOptions,
   ShutdownResult,
-  StreamOptions,
   // Process readiness types
   WaitForExitResult,
   WaitForLogResult,

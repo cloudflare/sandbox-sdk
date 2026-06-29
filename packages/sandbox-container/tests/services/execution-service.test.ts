@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
+import { StatelessProcessRunner } from '@repo/sandbox-execution';
 import type { Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { ExecutionService } from '@sandbox-container/services/execution-service';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
+
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
 
 type SessionExec = (
   command: string,
@@ -28,7 +30,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockSessionManager = {
   executeInSession: vi.fn(),
-  executeStreamInSession: vi.fn(),
+  startProcessStreamInSession: vi.fn(),
   withSession: vi.fn(),
   killCommand: vi.fn()
 } as unknown as SessionManager;
@@ -59,7 +61,7 @@ describe('ExecutionService', () => {
     } as ServiceResult<RawExecResult>);
 
     const result = await executionService.execute('echo test', {
-      sessionId: 'session-123',
+      target: { kind: 'session', sessionId: 'session-123' },
       cwd: '/workspace/app',
       timeoutMs: 5000,
       env: { TEST_ENV: '1' },
@@ -79,38 +81,28 @@ describe('ExecutionService', () => {
     );
   });
 
-  it('canonicalizes a missing sessionId to default', async () => {
-    mocked(mockSessionManager.executeInSession).mockResolvedValue({
-      success: true,
-      data: {
-        command: 'pwd',
-        stdout: '/workspace\n',
-        stderr: '',
-        exitCode: 0,
-        duration: 1,
-        timestamp: new Date().toISOString()
-      }
-    } as ServiceResult<RawExecResult>);
-
-    const result = await executionService.execute('pwd');
-
-    expect(result.success).toBe(true);
-    expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-      'default',
-      'pwd',
-      {
-        cwd: undefined,
-        timeoutMs: undefined,
-        env: undefined,
-        origin: undefined
-      }
+  it('runs missing-session execution without persistent shell state', async () => {
+    const first = await executionService.execute(
+      'cd /tmp && export SANDBOX_STATE=leaked',
+      { cwd: process.cwd() }
     );
+    const second = await executionService.execute(
+      'printf "%s:%s" "$PWD" "$SANDBOX_STATE"',
+      { cwd: process.cwd() }
+    );
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    if (second.success) {
+      expect(second.data.stdout).toBe(`${process.cwd()}:`);
+    }
+    expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
   });
 
   it('runs sessionless execute without calling SessionManager', async () => {
     const result = await executionService.execute(
       'printf "hello"; printf "warn" >&2; exit 7',
-      { sessionId: DISABLE_SESSION_TOKEN, cwd: process.cwd() }
+      { target: { kind: 'sessionless' }, cwd: process.cwd() }
     );
 
     expect(result.success).toBe(true);
@@ -124,7 +116,7 @@ describe('ExecutionService', () => {
 
   it('terminates timed-out sessionless execution and returns the timeout exit code', async () => {
     const result = await executionService.execute('sleep 1', {
-      sessionId: DISABLE_SESSION_TOKEN,
+      target: { kind: 'sessionless' },
       cwd: process.cwd(),
       timeoutMs: 50
     });
@@ -140,7 +132,7 @@ describe('ExecutionService', () => {
   it('inherits outer env and timeout in sessionless withExecution calls', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 500,
@@ -203,7 +195,7 @@ describe('ExecutionService', () => {
 
     const result = await executionService.withExecution(
       {
-        sessionId: 'session-123',
+        target: { kind: 'session', sessionId: 'session-123' },
         cwd: '/workspace/outer',
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 5000,
@@ -242,7 +234,7 @@ describe('ExecutionService', () => {
   it('lets nested sessionless withExecution options override inherited defaults', async () => {
     const result = await executionService.withExecution(
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         env: { OUTER_TEST_ENV: 'from-outer' },
         timeoutMs: 1000,
@@ -275,14 +267,52 @@ describe('ExecutionService', () => {
     expect(mockSessionManager.withSession).not.toHaveBeenCalled();
   });
 
-  it('streams sessionless output events and completion', async () => {
+  it('routes session process streaming as a background process', async () => {
+    mocked(mockSessionManager.startProcessStreamInSession).mockResolvedValue({
+      success: true,
+      data: { continueStreaming: Promise.resolve() }
+    });
+
+    const result = await executionService.startProcessStream('sleep 10', {
+      target: { kind: 'session', sessionId: 'explicit-session' },
+      cwd: '/workspace/app',
+      timeoutMs: 5000,
+      env: { TEST_ENV: '1' },
+      origin: 'user',
+      commandId: 'process-command',
+      onEvent: async () => {}
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.commandHandle).toEqual({
+        target: { kind: 'session', sessionId: 'explicit-session' },
+        commandId: 'process-command'
+      });
+    }
+    expect(mockSessionManager.startProcessStreamInSession).toHaveBeenCalledWith(
+      'explicit-session',
+      'sleep 10',
+      expect.any(Function),
+      {
+        cwd: '/workspace/app',
+        env: { TEST_ENV: '1' },
+        timeoutMs: 5000,
+        origin: 'user'
+      },
+      'process-command'
+    );
+  });
+
+  it('streams sessionless output events and completion through the execution package', async () => {
     const events: Array<{ type: string; data?: string; exitCode?: number }> =
       [];
+    const startSpy = vi.spyOn(StatelessProcessRunner.prototype, 'start');
 
-    const result = await executionService.executeStream(
+    const result = await executionService.startProcessStream(
       'printf "hello"; printf "warn" >&2',
       {
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         cwd: process.cwd(),
         commandId: 'cmd-1',
         onEvent: async (event) => {
@@ -300,7 +330,16 @@ describe('ExecutionService', () => {
       return;
     }
 
-    expect(result.data.commandHandle.sessionId).toBe(DISABLE_SESSION_TOKEN);
+    expect(startSpy).toHaveBeenCalledWith(
+      'printf "hello"; printf "warn" >&2',
+      expect.objectContaining({
+        cwd: process.cwd(),
+        timeoutMs: undefined,
+        env: undefined,
+        onOutput: expect.any(Function)
+      })
+    );
+    expect(result.data.commandHandle.target).toEqual({ kind: 'sessionless' });
     expect(result.data.commandHandle.commandId).toBe('cmd-1');
     expect(result.data.commandHandle.pid).toBeDefined();
 
@@ -316,17 +355,31 @@ describe('ExecutionService', () => {
     expect(
       events.some((event) => event.type === 'complete' && event.exitCode === 0)
     ).toBe(true);
-    expect(mockSessionManager.executeStreamInSession).not.toHaveBeenCalled();
+    expect(
+      mockSessionManager.startProcessStreamInSession
+    ).not.toHaveBeenCalled();
+  });
+
+  it('returns sessionless kill errors without sentinel session IDs', async () => {
+    const result = await executionService.kill({
+      target: { kind: 'sessionless' },
+      commandId: 'missing-process'
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.message).toContain('sessionless execution');
+      expect(result.error.message).not.toContain(LEGACY_SESSIONLESS_SESSION_ID);
+    }
   });
 
   it('kills a sessionless streaming process by pid', async () => {
     const events: Array<{ type: string; exitCode?: number }> = [];
 
-    const result = await executionService.executeStream('sleep 30', {
-      sessionId: DISABLE_SESSION_TOKEN,
+    const result = await executionService.startProcessStream('sleep 30', {
+      target: { kind: 'sessionless' },
       cwd: process.cwd(),
       commandId: 'cmd-kill',
-      background: true,
       onEvent: async (event) => {
         events.push({
           type: event.type,

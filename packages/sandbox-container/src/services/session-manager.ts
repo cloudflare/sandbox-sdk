@@ -1,11 +1,13 @@
 // SessionManager Service - Manages persistent execution sessions
 
-import { rm } from 'node:fs/promises';
+import {
+  CommandSession,
+  type CommandSessionProcess
+} from '@repo/sandbox-execution';
 import {
   type ExecEvent,
   type Logger,
   logCanonicalEvent,
-  type PtyOptions,
   partitionEnvVars,
   shellEscape
 } from '@repo/shared';
@@ -18,7 +20,6 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
-import { CONFIG } from '../config';
 import {
   type ServiceError,
   type ServiceResult,
@@ -26,8 +27,305 @@ import {
   serviceSuccess
 } from '../core/types';
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
-import { Pty } from '../pty';
-import { type RawExecResult, Session, type SessionOptions } from '../session';
+import type { RawExecResult, SessionOptions } from '../session-types';
+
+type RuntimeProcessStreamOptions = {
+  commandId: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  origin?: 'user' | 'internal';
+};
+
+type RuntimeProcessEntry = {
+  controller: AbortController;
+  process?: CommandSessionProcess;
+};
+
+type ManagedSessionExecOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  origin?: 'user' | 'internal';
+};
+
+interface ManagedSession {
+  initialize(): Promise<void>;
+  exec(
+    command: string,
+    options?: ManagedSessionExecOptions
+  ): Promise<RawExecResult>;
+  startRuntimeProcessStream(
+    command: string,
+    options: RuntimeProcessStreamOptions
+  ): AsyncGenerator<ExecEvent, void, unknown>;
+  killCommand(commandId: string, waitForExit?: boolean): Promise<boolean>;
+  getRunningCommandIds(): string[];
+  isReady(): boolean;
+  wasDestroyed(): boolean;
+  getShellExitCode(): number | null;
+  destroy(): Promise<void>;
+}
+
+class ExecEventQueue implements AsyncIterable<ExecEvent> {
+  private readonly events: ExecEvent[] = [];
+  private readonly waiters: Array<(result: IteratorResult<ExecEvent>) => void> =
+    [];
+  private closed = false;
+
+  push(event: ExecEvent): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter({ done: false, value: event });
+      return;
+    }
+    this.events.push(event);
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter({ done: true, value: undefined });
+    }
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<ExecEvent> {
+    while (true) {
+      const next = await this.next();
+      if (next.done) {
+        return;
+      }
+      yield next.value;
+    }
+  }
+
+  private next(): Promise<IteratorResult<ExecEvent>> {
+    const event = this.events.shift();
+    if (event) {
+      return Promise.resolve({ done: false, value: event });
+    }
+    if (this.closed) {
+      return Promise.resolve({ done: true, value: undefined });
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+}
+
+class RuntimeBackedSession implements ManagedSession {
+  private runtimeSession?: CommandSession;
+  private readonly runtimeProcesses = new Map<string, RuntimeProcessEntry>();
+  private runtimeDestroyed = false;
+
+  constructor(private readonly runtimeOptions: SessionOptions) {}
+
+  async initialize(): Promise<void> {
+    this.runtimeDestroyed = false;
+    this.runtimeSession = await CommandSession.create({
+      cwd: this.runtimeOptions.cwd,
+      env: this.runtimeOptions.env
+        ? Object.fromEntries(
+            Object.entries(this.runtimeOptions.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined
+            )
+          )
+        : undefined
+    });
+  }
+
+  async exec(
+    command: string,
+    options?: ManagedSessionExecOptions
+  ): Promise<RawExecResult> {
+    if (!this.runtimeSession) {
+      throw new Error('Runtime command session is not initialized');
+    }
+
+    const startTime = Date.now();
+    try {
+      const result = await this.runtimeSession.exec(command, {
+        cwd: options?.cwd,
+        env: options?.env,
+        timeoutMs: options?.timeoutMs ?? this.runtimeOptions.commandTimeoutMs
+      });
+
+      return {
+        command,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        duration: Date.now() - startTime,
+        timestamp: new Date(startTime).toISOString()
+      };
+    } catch (error) {
+      if (!this.runtimeSession.isReady()) {
+        throw new ShellTerminatedError(
+          this.runtimeOptions.id,
+          parseExitCommandExitCode(command) ??
+            this.runtimeSession.getShellExitCode()
+        );
+      }
+      throw error;
+    }
+  }
+
+  isReady(): boolean {
+    return !!this.runtimeSession?.isReady();
+  }
+
+  wasDestroyed(): boolean {
+    return this.runtimeDestroyed;
+  }
+
+  getShellExitCode(): number | null {
+    return this.runtimeSession?.getShellExitCode() ?? null;
+  }
+
+  async *startRuntimeProcessStream(
+    command: string,
+    options: RuntimeProcessStreamOptions
+  ): AsyncGenerator<ExecEvent, void, unknown> {
+    if (!this.runtimeSession) {
+      yield {
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        error: 'Runtime command session is not initialized'
+      };
+      return;
+    }
+
+    const startTime = Date.now();
+    const outputEvents = new ExecEventQueue();
+    const runtimeProcess: RuntimeProcessEntry = {
+      controller: new AbortController()
+    };
+    this.runtimeProcesses.set(options.commandId, runtimeProcess);
+    let completed = false;
+
+    try {
+      const process = await this.runtimeSession.startProcess(command, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeoutMs,
+        signal: runtimeProcess.controller.signal,
+        onOutput: (chunk) => {
+          outputEvents.push({
+            type: chunk.stream,
+            data: chunk.data,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
+
+      runtimeProcess.process = process;
+
+      yield {
+        type: 'start',
+        timestamp: new Date().toISOString(),
+        command,
+        pid: process.getPID()
+      };
+
+      const completion = process
+        .wait()
+        .then((result) => {
+          const duration = Date.now() - startTime;
+          outputEvents.push({
+            type: 'complete',
+            exitCode: result.exitCode,
+            timestamp: new Date().toISOString(),
+            result: {
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exitCode: result.exitCode,
+              success: result.exitCode === 0,
+              command,
+              duration,
+              timestamp: new Date(startTime).toISOString()
+            }
+          });
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          outputEvents.push({
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            error: message
+          });
+        })
+        .finally(() => {
+          completed = true;
+          if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+            this.runtimeProcesses.delete(options.commandId);
+          }
+          outputEvents.close();
+        });
+
+      try {
+        for await (const event of outputEvents) {
+          yield event;
+        }
+        await completion;
+      } finally {
+        if (!completed) {
+          runtimeProcess.controller.abort();
+          await runtimeProcess.process?.terminate().catch(() => {});
+          if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+            this.runtimeProcesses.delete(options.commandId);
+          }
+        }
+      }
+    } catch (error) {
+      if (this.runtimeProcesses.get(options.commandId) === runtimeProcess) {
+        this.runtimeProcesses.delete(options.commandId);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      yield {
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        error: message
+      };
+    }
+  }
+
+  async killCommand(commandId: string, _waitForExit = true): Promise<boolean> {
+    const runtimeProcess = this.runtimeProcesses.get(commandId);
+    if (!runtimeProcess) {
+      return false;
+    }
+
+    runtimeProcess.controller.abort();
+    await runtimeProcess.process?.kill();
+    return true;
+  }
+
+  getRunningCommandIds(): string[] {
+    return [...this.runtimeProcesses.keys()];
+  }
+
+  async destroy(): Promise<void> {
+    this.runtimeDestroyed = true;
+    await this.runtimeSession?.close().catch(() => {});
+    this.runtimeSession = undefined;
+    this.runtimeProcesses.clear();
+  }
+}
+
+function parseExitCommandExitCode(command: string): number | null {
+  const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  if (!match[1]) {
+    return 0;
+  }
+
+  const exitCode = Number.parseInt(match[1], 10);
+  return Number.isNaN(exitCode) ? null : exitCode;
+}
 
 export interface ExecuteInSessionOptions {
   cwd?: string;
@@ -38,14 +336,14 @@ export interface ExecuteInSessionOptions {
 
 /**
  * SessionManager manages persistent execution sessions.
- * Wraps the session.ts Session class with ServiceResult<T> pattern.
+ * Wraps managed shell resources with the ServiceResult<T> pattern.
  */
 export class SessionManager {
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, ManagedSession>();
   /** Per-session mutexes to prevent concurrent command execution */
   private sessionLocks = new Map<string, Mutex>();
   /** Tracks in-progress session creation to prevent duplicate creation races */
-  private creatingLocks = new Map<string, Promise<Session>>();
+  private creatingLocks = new Map<string, Promise<ManagedSession>>();
 
   constructor(private logger: Logger) {}
 
@@ -78,7 +376,7 @@ export class SessionManager {
   private async getOrCreateSession(
     sessionId: string,
     options: { cwd?: string; commandTimeoutMs?: number } = {}
-  ): Promise<ServiceResult<Session>> {
+  ): Promise<ServiceResult<ManagedSession>> {
     // Fast path: session already exists.
     //
     // A session whose shell has exited (user ran `exit`, shell crashed,
@@ -139,8 +437,8 @@ export class SessionManager {
 
     // We need to create the session - set up coordination
     // Since we hold the lock, we can safely set creatingLocks without race
-    const createPromise = (async (): Promise<Session> => {
-      const session = new Session({
+    const createPromise = (async (): Promise<ManagedSession> => {
+      const session = new RuntimeBackedSession({
         id: sessionId,
         cwd: options.cwd || '/workspace',
         commandTimeoutMs: options.commandTimeoutMs,
@@ -185,7 +483,7 @@ export class SessionManager {
    */
   async createSession(
     options: SessionOptions
-  ): Promise<ServiceResult<Session>> {
+  ): Promise<ServiceResult<ManagedSession>> {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
@@ -210,14 +508,13 @@ export class SessionManager {
       // directly). We acquire it here and hold it across the entire
       // check -> evict -> construct -> initialize -> set sequence, so:
       //
-      //   - Concurrent executeInSession / withSession / streaming
+      //   - Concurrent executeInSession / withSession / process streaming
       //     callers serialize behind the recreate, as the design comment
       //     has always claimed.
       //   - The dead-replace branch cannot interleave with a
       //     getOrCreateSession that would otherwise construct a
-      //     competing Session between our evict and our set, orphaning
-      //     one of them with a live bash process and an on-disk session
-      //     directory.
+      //     competing managed session between our evict and our set,
+      //     orphaning one of them with live execution resources.
       //   - Two concurrent createSession() calls on the same id also
       //     serialize, so the fresh-create path cannot double-initialize
       //     either.
@@ -228,7 +525,7 @@ export class SessionManager {
       // creatingLocks, and different session ids use different locks.
       const lock = this.getSessionLock(options.id);
       const lockedResult = await lock.runExclusive(
-        async (): Promise<ServiceResult<Session>> => {
+        async (): Promise<ServiceResult<ManagedSession>> => {
           const existing = this.sessions.get(options.id);
           if (existing) {
             if (existing.isReady()) {
@@ -252,9 +549,9 @@ export class SessionManager {
           }
 
           // Create and initialize session under the lock, so no
-          // concurrent caller can insert a competing Session between
-          // `new Session` and `this.sessions.set`.
-          const session = new Session({
+          // concurrent caller can insert a competing managed session
+          // before `this.sessions.set`.
+          const session = new RuntimeBackedSession({
             ...options,
             logger: this.logger
           });
@@ -307,7 +604,7 @@ export class SessionManager {
   /**
    * Get an existing session
    */
-  async getSession(sessionId: string): Promise<ServiceResult<Session>> {
+  async getSession(sessionId: string): Promise<ServiceResult<ManagedSession>> {
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -333,22 +630,8 @@ export class SessionManager {
   /**
    * Return the explicit exit code when command is a direct shell-exit command.
    */
-  private parseExitCommandExitCode(command: string): number | null {
-    const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
-    if (!match) {
-      return null;
-    }
-
-    if (!match[1]) {
-      return 0;
-    }
-
-    const exitCode = Number.parseInt(match[1], 10);
-    return Number.isNaN(exitCode) ? null : exitCode;
-  }
-
   /**
-   * Classify a failure from session.exec / session.execStream into one of:
+   * Classify a failure from session command execution into one of:
    *   - API-initiated destruction (SESSION_DESTROYED)
    *   - shell terminated on its own (SESSION_TERMINATED)
    *   - a plain command execution failure (COMMAND_EXECUTION_ERROR)
@@ -388,7 +671,7 @@ export class SessionManager {
     // Untyped error fallback (non-shell failures like I/O errors)
     let errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-    const explicitExitCode = this.parseExitCommandExitCode(command);
+    const explicitExitCode = parseExitCommandExitCode(command);
     if (explicitExitCode !== null) {
       errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
     }
@@ -432,12 +715,12 @@ export class SessionManager {
   /**
    * Tear down a session whose shell has exited, and remove it from the
    * manager's maps. Best-effort: the shell is already gone, we only care
-   * that associated resources (pty, in-flight command handles) are reaped
-   * and that the next call on this sessionId creates a fresh session.
+   * that in-flight command handles are reaped and that the next call on
+   * this sessionId creates a fresh session.
    */
   private async evictTerminatedSession(
     sessionId: string,
-    session: Session
+    session: ManagedSession
   ): Promise<void> {
     try {
       await session.destroy();
@@ -654,145 +937,41 @@ export class SessionManager {
   }
 
   /**
-   * Execute a command with streaming output.
+   * Start a lifecycle-managed process from a persistent session.
    *
    * @param sessionId - The session identifier
    * @param command - The command to execute
-   * @param onEvent - Callback for streaming events
+   * @param onEvent - Callback for process events
    * @param options - Optional cwd and env overrides
    * @param commandId - Required command identifier for tracking and killing
-   * @param lockOptions - Lock behavior options
-   * @param lockOptions.background - If true, release lock after 'start' event (for startProcess).
-   *                                 If false (default), hold lock until streaming completes (for exec --stream).
-   * @returns A promise that resolves when first event is processed, with continueStreaming promise for background execution
+   * @returns Process startup result plus a promise for remaining events
    */
-  async executeStreamInSession(
+  async startProcessStreamInSession(
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
     options: {
       cwd?: string;
       env?: Record<string, string | undefined>;
+      timeoutMs?: number;
       origin?: 'user' | 'internal';
     } = {},
-    commandId: string,
-    lockOptions: { background?: boolean } = {}
+    commandId: string
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    const { background = false } = lockOptions;
     const lock = this.getSessionLock(sessionId);
 
-    // For background mode: acquire lock, process start event, release lock, continue streaming
-    // For foreground mode: acquire lock, process all events, release lock
-    if (background) {
-      return this.executeStreamBackground(
-        sessionId,
-        command,
-        onEvent,
-        options,
-        commandId,
-        lock
-      );
-    } else {
-      return this.executeStreamForeground(
-        sessionId,
-        command,
-        onEvent,
-        options,
-        commandId,
-        lock
-      );
-    }
+    return this.startProcessStreamWithLock(
+      sessionId,
+      command,
+      onEvent,
+      options,
+      commandId,
+      lock
+    );
   }
 
   /**
-   * Foreground streaming: hold lock until all events are processed
-   */
-  private async executeStreamForeground(
-    sessionId: string,
-    command: string,
-    onEvent: (event: ExecEvent) => Promise<void>,
-    options: {
-      cwd?: string;
-      env?: Record<string, string | undefined>;
-      origin?: 'user' | 'internal';
-    },
-    commandId: string,
-    lock: Mutex
-  ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    return lock.runExclusive(async () => {
-      try {
-        const { cwd, env, origin } = options;
-
-        const sessionResult = await this.getOrCreateSession(sessionId, {
-          cwd: cwd || '/workspace'
-        });
-
-        if (!sessionResult.success) {
-          return sessionResult as ServiceResult<{
-            continueStreaming: Promise<void>;
-          }>;
-        }
-
-        const session = sessionResult.data;
-        const generator = session.execStream(command, {
-          commandId,
-          cwd,
-          env,
-          origin
-        });
-
-        // Process ALL events under lock
-        for await (const event of generator) {
-          await onEvent(event);
-        }
-
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      } catch (error) {
-        const {
-          errorMessage,
-          sessionDestroyed,
-          shellTerminated,
-          shellExitCode
-        } = this.classifyCommandError(error, command, sessionId);
-
-        if (sessionDestroyed) {
-          return {
-            success: false,
-            error: this.sessionDestroyedError(sessionId)
-          };
-        }
-
-        if (shellTerminated) {
-          const session = this.sessions.get(sessionId);
-          if (session && !session.isReady()) {
-            await this.evictTerminatedSession(sessionId, session);
-          }
-          return {
-            success: false,
-            error: this.sessionTerminatedError(sessionId, shellExitCode)
-          };
-        }
-
-        return {
-          success: false,
-          error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
-            code: ErrorCode.STREAM_START_ERROR,
-            details: {
-              command,
-              stderr: errorMessage
-            } satisfies CommandErrorContext
-          }
-        };
-      }
-    });
-  }
-
-  /**
-   * Background streaming: hold lock only until 'start' event, then release.
+   * Process streaming holds the lock only until 'start' event, then releases it.
    *
    * This mode is used for long-running background processes (like servers)
    * where we want to:
@@ -810,22 +989,23 @@ export class SessionManager {
    * - Starting background services
    * - Any long-running process that should not block other operations
    */
-  private async executeStreamBackground(
+  private async startProcessStreamWithLock(
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
     options: {
       cwd?: string;
       env?: Record<string, string | undefined>;
+      timeoutMs?: number;
       origin?: 'user' | 'internal';
     },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    // Acquire lock for startup phase only
+    // Acquire lock for startup phase only.
     const startupResult = await lock.runExclusive(async () => {
       try {
-        const { cwd, env, origin } = options;
+        const { cwd, env, timeoutMs, origin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -836,14 +1016,15 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, {
+        const generator = session.startRuntimeProcessStream(command, {
           commandId,
           cwd,
           env,
+          timeoutMs,
           origin
         });
 
-        // Process 'start' event under lock
+        // Process 'start' event under lock.
         const firstResult = await generator.next();
 
         if (firstResult.done) {
@@ -856,7 +1037,7 @@ export class SessionManager {
 
         await onEvent(firstResult.value);
 
-        // If already complete/error, drain remaining events under lock
+        // If already complete/error, drain remaining events under lock.
         if (
           firstResult.value.type === 'complete' ||
           firstResult.value.type === 'error'
@@ -871,7 +1052,7 @@ export class SessionManager {
           };
         }
 
-        // Return generator for background processing (lock will be released)
+        // Return generator for background processing after lock release.
         return {
           success: true as const,
           generator,
@@ -906,7 +1087,7 @@ export class SessionManager {
         return {
           success: false as const,
           error: {
-            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to start process stream '${command}' in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.STREAM_START_ERROR,
             details: {
               command,
@@ -924,7 +1105,7 @@ export class SessionManager {
       };
     }
 
-    // If generator is null, everything completed during startup
+    // If generator is null, everything completed during startup.
     if (!startupResult.generator) {
       return {
         success: true,
@@ -932,7 +1113,7 @@ export class SessionManager {
       };
     }
 
-    // Continue streaming remaining events WITHOUT lock
+    // Continue streaming remaining events without the session lock.
     const continueStreaming = (async () => {
       for await (const event of startupResult.generator!) {
         await onEvent(event);
@@ -943,90 +1124,6 @@ export class SessionManager {
       success: true,
       data: { continueStreaming }
     };
-  }
-
-  async getPty(
-    sessionId: string,
-    options?: PtyOptions
-  ): Promise<ServiceResult<Pty>> {
-    const lock = this.getSessionLock(sessionId);
-
-    return lock.runExclusive(async () => {
-      const sessionResult = await this.getOrCreateSession(sessionId);
-      if (!sessionResult.success) {
-        return sessionResult as ServiceResult<Pty>;
-      }
-
-      const session = sessionResult.data;
-
-      if (session.pty) {
-        return { success: true, data: session.pty };
-      }
-
-      // Capture the session shell's current environment and working
-      // directory so the PTY inherits env vars set via setEnvVars()
-      // and reflects any directory changes made in the session.
-      //
-      // Captures env output to a temp file. The exec pipeline's
-      // `read`-based labeling strips \0 from stdout, so reading
-      // the file directly with Bun preserves the null-byte delimiters.
-      const sessionEnv: Record<string, string> = {};
-      let sessionCwd: string = CONFIG.DEFAULT_CWD;
-      const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
-      try {
-        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`, {
-          origin: 'internal'
-        });
-        if (envResult.exitCode === 0) {
-          const envText = await Bun.file(tempEnvFile).text();
-          for (const entry of envText.split('\0')) {
-            const idx = entry.indexOf('=');
-            if (idx > 0) {
-              sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
-            }
-          }
-        }
-
-        const cwdResult = await session.exec('pwd', { origin: 'internal' });
-        if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
-          sessionCwd = cwdResult.stdout.trim();
-        }
-      } catch {
-        this.logger.warn('Failed to capture session state for PTY', {
-          sessionId
-        });
-      } finally {
-        await rm(tempEnvFile, { force: true }).catch(() => {});
-      }
-
-      const pty = new Pty({
-        cwd: sessionCwd,
-        env: sessionEnv,
-        logger: this.logger
-      });
-
-      try {
-        await pty.initialize(options);
-
-        session.pty = pty;
-        return { success: true, data: pty };
-      } catch (error) {
-        await pty.destroy().catch(() => {});
-
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        return {
-          success: false,
-          error: {
-            message: `Failed to create PTY: ${errorMessage}`,
-            code: ErrorCode.INTERNAL_ERROR,
-            details: { sessionId }
-          }
-        };
-      }
-    });
   }
 
   /**

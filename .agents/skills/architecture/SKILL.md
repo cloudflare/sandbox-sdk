@@ -38,7 +38,7 @@ Worker
       → capnweb over /rpc WebSocket
         → SandboxControlAPI (packages/sandbox-container/src/control-plane/)
           → container services
-            → sessions / shell commands / filesystem
+            → execution runtime / terminal resources / filesystem
 ```
 
 Errors flow back the same path: container service → control plane → capnweb → Sandbox DO → Worker, using custom error classes keyed by the `ErrorCode` enum.
@@ -59,7 +59,7 @@ The shared `@repo/shared` `SandboxAPI` interface defines the control API contrac
 Specialized non-control channels remain separate:
 
 - `/rpc` — SDK control channel
-- `/ws/pty` — PTY terminal channel
+- `/ws/terminal` — terminal WebSocket channel
 - preview/proxy forwarding — user service traffic, not SDK control traffic
 
 ## Container Runtime (`packages/sandbox-container/src/`)
@@ -68,8 +68,9 @@ Specialized non-control channels remain separate:
 - **Control plane** (`control-plane/`) — container-side API called by the Sandbox DO
 - **Services** (`services/`) — business logic (`ProcessService`, `FileService`, `PortService`, …)
 - **Managers** (`managers/`) — stateful coordinators such as `ProcessManager`
-- **Session** (`session.ts`) — persistent shell execution implementation
-- **PTY handler** (`handlers/pty-ws-handler.ts`) — terminal WebSocket handling
+- **Execution runtime** (`@repo/sandbox-execution`) — stateless commands, persistent command sessions, and lifecycle-managed processes
+- **Session manager** (`services/session-manager.ts`) — explicit session lifecycle, locking, and runtime adapters
+- **Terminal handler** (`handlers/terminal-ws-handler.ts`) — terminal WebSocket byte transport
 
 Entry point: `packages/sandbox-container/src/index.ts` starts the Bun server on port 3000.
 
@@ -95,7 +96,7 @@ Uses npm workspaces + Turbo:
 
 ## Cross-Cutting Patterns
 
-- **Sessions** — isolate execution contexts (cwd, env vars). Default session is auto-created; multiple sessions per sandbox are supported.
+- **Execution** — top-level `exec()` / `startProcess()` are stateless. Explicit sessions isolate command state (cwd, env vars, aliases, functions) and are created via `createSession()`.
 - **Ports** — expose internal services via preview URLs with token auth. Preview URL authorization is Durable Object-owned, while forwarding is active only after `exposePort()` activates the port for the current runtime. Production preview URLs require a custom domain with wildcard DNS (`*.yourdomain.com`); `.workers.dev` does not support the required subdomain patterns.
 - **Container isolation** — handled at the Cloudflare platform level (VMs), not by SDK code.
 

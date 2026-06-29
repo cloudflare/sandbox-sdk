@@ -6,7 +6,7 @@ import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
 import { SandboxControlAPI } from './control-plane';
 import { Container } from './core/container';
-import type { PtyWSData } from './handlers/pty-ws-handler';
+import type { TerminalWSData } from './handlers/terminal-ws-handler';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -14,7 +14,7 @@ export type CapnwebWSData = {
   transport?: BunWebSocketTransport<WSData>;
 };
 
-export type WSData = PtyWSData | CapnwebWSData;
+export type WSData = TerminalWSData | CapnwebWSData;
 
 const logger = createLogger({ component: 'container' });
 const SERVER_PORT = 3000;
@@ -68,6 +68,7 @@ async function createApplication(): Promise<{
     backupService: container.get('backupService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
+    terminalManager: container.get('terminalManager'),
     extensionHost: container.get('extensionHost'),
     sessionManager: container.get('sessionManager'),
     logger
@@ -82,26 +83,24 @@ async function createApplication(): Promise<{
       if (upgradeHeader?.toLowerCase() === 'websocket') {
         const url = new URL(req.url);
 
-        if (url.pathname === '/ws/pty') {
-          const sessionId = url.searchParams.get('sessionId');
-          if (!sessionId) {
-            return new Response('sessionId query parameter required', {
+        if (url.pathname === '/ws/terminal') {
+          const terminalId = url.searchParams.get('terminalId');
+          if (!terminalId) {
+            return new Response('terminalId query parameter required', {
               status: 400
             });
           }
 
           const colsParam = url.searchParams.get('cols');
           const rowsParam = url.searchParams.get('rows');
-          const shellParam = url.searchParams.get('shell');
 
           const upgraded = server.upgrade(req, {
             data: {
-              type: 'pty' as const,
-              sessionId,
+              type: 'terminal' as const,
+              terminalId,
               connectionId: generateConnectionId(),
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
-              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined,
-              shell: shellParam ?? undefined
+              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
             }
           });
           if (upgraded) {
@@ -158,13 +157,13 @@ export async function startServer(): Promise<ServerInstance> {
     websocket: {
       open(ws) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             void app.container
-              .get('ptyWsHandler')
-              .onOpen(ws as ServerWebSocket<PtyWSData>)
+              .get('terminalWsHandler')
+              .onOpen(ws as ServerWebSocket<TerminalWSData>)
               .catch((err) => {
                 logger.error(
-                  'PTY onOpen failed',
+                  'Terminal onOpen failed',
                   err instanceof Error ? err : new Error(String(err))
                 );
                 try {
@@ -194,10 +193,10 @@ export async function startServer(): Promise<ServerInstance> {
       },
       close(ws, code, reason) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             app.container
-              .get('ptyWsHandler')
-              .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
+              .get('terminalWsHandler')
+              .onClose(ws as ServerWebSocket<TerminalWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
             // Forget the peer's control callback. Subsequent tunnel
@@ -214,10 +213,10 @@ export async function startServer(): Promise<ServerInstance> {
       },
       async message(ws, message) {
         try {
-          if (ws.data.type === 'pty') {
+          if (ws.data.type === 'terminal') {
             app.container
-              .get('ptyWsHandler')
-              .onMessage(ws as ServerWebSocket<PtyWSData>, message);
+              .get('terminalWsHandler')
+              .onMessage(ws as ServerWebSocket<TerminalWSData>, message);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchMessage(message);
           }
@@ -259,6 +258,7 @@ export async function startServer(): Promise<ServerInstance> {
         const watchService = app.container.get('watchService');
         const tunnelService = app.container.get('tunnelService');
         const extensionHost = app.container.get('extensionHost');
+        const terminalManager = app.container.get('terminalManager');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -270,6 +270,7 @@ export async function startServer(): Promise<ServerInstance> {
         await processService.destroy();
         portService.destroy();
         await tunnelService.destroyAll();
+        await terminalManager.destroyAll();
         await extensionHost.stopAll();
 
         logger.info('Services cleaned up successfully');

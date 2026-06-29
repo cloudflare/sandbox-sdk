@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import type {
   ProcessRecord,
   ServiceResult
@@ -11,8 +10,12 @@ import {
   ProcessService,
   type ProcessStore
 } from '@sandbox-container/services/process-service.js';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
+
+const LEGACY_SESSIONLESS_SESSION_ID = '__DISABLE_SESSION__';
+
+type TestProcessCommandHandle = NonNullable<ProcessRecord['commandHandle']>;
 
 // Mock the dependencies with proper typing
 const mockProcessStore = {
@@ -35,7 +38,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockExecutionService = {
   execute: vi.fn(),
-  executeStream: vi.fn(),
+  startProcessStream: vi.fn(),
   withExecution: vi.fn(),
   kill: vi.fn()
 } as unknown as ExecutionService;
@@ -53,7 +56,7 @@ const createMockProcess = (
   outputListeners: new Set(),
   statusListeners: new Set(),
   commandHandle: {
-    sessionId: 'default',
+    target: { kind: 'session', sessionId: 'default' },
     commandId: 'proc-123'
   },
   ...overrides
@@ -102,7 +105,7 @@ describe('ProcessService', () => {
       expect(mockExecutionService.execute).toHaveBeenCalledWith(
         'echo "hello world"',
         {
-          sessionId: undefined,
+          target: { kind: 'sessionless' },
           cwd: '/tmp',
           timeoutMs: undefined,
           env: undefined,
@@ -164,20 +167,20 @@ describe('ProcessService', () => {
         }
       );
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) =>
           ({
             success: true,
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: 'session-123',
+                target: { kind: 'session', sessionId: 'session-123' },
                 commandId: options.commandId
               }
             }
           }) as ServiceResult<{
             continueStreaming: Promise<void>;
-            commandHandle: { sessionId: string; commandId: string };
+            commandHandle: TestProcessCommandHandle;
           }>
       );
 
@@ -192,18 +195,17 @@ describe('ProcessService', () => {
         expect(result.data.command).toBe('sleep 10');
         expect(result.data.status).toBe('running');
         expect(result.data.commandHandle).toEqual({
-          sessionId: 'session-123',
+          target: { kind: 'session', sessionId: 'session-123' },
           commandId: result.data.id
         });
       }
 
-      // Verify SessionManager.executeStreamInSession was called
-      expect(mockExecutionService.executeStream).toHaveBeenCalledWith(
+      // Verify SessionManager.startProcessStreamInSession was called
+      expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
         'sleep 10',
         expect.objectContaining({
-          sessionId: 'session-123',
+          target: { kind: 'session', sessionId: 'session-123' },
           cwd: '/tmp',
-          background: true,
           commandId: expect.any(String),
           onEvent: expect.any(Function)
         })
@@ -212,7 +214,7 @@ describe('ProcessService', () => {
       expect(createdCommandAtCreate).toBe('sleep 10');
       expect(createdStatusAtCreate).toBe('running');
       expect(createdCommandHandleAtCreate).toEqual({
-        sessionId: 'session-123',
+        target: { kind: 'session', sessionId: 'session-123' },
         commandId: result.success ? result.data.id : expect.any(String)
       });
 
@@ -220,14 +222,14 @@ describe('ProcessService', () => {
         result.success ? result.data.id : expect.any(String),
         expect.objectContaining({
           commandHandle: {
-            sessionId: 'session-123',
+            target: { kind: 'session', sessionId: 'session-123' },
             commandId: result.success ? result.data.id : expect.any(String)
           }
         })
       );
     });
 
-    it('should preserve the sessionless command handle for background processes', async () => {
+    it('uses sessionless command targets for missing-session processes', async () => {
       let createdCommandHandleAtCreate:
         | ProcessRecord['commandHandle']
         | undefined;
@@ -238,43 +240,83 @@ describe('ProcessService', () => {
         }
       );
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) =>
           ({
             success: true,
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: DISABLE_SESSION_TOKEN,
+                target: { kind: 'sessionless' },
                 commandId: options.commandId,
                 pid: 4321
               }
             }
           }) as ServiceResult<{
             continueStreaming: Promise<void>;
-            commandHandle: {
-              sessionId: string;
-              commandId: string;
-              pid?: number;
-            };
+            commandHandle: TestProcessCommandHandle;
+          }>
+      );
+
+      const result = await processService.startProcess('sleep 10');
+
+      expect(result.success).toBe(true);
+      expect(createdCommandHandleAtCreate).toEqual({
+        target: { kind: 'sessionless' },
+        commandId: result.success ? result.data.id : expect.any(String)
+      });
+      expect(mockExecutionService.startProcessStream).toHaveBeenCalledWith(
+        'sleep 10',
+        expect.objectContaining({
+          target: { kind: 'sessionless' }
+        })
+      );
+    });
+
+    it('preserves sessionless command targets for explicit sessionless processes', async () => {
+      let createdCommandHandleAtCreate:
+        | ProcessRecord['commandHandle']
+        | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdCommandHandleAtCreate = process.commandHandle;
+        }
+      );
+
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
+        async (_command, options) =>
+          ({
+            success: true,
+            data: {
+              continueStreaming: new Promise(() => {}),
+              commandHandle: {
+                target: { kind: 'sessionless' },
+                commandId: options.commandId,
+                pid: 4321
+              }
+            }
+          }) as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: TestProcessCommandHandle;
           }>
       );
 
       const result = await processService.startProcess('sleep 10', {
-        sessionId: DISABLE_SESSION_TOKEN
+        sessionId: LEGACY_SESSIONLESS_SESSION_ID
       });
 
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.commandHandle).toEqual({
-          sessionId: DISABLE_SESSION_TOKEN,
+          target: { kind: 'sessionless' },
           commandId: result.data.id,
           pid: 4321
         });
       }
 
       expect(createdCommandHandleAtCreate).toEqual({
-        sessionId: DISABLE_SESSION_TOKEN,
+        target: { kind: 'sessionless' },
         commandId: result.success ? result.data.id : expect.any(String)
       });
 
@@ -282,7 +324,7 @@ describe('ProcessService', () => {
         result.success ? result.data.id : expect.any(String),
         expect.objectContaining({
           commandHandle: {
-            sessionId: DISABLE_SESSION_TOKEN,
+            target: { kind: 'sessionless' },
             commandId: result.success ? result.data.id : expect.any(String),
             pid: 4321
           }
@@ -293,7 +335,7 @@ describe('ProcessService', () => {
     it('should reflect a later non-zero complete event on the returned process record', async () => {
       let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
 
-      mocked(mockExecutionService.executeStream).mockImplementation(
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
         async (_command, options) => {
           onEvent = options.onEvent;
 
@@ -302,18 +344,14 @@ describe('ProcessService', () => {
             data: {
               continueStreaming: new Promise(() => {}),
               commandHandle: {
-                sessionId: DISABLE_SESSION_TOKEN,
+                target: { kind: 'sessionless' },
                 commandId: options.commandId,
                 pid: 4321
               }
             }
           } as ServiceResult<{
             continueStreaming: Promise<void>;
-            commandHandle: {
-              sessionId: string;
-              commandId: string;
-              pid?: number;
-            };
+            commandHandle: TestProcessCommandHandle;
           }>;
         }
       );
@@ -345,11 +383,11 @@ describe('ProcessService', () => {
       }
 
       // Verify SessionManager was not called
-      expect(mockExecutionService.executeStream).not.toHaveBeenCalled();
+      expect(mockExecutionService.startProcessStream).not.toHaveBeenCalled();
     });
 
-    it('should handle stream execution errors', async () => {
-      mocked(mockExecutionService.executeStream).mockImplementation(() => {
+    it('should handle process stream errors', async () => {
+      mocked(mockExecutionService.startProcessStream).mockImplementation(() => {
         throw new Error('Failed to execute stream');
       });
 
@@ -359,7 +397,7 @@ describe('ProcessService', () => {
       if (!result.success) {
         expect(result.error.code).toBe('STREAM_START_ERROR');
         expect(result.error.message).toContain(
-          'Failed to start streaming command'
+          'Failed to start process stream'
         );
       }
 
@@ -374,7 +412,7 @@ describe('ProcessService', () => {
     });
 
     it('should mark returned stream startup failures as terminal error', async () => {
-      mocked(mockExecutionService.executeStream).mockResolvedValue({
+      mocked(mockExecutionService.startProcessStream).mockResolvedValue({
         success: false,
         error: {
           message: 'Failed before stream was ready',
@@ -382,7 +420,7 @@ describe('ProcessService', () => {
         }
       } as ServiceResult<{
         continueStreaming: Promise<void>;
-        commandHandle: { sessionId: string; commandId: string };
+        commandHandle: TestProcessCommandHandle;
       }>);
 
       const result = await processService.startProcess('echo test', {});
@@ -432,7 +470,7 @@ describe('ProcessService', () => {
       const mockProcess = createMockProcess({
         command: 'sleep 10',
         commandHandle: {
-          sessionId: 'default',
+          target: { kind: 'session', sessionId: 'default' },
           commandId: 'proc-123'
         }
       });
@@ -512,12 +550,18 @@ describe('ProcessService', () => {
         createMockProcess({
           id: 'proc-1',
           command: 'sleep 10',
-          commandHandle: { sessionId: 'default', commandId: 'proc-1' }
+          commandHandle: {
+            target: { kind: 'session', sessionId: 'default' },
+            commandId: 'proc-1'
+          }
         }),
         createMockProcess({
           id: 'proc-2',
           command: 'sleep 20',
-          commandHandle: { sessionId: 'default', commandId: 'proc-2' }
+          commandHandle: {
+            target: { kind: 'session', sessionId: 'default' },
+            commandId: 'proc-2'
+          }
         })
       ];
 

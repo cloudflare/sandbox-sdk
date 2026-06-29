@@ -8,7 +8,7 @@ import { vi } from 'vitest';
  * invokes `onOutput` / `onComplete` / `onError` callbacks.
  */
 export function createMockSession(id = 'mock-session') {
-  return {
+  const session = {
     id,
     exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
       const result = { stdout: '', stderr: '', exitCode: 0 };
@@ -23,10 +23,22 @@ export function createMockSession(id = 'mock-session') {
       }
       return result;
     }),
+    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
+      await session.exec(cmd, {
+        ...opts,
+        stream: true,
+        onComplete(result: { exitCode: number }) {
+          if (typeof opts?.onExit === 'function') {
+            (opts.onExit as (code: number | null) => void)(result.exitCode);
+          }
+        }
+      });
+      return { id: 'mock-process' };
+    }),
     readFileStream: vi.fn(async () => new ReadableStream()),
-    writeFile: vi.fn(async () => {}),
-    terminal: vi.fn(async () => new Response(null, { status: 200 }))
+    writeFile: vi.fn(async () => {})
   };
+  return session;
 }
 
 /**
@@ -38,7 +50,7 @@ export function createMockSession(id = 'mock-session') {
  * final result.
  */
 export function createMockSandbox() {
-  return {
+  const sandbox = {
     exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
       const result = { stdout: '', stderr: '', exitCode: 0 };
       if (opts?.stream) {
@@ -53,14 +65,28 @@ export function createMockSandbox() {
       }
       return result;
     }),
+    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
+      await sandbox.exec(cmd, {
+        ...opts,
+        stream: true,
+        onComplete(result: { exitCode: number }) {
+          if (typeof opts?.onExit === 'function') {
+            (opts.onExit as (code: number | null) => void)(result.exitCode);
+          }
+        }
+      });
+      return { id: 'mock-process' };
+    }),
     readFile: vi.fn(async () => ({ content: 'file content' })),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {}),
-    terminal: vi.fn(async (_request: Request, _opts?: Record<string, unknown>) => {
+    terminal: vi.fn((opts?: { id?: string }) => ({
+      id: opts?.id ?? 'mock-terminal',
       // In real usage this returns a 101 WebSocket upgrade response, but Node
       // doesn't allow constructing Response with status 101, so we use 200.
-      return new Response(null, { status: 200 });
-    }),
+      connect: vi.fn(async () => new Response(null, { status: 200 })),
+      destroy: vi.fn(async () => {})
+    })),
     getSession: vi.fn(async (sessionId: string) => createMockSession(sessionId)),
     createSession: vi.fn(async (opts?: { id?: string }) => ({
       id: opts?.id || 'auto-session-id'
@@ -78,6 +104,7 @@ export function createMockSandbox() {
     },
     destroy: vi.fn(async () => {})
   };
+  return sandbox;
 }
 
 /** Base URL used for all test requests against the Hono app. */

@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import type { ServiceResult } from '@sandbox-container/core/types';
+import {
+  getExecutionTargetDisplayName,
+  type ServiceResult
+} from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
 import type { ExecutionService } from '@sandbox-container/services/execution-service';
-import type { RawExecResult } from '@sandbox-container/session';
+import type { RawExecResult } from '@sandbox-container/session-types';
 import { mocked } from '../test-utils';
 
 const mockLogger = {
@@ -17,7 +20,7 @@ mockLogger.child = vi.fn(() => mockLogger);
 
 const mockSessionManager = {
   executeInSession: vi.fn(),
-  executeStreamInSession: vi.fn(),
+  startProcessStreamInSession: vi.fn(),
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
@@ -30,7 +33,7 @@ const mockSessionManager = {
 
 const mockExecutionService = {
   execute: vi.fn(),
-  executeStream: vi.fn(),
+  startProcessStream: vi.fn(),
   withExecution: vi.fn(),
   kill: vi.fn()
 } as unknown as ExecutionService;
@@ -69,7 +72,9 @@ describe('BackupService', () => {
     global.fetch = mockFetch as unknown as typeof fetch;
     mocked(mockExecutionService.execute).mockImplementation(
       async (command, options = {}) => {
-        const sessionId = options.sessionId ?? 'default';
+        const sessionId = getExecutionTargetDisplayName(
+          options.target ?? { kind: 'sessionless' }
+        );
         return await mockSessionManager.executeInSession(sessionId, command);
       }
     );
@@ -374,7 +379,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       true,
       []
     );
@@ -470,7 +475,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       true,
       []
     );
@@ -533,7 +538,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       true,
       []
     );
@@ -583,7 +588,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       false,
       ['node_modules', '*.log']
     );
@@ -655,7 +660,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       true,
       []
     );
@@ -701,7 +706,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       false,
       ['**/node_modules/.cache', '**/.next/cache', '**/.turbo', '**/dist']
     );
@@ -766,7 +771,7 @@ describe('BackupService', () => {
     const result = await service.createArchive(
       dir,
       archivePath,
-      'default',
+      undefined,
       false
     );
 

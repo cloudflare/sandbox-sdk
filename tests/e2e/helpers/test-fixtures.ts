@@ -20,8 +20,8 @@ export function createSandboxId(): string {
 /**
  * Generate unique session ID for session isolation testing
  *
- * Session ID determines which shell session within a container to use.
- * Most tests should NOT need this - the SDK handles default sessions automatically.
+ * Session ID determines which explicit shell session within a container to use.
+ * Most tests should NOT need this - top-level SDK methods are sessionless.
  *
  * Only use this for:
  * - Testing session isolation (multiple sessions in one sandbox)
@@ -37,10 +37,10 @@ export function createSessionId(): string {
  * Create headers for sandbox/session identification
  *
  * @param sandboxId - Which container instance to use
- * @param sessionId - (Optional) Which session within that container (SDK defaults to auto-managed session)
+ * @param sessionId - (Optional) Which explicit session within that container
  *
  * @example
- * // Most tests: unique sandbox, default session
+ * // Most tests: unique sandbox, sessionless top-level APIs
  * const headers = createTestHeaders(createSandboxId());
  *
  * @example

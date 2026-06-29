@@ -1,5 +1,6 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
+import { resolveExecutionTarget } from '../core/types';
 import type { ProcessFilters, ProcessRecord } from './process-service';
 
 /**
@@ -168,13 +169,18 @@ export class ProcessStore {
       }
 
       const text = await file.text();
-      const data = JSON.parse(text);
+      const data = JSON.parse(text) as ProcessRecord & {
+        startTime: string;
+        endTime?: string;
+        commandHandle?: unknown;
+      };
 
-      // Reconstruct ProcessRecord with empty listener Sets
+      // Reconstruct ProcessRecord with empty listener Sets.
       const process: ProcessRecord = {
         ...data,
         startTime: new Date(data.startTime),
         endTime: data.endTime ? new Date(data.endTime) : undefined,
+        commandHandle: this.normalizeCommandHandle(data.commandHandle),
         outputListeners: new Set(),
         statusListeners: new Set()
       };
@@ -183,6 +189,41 @@ export class ProcessStore {
     } catch (error) {
       return null;
     }
+  }
+
+  private normalizeCommandHandle(
+    commandHandle: unknown
+  ): ProcessRecord['commandHandle'] {
+    if (!commandHandle || typeof commandHandle !== 'object') {
+      return undefined;
+    }
+
+    if ('target' in commandHandle && 'commandId' in commandHandle) {
+      return commandHandle as ProcessRecord['commandHandle'];
+    }
+
+    if (!('sessionId' in commandHandle) || !('commandId' in commandHandle)) {
+      return undefined;
+    }
+
+    const legacyHandle = commandHandle as {
+      sessionId: unknown;
+      commandId: unknown;
+      pid?: unknown;
+    };
+
+    if (
+      typeof legacyHandle.sessionId !== 'string' ||
+      typeof legacyHandle.commandId !== 'string'
+    ) {
+      return undefined;
+    }
+
+    return {
+      target: resolveExecutionTarget(legacyHandle.sessionId),
+      commandId: legacyHandle.commandId,
+      ...(typeof legacyHandle.pid === 'number' ? { pid: legacyHandle.pid } : {})
+    };
   }
 
   private async deleteProcessFile(id: string): Promise<void> {

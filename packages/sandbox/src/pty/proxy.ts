@@ -1,28 +1,70 @@
 import { switchPort } from '@cloudflare/containers';
-import type { PtyOptions } from '@repo/shared';
+import type {
+  SandboxTerminal,
+  TerminalConnectOptions,
+  TerminalCreateOptions,
+  TerminalOptions
+} from '@repo/shared';
+
+interface SandboxTerminalStub {
+  fetch(request: Request): Promise<Response>;
+  createTerminal(options: TerminalCreateOptions): Promise<unknown>;
+  destroyTerminal(id: string): Promise<void>;
+}
+
+function resolveTerminalId(options?: TerminalOptions): string {
+  if (options?.id !== undefined) {
+    if (typeof options.id !== 'string' || options.id.length === 0) {
+      throw new Error('terminal id must be a non-empty string');
+    }
+
+    return options.id;
+  }
+
+  return `terminal-${crypto.randomUUID()}`;
+}
+
+export function createSandboxTerminal(
+  stub: SandboxTerminalStub,
+  options?: TerminalOptions
+): SandboxTerminal {
+  const id = resolveTerminalId(options);
+
+  return {
+    id,
+    connect: (request, connectOptions) =>
+      proxyTerminal(stub, id, request, options, connectOptions),
+    destroy: () => stub.destroyTerminal(id)
+  };
+}
 
 export async function proxyTerminal(
-  stub: { fetch: (request: Request) => Promise<Response> },
-  sessionId: string,
+  stub: SandboxTerminalStub,
+  terminalId: string,
   request: Request,
-  options?: PtyOptions
+  options?: TerminalOptions,
+  connectOptions?: TerminalConnectOptions
 ): Promise<Response> {
-  if (!sessionId || typeof sessionId !== 'string') {
-    throw new Error('sessionId is required for terminal access');
-  }
-
   const upgradeHeader = request.headers.get('Upgrade');
   if (upgradeHeader?.toLowerCase() !== 'websocket') {
-    throw new Error('terminal() requires a WebSocket upgrade request');
+    throw new Error('terminal.connect() requires a WebSocket upgrade request');
   }
 
-  const params = new URLSearchParams({ sessionId });
-  if (options?.cols) params.set('cols', String(options.cols));
-  if (options?.rows) params.set('rows', String(options.rows));
-  if (options?.shell) params.set('shell', options.shell);
+  const createOptions: TerminalCreateOptions = { id: terminalId };
+  if (options?.cwd !== undefined) createOptions.cwd = options.cwd;
+  if (options?.shell !== undefined) createOptions.shell = options.shell;
+  if (connectOptions?.cols !== undefined)
+    createOptions.cols = connectOptions.cols;
+  if (connectOptions?.rows !== undefined)
+    createOptions.rows = connectOptions.rows;
+  await stub.createTerminal(createOptions);
 
-  const ptyUrl = `http://localhost/ws/pty?${params}`;
-  const ptyRequest = new Request(ptyUrl, request);
+  const params = new URLSearchParams({ terminalId });
+  if (connectOptions?.cols) params.set('cols', String(connectOptions.cols));
+  if (connectOptions?.rows) params.set('rows', String(connectOptions.rows));
 
-  return stub.fetch(switchPort(ptyRequest, 3000));
+  const terminalURL = `http://localhost/ws/terminal?${params}`;
+  const terminalRequest = new Request(terminalURL, request);
+
+  return stub.fetch(switchPort(terminalRequest, 3000));
 }

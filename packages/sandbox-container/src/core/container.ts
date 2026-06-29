@@ -1,7 +1,7 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
 import { ExtensionHost } from '../extensions/extension-host';
-import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
+import { TerminalWebSocketHandler } from '../handlers/terminal-ws-handler';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
@@ -12,6 +12,7 @@ import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { TerminalManager } from '../services/terminal-manager';
 import { TunnelService } from '../services/tunnel-service';
 import { WatchService } from '../services/watch-service';
 
@@ -30,10 +31,11 @@ export interface Dependencies {
   logger: Logger;
   security: SecurityService;
   sessionManager: SessionManager;
+  terminalManager: TerminalManager;
   executionService: ExecutionService;
 
   // Handlers
-  ptyWsHandler: PtyWebSocketHandler;
+  terminalWsHandler: TerminalWebSocketHandler;
 }
 
 export class Container {
@@ -95,8 +97,9 @@ export class Container {
     // Initialize stores
     const processStore = new ProcessStore(logger);
 
-    // Initialize SessionManager
+    // Initialize execution infrastructure
     const sessionManager = new SessionManager(logger);
+    const terminalManager = new TerminalManager(logger);
     const executionService = new ExecutionService(sessionManager, logger);
 
     // Create git-specific logger that automatically sanitizes credentials
@@ -127,7 +130,10 @@ export class Container {
     const extensionHost = new ExtensionHost(logger);
 
     // Initialize handlers
-    const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
+    const terminalWsHandler = new TerminalWebSocketHandler(
+      terminalManager,
+      logger
+    );
 
     // Store all dependencies
     this.dependencies = {
@@ -145,10 +151,11 @@ export class Container {
       logger,
       security,
       sessionManager,
+      terminalManager,
       executionService,
 
       // Handlers
-      ptyWsHandler
+      terminalWsHandler
     };
 
     this.initialized = true;

@@ -32,7 +32,7 @@
  *     `imports = 2` for its lifetime.
  *
  *   - **Returned ReadableStream.** When the peer (the container) returns a
- *     `ReadableStream` from an RPC method (e.g. `commands.executeStream`),
+ *     `ReadableStream` from an RPC method (e.g. `processes.streamProcessLogs`),
  *     capnweb serializes it via `createPipe()`: the *server* allocates an
  *     import slot, pumps `readable.pipeTo(writable)` over the wire, and
  *     only releases the slot in `pipeTo().finally(() => hook.dispose())`
@@ -47,7 +47,7 @@
  *
  * The practical consequence for sleepAfter: the per-call promise lifecycle
  * is *not* a reliable signal of "the container is done with this work".
- * `commands.executeStream(...)` resolves in milliseconds with a stream
+ * `processes.streamProcessLogs(...)` resolves in milliseconds with a stream
  * reference, but the container then writes to that stream for seconds. The
  * only signal that survives across the promise boundary is the export
  * entry — i.e. `getStats()`.
@@ -78,6 +78,7 @@ import type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
@@ -727,6 +728,13 @@ export class ContainerControlClient {
     return wrapStub(
       this.getConnection().rpc().tunnels,
       'tunnels',
+      this.renewActivity
+    );
+  }
+  get terminals(): SandboxTerminalsAPI {
+    return wrapStub(
+      this.getConnection().rpc().terminals,
+      'terminals',
       this.renewActivity
     );
   }

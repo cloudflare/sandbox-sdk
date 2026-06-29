@@ -23,7 +23,7 @@ export class SandboxAddon implements ITerminalAddon {
 
   private _state: ConnectionState = 'disconnected';
   private _sandboxId: string | undefined;
-  private _sessionId: string | undefined;
+  private _terminalId: string | undefined;
 
   get state(): ConnectionState {
     return this._state;
@@ -31,8 +31,8 @@ export class SandboxAddon implements ITerminalAddon {
   get sandboxId(): string | undefined {
     return this._sandboxId;
   }
-  get sessionId(): string | undefined {
-    return this._sessionId;
+  get terminalId(): string | undefined {
+    return this._terminalId;
   }
 
   constructor(private options: SandboxAddonOptions) {}
@@ -53,14 +53,14 @@ export class SandboxAddon implements ITerminalAddon {
 
     const isSameTarget =
       target.sandboxId === this._sandboxId &&
-      target.sessionId === this._sessionId;
+      target.terminalId === this._terminalId;
 
     if (isSameTarget && this._state !== 'disconnected') {
       return;
     }
 
     this._sandboxId = target.sandboxId;
-    this._sessionId = target.sessionId;
+    this._terminalId = target.terminalId;
 
     this.cancelReconnect();
     this.closeSocket();
@@ -98,7 +98,7 @@ export class SandboxAddon implements ITerminalAddon {
 
     const url = this.options.getWebSocketUrl({
       sandboxId: this._sandboxId,
-      sessionId: this._sessionId,
+      terminalId: this._terminalId,
       origin
     });
 

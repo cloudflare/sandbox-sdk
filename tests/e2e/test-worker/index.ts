@@ -2,7 +2,7 @@
  * Minimal test worker for integration tests
  *
  * Exposes SDK methods via HTTP endpoints for E2E testing.
- * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
+ * Supports sessionless top-level calls and explicit sessions via X-Session-Id header.
  *
  * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
@@ -217,12 +217,6 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
-    const enableDefaultSessionHeader = request.headers.get(
-      'X-Sandbox-Enable-Default-Session'
-    );
-    const enableDefaultSession =
-      enableDefaultSessionHeader === 'false' ? false : undefined;
-
     // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
     let sandboxNamespace: DurableObjectNamespace<Sandbox>;
@@ -240,8 +234,7 @@ export default {
 
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive,
-      ...(sleepAfter !== null && { sleepAfter }),
-      ...(enableDefaultSession !== undefined && { enableDefaultSession })
+      ...(sleepAfter !== null && { sleepAfter })
     });
 
     // Get session ID from header (optional)
@@ -443,34 +436,6 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      // Command execution with streaming
-      if (url.pathname === '/api/execStream' && request.method === 'POST') {
-        console.log(
-          '[TestWorker] execStream called for command:',
-          body.command
-        );
-        const startTime = Date.now();
-        const stream = await executor.execStream(body.command, {
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout
-        });
-        console.log(
-          '[TestWorker] Stream received in',
-          Date.now() - startTime,
-          'ms'
-        );
-
-        // Return SSE stream directly
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive'
-          }
-        });
-      }
-
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {
         const result = await executor.gitCheckout(body.repoUrl, {
@@ -665,7 +630,11 @@ console.log('Echo server on port ' + port);
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
         const process = await executor.startProcess(body.command, {
-          processId: body.processId
+          processId: body.processId,
+          env: body.env,
+          cwd: body.cwd,
+          timeout: body.timeout,
+          autoCleanup: body.autoCleanup
         });
         return new Response(JSON.stringify(process), {
           headers: { 'Content-Type': 'application/json' }
@@ -785,22 +754,7 @@ console.log('Echo server on port ' + port);
         if (pathParts[4] === 'stream') {
           const stream = await executor.streamProcessLogs(processId);
 
-          // Convert AsyncIterable to ReadableStream for SSE
-          const readableStream = new ReadableStream({
-            async start(controller) {
-              try {
-                for await (const event of stream) {
-                  const sseData = `data: ${JSON.stringify(event)}\n\n`;
-                  controller.enqueue(new TextEncoder().encode(sseData));
-                }
-                controller.close();
-              } catch (error) {
-                controller.error(error);
-              }
-            }
-          });
-
-          return new Response(readableStream, {
+          return new Response(stream, {
             headers: {
               'Content-Type': 'text/event-stream',
               'Cache-Control': 'no-cache',
@@ -1178,9 +1132,9 @@ console.log('Echo server on port ' + port);
 
       // PTY: Browser test page for Playwright tests
       if (url.pathname === '/terminal-test') {
-        const sessionId =
-          url.searchParams.get('sessionId') || `browser-test-${Date.now()}`;
-        return new Response(getTerminalTestPage(sandboxId, sessionId), {
+        const terminalId =
+          url.searchParams.get('terminalId') || `browser-test-${Date.now()}`;
+        return new Response(getTerminalTestPage(sandboxId, terminalId), {
           headers: { 'Content-Type': 'text/html' }
         });
       }
@@ -1197,19 +1151,14 @@ console.log('Echo server on port ' + port);
 
         const pathParts = url.pathname.split('/').filter(Boolean);
 
-        if (pathParts.length === 1) {
-          return sandbox.terminal(request, {
-            cols: parseInt(url.searchParams.get('cols') || '80', 10),
-            rows: parseInt(url.searchParams.get('rows') || '24', 10)
-          });
-        } else {
-          const ptySessionId = pathParts[1];
-          const session = await sandbox.getSession(ptySessionId);
-          return session.terminal(request, {
-            cols: parseInt(url.searchParams.get('cols') || '80', 10),
-            rows: parseInt(url.searchParams.get('rows') || '24', 10)
-          });
+        const terminalId = pathParts[1];
+        if (!terminalId) {
+          return new Response('Terminal ID required', { status: 400 });
         }
+        return sandbox.terminal({ id: terminalId }).connect(request, {
+          cols: parseInt(url.searchParams.get('cols') || '80', 10),
+          rows: parseInt(url.searchParams.get('rows') || '24', 10)
+        });
       }
 
       return new Response('Not found', { status: 404 });
@@ -1306,7 +1255,7 @@ console.log('Echo server on port ' + port);
   }
 };
 
-function getTerminalTestPage(sandboxId: string, sessionId: string): string {
+function getTerminalTestPage(sandboxId: string, terminalId: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1334,7 +1283,7 @@ function getTerminalTestPage(sandboxId: string, sessionId: string): string {
 
     const statusEl = document.getElementById('status');
     const sandboxId = '${sandboxId}';
-    const sessionId = '${sessionId}';
+    const terminalId = '${terminalId}';
 
     let ws = null;
     let reconnectAttempts = 0;
@@ -1348,7 +1297,7 @@ function getTerminalTestPage(sandboxId: string, sessionId: string): string {
     function connect() {
       updateStatus('connecting');
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/terminal/' + sessionId + '?sandboxId=' + sandboxId;
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?sandboxId=' + sandboxId;
       
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';

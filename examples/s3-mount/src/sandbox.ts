@@ -40,13 +40,17 @@ export async function mountBucket(
   env: Env
 ): Promise<MountResult> {
   // Idempotent: skip if already mounted
-  const mountCheck = await sandbox.exec('(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)');
+  const mountCheck = await sandbox.exec(
+    '(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)'
+  );
   if (mountCheck.stdout.trim() === 'mounted') {
     return { ok: true, status: 'already-mounted' };
   }
 
   // Verify /dev/fuse is available before attempting the mount
-  const fuseCheck = await sandbox.exec('(test -c /dev/fuse && echo ok || echo missing)');
+  const fuseCheck = await sandbox.exec(
+    '(test -c /dev/fuse && echo ok || echo missing)'
+  );
   if (fuseCheck.stdout.trim() !== 'ok') {
     return { ok: false, error: '/dev/fuse is not available in this container' };
   }
@@ -61,25 +65,28 @@ export async function mountBucket(
     'mount-s3',
     env.S3_BUCKET_NAME,
     '/mnt/s3',
-    '--region', env.AWS_REGION,
+    '--region',
+    env.AWS_REGION,
     '--allow-delete',
     '--allow-overwrite',
-    '--foreground',
+    '--foreground'
   ].join(' ');
 
   await sandbox.startProcess(mountCmd, {
     env: {
       AWS_CONTAINER_CREDENTIALS_FULL_URI: CREDENTIALS_URI,
-      AWS_REGION: env.AWS_REGION,
+      AWS_REGION: env.AWS_REGION
     },
     processId: 'mount-s3',
-    autoCleanup: false,
+    autoCleanup: false
   });
 
   // Poll until the mount is live (up to 10 seconds)
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const poll = await sandbox.exec('(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)');
+    const poll = await sandbox.exec(
+      '(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)'
+    );
     if (poll.stdout.trim() === 'mounted') {
       await installShellAutoCd(sandbox);
       return { ok: true, status: 'mounted' };
@@ -87,7 +94,9 @@ export async function mountBucket(
     await new Promise<void>((resolve) => setTimeout(resolve, 500));
   }
 
-  const diag = await sandbox.exec('(ls -la /dev/fuse; dmesg 2>/dev/null | tail -5 || true)');
+  const diag = await sandbox.exec(
+    '(ls -la /dev/fuse; dmesg 2>/dev/null | tail -5 || true)'
+  );
   return { ok: false, error: 'mount timed out', diagnostics: diag.stdout };
 }
 
@@ -97,16 +106,18 @@ export async function mountBucket(
  * automatically — no terminal() option needed. Idempotent via a marker comment.
  */
 const BASHRC_MARKER = '# sandbox-s3-mount auto-cd';
-async function installShellAutoCd(sandbox: ReturnType<typeof getSandbox>): Promise<void> {
+async function installShellAutoCd(
+  sandbox: ReturnType<typeof getSandbox>
+): Promise<void> {
   // Only cd when the shell is starting in $HOME; respect any explicit cd a
   // caller might do before spawning a sub-shell. `2>/dev/null` keeps the cd
   // failure quiet if /mnt/s3 ever goes away under us.
   const snippet = [
     BASHRC_MARKER,
-    'if [ -d /mnt/s3 ] && [ "$PWD" = "$HOME" ]; then cd /mnt/s3 2>/dev/null; fi',
+    'if [ -d /mnt/s3 ] && [ "$PWD" = "$HOME" ]; then cd /mnt/s3 2>/dev/null; fi'
   ].join('\n');
   await sandbox.exec(
-    `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`,
+    `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`
   );
 }
 
@@ -120,7 +131,8 @@ function shellQuote(s: string): string {
  * Any failure is swallowed because the DO is being torn down anyway — this just
  * gives mount-s3 a chance to flush pending writes before the container exits.
  */
-export async function unmountBucket(sandbox: ReturnType<typeof getSandbox>): Promise<void> {
-  // Subshell so a non-zero exit doesn't poison the default session.
+export async function unmountBucket(
+  sandbox: ReturnType<typeof getSandbox>
+): Promise<void> {
   await sandbox.exec('(fusermount -u /mnt/s3 2>&1 || true)');
 }

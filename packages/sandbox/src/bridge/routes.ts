@@ -10,9 +10,10 @@ import type {
   ExecutionSession,
   ISandbox,
   MountBucketOptions,
-  PtyOptions,
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions,
+  TerminalConnectOptions,
+  TerminalOptions,
   TunnelInfo,
   TunnelOptions
 } from '@repo/shared';
@@ -53,17 +54,11 @@ import type {
 
 /**
  * The SDK's getSandbox() proxy exposes methods not declared on ISandbox
- * (terminal, destroy) or declared with a narrower return type (getSession
- * without terminal). This type extends ISandbox with those extra methods
+ * (destroy, tunnels). This type extends ISandbox with those extra methods
  * so call sites get type safety without per-call casts.
  */
 type BridgeSandbox = ISandbox & {
-  terminal(request: Request, options?: PtyOptions): Promise<Response>;
-  getSession(sessionId: string): Promise<
-    ExecutionSession & {
-      terminal(request: Request, options?: PtyOptions): Promise<Response>;
-    }
-  >;
+  getSession(sessionId: string): Promise<ExecutionSession>;
   destroy(): Promise<void>;
   tunnels: {
     get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
@@ -515,14 +510,13 @@ export function createBridgeApp(
     }
 
     executor
-      .exec(command, {
+      .startProcess(command, {
         ...opts,
-        stream: true,
         onOutput(stream: 'stdout' | 'stderr', data: string) {
           writeSSE(stream, toBase64(data));
         },
-        onComplete(result: { exitCode: number }) {
-          writeSSE('exit', JSON.stringify({ exit_code: result.exitCode }));
+        onExit(code: number | null) {
+          writeSSE('exit', JSON.stringify({ exit_code: code ?? -1 }));
           closeStream();
         },
         onError(err: Error) {
@@ -752,11 +746,15 @@ export function createBridgeApp(
 
     const sandbox = getSandbox(getSandboxNs(c.env), c.get('containerUUID'));
 
-    // 2. Parse PtyOptions from query params
+    // 2. Parse terminal options from query params
     const colsParam = c.req.query('cols');
     const rowsParam = c.req.query('rows');
     const shell = c.req.query('shell');
-    const sessionId = c.req.header('Session-Id') || c.req.query('session');
+    const cwd = c.req.query('cwd');
+    const terminalId =
+      c.req.header('Terminal-Id') ??
+      c.req.query('terminalId') ??
+      c.req.query('terminal');
 
     const cols = colsParam ? Number(colsParam) : 80;
     const rows = rowsParam ? Number(rowsParam) : 24;
@@ -769,20 +767,31 @@ export function createBridgeApp(
       );
     }
 
-    const opts: PtyOptions = { cols, rows };
+    const terminalOptions: TerminalOptions = {};
+    const connectOptions: TerminalConnectOptions = { cols, rows };
     if (shell) {
-      opts.shell = shell;
+      terminalOptions.shell = shell;
+    }
+    if (cwd) {
+      terminalOptions.cwd = cwd;
+    }
+    if (!terminalId) {
+      return errorJson(
+        'terminalId query parameter or Terminal-Id header required',
+        'invalid_request',
+        400
+      );
     }
 
+    const validatedId = validateSessionId(terminalId);
+    if (!validatedId)
+      return errorJson('Invalid terminal ID format', 'invalid_request', 400);
+    terminalOptions.id = validatedId;
+
     try {
-      if (sessionId) {
-        const validatedId = validateSessionId(sessionId);
-        if (!validatedId)
-          return errorJson('Invalid session ID format', 'invalid_request', 400);
-        const sess = await sandbox.getSession(validatedId);
-        return await sess.terminal(c.req.raw, opts);
-      }
-      return await sandbox.terminal(c.req.raw, opts);
+      return await sandbox
+        .terminal(terminalOptions)
+        .connect(c.req.raw, connectOptions);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return errorJson(`terminal failed: ${msg}`, 'exec_transport_error', 502);

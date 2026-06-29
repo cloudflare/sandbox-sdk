@@ -453,7 +453,7 @@ async function runTests() {
 
   await test('rejects non-numeric cols via fetch with Upgrade header', async () => {
     // Bun's fetch passes the Upgrade header through
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?cols=abc`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&cols=abc`, {
       headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
     });
     assertEqual(res.status, 400, 'status');
@@ -462,7 +462,7 @@ async function runTests() {
   });
 
   await test('rejects non-numeric rows via fetch with Upgrade header', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?rows=xyz`, {
+    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&rows=xyz`, {
       headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
     });
     assertEqual(res.status, 400, 'status');
@@ -476,7 +476,7 @@ async function runTests() {
     // resulting in a 502 or a WS close — but the key assertion is
     // that the route is reached (not a 404).
     const wsBase = BASE.replace(/^http/, 'ws');
-    const wsUrl = `${wsBase}/v1/sandbox/${SANDBOX_ID}/pty?cols=80&rows=24`;
+    const wsUrl = `${wsBase}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&cols=80&rows=24`;
 
     const result = await new Promise<{
       opened: boolean;

@@ -5,6 +5,7 @@
  * control-plane API. The current wire implementation uses capnweb RPC.
  */
 
+import type { TerminalCreateOptions } from './pty-types.js';
 import type {
   CreateBackupResponse,
   RestoreBackupResponse,
@@ -47,19 +48,22 @@ export interface SandboxAPI {
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
   tunnels: SandboxTunnelsAPI;
+  terminals: SandboxTerminalsAPI;
   extensions: SandboxExtensionsAPI;
+}
+
+export interface CommandExecuteOptions {
+  sessionId?: string;
+  timeoutMs?: number;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  origin?: 'user' | 'internal';
 }
 
 export interface SandboxCommandsAPI {
   execute(
     command: string,
-    sessionId: string,
-    options?: {
-      timeoutMs?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
+    options?: CommandExecuteOptions
   ): Promise<{
     success: boolean;
     exitCode: number;
@@ -68,78 +72,89 @@ export interface SandboxCommandsAPI {
     command: string;
     timestamp: string;
   }>;
-  executeStream(
-    command: string,
-    sessionId: string,
-    options?: {
-      timeoutMs?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
-  ): Promise<ReadableStream<Uint8Array>>;
+}
+
+export interface FileSessionOptions {
+  sessionId?: string;
+}
+
+export interface ReadFileStreamOptions extends FileSessionOptions {}
+
+export interface ReadFileBinaryOptions extends FileSessionOptions {
+  encoding: 'none';
+}
+
+export interface ReadFileOptions extends FileSessionOptions {
+  encoding?: Exclude<FileEncoding, 'none'>;
+}
+
+export interface WriteFileOptions extends FileSessionOptions {
+  encoding?: string;
+  permissions?: string;
+}
+
+export interface MkdirOptions extends FileSessionOptions {
+  recursive?: boolean;
 }
 
 export interface SandboxFilesAPI {
   readFile(
     path: string,
-    sessionId: string,
-    options: { encoding: 'none' }
+    options: ReadFileBinaryOptions
   ): Promise<ReadFileStreamResult>;
-  readFile(
-    path: string,
-    sessionId: string,
-    options?: { encoding?: Exclude<FileEncoding, 'none'> }
-  ): Promise<ReadFileResult>;
+  readFile(path: string, options?: ReadFileOptions): Promise<ReadFileResult>;
   readFileStream(
     path: string,
-    sessionId: string
+    options?: ReadFileStreamOptions
   ): Promise<ReadableStream<Uint8Array>>;
   writeFile(
     path: string,
     content: string,
-    sessionId: string,
-    options?: { encoding?: string; permissions?: string }
+    options?: WriteFileOptions
   ): Promise<WriteFileResult>;
   writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    sessionId: string
+    options?: FileSessionOptions
   ): Promise<{
     success: boolean;
     path: string;
     bytesWritten: number;
     timestamp: string;
   }>;
-  deleteFile(path: string, sessionId: string): Promise<DeleteFileResult>;
+  deleteFile(
+    path: string,
+    options?: FileSessionOptions
+  ): Promise<DeleteFileResult>;
   renameFile(
     oldPath: string,
     newPath: string,
-    sessionId: string
+    options?: FileSessionOptions
   ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId: string
+    options?: FileSessionOptions
   ): Promise<MoveFileResult>;
-  mkdir(
-    path: string,
-    sessionId: string,
-    options?: { recursive?: boolean }
-  ): Promise<MkdirResult>;
-  listFiles(
-    path: string,
-    sessionId: string,
-    options?: ListFilesOptions
-  ): Promise<ListFilesResult>;
-  exists(path: string, sessionId: string): Promise<FileExistsResult>;
+  mkdir(path: string, options?: MkdirOptions): Promise<MkdirResult>;
+  listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string, options?: FileSessionOptions): Promise<FileExistsResult>;
+}
+
+export interface ProcessStartOptions {
+  sessionId?: string;
+  processId?: string;
+  timeoutMs?: number;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  encoding?: string;
+  autoCleanup?: boolean;
 }
 
 export interface SandboxProcessesAPI {
   startProcess(
     command: string,
-    sessionId: string,
-    options?: { processId?: string; timeoutMs?: number }
+    options?: ProcessStartOptions
   ): Promise<ProcessStartResult>;
   listProcesses(): Promise<ProcessListResult>;
   getProcess(id: string): Promise<ProcessInfoResult>;
@@ -153,28 +168,33 @@ export interface SandboxPortsAPI {
   watchPort(request: PortWatchRequest): Promise<ReadableStream<Uint8Array>>;
 }
 
+export interface GitCheckoutOptions {
+  sessionId?: string;
+  branch?: string;
+  targetDir?: string;
+  depth?: number;
+  timeoutMs?: number;
+}
+
 export interface SandboxGitAPI {
   checkout(
     repoUrl: string,
-    sessionId: string,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      depth?: number;
-      timeoutMs?: number;
-    }
+    options?: GitCheckoutOptions
   ): Promise<GitCheckoutResult>;
+}
+
+export interface SessionCreateOptions {
+  id: string;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  commandTimeoutMs?: number;
 }
 
 export interface SandboxUtilsAPI {
   ping(): Promise<string>;
   getVersion(): Promise<string>;
   getCommands(): Promise<string[]>;
-  createSession(options: {
-    id: string;
-    env?: Record<string, string | undefined>;
-    cwd?: string;
-  }): Promise<{
+  createSession(options: SessionCreateOptions): Promise<{
     success: boolean;
     id: string;
     message: string;
@@ -187,21 +207,27 @@ export interface SandboxUtilsAPI {
   listSessions(): Promise<{ sessions: string[] }>;
 }
 
+export interface BackupCreateArchiveOptions {
+  sessionId?: string;
+  excludes?: string[];
+  gitignore?: boolean;
+  compression?: BackupCompressionOptions;
+}
+
+export interface BackupRestoreArchiveOptions {
+  sessionId?: string;
+}
+
 export interface SandboxBackupAPI {
   createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string,
-    options?: {
-      excludes?: string[];
-      gitignore?: boolean;
-      compression?: BackupCompressionOptions;
-    }
+    options?: BackupCreateArchiveOptions
   ): Promise<CreateBackupResponse>;
   restoreArchive(
     dir: string,
     archivePath: string,
-    sessionId: string
+    options?: BackupRestoreArchiveOptions
   ): Promise<RestoreBackupResponse>;
   uploadParts(request: {
     archivePath: string;
@@ -326,6 +352,13 @@ export interface TunnelRunExitEvent extends TunnelRunIdentity {
   mode: TunnelRunMode;
   port: number;
   exitCode: number | null;
+}
+
+export interface SandboxTerminalsAPI {
+  createTerminal(
+    options: TerminalCreateOptions
+  ): Promise<{ success: true; id: string }>;
+  destroyTerminal(id: string): Promise<{ success: true; id: string }>;
 }
 
 export interface SandboxTunnelsAPI {

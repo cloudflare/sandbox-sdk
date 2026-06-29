@@ -10,8 +10,7 @@ import type { Sandbox } from '../../src/sandbox';
 export function createMockControlClient(): Sandbox['client'] {
   return {
     commands: {
-      execute: vi.fn(),
-      executeStream: vi.fn()
+      execute: vi.fn()
     },
     files: {
       readFile: vi.fn(),
@@ -60,6 +59,10 @@ export function createMockControlClient(): Sandbox['client'] {
     tunnels: {
       ensureTunnelRun: vi.fn(),
       stopTunnelRun: vi.fn()
+    },
+    terminals: {
+      createTerminal: vi.fn(),
+      destroyTerminal: vi.fn()
     },
     setRetryTimeoutMs: vi.fn(),
     isWebSocketConnected: vi.fn(),

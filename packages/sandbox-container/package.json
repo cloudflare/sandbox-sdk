@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@repo/sandbox-execution": "*",
     "@repo/shared": "*",
     "acorn": "^8.14.0",
     "async-mutex": "^0.5.0",
@@ -21,7 +22,7 @@
   "devDependencies": {
     "@repo/typescript-config": "*",
     "@types/acorn": "^4.0.6",
-    "@types/bun": "^1.3.6",
+    "@types/bun": "^1.3.14",
     "@types/tar-stream": "^3.1.4",
     "typescript": "^5.9.3"
   }

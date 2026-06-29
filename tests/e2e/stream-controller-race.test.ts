@@ -286,44 +286,4 @@ describe('Stream Controller Race Condition', () => {
 
     expect(healthCheck.status).toBe(200);
   }, 30000);
-
-  /**
-   * Test 5: Execute streaming endpoint race condition
-   *
-   * The execute/stream endpoint has similar vulnerability
-   * since it uses the same streaming pattern.
-   */
-  test('should handle execute/stream cancellation gracefully', async () => {
-    // Start streaming execution
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'bash -c "for i in {1..50}; do echo exec-$i; sleep 0.01; done"'
-      })
-    });
-
-    expect(streamResponse.status).toBe(200);
-    expect(streamResponse.body).toBeDefined();
-
-    const reader = streamResponse.body!.getReader();
-
-    // Read initial chunk
-    await reader.read();
-
-    // Cancel early
-    await reader.cancel();
-
-    // Wait for potential race
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Health check
-    const healthCheck = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'echo exec-stream-check' })
-    });
-
-    expect(healthCheck.status).toBe(200);
-  }, 30000);
 });

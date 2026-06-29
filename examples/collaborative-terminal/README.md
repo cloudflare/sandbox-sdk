@@ -21,7 +21,7 @@ Browser (xterm.js + SandboxAddon)
     |
     |-- /ws/room/:id ----> Room DO         Presence, user list, typing
     |
-    \-- /ws/terminal/:sessionId
+    \-- /ws/terminal/:terminalId
             |
             v
         Sandbox DO <---> Container PTY    Direct WebSocket passthrough
@@ -40,10 +40,9 @@ RoomRegistry DO                           Tracks active rooms globally
 The Worker routes requests to the appropriate Durable Object:
 
 ```typescript
-// Terminal: proxy WebSocket directly to the room sandbox PTY
+// Terminal: proxy WebSocket directly to the room sandbox terminal
 const sandbox = getSandbox(env.Sandbox, `room-${roomId}`);
-const session = await sandbox.getSession('default');
-return session.terminal(request);
+return sandbox.terminal({ id: `room-${roomId}` }).connect(request);
 ```
 
 Each room maps to a sandbox ID (`room-${roomId}`), so room workspaces do not share a filesystem, processes, or environment variables. In production, derive sandbox IDs from the authenticated user or a user-owned workspace.
@@ -58,13 +57,13 @@ The terminal component uses `SandboxAddon` from `@cloudflare/sandbox/xterm` to h
 import { SandboxAddon } from '@cloudflare/sandbox/xterm';
 
 const sandboxAddon = new SandboxAddon({
-  getWebSocketUrl: ({ origin, sessionId }) =>
-    `${origin}/ws/terminal/${sessionId}`,
+  getWebSocketUrl: ({ origin, terminalId }) =>
+    `${origin}/ws/terminal/${terminalId}`,
   onStateChange: (state) => setState(state)
 });
 
 terminal.loadAddon(sandboxAddon);
-sandboxAddon.connect({ sandboxId: sessionId, sessionId });
+sandboxAddon.connect({ sandboxId: roomSandboxId, terminalId: roomTerminalId });
 ```
 
 ## Getting Started

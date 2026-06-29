@@ -329,7 +329,7 @@ export async function createOpencodeServer(
   return {
     port,
     url: `http://localhost:${port}`,
-    close: () => process.kill('SIGTERM')
+    close: () => process.kill()
   };
 }
 

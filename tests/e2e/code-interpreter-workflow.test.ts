@@ -289,7 +289,7 @@ console.log('Sum:', sum);
     expect(jsExec.error).toBeUndefined();
     expect(jsExec.logs.stdout.join('')).toContain('Sum: 15');
 
-    // Test streaming execution
+    // Test code interpreter streaming
     const streamCtx = await createContext('python');
     const streamResponse = await fetch(`${workerUrl}/api/code/execute/stream`, {
       method: 'POST',

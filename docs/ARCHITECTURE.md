@@ -61,15 +61,14 @@ Internal shared types and utilities. This package is not published independently
 
 The container runtime bundled into the Docker image.
 
-| Directory/file          | Purpose                                         |
-| ----------------------- | ----------------------------------------------- |
-| `src/server.ts`         | Bun server entry point on port 3000             |
-| `src/control-plane/`    | Container-side implementation of `SandboxAPI`   |
-| `src/core/container.ts` | Dependency injection container                  |
-| `src/services/`         | Business logic layer                            |
-| `src/managers/`         | Stateful managers such as process/file managers |
-| `src/session.ts`        | Persistent bash session execution               |
-| `src/handlers/pty-ws-*` | PTY WebSocket handling                          |
+| Directory/file            | Purpose                                         |
+| ------------------------- | ----------------------------------------------- |
+| `src/server.ts`           | Bun server entry point on port 3000             |
+| `src/control-plane/`      | Container-side implementation of `SandboxAPI`   |
+| `src/core/container.ts`   | Dependency injection container                  |
+| `src/services/`           | Business logic layer                            |
+| `src/managers/`           | Stateful managers such as process/file managers |
+| `src/handlers/terminal-*` | Terminal WebSocket handling                     |
 
 ## Control Channel Architecture
 
@@ -86,7 +85,7 @@ ContainerControlClient
 `ContainerControlClient` exposes typed domains matching `SandboxAPI`:
 
 ```text
-commands, files, processes, ports, git, interpreter, utils, backup, watch, tunnels
+commands, files, processes, ports, git, interpreter, utils, backup, watch, tunnels, terminals
 ```
 
 `ContainerControlConnection` owns:
@@ -111,9 +110,8 @@ Worker code
   -> SandboxControlAPI.commands.execute(...)
   -> ProcessService.executeCommand(...)
   -> ExecutionService.execute(...)
-  -> SessionManager.executeInSession(...)
-  -> Session.exec(...)
-  -> persistent bash shell
+  -> StatelessCommandRunner.exec(...)
+  -> one-shot shell command
 ```
 
 Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. The bytes are SSE-framed so existing SDK consumers can parse them with the same code, but the transport is the `/rpc` control channel.
@@ -128,19 +126,19 @@ Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. Th
   -> Manager or Session
 ```
 
-The Bun server also keeps `/ws/pty` for terminal sessions. Non-WebSocket HTTP requests that are not preview/proxy traffic are not the SDK control plane.
+The Bun server also keeps `/ws/terminal` for terminal resources. Non-WebSocket HTTP requests that are not preview/proxy traffic are not the SDK control plane.
 
-`core/container.ts` instantiates services and the PTY handler with explicit dependencies. Control-plane methods call these services directly.
+`core/container.ts` instantiates services and the terminal handler with explicit dependencies. Control-plane methods call these services directly.
 
 ## Key Architectural Patterns
 
 ### Sessions
 
-Sessions isolate execution contexts such as working directory and environment variables. A default session is auto-created; custom sessions enable parallel isolated workloads. `SessionManager` serializes command execution per session and owns session lifecycle.
+Explicit sessions isolate execution contexts such as working directory and environment variables. `SessionManager` serializes command execution per session and owns session lifecycle. Top-level `sandbox.exec()` and `sandbox.startProcess()` are stateless and do not create hidden persistent sessions.
 
 ### Command Execution
 
-`Session` maintains a persistent bash shell. Foreground `exec()` preserves shell state and captures output through temp files. Background `execStream()` and process APIs use FIFOs, labelers, and exit-code files for streaming and cancellation.
+Command execution is split by semantics. `exec()` is completion-only; `startProcess()` owns streaming, kill, and timeout lifecycle. Explicit `session.exec()` preserves shell state through `@repo/sandbox-execution` `CommandSession`, while `session.startProcess()` starts a lifecycle-managed process from inherited session state without writing process mutations back to the parent session.
 
 See [SESSION_EXECUTION.md](./SESSION_EXECUTION.md) for details.
 

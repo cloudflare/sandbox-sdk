@@ -6,7 +6,8 @@ export interface User {
 
 export interface RoomInfo {
   roomId: string;
-  sessionId: string;
+  sandboxId: string;
+  terminalId: string;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';

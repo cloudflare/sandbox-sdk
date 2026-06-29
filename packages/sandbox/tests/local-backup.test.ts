@@ -254,8 +254,8 @@ describe('Local Backup & Restore', () => {
       expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
-        expect.any(String), // backup session ID
         {
+          sessionId: expect.any(String),
           gitignore: false,
           excludes: [],
           compression: {
@@ -405,8 +405,8 @@ describe('Local Backup & Restore', () => {
       expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
-        expect.any(String),
         {
+          sessionId: expect.any(String),
           gitignore: false,
           excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
@@ -467,7 +467,7 @@ describe('Local Backup & Restore', () => {
       expect(sandbox.client.files.writeFileStream).toHaveBeenCalledWith(
         expect.stringContaining('/var/backups/'),
         expect.any(ReadableStream),
-        expect.any(String) // session ID
+        expect.objectContaining({ sessionId: expect.any(String) })
       );
 
       // Verify unsquashfs was called

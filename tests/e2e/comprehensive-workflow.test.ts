@@ -19,7 +19,6 @@
  */
 
 import type {
-  ExecEvent,
   ExecResult,
   FileInfo,
   GitCheckoutResult,
@@ -29,13 +28,18 @@ import type {
   ReadFileResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupTestSandbox,
   createTestSandbox,
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import {
+  collectProcessStdout,
+  collectProcessStreamEvents,
+  startProcessViaTestWorker,
+  streamProcessViaTestWorker
+} from './helpers/process-stream';
 
 describe('Comprehensive Workflow', () => {
   let sandbox: TestSandbox | null = null;
@@ -371,87 +375,46 @@ const interval = setInterval(() => {
   );
 
   /**
-   * Test 2: Streaming execution with real-time output
+   * Test 2: Process streaming with real-time output
    *
-   * Tests execStream to verify SSE streaming works correctly
-   * within the same sandbox context.
+   * Tests process log streaming within the same sandbox context.
    */
   test(
     'should stream command output in real-time',
     { retry: 2, timeout: 60000 },
     async () => {
-      // Helper to collect SSE events
-      async function collectSSEEvents(
-        response: Response,
-        maxEvents: number = 50
-      ): Promise<ExecEvent[]> {
-        if (!response.body) throw new Error('No body');
-
-        const events: ExecEvent[] = [];
-        const abortController = new AbortController();
-
-        try {
-          for await (const event of parseSSEStream<ExecEvent>(
-            response.body,
-            abortController.signal
-          )) {
-            events.push(event);
-            if (event.type === 'complete' || event.type === 'error') {
-              abortController.abort();
-              break;
-            }
-            if (events.length >= maxEvents) {
-              abortController.abort();
-              break;
-            }
-          }
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            error.message !== 'Operation was aborted'
-          ) {
-            throw error;
-          }
-        }
-
-        return events;
-      }
-
-      // Stream a command that outputs multiple lines with timestamps
-      const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-        method: 'POST',
+      // Stream a process that outputs multiple lines with timestamps.
+      const process = await startProcessViaTestWorker(
+        workerUrl,
         headers,
-        body: JSON.stringify({
-          command:
-            'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
-        })
-      });
+        'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
+      );
+      const streamResponse = await streamProcessViaTestWorker(
+        workerUrl,
+        headers,
+        process.id
+      );
 
       expect(streamResponse.status).toBe(200);
       expect(streamResponse.headers.get('content-type')).toBe(
         'text/event-stream'
       );
 
-      const events = await collectSSEEvents(streamResponse);
+      const events = await collectProcessStreamEvents(streamResponse);
 
-      // Verify event types
-      const eventTypes = new Set(events.map((e) => e.type));
-      expect(eventTypes.has('start')).toBe(true);
+      const eventTypes = new Set(events.map((event) => event.type));
       expect(eventTypes.has('stdout')).toBe(true);
-      expect(eventTypes.has('complete')).toBe(true);
+      expect(eventTypes.has('exit')).toBe(true);
 
       // Verify output includes env var from earlier phase
-      const output = events
-        .filter((e) => e.type === 'stdout')
-        .map((e) => e.data)
-        .join('');
+      const output = collectProcessStdout(events);
       expect(output).toContain('[hello-world]');
       expect(output).toContain('Step 1');
       expect(output).toContain('Step 3');
 
       // Verify successful completion
-      const completeEvent = events.find((e) => e.type === 'complete');
-      expect(completeEvent?.exitCode).toBe(0);
+      const exitEvent = events.find((event) => event.type === 'exit');
+      expect(exitEvent?.exitCode).toBe(0);
     }
   );
 

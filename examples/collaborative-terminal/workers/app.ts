@@ -65,16 +65,15 @@ export default {
     }
 
     if (url.pathname.startsWith('/ws/terminal/')) {
-      const sessionId = url.pathname.split('/')[3];
-      if (!sessionId) {
-        return new Response('Session ID required', { status: 400 });
+      const terminalId = url.pathname.split('/')[3];
+      if (!terminalId) {
+        return new Response('Terminal ID required', { status: 400 });
       }
 
       try {
-        // Each room session maps to its own sandbox workspace.
-        const sandbox = getSandbox(env.Sandbox, sessionId);
-        const session = await sandbox.getSession('default');
-        return await session.terminal(request);
+        // Each room maps to its own sandbox workspace and terminal resource.
+        const sandbox = getSandbox(env.Sandbox, terminalId);
+        return await sandbox.terminal({ id: terminalId }).connect(request);
       } catch (err) {
         console.error('Terminal connection error:', err);
         return new Response(

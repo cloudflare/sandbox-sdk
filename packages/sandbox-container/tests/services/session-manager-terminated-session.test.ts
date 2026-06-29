@@ -246,13 +246,12 @@ describe('SessionManager terminated-session semantics', () => {
 
   it('createSession holds the lock across evict, create, and set, so concurrent executeInSession cannot orphan a session', async () => {
     // Before the fix, createSession released the per-session lock after
-    // eviction and then ran `new Session` + `initialize` + `set`
+    // eviction and then constructed and installed the replacement handle
     // *outside* the lock. A concurrent executeInSession could acquire
     // the now-free lock between eviction and set, create its own
     // session via getOrCreateSession, run a command, and release --
     // only for createSession to resume and overwrite the map entry,
-    // orphaning the interloper's Session (live bash PTY + session dir,
-    // never destroyed).
+    // orphaning the interloper's live runtime session.
     //
     // Reproduce by firing a dead-replace createSession and a concurrent
     // executeInSession on the same id and asserting both commands
@@ -269,12 +268,9 @@ describe('SessionManager terminated-session semantics', () => {
     });
 
     // At this point the dead handle has been evicted by executeInSession.
-    // Re-install a dead handle so the createSession call hits its
-    // dead-replace branch: create a fresh session, then kill its shell
-    // via a raw execStream path that does not trigger eviction. Simpler
-    // alternative: just race createSession + executeInSession and assert
-    // on end state. Both paths must converge on exactly one live session
-    // in the map and consistent observable state.
+    // Race createSession + executeInSession and assert on end state. Both
+    // paths must converge on exactly one live session in the map and
+    // consistent observable state.
     const [createResult, execResult] = await Promise.all([
       sessionManager.createSession({ id: sessionId, cwd: testDir }),
       sessionManager.executeInSession(

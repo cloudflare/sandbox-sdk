@@ -1,4 +1,4 @@
-import type { PtyOptions } from './pty-types';
+import type { SandboxTerminal, TerminalOptions } from './pty-types';
 
 /**
  * Represents a disposable resource with a cleanup function.
@@ -36,31 +36,6 @@ export interface BaseExecOptions {
 
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
-  /**
-   * Enable real-time output streaming via callbacks
-   */
-  stream?: boolean;
-
-  /**
-   * Callback for real-time output data
-   */
-  onOutput?: (stream: 'stdout' | 'stderr', data: string) => void;
-
-  /**
-   * Callback when command completes (only when stream: true)
-   */
-  onComplete?: (result: ExecResult) => void;
-
-  /**
-   * Callback for execution errors
-   */
-  onError?: (error: Error) => void;
-
-  /**
-   * AbortSignal for cancelling execution
-   */
-  signal?: AbortSignal;
-
   /**
    * Whether this command was initiated by the user or by internal
    * infrastructure (backup, bucket mount, env setup, etc.).
@@ -215,11 +190,18 @@ export interface PortWatchEvent {
 }
 
 // Background process types
+export interface ProcessQueryOptions {
+  /**
+   * Optional session ID used to bind returned process handles to an explicit session.
+   */
+  sessionId?: string;
+}
+
 export interface ProcessOptions extends BaseExecOptions {
   /**
    * Optional session ID to run the background process in.
    *
-   * When omitted, the sandbox's default execution policy applies.
+   * When omitted, the process starts without persistent session state.
    */
   sessionId?: string;
 
@@ -319,7 +301,7 @@ export interface Process {
   /**
    * Kill the process
    */
-  kill(signal?: string): Promise<void>;
+  kill(): Promise<void>;
 
   /**
    * Get current process status (refreshed)
@@ -393,25 +375,6 @@ export interface LogEvent {
   exitCode?: number;
 }
 
-export interface StreamOptions extends BaseExecOptions {
-  /**
-   * Optional session ID to run the streaming command in.
-   *
-   * When omitted, the sandbox's default execution policy applies.
-   */
-  sessionId?: string;
-
-  /**
-   * Buffer size for streaming output
-   */
-  bufferSize?: number;
-
-  /**
-   * AbortSignal for cancelling stream
-   */
-  signal?: AbortSignal;
-}
-
 // Session management types
 export interface SessionOptions {
   /**
@@ -469,17 +432,6 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
-
-  /**
-   * When true (the default), implicit operations automatically create and reuse
-   * a persistent default shell session. Set to false to run implicit top-level
-   * operations sessionlessly, where each command spawns a fresh process with no
-   * shared shell state. Explicit per-call session IDs continue to work normally
-   * when this is false.
-   *
-   * Default: true
-   */
-  enableDefaultSession?: boolean;
 
   /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
@@ -771,8 +723,8 @@ export interface WatchOptions {
   exclude?: string[];
 
   /**
-   * Session to run the watch in.
-   * If omitted, the default session is used.
+   * Session to run the watch in. Provide this when watch behavior should be
+   * scoped to an explicit session context.
    */
   sessionId?: string;
 }
@@ -972,16 +924,15 @@ export interface ExecutionSession {
 
   // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
-  execStream(
-    command: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(sessionId?: string): Promise<Process[]>;
-  getProcess(id: string, sessionId?: string): Promise<Process | null>;
-  killProcess(id: string, signal?: string): Promise<void>;
+  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
+  getProcess(
+    id: string,
+    options?: ProcessQueryOptions
+  ): Promise<Process | null>;
+  killProcess(id: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(
@@ -1052,9 +1003,6 @@ export interface ExecutionSession {
   // Backup operations
   createBackup(options: BackupOptions): Promise<DirectoryBackup>;
   restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
-
-  // Terminal access (browser WebSocket passthrough)
-  terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
 // Backup types
@@ -1291,16 +1239,15 @@ export interface ISandbox {
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
-  listProcesses(sessionId?: string): Promise<Process[]>;
-  getProcess(id: string, sessionId?: string): Promise<Process | null>;
-  killProcess(id: string, signal?: string): Promise<void>;
+  listProcesses(options?: ProcessQueryOptions): Promise<Process[]>;
+  getProcess(
+    id: string,
+    options?: ProcessQueryOptions
+  ): Promise<Process | null>;
+  killProcess(id: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 
   // Streaming operations
-  execStream(
-    command: string,
-    options?: StreamOptions
-  ): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(
     processId: string,
     options?: { signal?: AbortSignal }
@@ -1316,17 +1263,20 @@ export interface ISandbox {
   writeFile(
     path: string,
     content: string | ReadableStream<Uint8Array>,
-    options?: { encoding?: string }
+    options?: { encoding?: string; sessionId?: string }
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
-    options: { encoding: 'none' }
+    options: { encoding: 'none'; sessionId?: string }
   ): Promise<ReadFileStreamResult>;
   readFile(
     path: string,
-    options?: { encoding?: Exclude<FileEncoding, 'none'> }
+    options?: { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string }
   ): Promise<ReadFileResult>;
-  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  readFileStream(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
     options?: WatchOptions
@@ -1335,15 +1285,29 @@ export interface ISandbox {
     path: string,
     options?: CheckChangesOptions
   ): Promise<CheckChangesResult>;
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
-  deleteFile(path: string): Promise<DeleteFileResult>;
-  renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
+  mkdir(
+    path: string,
+    options?: { recursive?: boolean; sessionId?: string }
+  ): Promise<MkdirResult>;
+  deleteFile(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<DeleteFileResult>;
+  renameFile(
+    oldPath: string,
+    newPath: string,
+    options?: { sessionId?: string }
+  ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
-    destinationPath: string
+    destinationPath: string,
+    options?: { sessionId?: string }
   ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
-  exists(path: string, sessionId?: string): Promise<FileExistsResult>;
+  exists(
+    path: string,
+    options?: { sessionId?: string }
+  ): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(
@@ -1389,6 +1353,9 @@ export interface ISandbox {
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;
+
+  // Terminal resources
+  terminal(options?: TerminalOptions): SandboxTerminal;
 }
 
 // Type guards for runtime validation

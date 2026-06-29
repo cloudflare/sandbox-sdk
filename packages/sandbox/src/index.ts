@@ -34,7 +34,7 @@ export type {
   RestoreBackupResult,
   SandboxOptions,
   SessionOptions,
-  StreamOptions,
+  TerminalOptions,
   TunnelInfo,
   TunnelOptions,
   WaitForLogResult,
@@ -64,7 +64,7 @@ export {
   isDurableObjectCodeUpdateReset,
   isPlatformTransientError
 } from './platform-errors';
-export { proxyTerminal } from './pty';
+export { createSandboxTerminal, proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
 // Required export for egress intercepting

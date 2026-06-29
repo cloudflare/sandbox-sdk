@@ -1,1 +1,0 @@
-export const DISABLE_SESSION_TOKEN = '__DISABLE_SESSION__';

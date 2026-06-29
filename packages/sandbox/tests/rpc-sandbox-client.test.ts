@@ -95,7 +95,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     // Touching a sub-client constructs the connection and starts the poller.
     void client.commands;
 
-    // Simulate executeStream returning a ReadableStream: capnweb has
+    // Simulate a control-plane method returning a ReadableStream: capnweb has
     // allocated an export for the pipe, and it stays elevated for the
     // entire duration of the stream.
     stats = { imports: 1, exports: 2 };
