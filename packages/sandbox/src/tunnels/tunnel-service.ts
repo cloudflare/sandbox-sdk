@@ -26,6 +26,7 @@ import {
 } from './cleanup';
 import { TunnelOperationLifecycle } from './lifecycle';
 import { TunnelProvisioner } from './provisioner';
+import { randomId } from './random-id';
 import { pruneTunnelsForRestart } from './restart';
 import type { TunnelCleanupEntry, TunnelsStorage } from './storage';
 import {
@@ -178,8 +179,15 @@ function isTunnelNotFoundError(error: unknown): boolean {
   return hasErrorCode(error, 'TUNNEL_NOT_FOUND');
 }
 
+interface TunnelGetRecoveryState {
+  quickRun?: {
+    tunnelId: string;
+    runId: string;
+  };
+}
+
 function createTunnelRunId(): string {
-  return crypto.randomUUID();
+  return `run-${randomId()}`;
 }
 
 /** Tunnel domain façade for public operations and lifecycle hooks. */
@@ -218,9 +226,10 @@ export class TunnelService implements TunnelsHandler {
       if (options?.name !== undefined) validateTunnelName(options.name);
       const requestedHash = computeOptionsHash(options);
 
-      const result = await this.#lifecycle.runGetWithRecovery(() =>
-        this.#withPortLock(port, () =>
-          this.#getLocked(port, options, requestedHash)
+      const recovery: TunnelGetRecoveryState = {};
+      const result = await this.#withPortLock(port, () =>
+        this.#lifecycle.runGetWithRecovery(() =>
+          this.#getLocked(port, options, requestedHash, recovery)
         )
       );
       cacheState = result.cacheState;
@@ -244,7 +253,8 @@ export class TunnelService implements TunnelsHandler {
   async #getLocked(
     port: number,
     options: TunnelOptions | undefined,
-    requestedHash: string
+    requestedHash: string,
+    recovery: TunnelGetRecoveryState
   ): Promise<TunnelGetResult> {
     const state = await readPortState(this.#host.storage, port);
     const existing = state.info;
@@ -284,7 +294,7 @@ export class TunnelService implements TunnelsHandler {
           return {
             info: existing.name
               ? await this.#provisionNamedTunnel(port, existing.name)
-              : await this.#provisionQuickTunnel(port),
+              : await this.#provisionQuickTunnel(port, recovery),
             cacheState: 'miss'
           };
         }
@@ -300,7 +310,7 @@ export class TunnelService implements TunnelsHandler {
     return {
       info: options?.name
         ? await this.#provisionNamedTunnel(port, options.name)
-        : await this.#provisionQuickTunnel(port),
+        : await this.#provisionQuickTunnel(port, recovery),
       cacheState: 'miss'
     };
   }
@@ -353,12 +363,20 @@ export class TunnelService implements TunnelsHandler {
   }
 
   /** Provision a fresh quick tunnel and persist it. Caller holds the per-port lock. */
-  async #provisionQuickTunnel(port: number): Promise<QuickTunnelInfo> {
+  async #provisionQuickTunnel(
+    port: number,
+    recovery: TunnelGetRecoveryState
+  ): Promise<QuickTunnelInfo> {
     let lifecycle = await this.#lifecycle.capture();
-    const tunnelRunId = createTunnelRunId();
+    recovery.quickRun ??= {
+      tunnelId: `quick-${randomId()}`,
+      runId: createTunnelRunId()
+    };
+    const { tunnelId, runId } = recovery.quickRun;
     const spawned = await this.#provisioner.provisionQuickTunnel(
       port,
-      tunnelRunId
+      runId,
+      tunnelId
     );
     lifecycle = await this.#lifecycle.requireRuntime(
       lifecycle,
@@ -376,7 +394,7 @@ export class TunnelService implements TunnelsHandler {
         ...(lifecycle.lifetime && {
           sandboxLifetimeID: lifecycle.lifetime.id
         }),
-        tunnelRunId
+        tunnelRunId: runId
       }
     }));
     await this.#lifecycle.assertActive(lifecycle, 'committing', true);

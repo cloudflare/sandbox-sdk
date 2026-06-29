@@ -1007,7 +1007,7 @@ describe('Sandbox - Automatic Session Management', () => {
           code: ErrorCode.CONTAINER_UNAVAILABLE,
           context: {
             reason: 'container_replaced',
-            sessionId: 'sandbox-default'
+            retryable: true
           }
         });
         await expect(inflight).rejects.toBeInstanceOf(

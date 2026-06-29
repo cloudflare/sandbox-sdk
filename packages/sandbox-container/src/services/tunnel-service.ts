@@ -27,7 +27,7 @@ import {
 interface TunnelRecord {
   manager: TunnelManager;
   request: EnsureTunnelRunRequest;
-  run: TunnelRunSnapshot;
+  result: Promise<ServiceResult<EnsureTunnelRunResult>>;
 }
 
 function tunnelRunExitEvent(
@@ -99,7 +99,9 @@ export class TunnelService {
           details: { tunnelId: request.tunnelId, runId: request.runId }
         });
       }
-      return serviceSuccess({ run: existingRun.run, started: false });
+      const result = await existingRun.result;
+      if (!result.success) return result;
+      return serviceSuccess({ run: result.data.run, started: false });
     }
 
     const existingTunnel = this.runsByTunnelId.get(request.tunnelId);
@@ -120,7 +122,7 @@ export class TunnelService {
           tunnelId: request.tunnelId,
           runId: request.runId,
           port: request.port,
-          activeRunId: existingPort.run.runId
+          activeRunId: existingPort.request.runId
         }
       });
     }
@@ -144,13 +146,27 @@ export class TunnelService {
       }
     });
 
+    const result = Promise.resolve().then(() =>
+      this.#startTunnelRun(request, manager)
+    );
+    const record: TunnelRecord = {
+      manager,
+      request,
+      result
+    };
+    this.runs.set(request.runId, record);
+    this.runsByTunnelId.set(request.tunnelId, record);
+    this.runsByPort.set(request.port, record);
+    return await record.result;
+  }
+
+  async #startTunnelRun(
+    request: EnsureTunnelRunRequest,
+    manager: TunnelManager
+  ): Promise<ServiceResult<EnsureTunnelRunResult>> {
     try {
       const { url } = await manager.start();
       const run = this.#createSnapshot(request, url);
-      const record: TunnelRecord = { manager, request, run };
-      this.runs.set(request.runId, record);
-      this.runsByTunnelId.set(request.tunnelId, record);
-      this.runsByPort.set(request.port, record);
       this.logger.info('Tunnel run ready', {
         mode: request.mode,
         tunnelId: request.tunnelId,
@@ -159,6 +175,7 @@ export class TunnelService {
       });
       return serviceSuccess({ run, started: true });
     } catch (err) {
+      this.#deleteRun(request.tunnelId, request.runId, request.port);
       await manager.stop().catch(() => {});
       if (err instanceof CloudflaredNotFoundError) {
         return serviceError({
@@ -190,19 +207,23 @@ export class TunnelService {
   ): Promise<ServiceResult<StopTunnelRunResult>> {
     const record = this.runs.get(request.runId);
 
-    if (!record || record.run.tunnelId !== request.tunnelId) {
+    if (!record || record.request.tunnelId !== request.tunnelId) {
       return serviceSuccess({ stopped: false });
     }
 
     try {
       await record.manager.stop();
     } finally {
-      this.#deleteRun(record.run.tunnelId, record.run.runId, record.run.port);
+      this.#deleteRun(
+        record.request.tunnelId,
+        record.request.runId,
+        record.request.port
+      );
     }
     this.logger.info('Tunnel run stopped', {
-      tunnelId: record.run.tunnelId,
-      runId: record.run.runId,
-      port: record.run.port
+      tunnelId: record.request.tunnelId,
+      runId: record.request.runId,
+      port: record.request.port
     });
     return serviceSuccess({ stopped: true });
   }
@@ -213,8 +234,8 @@ export class TunnelService {
     await Promise.all(
       runs.map((record) =>
         this.stopTunnelRun({
-          tunnelId: record.run.tunnelId,
-          runId: record.run.runId
+          tunnelId: record.request.tunnelId,
+          runId: record.request.runId
         })
       )
     );

@@ -253,6 +253,32 @@ describe('TunnelService > ensureTunnelRun', () => {
     expect(fakeProcs).toHaveLength(1);
   });
 
+  it('replays a same-run request while startup is still in flight', async () => {
+    const service = new TunnelService(mockLogger);
+    const request = quickRequest();
+
+    const first = service.ensureTunnelRun(request);
+    await new Promise((r) => setTimeout(r, 20));
+    const replay = service.ensureTunnelRun(request);
+    await new Promise((r) => setTimeout(r, 20));
+    const spawned = fakeProcs.length;
+
+    for (const proc of fakeProcs) {
+      proc.stderr.write(QUICK_BANNER);
+    }
+    fetchHandler.ready = true;
+
+    const [firstResult, replayResult] = await Promise.all([first, replay]);
+
+    expect(spawned).toBe(1);
+    expect(firstResult.success).toBe(true);
+    expect(replayResult.success).toBe(true);
+    if (!firstResult.success || !replayResult.success) return;
+    expect(firstResult.data.started).toBe(true);
+    expect(replayResult.data.started).toBe(false);
+    expect(replayResult.data.run).toEqual(firstResult.data.run);
+  });
+
   it('rejects a same-run replay with different parameters', async () => {
     const service = new TunnelService(mockLogger);
     await withFakeCloudflared(QUICK_BANNER, () =>

@@ -178,10 +178,8 @@ describe('tunnel service > get', () => {
     const [request] = client.tunnels.ensureTunnelRun.mock.calls[0];
     expect(request.mode).toBe('quick');
     expect(request.port).toBe(8080);
-    expect(request.tunnelId).toMatch(
-      /^quick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    );
-    expect(request.runId).toEqual(expect.any(String));
+    expect(request.tunnelId).toMatch(/^quick-[0-9a-hjkmnp-tv-z]{20}$/);
+    expect(request.runId).toMatch(/^run-[0-9a-hjkmnp-tv-z]{20}$/);
     expect(info).toEqual({
       id: request.tunnelId,
       port: 8080,
@@ -245,7 +243,7 @@ describe('tunnel service > get', () => {
     expect(meta?.['8080']?.sandboxLifetimeID).toBe('lifetime-1');
   });
 
-  it('mints UUID-backed quick tunnel ids', async () => {
+  it('mints short base32 quick tunnel ids', async () => {
     const { client, handler } = makeHandler();
     mockEnsureQuick(client.tunnels, async (id, port) =>
       makeRecord({ id, port })
@@ -254,9 +252,7 @@ describe('tunnel service > get', () => {
     const info = await handler.get(8080);
     const [{ tunnelId }] = client.tunnels.ensureTunnelRun.mock.calls[0];
 
-    expect(tunnelId).toMatch(
-      /^quick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    );
+    expect(tunnelId).toMatch(/^quick-[0-9a-hjkmnp-tv-z]{20}$/);
     expect(info.id).toBe(tunnelId);
   });
 
@@ -398,6 +394,9 @@ describe('tunnel service > get', () => {
 
     expect(info).toEqual(second);
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
+    const firstRequest = client.tunnels.ensureTunnelRun.mock.calls[0][0];
+    const secondRequest = client.tunnels.ensureTunnelRun.mock.calls[1][0];
+    expect(secondRequest).toEqual(firstRequest);
   });
 
   it('surfaces sandbox lifetime changes as non-retryable operation interruptions', async () => {

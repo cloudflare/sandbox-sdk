@@ -13,6 +13,7 @@ import {
   getZoneName,
   upsertCNAME
 } from './cloudflare-api';
+import { randomId } from './random-id';
 import {
   computeOptionsHash,
   createNamedTunnelResourceIntent,
@@ -49,7 +50,7 @@ export interface NamedTunnelPreparationHooks {
 }
 
 function createQuickTunnelId(): string {
-  return `quick-${crypto.randomUUID()}`;
+  return `quick-${randomId()}`;
 }
 
 // Replays use the same request so container runId idempotency can resolve
@@ -66,11 +67,12 @@ export class TunnelProvisioner {
 
   async provisionQuickTunnel(
     port: number,
-    tunnelRunId: string
+    tunnelRunId: string,
+    tunnelId = createQuickTunnelId()
   ): Promise<QuickTunnelInfo> {
     const result = await this.#ensureTunnelRun({
       mode: 'quick',
-      tunnelId: createQuickTunnelId(),
+      tunnelId,
       runId: tunnelRunId,
       port
     });
