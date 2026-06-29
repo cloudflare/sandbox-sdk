@@ -67,12 +67,18 @@ export type {
   WriteFileRequest
 } from './request-types.js';
 export type {
+  EnsureNamedTunnelRunRequest,
+  EnsureQuickTunnelRunRequest,
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
   ExtensionConnectRequest,
   ExtensionHealth,
   ExtensionPackage,
   ExtensionRegistration,
   NamedTunnelInfo,
+  NamedTunnelRunSnapshot,
   QuickTunnelInfo,
+  QuickTunnelRunSnapshot,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxCommandsAPI,
@@ -85,8 +91,14 @@ export type {
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
   TunnelInfo,
-  TunnelOptions
+  TunnelOptions,
+  TunnelRunExitEvent,
+  TunnelRunIdentity,
+  TunnelRunMode,
+  TunnelRunSnapshot
 } from './rpc-types.js';
 // RPC interface types (shared between SDK and container)
 export { EXTENSION_TARBALL_REQUIRED } from './rpc-types.js';

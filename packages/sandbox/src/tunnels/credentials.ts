@@ -12,7 +12,7 @@
  *
  * The resolver is feature-agnostic; only the `overrideKey` differs per
  * caller. Throws on any failure with a message that names the env vars
- * the caller can set to fix it.
+ * the caller can set for an explicit configuration.
  */
 
 import { getEnvString } from '@repo/shared';

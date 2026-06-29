@@ -26,6 +26,49 @@ function buildApi(sessionManager: SessionManager): SandboxControlAPI {
   } as unknown as SandboxAPIDeps);
 }
 
+describe('SandboxControlAPI tunnels.ensureTunnelRun', () => {
+  it('exposes the runtime-run control methods only', () => {
+    const api = new SandboxControlAPI({
+      tunnelService: {},
+      logger: mockLogger
+    } as unknown as SandboxAPIDeps);
+
+    expect('ensureTunnelRun' in api.tunnels).toBe(true);
+    expect('stopTunnelRun' in api.tunnels).toBe(true);
+    expect('runQuickTunnel' in api.tunnels).toBe(false);
+    expect('runNamedTunnel' in api.tunnels).toBe(false);
+    expect('destroyTunnel' in api.tunnels).toBe(false);
+  });
+
+  it('delegates to the tunnel service and returns the runtime-run result', async () => {
+    const request = {
+      mode: 'quick' as const,
+      tunnelId: 'quick-1',
+      runId: 'run-1',
+      port: 8080
+    };
+    const run = {
+      ...request,
+      url: 'https://stub.trycloudflare.com',
+      hostname: 'stub.trycloudflare.com',
+      startedAt: '2026-01-01T00:00:00.000Z'
+    };
+    const ensureTunnelRun = vi.fn(async () => ({
+      success: true as const,
+      data: { run, started: true }
+    }));
+    const api = new SandboxControlAPI({
+      tunnelService: { ensureTunnelRun },
+      logger: mockLogger
+    } as unknown as SandboxAPIDeps);
+
+    const result = await api.tunnels.ensureTunnelRun(request);
+
+    expect(ensureTunnelRun).toHaveBeenCalledWith(request);
+    expect(result).toEqual({ run, started: true });
+  });
+});
+
 describe('SandboxControlAPI utils.createSession', () => {
   let mockSessionManager: SessionManager;
 

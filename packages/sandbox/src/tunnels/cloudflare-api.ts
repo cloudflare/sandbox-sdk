@@ -52,7 +52,7 @@ interface RequestOptions {
   /**
    * Per-request timeout in milliseconds. Defaults to `DEFAULT_TIMEOUT_MS`.
    * Without a timeout a hung Cloudflare call wedges the per-port lock in
-   * `tunnels-handler.ts` indefinitely, which then blocks every subsequent
+   * `rpc-target.ts` indefinitely, which then blocks every subsequent
    * `get(port)` / `destroy(port)` on that port. The shared
    * `#zoneNamePromise` makes the impact span every port for named
    * tunnels.
@@ -421,15 +421,59 @@ interface DNSRecordEntry {
   proxied?: boolean;
 }
 
+async function listCNAMERecords(args: {
+  token: string;
+  zoneId: string;
+  hostname: string;
+  fetcher: Fetcher;
+}): Promise<DNSRecordEntry[]> {
+  const listUrl =
+    `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records` +
+    `?type=CNAME&name=${encodeURIComponent(args.hostname)}`;
+  return (
+    (await cfRequest<DNSRecordEntry[]>(listUrl, args.token, args.fetcher)) ?? []
+  );
+}
+
+export interface FindCNAMEArgs extends BaseArgs {
+  zoneId: string;
+  hostname: string;
+  cnameTarget: string;
+}
+
+export interface FoundCNAMEResult {
+  recordId: string;
+}
+
+export async function findCNAME(
+  args: FindCNAMEArgs
+): Promise<FoundCNAMEResult | null> {
+  const fetcher = args.fetcher ?? fetch;
+  const records = await listCNAMERecords({
+    token: args.token,
+    zoneId: args.zoneId,
+    hostname: args.hostname,
+    fetcher
+  });
+  const existing = records.find(
+    (r) =>
+      r.type === 'CNAME' &&
+      r.name === args.hostname &&
+      r.content === args.cnameTarget
+  );
+  return existing ? { recordId: existing.id } : null;
+}
+
 export async function upsertCNAME(
   args: UpsertCNAMEArgs
 ): Promise<UpsertCNAMEResult> {
   const fetcher = args.fetcher ?? fetch;
-  const listUrl =
-    `${API_BASE}/zones/${encodeURIComponent(args.zoneId)}/dns_records` +
-    `?type=CNAME&name=${encodeURIComponent(args.hostname)}`;
-  const records =
-    (await cfRequest<DNSRecordEntry[]>(listUrl, args.token, fetcher)) ?? [];
+  const records = await listCNAMERecords({
+    token: args.token,
+    zoneId: args.zoneId,
+    hostname: args.hostname,
+    fetcher
+  });
 
   const existing = records.find(
     (r) => r.type === 'CNAME' && r.name === args.hostname

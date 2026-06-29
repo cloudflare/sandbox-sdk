@@ -1007,7 +1007,7 @@ describe('Sandbox - Automatic Session Management', () => {
           code: ErrorCode.CONTAINER_UNAVAILABLE,
           context: {
             reason: 'container_replaced',
-            sessionId: 'sandbox-default'
+            retryable: true
           }
         });
         await expect(inflight).rejects.toBeInstanceOf(
@@ -2334,33 +2334,138 @@ describe('Sandbox - Automatic Session Management', () => {
       return puts;
     }
 
-    function expectOnlyNamedTunnelPreserved(
+    function expectOnlyNamedTunnelMetadataPreserved(
       puts: Array<{ key: string; value: unknown }>
     ): void {
       const nextTunnels = puts.find((p) => p.key === 'tunnels')
         ?.value as Record<string, { name?: string }>;
-      const nextMeta = puts.find((p) => p.key === 'tunnels:meta')
-        ?.value as Record<string, { needsRespawn?: boolean }>;
+      const nextMeta = puts.find((p) => p.key === 'tunnels:meta')?.value as
+        | Record<
+            string,
+            {
+              needsRespawn?: boolean;
+              tunnelId?: string;
+              name?: string;
+              hostname?: string;
+            }
+          >
+        | undefined;
 
-      expect(Object.keys(nextTunnels ?? {})).toEqual(['8081']);
+      expect(nextTunnels ?? {}).toEqual({});
       expect(nextMeta?.['8081']?.needsRespawn).toBe(true);
+      expect(nextMeta?.['8081']?.tunnelId).toBe('uuid-1');
+      expect(nextMeta?.['8081']?.name).toBe('app');
+      expect(nextMeta?.['8081']?.hostname).toBe('app.example.com');
       expect(nextMeta?.['8080']).toBeUndefined();
     }
 
-    it('onStart() preserves named-tunnel records across restart and drops quick ones', async () => {
+    it('onStart() hides named tunnels for respawn and drops quick ones', async () => {
       const puts = seedMixedTunnelStorage();
 
       await (sandbox as any).onStart();
 
-      expectOnlyNamedTunnelPreserved(puts);
+      expectOnlyNamedTunnelMetadataPreserved(puts);
     });
 
-    it('onStop() preserves named-tunnel records and drops quick ones', async () => {
+    it('onStart() resumes retained named tunnel cleanup records', async () => {
+      mockEnv.CLOUDFLARE_API_TOKEN = 'TOK';
+      mockEnv.CLOUDFLARE_TUNNEL_ACCOUNT_ID = 'ACCT';
+      mockEnv.CLOUDFLARE_ZONE_ID = 'zone-id';
+      const fetchMock = vi.fn<
+        (input: string | URL, init?: RequestInit) => Promise<Response>
+      >(
+        async () =>
+          new Response(JSON.stringify({ success: true, result: {} }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const storagePut = mockCtx.storage.put as unknown as (
+        key: string,
+        value: unknown
+      ) => Promise<void>;
+      const storageGet = mockCtx.storage.get as unknown as (
+        key: string
+      ) => Promise<unknown>;
+      await storagePut('tunnels:cleanup', {
+        '8080': {
+          tunnelId: 'tunnel-uuid-retained',
+          port: 8080,
+          name: 'api',
+          hostname: 'api.example.com',
+          dnsRecordId: 'dns-record-retained',
+          accountId: 'ACCT',
+          zoneId: 'zone-id',
+          phase: 'claimed',
+          updatedAt: '2026-05-13T00:00:00.000Z'
+        }
+      });
+
+      await (sandbox as any).onStart();
+
+      const deleteTargets = fetchMock.mock.calls
+        .filter(([, init]) => init?.method === 'DELETE')
+        .map(([url]) => String(url));
+      expect(
+        deleteTargets.some((target) =>
+          target.includes('/dns_records/dns-record-retained')
+        )
+      ).toBe(true);
+      expect(
+        deleteTargets.some((target) =>
+          target.includes('/cfd_tunnel/tunnel-uuid-retained')
+        )
+      ).toBe(true);
+      expect(await storageGet('tunnels:cleanup')).toEqual({});
+    });
+
+    it('onStop() hides named tunnels for respawn and drops quick ones', async () => {
       const puts = seedMixedTunnelStorage();
 
       await (sandbox as any).onStop();
 
-      expectOnlyNamedTunnelPreserved(puts);
+      expectOnlyNamedTunnelMetadataPreserved(puts);
+    });
+
+    it('tunnels.get() records runtime and lifetime metadata', async () => {
+      const storagePut = mockCtx.storage.put as unknown as (
+        key: string,
+        value: unknown
+      ) => Promise<void>;
+      const storageGet = mockCtx.storage.get as unknown as (
+        key: string
+      ) => Promise<unknown>;
+      await storagePut('currentRuntimeIdentity', { id: 'runtime-1' });
+      await storagePut('sandbox:lifetime', {
+        id: 'lifetime-1',
+        generation: 1,
+        createdAt: '2026-06-18T00:00:00.000Z',
+        updatedAt: '2026-06-18T00:00:00.000Z'
+      });
+      vi.mocked(sandbox.client.tunnels.ensureTunnelRun).mockImplementation(
+        async (request) => ({
+          started: true,
+          run: {
+            mode: 'quick',
+            tunnelId: request.tunnelId,
+            runId: request.runId,
+            port: request.port,
+            url: 'https://stub.trycloudflare.com',
+            hostname: 'stub.trycloudflare.com',
+            startedAt: '2026-06-18T00:00:00.000Z'
+          }
+        })
+      );
+
+      await sandbox.tunnels.get(8080);
+
+      const meta = (await storageGet('tunnels:meta')) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      expect(meta['8080']?.runtimeIdentityID).toBe('runtime-1');
+      expect(meta['8080']?.sandboxLifetimeID).toBe('lifetime-1');
     });
 
     it('destroy() deletes the tunnels storage key', async () => {

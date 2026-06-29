@@ -1,6 +1,8 @@
 import type {
   CheckChangesRequest,
   CheckChangesResult,
+  EnsureTunnelRunRequest,
+  EnsureTunnelRunResult,
   ExtensionConnectRequest,
   ExtensionHealth,
   FileEncoding,
@@ -8,7 +10,8 @@ import type {
   ListFilesOptions,
   Logger,
   SandboxAPI,
-  TunnelInfo,
+  StopTunnelRunRequest,
+  StopTunnelRunResult,
   WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -944,28 +947,18 @@ class TunnelsRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async runQuickTunnel(id: string, port: number): Promise<TunnelInfo> {
-    const result = await this.#svc.runQuickTunnel(id, port);
-    return extractData<TunnelInfo>(result);
+  async ensureTunnelRun(
+    request: EnsureTunnelRunRequest
+  ): Promise<EnsureTunnelRunResult> {
+    const result = await this.#svc.ensureTunnelRun(request);
+    return extractData<EnsureTunnelRunResult>(result);
   }
 
-  async runNamedTunnel(
-    id: string,
-    token: string,
-    port: number
-  ): Promise<TunnelInfo> {
-    const result = await this.#svc.runNamedTunnel(id, token, port);
-    return extractData<TunnelInfo>(result);
-  }
-
-  async destroyTunnel(id: string): Promise<{ success: true; id: string }> {
-    const result = await this.#svc.destroyTunnel(id);
-    throwIfError(result);
-    return { success: true, id };
-  }
-
-  async listTunnels(): Promise<TunnelInfo[]> {
-    return this.#svc.list();
+  async stopTunnelRun(
+    request: StopTunnelRunRequest
+  ): Promise<StopTunnelRunResult> {
+    const result = await this.#svc.stopTunnelRun(request);
+    return extractData<StopTunnelRunResult>(result);
   }
 }
 
