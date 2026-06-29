@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 env:
-  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+  CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
 
 jobs:
   # --- Prerelease channels ---
