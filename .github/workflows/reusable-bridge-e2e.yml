@@ -42,7 +42,7 @@ on:
         description: 'When true, skip cache writes (security: prevents cache poisoning from fork PRs).'
 
 env:
-  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+  CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
 
 jobs:
   deploy-and-test:
