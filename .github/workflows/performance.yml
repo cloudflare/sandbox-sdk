@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+  CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
   PERF_WORKER_NAME: sandbox-perf-test-worker
 
 jobs:
@@ -96,7 +96,7 @@ jobs:
             packages/shared/dist/
           retention-days: 1
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR (for build cache)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -106,7 +106,7 @@ jobs:
         run: echo "version=$(cat .bun-version)" >> $GITHUB_OUTPUT
 
       - name: Build default Docker image
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         env:
           TAG: perf
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
