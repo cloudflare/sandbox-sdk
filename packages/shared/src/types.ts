@@ -587,11 +587,15 @@ export interface SandboxExecOptions {
  * `stdout` / `stderr` are `string` by default (utf-8) or `ArrayBuffer`
  * when `output({ encoding: 'buffer' })` is requested.
  */
-export interface SandboxExecOutput {
-  /** Standard output content. utf-8 string by default, `ArrayBuffer` if requested. */
-  stdout: string | ArrayBuffer;
-  /** Standard error content. utf-8 string by default, `ArrayBuffer` if requested. */
-  stderr: string | ArrayBuffer;
+export type SandboxOutputMode = 'pipe' | 'ignore';
+export type SandboxStderrMode = 'pipe' | 'ignore' | 'combined';
+export type SandboxOutputEncoding = 'utf8' | 'buffer';
+
+export interface SandboxExecOutputBase<T> {
+  /** Standard output content. */
+  stdout: T;
+  /** Standard error content. */
+  stderr: T;
   /** Process exit code. */
   exitCode: number;
   /** True iff `exitCode === 0`. */
@@ -605,6 +609,12 @@ export interface SandboxExecOutput {
   /** Session ID, if the command ran in a session. */
   sessionId?: string;
 }
+
+export type SandboxExecStringOutput = SandboxExecOutputBase<string>;
+export type SandboxExecBufferOutput = SandboxExecOutputBase<ArrayBuffer>;
+export type SandboxExecOutput =
+  | SandboxExecStringOutput
+  | SandboxExecBufferOutput;
 
 /**
  * Unified process handle returned (resolved) by `sandbox.exec()`.
@@ -635,16 +645,22 @@ export interface SandboxProcess {
    * Default encoding is utf-8 strings; pass `{ encoding: 'buffer' }` to get
    * `ArrayBuffer` instead (matches the containers contract).
    */
+  output(options: { encoding: 'buffer' }): Promise<SandboxExecBufferOutput>;
+  output(options?: { encoding?: 'utf8' }): Promise<SandboxExecStringOutput>;
   output(options?: {
-    encoding?: 'utf8' | 'buffer';
+    encoding?: SandboxOutputEncoding;
   }): Promise<SandboxExecOutput>;
+
+  /** Sugar for `(await this.output({ encoding: 'utf8' })).stdout` as a string. */
+  text(): Promise<string>;
+
+  /** Sugar for `JSON.parse(await this.text())`. */
+  json<T = unknown>(): Promise<T>;
 
   /**
    * Terminate the process.
    *
-   * Defaults to `SIGTERM` (15). The signal parameter is accepted for
-   * containers-contract compatibility, but the current container control path
-   * treats termination as SIGTERM.
+   * Defaults to `SIGTERM` (15).
    */
   kill(signal?: number | string): void;
 
@@ -693,8 +709,10 @@ export interface SandboxProcess {
  */
 export interface SandboxProcessPromise extends Promise<SandboxProcess> {
   /** Equivalent to `(await this).output(options)`. */
+  output(options: { encoding: 'buffer' }): Promise<SandboxExecBufferOutput>;
+  output(options?: { encoding?: 'utf8' }): Promise<SandboxExecStringOutput>;
   output(options?: {
-    encoding?: 'utf8' | 'buffer';
+    encoding?: SandboxOutputEncoding;
   }): Promise<SandboxExecOutput>;
   /** Sugar for `(await this.output({ encoding: 'utf8' })).stdout` as a string. */
   text(): Promise<string>;
@@ -1178,6 +1196,8 @@ export interface ProcessListResult {
     startTime: string;
     endTime?: string;
     exitCode?: number;
+    stdout?: SandboxOutputMode;
+    stderr?: SandboxStderrMode;
   }>;
   timestamp: string;
 }
@@ -1192,6 +1212,8 @@ export interface ProcessInfoResult {
     startTime: string;
     endTime?: string;
     exitCode?: number;
+    stdout?: SandboxOutputMode;
+    stderr?: SandboxStderrMode;
   };
   timestamp: string;
 }

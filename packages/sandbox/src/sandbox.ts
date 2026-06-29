@@ -720,10 +720,8 @@ export function getSandbox<T extends Sandbox<any>>(
     // directly on the returned promise.
     exec: (command: string | string[], execOptions?: SandboxExecOptions) =>
       createSandboxProcessPromise(stub.exec(command, execOptions)),
-    run: (
-      command: string,
-      runOptions?: ExecOptions & { sessionId?: string }
-    ) => stub.run(command, runOptions),
+    run: (command: string, runOptions?: ExecOptions & { sessionId?: string }) =>
+      stub.run(command, runOptions),
     getProcess: (id: string, options?: ProcessQueryOptions) =>
       options?.sessionId === undefined
         ? stub.getProcess(id)
@@ -3484,6 +3482,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     //   - `stdinWriter`: the `WritableStream<Uint8Array>` exposed to the
     //     caller as `proc.stdin` when they asked for `"pipe"`.
     const { stdinSource, stdinWriter } = resolveStdinForRpc(options?.stdin);
+    const stderrMode = options?.stderr ?? 'pipe';
+    const stdoutMode = options?.stdout ?? 'pipe';
 
     // Normalize to `undefined` when no options were provided. Keeps wire
     // compatibility with the legacy `execWithSession` shape and avoids
@@ -3492,7 +3492,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       session !== undefined ||
       options?.processId !== undefined ||
       options?.autoCleanup !== undefined ||
-      stdinSource !== undefined;
+      options?.stdout !== undefined ||
+      options?.stderr !== undefined;
     const requestOptions =
       executionOptions === undefined && !hasProcessOption
         ? undefined
@@ -3505,15 +3506,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             ...(options?.autoCleanup !== undefined && {
               autoCleanup: options.autoCleanup
             }),
-            ...(stdinSource !== undefined && { stdin: stdinSource })
+            ...(options?.stdout !== undefined && { stdout: stdoutMode }),
+            ...(options?.stderr !== undefined && { stderr: stderrMode })
           };
 
-    const response = requestOptions
-      ? await this.client.processes.startProcess(display, requestOptions)
-      : await this.client.processes.startProcess(display);
-
-    const stderrMode = options?.stderr ?? 'pipe';
-    const stdoutMode = options?.stdout ?? 'pipe';
+    const response =
+      requestOptions !== undefined || stdinSource !== undefined
+        ? await this.client.processes.startProcess(
+            display,
+            requestOptions,
+            stdinSource
+          )
+        : await this.client.processes.startProcess(display);
 
     const proc = new SandboxProcessImpl(
       {
@@ -3570,8 +3574,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           throw error;
         }
       },
-      killProcess: async (id) => {
-        await this.client.processes.killProcess(id);
+      killProcess: async (id, signal) => {
+        await this.client.processes.killProcess(id, signal);
       },
       waitForPort: (id, command, port, opts) =>
         this.waitForPortReady(id, command, port, opts),
@@ -4077,8 +4081,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 : (data.startTime ?? new Date()),
             status: data.status,
             ownership: 'attached',
-            stdout: 'pipe',
-            stderr: 'pipe',
+            stdout: data.stdout ?? 'pipe',
+            stderr: data.stderr ?? 'pipe',
             stdin: null
           },
           this.buildSandboxProcessDeps()
@@ -4091,7 +4095,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /** Return lightweight process snapshots. */
-  async listProcesses(options?: ProcessQueryOptions): Promise<SandboxProcess[]> {
+  async listProcesses(
+    options?: ProcessQueryOptions
+  ): Promise<SandboxProcess[]> {
     const session = this.validateOptionalSessionId(options?.sessionId);
     const response = await this.client.processes.listProcesses();
     const deps = this.buildSandboxProcessDeps();
@@ -4109,8 +4115,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 : (data.startTime ?? new Date()),
             status: data.status,
             ownership: 'attached',
-            stdout: 'ignore',
-            stderr: 'ignore',
+            stdout: data.stdout ?? 'ignore',
+            stderr: data.stderr ?? 'ignore',
             stdin: null
           },
           deps
@@ -4947,7 +4953,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.ctx.storage.get<string | null>('containerPlacementId');
   }
 
-
   private getSessionWrapper(sessionId: string): ExecutionSession {
     // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
@@ -4957,10 +4962,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Unified exec (mirrors `ctx.container.exec()` contract). Session-scoped:
       // caller-provided `options.sessionId` is overridden by this wrapper's
       // sessionId to enforce session pinning.
-      exec: (
-        command: string | string[],
-        execOptions?: SandboxExecOptions
-      ) =>
+      exec: (command: string | string[], execOptions?: SandboxExecOptions) =>
         createSandboxProcessPromise(
           this.spawnSandboxProcess(command, { ...execOptions, sessionId })
         ),

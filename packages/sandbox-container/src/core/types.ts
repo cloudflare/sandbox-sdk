@@ -92,6 +92,9 @@ export interface ProcessCommandHandle {
   pid?: number;
 }
 
+export type ProcessOutputMode = 'pipe' | 'ignore';
+export type ProcessStderrMode = 'pipe' | 'ignore' | 'combined';
+
 export interface ProcessRecord {
   id: string;
   pid?: number;
@@ -103,6 +106,8 @@ export interface ProcessRecord {
   sessionId?: string;
   stdout: string;
   stderr: string;
+  stdoutMode: ProcessOutputMode;
+  stderrMode: ProcessStderrMode;
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
   commandHandle?: ProcessCommandHandle;
@@ -124,6 +129,8 @@ export interface ProcessOptions {
   encoding?: string;
   autoCleanup?: boolean;
   origin?: 'user' | 'internal';
+  stdout?: ProcessOutputMode;
+  stderr?: ProcessStderrMode;
   /**
    * Optional standard input stream piped into the spawned process. Bytes
    * are written to a per-command FIFO (or directly into the process's

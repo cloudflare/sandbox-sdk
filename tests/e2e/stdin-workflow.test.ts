@@ -41,7 +41,11 @@ describe('stdin workflow', () => {
       headers: sandbox.headers(),
       body: JSON.stringify({ command, stdin })
     });
-    expect(response.status).toBe(200);
+    if (response.status !== 200) {
+      throw new Error(
+        `stdin exec failed with ${response.status}: ${await response.text()}`
+      );
+    }
     return (await response.json()) as {
       stdout: string;
       stderr: string;

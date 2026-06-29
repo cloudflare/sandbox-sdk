@@ -7,8 +7,9 @@
  * `tests/e2e/...`); these tests pin the SDK-side contract.
  */
 
-import { describe, expect, it } from 'vitest';
-import { resolveStdinForRpc } from '../src/process';
+import type { ProcessStatus, WaitForExitResult } from '@repo/shared';
+import { describe, expect, it, vi } from 'vitest';
+import { resolveStdinForRpc, SandboxProcessImpl } from '../src/process';
 
 async function readAll(
   stream: ReadableStream<Uint8Array>
@@ -92,5 +93,78 @@ describe('resolveStdinForRpc', () => {
 
     const bytes = await drained;
     expect(new TextDecoder().decode(bytes)).toBe('abc');
+  });
+});
+
+describe('SandboxProcessImpl', () => {
+  function createProcess(
+    options: {
+      stdout?: 'pipe' | 'ignore';
+      stderr?: 'pipe' | 'ignore' | 'combined';
+    } = {}
+  ) {
+    const deps = {
+      openLogStream: async () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          }
+        }),
+      readLogs: async () => ({ stdout: 'out', stderr: 'err' }),
+      fetchStatus: async (): Promise<ProcessStatus> => 'completed',
+      killProcess: async (_id: string, _signal: number) => {},
+      waitForPort: async () => {},
+      waitForLogPattern: async () => ({ line: 'out' }),
+      waitForProcessExit: async (): Promise<WaitForExitResult> => ({
+        exitCode: 0
+      })
+    };
+
+    return {
+      deps,
+      proc: new SandboxProcessImpl(
+        {
+          id: 'proc-test',
+          pid: 123,
+          command: 'echo test',
+          startTime: new Date('2024-01-01T00:00:00Z'),
+          status: 'running',
+          ownership: 'owner',
+          stdout: options.stdout ?? 'pipe',
+          stderr: options.stderr ?? 'pipe',
+          stdin: null
+        },
+        deps
+      )
+    };
+  }
+
+  it('forwards normalized kill signals to deps', async () => {
+    const { deps, proc } = createProcess();
+    const calls: Array<{ id: string; signal: number }> = [];
+    deps.killProcess = async (id: string, signal: number) => {
+      calls.push({ id, signal });
+    };
+
+    proc.kill('SIGKILL');
+
+    await vi.waitFor(() =>
+      expect(calls).toEqual([{ id: 'proc-test', signal: 9 }])
+    );
+  });
+
+  it('honors ignore and combined modes in buffered output', async () => {
+    const ignored = await createProcess({
+      stdout: 'ignore',
+      stderr: 'ignore'
+    }).proc.outputViaLogs();
+    expect(ignored.stdout).toBe('');
+    expect(ignored.stderr).toBe('');
+
+    const combined = await createProcess({
+      stderr: 'combined'
+    }).proc.outputViaLogs();
+    expect(combined.stdout).toBe('out');
+    expect(combined.stderr).toBe('');
   });
 });

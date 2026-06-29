@@ -96,9 +96,9 @@ function sandboxSetup(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
     (async () => {
       try {
-        await sandbox.exec(
-          'find /workspace -mindepth 1 -delete 2>/dev/null; true'
-        );
+        await sandbox
+          .exec('find /workspace -mindepth 1 -delete 2>/dev/null; true')
+          .output();
         const result = await sandbox.gitCheckout(repoUrl, {
           branch: params.branch as string | undefined,
           targetDir: '/workspace',
@@ -139,6 +139,7 @@ function sandboxExec(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
     sandbox
       .exec(command)
+      .output()
       .then((result) => ctx.sendToClient({ id: msg.id, result }))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);

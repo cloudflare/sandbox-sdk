@@ -187,11 +187,15 @@ export class ExecutionService {
     }
   }
 
-  async kill(handle: ProcessCommandHandle): Promise<ServiceResult<void>> {
+  async kill(
+    handle: ProcessCommandHandle,
+    signal: NodeJS.Signals = 'SIGTERM'
+  ): Promise<ServiceResult<void>> {
     if (handle.target.kind === 'session') {
       return this.sessionManager.killCommand(
         handle.target.sessionId,
-        handle.commandId
+        handle.commandId,
+        signal
       );
     }
 
@@ -207,7 +211,7 @@ export class ExecutionService {
     }
 
     try {
-      await process.kill();
+      await process.kill(signal);
       return { success: true };
     } catch (error) {
       const errorMessage =

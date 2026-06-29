@@ -140,7 +140,7 @@ async function runTask(request: Request, env: Env): Promise<Response> {
 
     // git clone repo
     await sandbox.gitCheckout(repo, { targetDir: name });
-    await sandbox.exec(`cd ${shellQuote(name)}`);
+    const cwd = `/workspace/${name}`;
 
     // wire up the placeholder credential the container should see
     await seedPlaceholderAuth(sandbox, env);
@@ -150,8 +150,8 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     const prompt = `${EXTRA_SYSTEM}\n\nTask: ${task}`;
     const cmd = `codex exec --dangerously-bypass-approvals-and-sandbox ${shellQuote(prompt)}`;
 
-    const logs = getOutput(await sandbox.exec(cmd).output());
-    const diff = getOutput(await sandbox.exec('git diff').output());
+    const logs = getOutput(await sandbox.exec(cmd, { cwd }).output());
+    const diff = getOutput(await sandbox.exec('git diff', { cwd }).output());
 
     return Response.json({ logs, diff });
   } catch {

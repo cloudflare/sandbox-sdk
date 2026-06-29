@@ -150,23 +150,19 @@ export interface ProcessStartOptions {
   encoding?: string;
   autoCleanup?: boolean;
   origin?: 'user' | 'internal';
-  /**
-   * Optional standard input stream piped into the spawned process.
-   * Bytes flow into the per-command stdin FIFO (session-backed exec)
-   * or directly into the process stdin (sessionless exec) until the
-   * stream ends, at which point the command sees EOF on stdin.
-   */
-  stdin?: ReadableStream<Uint8Array>;
+  stdout?: 'pipe' | 'ignore';
+  stderr?: 'pipe' | 'ignore' | 'combined';
 }
 
 export interface SandboxProcessesAPI {
   startProcess(
     command: string,
-    options?: ProcessStartOptions
+    options?: ProcessStartOptions,
+    stdin?: ReadableStream<Uint8Array>
   ): Promise<ProcessStartResult>;
   listProcesses(): Promise<ProcessListResult>;
   getProcess(id: string): Promise<ProcessInfoResult>;
-  killProcess(id: string): Promise<ProcessKillResult>;
+  killProcess(id: string, signal?: number): Promise<ProcessKillResult>;
   killAllProcesses(): Promise<ProcessCleanupResult>;
   getProcessLogs(id: string): Promise<ProcessLogsResult>;
   streamProcessLogs(id: string): Promise<ReadableStream<Uint8Array>>;

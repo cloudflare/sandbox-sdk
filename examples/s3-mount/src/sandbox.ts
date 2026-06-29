@@ -116,9 +116,11 @@ async function installShellAutoCd(
     BASHRC_MARKER,
     'if [ -d /mnt/s3 ] && [ "$PWD" = "$HOME" ]; then cd /mnt/s3 2>/dev/null; fi'
   ].join('\n');
-  await sandbox.exec(
-    `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`
-  );
+  await sandbox
+    .exec(
+      `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`
+    )
+    .output();
 }
 
 function shellQuote(s: string): string {
@@ -135,5 +137,5 @@ export async function unmountBucket(
   sandbox: ReturnType<typeof getSandbox>
 ): Promise<void> {
   // Subshell so a non-zero exit doesn't poison the default session.
-  await sandbox.exec('(fusermount -u /mnt/s3 2>&1 || true)');
+  await sandbox.exec('(fusermount -u /mnt/s3 2>&1 || true)').output();
 }

@@ -89,7 +89,7 @@ async function runTask(request: Request, env: Env): Promise<Response> {
 
     // git clone repo
     await sandbox.gitCheckout(repo, { targetDir: name });
-    await sandbox.exec(`cd ${shellQuote(name)}`);
+    const cwd = `/workspace/${name}`;
 
     // Kick off CC with our query.
     const cmd = `claude --print --permission-mode bypassPermissions --append-system-prompt ${shellQuote(EXTRA_SYSTEM)} ${shellQuote(task)}`;
@@ -97,11 +97,12 @@ async function runTask(request: Request, env: Env): Promise<Response> {
     const logs = getOutput(
       await sandbox
         .exec(cmd, {
+          cwd,
           env: { IS_SANDBOX: '1', ...placeholderAuthVars(env) }
         })
         .output()
     );
-    const diff = getOutput(await sandbox.exec('git diff').output());
+    const diff = getOutput(await sandbox.exec('git diff', { cwd }).output());
 
     return Response.json({ logs, diff });
   } catch {

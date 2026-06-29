@@ -425,6 +425,23 @@ class FilesRPCAPI extends RpcTarget {
   }
 }
 
+const SIGNAL_NAMES: Record<number, NodeJS.Signals> = {
+  1: 'SIGHUP',
+  2: 'SIGINT',
+  3: 'SIGQUIT',
+  9: 'SIGKILL',
+  10: 'SIGUSR1',
+  12: 'SIGUSR2',
+  15: 'SIGTERM',
+  18: 'SIGCONT',
+  19: 'SIGSTOP'
+};
+
+function signalNumberToNodeSignal(signal?: number): NodeJS.Signals | undefined {
+  if (signal === undefined) return undefined;
+  return SIGNAL_NAMES[signal] ?? 'SIGTERM';
+}
+
 // ===========================================================================
 // Processes
 // ===========================================================================
@@ -436,8 +453,15 @@ class ProcessesRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async startProcess(command: string, options: ProcessStartOptions = {}) {
-    const result = await this.#svc.startProcess(command, options);
+  async startProcess(
+    command: string,
+    options: ProcessStartOptions = {},
+    stdin?: ReadableStream<Uint8Array>
+  ) {
+    const result = await this.#svc.startProcess(command, {
+      ...options,
+      ...(stdin !== undefined && { stdin })
+    });
     const proc = extractData<ProcessRecord>(result);
     return {
       success: true,
@@ -459,7 +483,9 @@ class ProcessesRPCAPI extends RpcTarget {
         command: p.command,
         status: p.status,
         startTime: p.startTime.toISOString(),
-        exitCode: p.exitCode
+        exitCode: p.exitCode,
+        stdout: p.stdoutMode,
+        stderr: p.stderrMode
       })),
       timestamp: new Date().toISOString()
     };
@@ -476,14 +502,19 @@ class ProcessesRPCAPI extends RpcTarget {
         command: proc.command,
         status: proc.status,
         startTime: proc.startTime.toISOString(),
-        exitCode: proc.exitCode
+        exitCode: proc.exitCode,
+        stdout: proc.stdoutMode,
+        stderr: proc.stderrMode
       },
       timestamp: new Date().toISOString()
     };
   }
 
-  async killProcess(id: string) {
-    const result = await this.#svc.killProcess(id);
+  async killProcess(id: string, signal?: number) {
+    const result = await this.#svc.killProcess(
+      id,
+      signalNumberToNodeSignal(signal)
+    );
     throwIfError(result);
     return {
       success: true,

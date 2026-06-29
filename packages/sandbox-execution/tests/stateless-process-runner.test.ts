@@ -50,6 +50,21 @@ describe('StatelessProcessRunner', () => {
     expect(result.output).toEqual(streamed);
   });
 
+  it('pipes stdin into the process', async () => {
+    const stdin = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        controller.enqueue(enc.encode('one\ntwo\nthree\n'));
+        controller.close();
+      }
+    });
+
+    const result = await runner.start('wc -l', { stdin }).wait();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe('3');
+  });
+
   it('captures stdout and stderr as filterable chunks', async () => {
     const process = runner.start(
       'printf out1; printf err1 >&2; printf out2; printf err2 >&2'

@@ -393,6 +393,34 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('passes non-default output modes to process start', async () => {
+      await sandbox.exec('echo test', {
+        stdout: 'ignore',
+        stderr: 'combined'
+      });
+
+      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
+        'echo test',
+        expect.objectContaining({
+          stdout: 'ignore',
+          stderr: 'combined'
+        }),
+        undefined
+      );
+    });
+
+    it('forwards kill signals through process handles', async () => {
+      const proc = await sandbox.exec('sleep 10');
+
+      proc.kill('SIGKILL');
+      await vi.waitFor(() =>
+        expect(sandbox.client.processes.killProcess).toHaveBeenCalledWith(
+          proc.id,
+          9
+        )
+      );
+    });
+
     it('runs infrastructure exec without creating a default session', async () => {
       await sandbox.setEnvVars({ INFRA_TOKEN: 'secret' });
       vi.mocked(sandbox.client.utils.createSession).mockClear();
@@ -447,7 +475,8 @@ describe('Sandbox - Automatic Session Management', () => {
           timeoutMs: 5000,
           env: { OPTION: 'value' },
           cwd: '/workspace/project'
-        }
+        },
+        undefined
       );
     });
 
@@ -644,7 +673,8 @@ describe('Sandbox - Automatic Session Management', () => {
           cwd: '/workspace/app',
           timeoutMs: 1000,
           autoCleanup: false
-        }
+        },
+        undefined
       );
     });
 
@@ -905,7 +935,8 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'echo test',
-        { sessionId: 'isolated-session' }
+        { sessionId: 'isolated-session' },
+        undefined
       );
     });
 
@@ -1080,7 +1111,8 @@ describe('Sandbox - Automatic Session Management', () => {
       await session.exec('pwd');
       expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'pwd',
-        { sessionId: 'test-session' }
+        { sessionId: 'test-session' },
+        undefined
       );
     });
 
@@ -1111,7 +1143,8 @@ describe('Sandbox - Automatic Session Management', () => {
           cwd: '/workspace/app',
           timeoutMs: 1000,
           autoCleanup: false
-        }
+        },
+        undefined
       );
     });
 
@@ -3433,5 +3466,27 @@ describe('Sandbox.getProcess()', () => {
       } as any)
     );
     expect(await sb.getProcess('x')).toBeNull();
+  });
+
+  it('re-attaches with persisted output modes', async () => {
+    const sb = await makeSandbox();
+    vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
+      success: true,
+      process: {
+        id: 'x',
+        pid: 123,
+        command: 'echo test',
+        status: 'running',
+        startTime: new Date().toISOString(),
+        stdout: 'ignore',
+        stderr: 'combined'
+      },
+      timestamp: ''
+    } as any);
+
+    const proc = await sb.getProcess('x');
+
+    expect(proc?.stdout).toBeNull();
+    expect(proc?.stderr).toBeNull();
   });
 });

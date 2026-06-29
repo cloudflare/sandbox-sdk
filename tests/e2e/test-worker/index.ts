@@ -572,19 +572,19 @@ console.log('Echo server on port ' + port);
       // `run()` (the foreground session-shell path) so legacy E2E coverage
       // still validates persistent session behaviour like `cd`, aliases,
       // functions, session-level timeouts, and shell termination recovery.
-      // When a `stdin` string is supplied, use the unified `exec()` path so
-      // the request exercises `SandboxExecOptions.stdin` end-to-end.
+      // When a `stdin` string or `mode: 'exec'` is supplied, use the unified
+      // `exec()` path so tests can exercise `SandboxExecOptions` end-to-end.
       if (url.pathname === '/api/execute' && request.method === 'POST') {
         const result =
-          typeof body.stdin === 'string'
-            ? await executor
-                .exec(body.command, {
+          typeof body.stdin === 'string' || body.mode === 'exec'
+            ? await (
+                await executor.exec(body.command, {
                   env: body.env,
                   cwd: body.cwd,
                   timeout: body.timeout,
-                  stdin: body.stdin
+                  ...(typeof body.stdin === 'string' && { stdin: body.stdin })
                 })
-                .output({ encoding: 'utf8' })
+              ).output({ encoding: 'utf8' })
             : await executor.run(body.command, {
                 env: body.env,
                 cwd: body.cwd,
@@ -625,7 +625,6 @@ console.log('Echo server on port ' + port);
           }
         });
       }
-
 
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {

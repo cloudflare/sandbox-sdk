@@ -6,15 +6,19 @@
  * waitForExit) into a single handle whose shape mirrors `ExecProcess` from
  * the Cloudflare Containers runtime contract.
  *
- * See `docs/EXEC_MIGRATION.md` for migration guidance.
  */
 
 import type {
   LogEvent,
   ProcessStatus,
+  SandboxExecBufferOutput,
   SandboxExecOutput,
+  SandboxExecStringOutput,
+  SandboxOutputEncoding,
+  SandboxOutputMode,
   SandboxProcess,
   SandboxProcessPromise,
+  SandboxStderrMode,
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions
@@ -31,13 +35,13 @@ import { parseSSEStream } from './sse-parser';
 
 export interface SandboxProcessDeps {
   /** Open the multiplexed log stream for a process (replay-then-tail). */
-  openLogStream(processId: string): Promise<ReadableStream<Uint8Array>>;
+  openLogStream(id: string): Promise<ReadableStream<Uint8Array>>;
   /** Read accumulated logs as decoded strings. */
-  readLogs(processId: string): Promise<{ stdout: string; stderr: string }>;
+  readLogs(id: string): Promise<{ stdout: string; stderr: string }>;
   /** Fetch the current `ProcessStatus`. */
-  fetchStatus(processId: string): Promise<ProcessStatus>;
+  fetchStatus(id: string): Promise<ProcessStatus>;
   /** Terminate the process via the container. */
-  killProcess(processId: string): Promise<void>;
+  killProcess(id: string, signal: number): Promise<void>;
   /** Wait for a port to become ready, scoped to the process lifetime. */
   waitForPort(
     processId: string,
@@ -228,14 +232,10 @@ export interface SandboxProcessInit {
   startTime: Date;
   /** Initial status reported by the container after `startProcess`. */
   status: ProcessStatus;
-  /**
-   * `pipe` for owners (live multiplexed stream), `replay` for re-attach.
-   * Either way we read the same `streamProcessLogs` endpoint; the flag is
-   * carried for diagnostics.
-   */
+  /** Indicates whether this handle was created by `exec()` or `getProcess()`. */
   ownership: 'owner' | 'attached';
-  stdout: 'pipe' | 'ignore';
-  stderr: 'pipe' | 'ignore' | 'combined';
+  stdout: SandboxOutputMode;
+  stderr: SandboxStderrMode;
   /**
    * Stdin handle exposed to the caller. `null` when no stdin was
    * requested (the container redirects from `/dev/null`); a
@@ -274,8 +274,8 @@ export class SandboxProcessImpl implements SandboxProcess {
   readonly stderr: ReadableStream<Uint8Array> | null;
 
   private readonly deps: SandboxProcessDeps;
-  private readonly stdoutMode: 'pipe' | 'ignore';
-  private readonly stderrMode: 'pipe' | 'ignore' | 'combined';
+  private readonly stdoutMode: SandboxOutputMode;
+  private readonly stderrMode: SandboxStderrMode;
   /**
    * Memoised demultiplex result. Initialised lazily on first access to
    * `stdout` / `stderr` / `exitCode` / `output()` so handles whose caller
@@ -302,10 +302,8 @@ export class SandboxProcessImpl implements SandboxProcess {
     // `init.status` is the at-spawn snapshot; we only retain the terminal
     // status once exit settles.
     void init.status;
-    // `init.ownership` is informational; behaviour is identical for owner
-    // and re-attached handles — both demux the same `streamProcessLogs`
-    // SSE feed, the container-side just stages a replay-then-tail for
-    // attached handles.
+    // Owner and re-attached handles both consume the same replay-then-tail
+    // process log stream.
     void init.ownership;
 
     // Writer-side of the SDK-managed stdin `TransformStream` (see
@@ -444,15 +442,17 @@ export class SandboxProcessImpl implements SandboxProcess {
   // ---- ExecProcess parity --------------------------------------------------
 
   kill(signal: number | string = 15 /* SIGTERM */): void {
-    normalizeSignal(signal);
+    const signalNumber = normalizeSignal(signal);
     // Fire-and-forget to match the synchronous `ExecProcess.kill` shape.
-    void this.deps.killProcess(this.id).catch(() => {
+    void this.deps.killProcess(this.id, signalNumber).catch(() => {
       /* swallow; container-side already logs */
     });
   }
 
+  output(options: { encoding: 'buffer' }): Promise<SandboxExecBufferOutput>;
+  output(options?: { encoding?: 'utf8' }): Promise<SandboxExecStringOutput>;
   async output(options?: {
-    encoding?: 'utf8' | 'buffer';
+    encoding?: SandboxOutputEncoding;
   }): Promise<SandboxExecOutput> {
     const enc = options?.encoding ?? 'utf8';
     const startedAt = Date.now();
@@ -463,18 +463,28 @@ export class SandboxProcessImpl implements SandboxProcess {
       this.exitCode
     ]);
 
-    const decode = (b: Uint8Array): string | ArrayBuffer =>
-      enc === 'utf8' ? new TextDecoder().decode(b) : asArrayBuffer(b);
-
-    return {
-      stdout: decode(stdoutBytes),
-      stderr: decode(stderrBytes),
+    const base = {
       exitCode,
       success: exitCode === 0,
       duration: Date.now() - startedAt,
       command: this.command,
       timestamp: this.startTime.toISOString(),
       sessionId: this.sessionId
+    };
+
+    if (enc === 'buffer') {
+      return {
+        ...base,
+        stdout: asArrayBuffer(stdoutBytes),
+        stderr: asArrayBuffer(stderrBytes)
+      };
+    }
+
+    const decoder = new TextDecoder();
+    return {
+      ...base,
+      stdout: decoder.decode(stdoutBytes),
+      stderr: decoder.decode(stderrBytes)
     };
   }
 
@@ -495,8 +505,23 @@ export class SandboxProcessImpl implements SandboxProcess {
    * The `encoding` option works the same way as `output()`; the default
    * is utf-8 strings.
    */
+  async text(): Promise<string> {
+    const out = await this.output({ encoding: 'utf8' });
+    return out.stdout;
+  }
+
+  async json<T = unknown>(): Promise<T> {
+    return JSON.parse(await this.text()) as T;
+  }
+
+  outputViaLogs(options: {
+    encoding: 'buffer';
+  }): Promise<SandboxExecBufferOutput>;
+  outputViaLogs(options?: {
+    encoding?: 'utf8';
+  }): Promise<SandboxExecStringOutput>;
   async outputViaLogs(options?: {
-    encoding?: 'utf8' | 'buffer';
+    encoding?: SandboxOutputEncoding;
   }): Promise<SandboxExecOutput> {
     const enc = options?.encoding ?? 'utf8';
     const startedAt = Date.now();
@@ -509,13 +534,10 @@ export class SandboxProcessImpl implements SandboxProcess {
       this.command
     );
     const logs = await this.deps.readLogs(this.id);
+    const stdout = this.stdoutMode === 'pipe' ? logs.stdout : '';
+    const stderr = this.stderrMode === 'pipe' ? logs.stderr : '';
 
-    const decodeUtf = (s: string): string | ArrayBuffer =>
-      enc === 'utf8' ? s : new TextEncoder().encode(s).buffer;
-
-    return {
-      stdout: decodeUtf(logs.stdout),
-      stderr: decodeUtf(logs.stderr),
+    const base = {
       exitCode,
       success: exitCode === 0,
       duration: Date.now() - startedAt,
@@ -523,6 +545,30 @@ export class SandboxProcessImpl implements SandboxProcess {
       timestamp: this.startTime.toISOString(),
       sessionId: this.sessionId
     };
+
+    if (enc === 'buffer') {
+      const encoder = new TextEncoder();
+      return {
+        ...base,
+        stdout: asArrayBuffer(encoder.encode(stdout)),
+        stderr: asArrayBuffer(encoder.encode(stderr))
+      };
+    }
+
+    return {
+      ...base,
+      stdout,
+      stderr
+    };
+  }
+
+  async textViaLogs(): Promise<string> {
+    const out = await this.outputViaLogs({ encoding: 'utf8' });
+    return out.stdout;
+  }
+
+  async jsonViaLogs<T = unknown>(): Promise<T> {
+    return JSON.parse(await this.textViaLogs()) as T;
   }
 
   // ---- sandbox extensions --------------------------------------------------
@@ -574,10 +620,21 @@ export function createSandboxProcessPromise(
   //   const out  = await sandbox.exec(cmd).output(); // SandboxExecOutput
   //   const text = await sandbox.exec(cmd).text();   // string
   const promise = spawn as SandboxProcessPromise;
-  promise.output = async (opts) => (await spawn).output(opts);
+  const output: SandboxProcessPromise['output'] = ((opts?: {
+    encoding?: SandboxOutputEncoding;
+  }) => {
+    const run = async (): Promise<SandboxExecOutput> => {
+      const proc = await spawn;
+      return opts?.encoding === 'buffer'
+        ? proc.output({ encoding: 'buffer' })
+        : proc.output({ encoding: 'utf8' });
+    };
+    return run();
+  }) as SandboxProcessPromise['output'];
+  promise.output = output;
   promise.text = async () => {
     const out = await (await spawn).output({ encoding: 'utf8' });
-    return out.stdout as string;
+    return out.stdout;
   };
   promise.json = async <T>() => JSON.parse(await promise.text()) as T;
   promise.kill = async (signal) => {
@@ -713,7 +770,7 @@ export function resolveStdinForRpc(
 // Object RPC return. Mirrors the legacy `createProcessFromDTO` pattern:
 //
 //   - Data fields are copied by value.
-//   - Streams and the `exitCode` promise are copied by reference and cross
+//   - Streams and the `exitCode` thenable are copied by reference and cross
 //     the JsRpc boundary using workerd's built-in support for them.
 //   - Methods are bound to the underlying impl and become RPC callbacks
 //     when the object is shipped across the boundary.
@@ -736,6 +793,14 @@ export function toRpcSandboxProcess(impl: SandboxProcessImpl): SandboxProcess {
   // shipping), and returns a buffered `SandboxExecOutput` to the Worker.
   // The Worker still sees the live `stdout` / `stderr` streams for
   // incremental reading.
+  const output: SandboxProcess['output'] = ((opts?: {
+    encoding?: SandboxOutputEncoding;
+  }) => {
+    return opts?.encoding === 'buffer'
+      ? impl.outputViaLogs({ encoding: 'buffer' })
+      : impl.outputViaLogs({ encoding: 'utf8' });
+  }) as SandboxProcess['output'];
+
   return {
     id: impl.id,
     pid: impl.pid,
@@ -746,7 +811,9 @@ export function toRpcSandboxProcess(impl: SandboxProcessImpl): SandboxProcess {
     stdout: impl.stdout,
     stderr: impl.stderr,
     exitCode: impl.exitCode,
-    output: (opts) => impl.outputViaLogs(opts),
+    output,
+    text: () => impl.textViaLogs(),
+    json: <T = unknown>() => impl.jsonViaLogs<T>(),
     kill: (signal) => impl.kill(signal),
     status: () => impl.status(),
     getLogs: () => impl.getLogs(),

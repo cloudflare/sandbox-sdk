@@ -68,11 +68,15 @@ export default {
       const testContent = `Hello from sandbox at ${new Date().toISOString()}`;
       const bucket = 'sandbox-auth-test';
 
-      await sandbox.exec(`
+      await sandbox
+        .exec(
+          `
         curl -s -X PUT "http://r2.worker/${bucket}/test-file.txt" \
           -H "Content-Type: text/plain" \
           -d '${testContent}'
-      `);
+      `
+        )
+        .output();
 
       const readResult = await sandbox
         .exec(

@@ -101,8 +101,8 @@ export class Shell implements OpenAIShell {
             cwd: this.cwd
           })
           .output({ encoding: 'utf8' });
-        stdout = result.stdout as string;
-        stderr = result.stderr as string;
+        stdout = result.stdout;
+        stderr = result.stderr;
         exitCode = result.exitCode;
         // exec returns a result even for failed commands, so check success field
         // Timeout would be indicated by a specific error or exit code
