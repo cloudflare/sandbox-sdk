@@ -118,6 +118,17 @@ describe('createOpenCodeProxy', () => {
     expect(handle.fetch).toHaveBeenCalledOnce();
   });
 
+  it('preserves non-fetch handlers like scheduled and queue', async () => {
+    const scheduled = vi.fn();
+    const queue = vi.fn();
+    const handler = createOpenCodeProxy(
+      () => createMockHandle() as unknown as OpenCodeHandle
+    )({ fetch: vi.fn(), scheduled, queue });
+
+    expect(handler.scheduled).toBe(scheduled);
+    expect(handler.queue).toBe(queue);
+  });
+
   it('resolves the handle lazily, only when proxying', async () => {
     const resolve = vi.fn(
       () => createMockHandle() as unknown as OpenCodeHandle
