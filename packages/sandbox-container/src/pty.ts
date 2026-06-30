@@ -14,16 +14,19 @@ export class Pty {
   private readonly cwd: string;
   private readonly env: Record<string, string | undefined>;
   private readonly logger: Logger;
+  private readonly onExit?: () => void;
 
   constructor(options: {
     cwd: string;
     env?: Record<string, string | undefined>;
     logger: Logger;
     bufferSize?: number;
+    onExit?: () => void;
   }) {
     this.cwd = options.cwd;
     this.env = options.env ?? {};
     this.logger = options.logger;
+    this.onExit = options.onExit;
     this.outputBuffer = new ByteRingBuffer(
       options.bufferSize ?? DEFAULT_BUFFER_SIZE
     );
@@ -39,7 +42,7 @@ export class Pty {
       name: 'xterm-256color',
       data: (_term, data: Uint8Array) => this.emitData(data),
       exit: (_term, exitCode, signal) => {
-        this._closed = true;
+        this.markClosed();
         this.logger.info('PTY terminal exited', { exitCode, signal });
       }
     });
@@ -58,7 +61,7 @@ export class Pty {
     });
 
     this.process.exited.then((exitCode) => {
-      this._closed = true;
+      this.markClosed();
       this.logger.info('PTY process exited', { exitCode });
     });
   }
@@ -93,7 +96,7 @@ export class Pty {
   }
 
   async destroy(): Promise<void> {
-    this._closed = true;
+    this.markClosed();
 
     if (this.terminal && !this.terminal.closed) {
       this.terminal.close();
@@ -108,6 +111,13 @@ export class Pty {
     this.outputBuffer.clear();
     this.terminal = null;
     this.process = null;
+  }
+
+  /** Sets _closed once and fires the onExit callback at most once. */
+  private markClosed(): void {
+    if (this._closed) return;
+    this._closed = true;
+    this.onExit?.();
   }
 
   private emitData(data: Uint8Array): void {
