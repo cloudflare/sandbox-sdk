@@ -11,6 +11,7 @@ Consumer-facing documentation (API reference, deployment, security) lives in [`b
 - `warm-pool.ts` — `WarmPool` Durable Object that maintains a pool of pre-started sandbox containers (adapted from [cf-container-warm-pool](https://github.com/mikenomitch/cf-container-warm-pool)).
 - `pool.ts` — Pool management helpers used by routes.
 - `helpers.ts` — Utility functions (path validation, shell quoting, SSE formatting).
+- `tracing.ts` — Custom span instrumentation: wraps each route handler in a `bridge.<operation>` Cloudflare custom span, seeding common attributes and exposing the active span for operation-specific metadata.
 - `types.ts` — `BridgeConfig`, `BridgeEnv`, `WorkerHandlers` type definitions.
 - `openapi.ts` — OpenAPI 3.1 schema definition.
 - `openapi-html.ts` — Self-contained HTML renderer for the OpenAPI spec.
