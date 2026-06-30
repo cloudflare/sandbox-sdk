@@ -1,6 +1,9 @@
 {
   "name": "sandbox-test",
-  "main": "src/index.ts",
+  // Entry is the eviction-test worker: it re-exports the SDK worker surface
+  // (so the Sandbox container binding resolves) plus the OpenCodeFixture DO that
+  // the DO-eviction test drives via its namespace binding.
+  "main": "opencode/eviction-worker.ts",
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
 
@@ -22,6 +25,10 @@
       {
         "class_name": "Sandbox",
         "name": "Sandbox"
+      },
+      {
+        "class_name": "OpenCodeFixture",
+        "name": "OpenCodeFixture"
       }
     ]
   },
@@ -30,6 +37,10 @@
     {
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
+    },
+    {
+      "new_sqlite_classes": ["OpenCodeFixture"],
+      "tag": "v2"
     }
   ]
 }

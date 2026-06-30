@@ -225,7 +225,7 @@ export interface InvalidBackupConfigContext {
 /**
  * OpenCode error contexts
  */
-export interface OpencodeStartupContext {
+export interface OpenCodeStartupContext {
   port: number;
   stderr?: string;
   command?: string;
