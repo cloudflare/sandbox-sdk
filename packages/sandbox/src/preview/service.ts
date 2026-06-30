@@ -7,43 +7,59 @@ import type { ErrorResponse } from '../errors';
 import { CustomDomainRequiredError, ErrorCode } from '../errors';
 import { SandboxSecurityError, validatePort } from '../security';
 import { forwardPreviewRequest, type PreviewTCPPort } from './forwarding';
-import {
-  PREVIEW_PROXY_HEADER,
-  PREVIEW_PROXY_HEADERS,
-  PREVIEW_PROXY_PORT_HEADER,
-  PREVIEW_PROXY_SANDBOX_ID_HEADER,
-  PREVIEW_PROXY_TOKEN_HEADER
-} from './protocol';
+import { readPreviewProxyMetadata } from './protocol';
+import { buildPreviewProxyRequest } from './proxy-request';
 import { constructPreviewURL } from './route';
 import {
   type CurrentPreviewPort,
   clearActivePreviewPorts,
   PORT_TOKENS_STORAGE_KEY,
+  type PortTokenEntry,
+  type PreviewPortActivations,
   readActivePreviewPorts,
   readPortTokens,
   readPreviewState,
   writeActivePreviewPorts
 } from './state';
+import {
+  assertValidCustomPreviewToken,
+  generatePreviewToken,
+  previewTokensMatch
+} from './token';
 
 export type PreviewForwardingContainer = {
   running?: boolean;
   getTcpPort(port: number): PreviewTCPPort;
 };
 
+type StalePreviewRuntime = {
+  status: 'stale';
+  reason:
+    | 'runtime-not-healthy'
+    | 'runtime-not-running'
+    | 'missing-runtime-id'
+    | 'missing-activation'
+    | 'runtime-mismatch'
+    | 'token-mismatch';
+  containerStatus?: string;
+};
+
 type PreviewURLRuntimeValidation =
   | { status: 'invalid' }
-  | {
-      status: 'stale';
-      reason:
-        | 'runtime-not-healthy'
-        | 'runtime-not-running'
-        | 'missing-runtime-id'
-        | 'missing-activation'
-        | 'runtime-mismatch'
-        | 'token-mismatch';
-      containerStatus?: string;
-    }
+  | StalePreviewRuntime
   | { status: 'active'; runtime: RuntimeIdentity };
+
+type PreviewRuntimeAvailability =
+  | StalePreviewRuntime
+  | { status: 'active'; runtime: RuntimeIdentity };
+
+type PreviewRuntimeSnapshot = {
+  containerStatus: string;
+  containerRunning: boolean;
+  tokens: Record<string, PortTokenEntry>;
+  activations: PreviewPortActivations;
+  runtime: RuntimeIdentity | null;
+};
 
 export interface PreviewServiceDeps {
   storage: DurableObjectStorage;
@@ -61,17 +77,15 @@ export interface PreviewServiceDeps {
 export class PreviewService {
   constructor(private readonly deps: PreviewServiceDeps) {}
 
-  isPreviewProxyRequest(request: Request): boolean {
-    return request.headers.get(PREVIEW_PROXY_HEADER) === '1';
-  }
-
   async clearActivePreviewPorts(): Promise<void> {
     await clearActivePreviewPorts(this.deps.storage);
   }
 
   async clearPreviewState(): Promise<void> {
-    await this.deps.storage.delete(PORT_TOKENS_STORAGE_KEY);
-    await this.clearActivePreviewPorts();
+    await this.deps.storage.transaction(async (txn) => {
+      await txn.delete(PORT_TOKENS_STORAGE_KEY);
+      await clearActivePreviewPorts(txn);
+    });
   }
 
   async exposePort(
@@ -107,7 +121,7 @@ export class PreviewService {
       }
 
       if (options.token !== undefined) {
-        this.validateCustomToken(options.token);
+        assertValidCustomPreviewToken(options.token);
       }
 
       const runtime = await this.deps.ensureRuntimeActiveForPreview();
@@ -117,7 +131,7 @@ export class PreviewService {
         const tokens = await readPortTokens(txn);
         const existingEntry = tokens[port.toString()];
         const nextToken =
-          options.token ?? existingEntry?.token ?? this.generatePortToken();
+          options.token ?? existingEntry?.token ?? generatePreviewToken();
 
         const existingPort = Object.entries(tokens).find(
           ([p, entry]) => entry.token === nextToken && p !== port.toString()
@@ -142,12 +156,14 @@ export class PreviewService {
 
       await this.deps.currentRuntime.assertActive(runtime);
 
-      const url = this.constructPreviewURL(
+      const url = constructPreviewURL({
         port,
-        sandboxName,
-        options.hostname,
-        token
-      );
+        sandboxId: sandboxName,
+        effectiveId: sandboxName,
+        hostname: options.hostname,
+        token,
+        normalizeId: this.deps.getNormalizeID()
+      });
 
       outcome = 'success';
 
@@ -224,7 +240,14 @@ export class PreviewService {
 
     const activePorts = await this.getCurrentPreviewPorts();
     return activePorts.map(({ port, entry }) => ({
-      url: this.constructPreviewURL(port, sandboxName, hostname, entry.token),
+      url: constructPreviewURL({
+        port,
+        sandboxId: sandboxName,
+        effectiveId: sandboxName,
+        hostname,
+        token: entry.token,
+        normalizeId: this.deps.getNormalizeID()
+      }),
       port,
       status: 'active' as const
     }));
@@ -246,25 +269,21 @@ export class PreviewService {
       return false;
     }
 
-    return this.previewTokensMatch(entry.token, token);
+    return previewTokensMatch(entry.token, token);
   }
 
   async proxyPreviewRequest(request: Request): Promise<Response> {
-    const portValue = request.headers.get(PREVIEW_PROXY_PORT_HEADER);
-    const token = request.headers.get(PREVIEW_PROXY_TOKEN_HEADER);
-    const sandboxId = request.headers.get(PREVIEW_PROXY_SANDBOX_ID_HEADER);
-    const port =
-      portValue === null ? Number.NaN : Number.parseInt(portValue, 10);
-
-    if (!Number.isFinite(port) || !validatePort(port) || !token || !sandboxId) {
+    const target = readPreviewProxyMetadata(request);
+    if (!target) {
       return this.invalidPreviewTokenResponse();
     }
 
-    const proxyRequest = this.buildPreviewProxyRequest(
-      request,
+    const { port, token, sandboxId } = target;
+    const proxyRequest = buildPreviewProxyRequest(request, {
       port,
-      sandboxId
-    );
+      sandboxId,
+      sandboxName: this.deps.getSandboxName()
+    });
 
     const validation = await this.validatePreviewURLForRuntime(port, token);
     if (validation.status === 'invalid') {
@@ -287,22 +306,6 @@ export class PreviewService {
       port,
       validation.runtime
     );
-  }
-
-  private constructPreviewURL(
-    port: number,
-    sandboxId: string,
-    hostname: string,
-    token: string
-  ): string {
-    return constructPreviewURL({
-      port,
-      sandboxId,
-      hostname,
-      token,
-      effectiveId: this.deps.getSandboxName() || sandboxId,
-      normalizeId: this.deps.getNormalizeID()
-    });
   }
 
   private invalidPreviewTokenResponse(): Response {
@@ -333,40 +336,6 @@ export class PreviewService {
         }
       }
     );
-  }
-
-  private buildPreviewProxyRequest(
-    request: Request,
-    port: number,
-    sandboxId: string
-  ): Request {
-    const url = new URL(request.url);
-    const proxyURL = `http://localhost:${port}${url.pathname}${url.search}`;
-    const headers = new Headers(request.headers);
-    for (const header of PREVIEW_PROXY_HEADERS) {
-      headers.delete(header);
-    }
-    headers.set('X-Original-URL', request.url);
-    headers.set('X-Forwarded-Host', url.hostname);
-    headers.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
-    headers.set('X-Sandbox-Name', this.deps.getSandboxName() ?? sandboxId);
-
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader?.toLowerCase() === 'websocket') {
-      return new Request(request, {
-        headers,
-        redirect: 'manual'
-      });
-    }
-
-    return new Request(proxyURL, {
-      method: request.method,
-      headers,
-      body: request.body,
-      // @ts-expect-error - duplex required for body streaming in modern runtimes
-      duplex: 'half',
-      redirect: 'manual'
-    });
   }
 
   private async fetchPreviewIfRunning(
@@ -409,119 +378,76 @@ export class PreviewService {
     port: number,
     token: string
   ): Promise<PreviewURLRuntimeValidation> {
-    const containerState = await this.deps.getContainerState();
-    const containerRunning =
-      this.deps.getForwardingContainer()?.running === true;
-    const { tokens, activations, runtime } =
-      await this.deps.storage.transaction(async (txn) => {
-        const [previewState, runtime] = await Promise.all([
-          readPreviewState(txn),
-          this.deps.currentRuntime.getStored(txn)
-        ]);
-        return { ...previewState, runtime };
-      });
-
-    const entry = tokens[port.toString()];
+    const snapshot = await this.readRuntimeSnapshot();
+    const entry = snapshot.tokens[port.toString()];
     if (!entry) {
       return { status: 'invalid' };
     }
 
-    const tokenMatches = this.previewTokensMatch(entry.token, token);
+    const tokenMatches = previewTokensMatch(entry.token, token);
     if (!tokenMatches) {
       return { status: 'invalid' };
     }
 
-    if (containerState.status !== 'healthy') {
-      return {
-        status: 'stale',
-        reason: 'runtime-not-healthy',
-        containerStatus: containerState.status
-      };
+    const availability = this.getRuntimeAvailability(snapshot);
+    if (availability.status === 'stale') {
+      return availability;
     }
 
-    if (!containerRunning) {
-      return {
-        status: 'stale',
-        reason: 'runtime-not-running',
-        containerStatus: containerState.status
-      };
-    }
-
-    if (!runtime) {
-      return {
-        status: 'stale',
-        reason: 'missing-runtime-id',
-        containerStatus: containerState.status
-      };
-    }
-
-    const activation = activations[port.toString()];
+    const activation = snapshot.activations[port.toString()];
     if (!activation) {
       return {
         status: 'stale',
         reason: 'missing-activation',
-        containerStatus: containerState.status
+        containerStatus: snapshot.containerStatus
       };
     }
 
-    if (!runtime.owns(activation)) {
+    if (!availability.runtime.owns(activation)) {
       return {
         status: 'stale',
         reason: 'runtime-mismatch',
-        containerStatus: containerState.status
+        containerStatus: snapshot.containerStatus
       };
     }
 
-    const activationTokenMatches = this.previewTokensMatch(
-      activation.token,
-      token
-    );
+    const activationTokenMatches = previewTokensMatch(activation.token, token);
     if (!activationTokenMatches) {
       this.deps.logger.warn('Preview URL activation token mismatch', {
         port,
-        runtimeIdentityID: runtime.id
+        runtimeIdentityID: availability.runtime.id
       });
       return {
         status: 'stale',
         reason: 'token-mismatch',
-        containerStatus: containerState.status
+        containerStatus: snapshot.containerStatus
       };
     }
 
-    return { status: 'active', runtime };
+    return { status: 'active', runtime: availability.runtime };
   }
 
   private async getCurrentPreviewPorts(): Promise<CurrentPreviewPort[]> {
-    const containerState = await this.deps.getContainerState();
-    const containerRunning =
-      this.deps.getForwardingContainer()?.running === true;
-    const { tokens, activations, runtime } =
-      await this.deps.storage.transaction(async (txn) => {
-        const [previewState, runtime] = await Promise.all([
-          readPreviewState(txn),
-          this.deps.currentRuntime.getStored(txn)
-        ]);
-        return { ...previewState, runtime };
-      });
-
-    if (containerState.status !== 'healthy' || !containerRunning || !runtime) {
+    const snapshot = await this.readRuntimeSnapshot();
+    const availability = this.getRuntimeAvailability(snapshot);
+    if (availability.status === 'stale') {
       return [];
     }
 
     const activePorts: CurrentPreviewPort[] = [];
 
-    for (const [portKey, activation] of Object.entries(activations)) {
+    for (const [portKey, activation] of Object.entries(snapshot.activations)) {
       const port = Number.parseInt(portKey, 10);
-      const entry = tokens[portKey];
+      const entry = snapshot.tokens[portKey];
       if (!entry || !Number.isInteger(port) || !validatePort(port)) {
         continue;
       }
 
-      if (!runtime.owns(activation)) {
+      if (!availability.runtime.owns(activation)) {
         continue;
       }
 
-      if (!this.previewTokensMatch(entry.token, activation.token)) {
+      if (!previewTokensMatch(entry.token, activation.token)) {
         continue;
       }
 
@@ -531,49 +457,55 @@ export class PreviewService {
     return activePorts.sort((a, b) => a.port - b.port);
   }
 
-  private previewTokensMatch(expected: string, actual: string): boolean {
-    const encoder = new TextEncoder();
-    const a = encoder.encode(expected);
-    const b = encoder.encode(actual);
+  private async readRuntimeSnapshot(): Promise<PreviewRuntimeSnapshot> {
+    const containerState = await this.deps.getContainerState();
+    const containerRunning =
+      this.deps.getForwardingContainer()?.running === true;
+    const { tokens, activations, runtime } =
+      await this.deps.storage.transaction(async (txn) => {
+        const [previewState, runtime] = await Promise.all([
+          readPreviewState(txn),
+          this.deps.currentRuntime.getStored(txn)
+        ]);
+        return { ...previewState, runtime };
+      });
 
-    try {
-      return (
-        crypto.subtle as SubtleCrypto & {
-          timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
-        }
-      ).timingSafeEqual(a, b);
-    } catch {
-      return false;
-    }
+    return {
+      containerStatus: containerState.status,
+      containerRunning,
+      tokens,
+      activations,
+      runtime
+    };
   }
 
-  private validateCustomToken(token: string): void {
-    if (token.length === 0) {
-      throw new SandboxSecurityError(`Custom token cannot be empty.`);
+  private getRuntimeAvailability(
+    snapshot: PreviewRuntimeSnapshot
+  ): PreviewRuntimeAvailability {
+    if (snapshot.containerStatus !== 'healthy') {
+      return {
+        status: 'stale',
+        reason: 'runtime-not-healthy',
+        containerStatus: snapshot.containerStatus
+      };
     }
 
-    if (token.length > 16) {
-      throw new SandboxSecurityError(
-        `Custom token too long. Maximum 16 characters allowed. Received: ${token.length} characters.`
-      );
+    if (!snapshot.containerRunning) {
+      return {
+        status: 'stale',
+        reason: 'runtime-not-running',
+        containerStatus: snapshot.containerStatus
+      };
     }
 
-    if (!/^[a-z0-9_]+$/.test(token)) {
-      throw new SandboxSecurityError(
-        `Custom token must contain only lowercase letters (a-z), numbers (0-9), and underscores (_). Invalid token provided.`
-      );
+    if (!snapshot.runtime) {
+      return {
+        status: 'stale',
+        reason: 'missing-runtime-id',
+        containerStatus: snapshot.containerStatus
+      };
     }
-  }
 
-  private generatePortToken(): string {
-    const array = new Uint8Array(12);
-    crypto.getRandomValues(array);
-
-    const base64 = btoa(String.fromCharCode(...array));
-    return base64
-      .replace(/\+/g, '_')
-      .replace(/\//g, '_')
-      .replace(/=/g, '')
-      .toLowerCase();
+    return { status: 'active', runtime: snapshot.runtime };
   }
 }

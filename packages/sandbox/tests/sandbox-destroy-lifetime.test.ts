@@ -48,7 +48,11 @@ function createMockState() {
       calls.push({ method: 'delete', key });
       values.delete(key);
     }),
-    list: vi.fn(async () => new Map<string, unknown>())
+    list: vi.fn(async () => new Map<string, unknown>()),
+    transaction: vi.fn(
+      async (callback: (txn: DurableObjectStorage) => Promise<unknown>) =>
+        callback(storage)
+    )
   } as unknown as DurableObjectStorage;
 
   const state = {

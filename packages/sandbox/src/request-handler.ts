@@ -1,11 +1,5 @@
 import { createLogger, TraceContext } from '@repo/shared';
-import {
-  PREVIEW_PROXY_HEADER,
-  PREVIEW_PROXY_HEADERS,
-  PREVIEW_PROXY_PORT_HEADER,
-  PREVIEW_PROXY_SANDBOX_ID_HEADER,
-  PREVIEW_PROXY_TOKEN_HEADER
-} from './preview/protocol';
+import { withPreviewProxyMetadata } from './preview/protocol';
 import { parsePreviewRoute } from './preview/route';
 import { getSandbox, type Sandbox } from './sandbox';
 
@@ -39,17 +33,9 @@ export async function proxyToSandbox<
     // Preview URLs always use normalized (lowercase) IDs
     const sandbox = getSandbox(env.Sandbox, sandboxId, { normalizeId: true });
 
-    const headers = new Headers(request.headers);
-    for (const header of PREVIEW_PROXY_HEADERS) {
-      headers.delete(header);
-    }
-    headers.set(PREVIEW_PROXY_HEADER, '1');
-    headers.set(PREVIEW_PROXY_PORT_HEADER, port.toString());
-    headers.set(PREVIEW_PROXY_TOKEN_HEADER, token);
-    headers.set(PREVIEW_PROXY_SANDBOX_ID_HEADER, sandboxId);
-
-    const previewRequest = new Request(request, { headers });
-    return await sandbox.fetch(previewRequest);
+    return await sandbox.fetch(
+      withPreviewProxyMetadata(request, { port, token, sandboxId })
+    );
   } catch (error) {
     const logger = createProxyLogger(request);
     logger.error(

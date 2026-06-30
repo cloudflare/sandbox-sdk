@@ -83,6 +83,11 @@ import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { isPlatformTransientError } from './platform-errors';
+import { isPreviewProxyRequest } from './preview/protocol';
+import {
+  type PreviewForwardingContainer,
+  PreviewService
+} from './preview/service';
 import {
   createSandboxProcessPromise,
   resolveStdinForRpc,
@@ -90,10 +95,6 @@ import {
   SandboxProcessImpl,
   toRpcSandboxProcess
 } from './process';
-import {
-  type PreviewForwardingContainer,
-  PreviewService
-} from './preview/service';
 import { createSandboxTerminal, proxyTerminal } from './pty';
 import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
@@ -2979,7 +2980,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const url = new URL(request.url);
 
-    if (this.previewService.isPreviewProxyRequest(request)) {
+    if (isPreviewProxyRequest(request)) {
       return await this.previewService.proxyPreviewRequest(request);
     }
 
