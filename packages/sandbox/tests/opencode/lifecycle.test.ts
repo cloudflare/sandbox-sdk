@@ -117,7 +117,7 @@ describe('withOpenCode', () => {
       await handle.start();
 
       expect(mockSandbox.startProcess).toHaveBeenCalledWith(
-        'cd /home/user/agents && opencode serve --port 4096 --hostname 0.0.0.0',
+        "cd '/home/user/agents' && opencode serve --port 4096 --hostname 0.0.0.0",
         expect.any(Object)
       );
     });

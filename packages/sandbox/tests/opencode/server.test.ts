@@ -99,7 +99,18 @@ describe('createOpenCodeServer', () => {
     });
 
     expect(mockSandbox.startProcess).toHaveBeenCalledWith(
-      'cd /home/user/project && opencode serve --port 4096 --hostname 0.0.0.0',
+      "cd '/home/user/project' && opencode serve --port 4096 --hostname 0.0.0.0",
+      expect.any(Object)
+    );
+  });
+
+  it('escapes the directory to prevent shell injection', async () => {
+    await createOpenCodeServer(mockSandbox as unknown as Sandbox, {
+      directory: '/tmp; rm -rf /'
+    });
+
+    expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+      "cd '/tmp; rm -rf /' && opencode serve --port 4096 --hostname 0.0.0.0",
       expect.any(Object)
     );
   });

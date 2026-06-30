@@ -32,7 +32,7 @@ describe('OpenCode desired-state survives DO eviction', () => {
     await revived.coldStart();
 
     expect(await revived.startedCommands()).toContain(
-      'cd /agents && opencode serve --port 8080 --hostname 0.0.0.0'
+      "cd '/agents' && opencode serve --port 8080 --hostname 0.0.0.0"
     );
   });
 
@@ -50,7 +50,7 @@ describe('OpenCode desired-state survives DO eviction', () => {
     await revived.coldStart();
 
     expect(await revived.startedCommands()).toContain(
-      'cd /agents && opencode serve --port 4096 --hostname 0.0.0.0'
+      "cd '/agents' && opencode serve --port 4096 --hostname 0.0.0.0"
     );
   });
 });
