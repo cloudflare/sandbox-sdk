@@ -43,7 +43,12 @@ export type {
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
-export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
+export type {
+  ContainerVersionMismatchContext,
+  ContainerVersionMismatchReason,
+  RPCTransportContext,
+  RPCTransportErrorKind
+} from './errors';
 // Export backup and process readiness errors
 export {
   BackupCreateError,
@@ -51,6 +56,8 @@ export {
   BackupNotFoundError,
   BackupRestoreError,
   ContainerUnavailableError,
+  // Raised when the SDK calls a new RPC surface absent from an old container image
+  ContainerVersionMismatchError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,

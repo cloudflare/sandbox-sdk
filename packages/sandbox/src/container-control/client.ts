@@ -83,22 +83,18 @@ import type {
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
 import {
-  ErrorCode,
-  type ErrorResponse,
-  getHttpStatus,
-  getSuggestion,
-  type OperationInterruptedContext,
-  type RPCTransportContext,
-  type RPCTransportErrorKind
-} from '@repo/shared/errors';
-import { createErrorFromResponse } from '../errors/adapter';
+  createNoOpLogger,
+  SANDBOX_CONTROL_PROTOCOL_VERSION
+} from '@repo/shared';
 import { SandboxError } from '../errors/classes';
+import { SDK_VERSION } from '../version';
 import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
 } from './connection';
+import { throwVersionMismatch } from './errors';
+import { createRPCDomain } from './rpc-domain';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -135,307 +131,6 @@ const BUSY_POLL_INTERVAL_MS = 1_000;
  */
 const IDLE_IMPORT_THRESHOLD = 1;
 const IDLE_EXPORT_THRESHOLD = 1;
-
-// ---------------------------------------------------------------------------
-// Error translation
-// ---------------------------------------------------------------------------
-
-/** Legacy JSON-in-message payload shape — see `translateRPCError`. */
-interface RPCErrorPayload {
-  code: string;
-  message: string;
-  context?: Record<string, unknown>;
-}
-
-function isLocalSandboxError(
-  error: Error
-): error is Error & { errorResponse: ErrorResponse } {
-  if (!('errorResponse' in error)) return false;
-  const response = error.errorResponse as Partial<ErrorResponse> | undefined;
-  return (
-    typeof response?.code === 'string' &&
-    Object.hasOwn(ErrorCode, response.code) &&
-    typeof response.message === 'string' &&
-    typeof response.httpStatus === 'number' &&
-    typeof response.timestamp === 'string' &&
-    typeof response.context === 'object' &&
-    response.context !== null
-  );
-}
-
-/**
- * Translate a capnweb-propagated error into a typed SandboxError.
- *
- * Two wire formats are supported for backward compatibility with older
- * container images:
- *
- *  1. Propagated error properties (capnweb >= 0.8.0). The container throws a
- *     `ServiceError`-shaped object with own enumerable `code` and `details`
- *     properties. capnweb walks `Object.keys()` and reconstructs those fields
- *     on the SDK side.
- *  2. Legacy JSON-encoded message. Older containers encoded the structured
- *     payload as a JSON string in `error.message`.
- *
- * The JSON-fallback branch can be removed once all older container images are
- * no longer in service.
- */
-export interface RPCTranslationContext {
-  /** Public operation name, e.g. `commands.execute` or `files.writeFile`. */
-  operation?: string;
-}
-
-export function translateRPCError(
-  error: unknown,
-  context: RPCTranslationContext = {}
-): never {
-  if (error instanceof SandboxError) throw error;
-
-  if (error instanceof Error) {
-    if (isLocalSandboxError(error)) {
-      throw error;
-    }
-
-    // Format (1): propagated error properties. Distinguish from arbitrary
-    // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
-    // code against the ErrorCode registry.
-    const propagated = error as Error & {
-      code?: unknown;
-      details?: unknown;
-    };
-    if (
-      typeof propagated.code === 'string' &&
-      Object.hasOwn(ErrorCode, propagated.code)
-    ) {
-      const code = propagated.code as ErrorCode;
-      const context =
-        propagated.details && typeof propagated.details === 'object'
-          ? (propagated.details as Record<string, unknown>)
-          : {};
-      throw createErrorFromResponse({
-        code,
-        message: error.message,
-        context,
-        httpStatus: getHttpStatus(code),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Format (2): legacy JSON-encoded structured error in `message`.
-    let payload: RPCErrorPayload | undefined;
-    try {
-      payload = JSON.parse(error.message) as RPCErrorPayload;
-    } catch {
-      // Not a JSON-encoded structured error. Fall through to transport-
-      // level classification below.
-    }
-    if (
-      payload &&
-      typeof payload.code === 'string' &&
-      typeof payload.message === 'string'
-    ) {
-      throw createErrorFromResponse({
-        code: payload.code as ErrorCode,
-        message: payload.message,
-        context: payload.context ?? {},
-        httpStatus: getHttpStatus(payload.code as ErrorCode),
-        timestamp: new Date().toISOString()
-      });
-    }
-    // Map capnweb / DeferredTransport messages onto structured SDK errors
-    // so consumers get public `code` and context fields.
-    const transportResponse = buildTransportErrorResponse(error);
-    const interruptedResponse = buildInterruptedOperationResponse(
-      transportResponse,
-      context
-    );
-    throw createErrorFromResponse(
-      (interruptedResponse ?? transportResponse) as unknown as ErrorResponse,
-      { cause: error }
-    );
-  }
-  // Non-Error throw (rare — capnweb's deserializer always constructs Error
-  // instances, but defensively handle anything else that bubbles up).
-  // Coerce to an Error so the kind=unknown context still has a usable
-  // originalMessage, and preserve the raw value as `cause`.
-  const wrapped = new Error(String(error));
-  throw createErrorFromResponse(
-    buildTransportErrorResponse(wrapped) as unknown as ErrorResponse,
-    { cause: error }
-  );
-}
-
-/**
- * Inspect a transport-level Error's message and produce the ErrorResponse
- * that becomes an RPCTransportError. Pattern strings are pinned to the exact
- * messages emitted by capnweb's WebSocket transport (see capnweb's
- * src/websocket.ts) and our DeferredTransport in container-control/connection.ts —
- * notably the trailing period in `WebSocket connection failed.` matches
- * capnweb verbatim. The DeferredTransport tests in
- * tests/container-connection.test.ts pin the literal strings.
- */
-function buildTransportErrorResponse(
-  error: Error
-): ErrorResponse<RPCTransportContext> {
-  const message = error.message;
-  const errorName = error.name;
-  let kind: RPCTransportErrorKind = 'unknown';
-  let closeCode: number | undefined;
-  let closeReason: string | undefined;
-
-  // First pass: classify by `error.name`. capnweb preserves the name
-  // across the wire for the standard built-ins (see ERROR_TYPES in
-  // capnweb's serialize.ts), and an unambiguous name beats substring
-  // matching on a free-form message. It also handles the cross-realm
-  // `instanceof` trap: a TypeError raised inside capnweb's serializer lives
-  // in capnweb's realm, not the SDK's.
-  if (errorName === 'TypeError') {
-    // Only DeferredTransport / capnweb's WebSocket transport raises a
-    // TypeError on the receive path — always a non-string frame.
-    kind = 'invalid_frame';
-  } else if (errorName === 'SyntaxError') {
-    // capnweb's readLoop calls JSON.parse on each incoming frame; if the
-    // peer sends garbage that's not parseable JSON, the SyntaxError flows
-    // through abort() to every in-flight call.
-    kind = 'protocol_error';
-  } else {
-    // Second pass: plain Errors. capnweb's transport layer and our
-    // DeferredTransport both emit unnamed Errors with these specific
-    // messages; the message is the only signal we have.
-    const peerCloseMatch = message.match(
-      /^Peer closed WebSocket: (\d+) ?(.*)$/
-    );
-    if (peerCloseMatch) {
-      kind = 'peer_closed';
-      closeCode = Number(peerCloseMatch[1]);
-      closeReason = peerCloseMatch[2] || undefined;
-    } else if (message === 'WebSocket connection failed.') {
-      kind = 'connection_failed';
-    } else if (message.startsWith('WebSocket upgrade failed')) {
-      // ContainerControlConnection.doConnect throws this when the HTTP upgrade
-      // returns a non-101 status.
-      kind = 'upgrade_failed';
-    } else if (message === 'No WebSocket in upgrade response') {
-      kind = 'upgrade_failed';
-    } else if (
-      message === 'RPC session was shut down by disposing the main stub' ||
-      message === 'RPC was canceled because the RpcPromise was disposed.'
-    ) {
-      kind = 'session_disposed';
-    }
-  }
-
-  const context: RPCTransportContext = {
-    kind,
-    originalMessage: message,
-    errorName,
-    ...(closeCode !== undefined ? { closeCode } : {}),
-    ...(closeReason !== undefined ? { closeReason } : {})
-  };
-  return {
-    code: ErrorCode.RPC_TRANSPORT_ERROR,
-    message,
-    context,
-    httpStatus: getHttpStatus(ErrorCode.RPC_TRANSPORT_ERROR),
-    suggestion: getSuggestion(
-      ErrorCode.RPC_TRANSPORT_ERROR,
-      context as unknown as Record<string, unknown>
-    ),
-    timestamp: new Date().toISOString()
-  };
-}
-
-/**
- * Wrap a capnweb RPC stub so that every method call translates errors
- * from the JSON wire format into typed SandboxError instances and signals
- * activity at call start.
- *
- * `onCallStarted` fires synchronously when an RPC method is invoked. The
- * ContainerControlClient uses this to renew the DO's activity timeout
- * immediately, so even a call that completes entirely between two
- * busy-poll ticks still pushes the sleepAfter deadline forward.
- *
- * Note: there is no `onCallSettled` hook. A method whose returned promise
- * resolves with a `ReadableStream` is *not* finished when the promise
- * settles — capnweb keeps the export alive until the stream ends. The
- * busy/idle poll on `getStats()` is the source of truth for that.
- */
-function buildInterruptedOperationResponse(
-  transportResponse: ErrorResponse<RPCTransportContext>,
-  context: RPCTranslationContext
-): ErrorResponse<OperationInterruptedContext> | null {
-  if (!context.operation) return null;
-  const { kind } = transportResponse.context;
-  if (
-    kind !== 'session_disposed' &&
-    kind !== 'peer_closed' &&
-    kind !== 'connection_failed'
-  ) {
-    return null;
-  }
-
-  const interruptedContext: OperationInterruptedContext = {
-    reason:
-      kind === 'session_disposed' ? 'transport_disposed' : 'runtime_replaced',
-    operation: context.operation,
-    phase: 'rpc_call',
-    admitted: 'unknown',
-    retryable: false
-  };
-  const action =
-    kind === 'session_disposed' ? 'was closing' : 'closed unexpectedly';
-
-  return {
-    code: ErrorCode.OPERATION_INTERRUPTED,
-    message: `Sandbox operation ${context.operation} was interrupted while the runtime connection ${action}`,
-    context: interruptedContext,
-    httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
-    suggestion: getSuggestion(
-      ErrorCode.OPERATION_INTERRUPTED,
-      interruptedContext as unknown as Record<string, unknown>
-    ),
-    timestamp: new Date().toISOString()
-  };
-}
-
-function wrapStub<T extends object>(
-  stub: T,
-  domain: string,
-  onCallStarted: () => void
-): T {
-  return new Proxy(stub, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value !== 'function') return value;
-      // Reflect.apply preserves the method call target because capnweb
-      // stubs are Proxies that interpret .apply as an RPC property access.
-      return (...args: unknown[]) => {
-        onCallStarted();
-        const operation =
-          typeof prop === 'string' ? `${domain}.${prop}` : domain;
-        try {
-          const result = Reflect.apply(
-            value as (...a: unknown[]) => unknown,
-            target,
-            args
-          );
-          // capnweb RpcPromise is a Proxy with typeof 'function',
-          // so check for .then directly rather than typeof 'object'.
-          if (
-            result != null &&
-            typeof (result as { then?: unknown }).then === 'function'
-          ) {
-            return (result as Promise<unknown>).catch((err: unknown) =>
-              translateRPCError(err, { operation })
-            );
-          }
-          return result;
-        } catch (err) {
-          translateRPCError(err, { operation });
-        }
-      };
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Public client
@@ -497,6 +192,8 @@ export class ContainerControlClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
+  private compatibleConnection: ContainerControlConnection | null = null;
+  private compatibilityCheck: Promise<void> | null = null;
 
   constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
@@ -651,6 +348,8 @@ export class ContainerControlClient {
   private destroyConnection(): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
+    this.compatibleConnection = null;
+    this.compatibilityCheck = null;
     // If we tear down while still believing the session is busy, fire the
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
@@ -663,87 +362,102 @@ export class ContainerControlClient {
     }
   }
 
+  private async verifyRuntimeCompatibility(
+    conn: ContainerControlConnection
+  ): Promise<void> {
+    let runtimeInfo: {
+      protocolVersion: number;
+      containerVersion?: string;
+    };
+    try {
+      const runtime = conn.rpc().runtime;
+      if (runtime == null || typeof runtime.getRuntimeInfo !== 'function') {
+        throwVersionMismatch({
+          reason: 'missing_handshake',
+          sdkVersion: SDK_VERSION,
+          supportedProtocolVersion: SANDBOX_CONTROL_PROTOCOL_VERSION
+        });
+      }
+      runtimeInfo = await runtime.getRuntimeInfo();
+    } catch (err) {
+      if (err instanceof SandboxError) throw err;
+      throwVersionMismatch(
+        {
+          reason: 'missing_handshake',
+          sdkVersion: SDK_VERSION,
+          supportedProtocolVersion: SANDBOX_CONTROL_PROTOCOL_VERSION
+        },
+        err
+      );
+    }
+
+    if (runtimeInfo.protocolVersion !== SANDBOX_CONTROL_PROTOCOL_VERSION) {
+      throwVersionMismatch({
+        reason: 'unsupported_protocol',
+        sdkVersion: SDK_VERSION,
+        containerVersion: runtimeInfo.containerVersion,
+        supportedProtocolVersion: SANDBOX_CONTROL_PROTOCOL_VERSION,
+        containerProtocolVersion: runtimeInfo.protocolVersion
+      });
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Sub-client getters
   // -------------------------------------------------------------------------
 
-  // Each getter returns the corresponding nested RpcTarget stub
-  // wrapped in a Proxy that translates RPC errors into SandboxError
-  // subclasses. Explicit return types keep capnweb's recursive
-  // type machinery out of .d.ts output.
-
-  get commands(): SandboxCommandsAPI {
-    return wrapStub(
-      this.getConnection().rpc().commands,
-      'commands',
+  // Each getter returns a lazy domain facade. The connection is materialized
+  // immediately so lifecycle hooks stay tied to getter access, while the
+  // actual RPC domain/method lookup happens after connect() verifies the
+  // currently active runtime protocol.
+  private domain<T extends object>(
+    name: string,
+    getStub: (conn: ContainerControlConnection) => T
+  ): T {
+    this.getConnection();
+    return createRPCDomain(
+      () => getStub(this.getConnection()),
+      name,
+      () => this.connect(),
       this.renewActivity
     );
   }
+
+  get commands(): SandboxCommandsAPI {
+    return this.domain('commands', (conn) => conn.rpc().commands);
+  }
   get files(): SandboxFilesAPI {
-    return wrapStub(
-      this.getConnection().rpc().files,
+    return this.domain(
       'files',
-      this.renewActivity
+      (conn) => conn.rpc().files
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
-    return wrapStub(
-      this.getConnection().rpc().processes,
-      'processes',
-      this.renewActivity
-    );
+    return this.domain('processes', (conn) => conn.rpc().processes);
   }
   get ports(): SandboxPortsAPI {
-    return wrapStub(
-      this.getConnection().rpc().ports,
-      'ports',
-      this.renewActivity
-    );
+    return this.domain('ports', (conn) => conn.rpc().ports);
   }
   get git(): SandboxGitAPI {
-    return wrapStub(this.getConnection().rpc().git, 'git', this.renewActivity);
+    return this.domain('git', (conn) => conn.rpc().git);
   }
   get utils(): SandboxUtilsAPI {
-    return wrapStub(
-      this.getConnection().rpc().utils,
-      'utils',
-      this.renewActivity
-    );
+    return this.domain('utils', (conn) => conn.rpc().utils);
   }
   get backup(): SandboxBackupAPI {
-    return wrapStub(
-      this.getConnection().rpc().backup,
-      'backup',
-      this.renewActivity
-    );
+    return this.domain('backup', (conn) => conn.rpc().backup);
   }
   get watch(): SandboxWatchAPI {
-    return wrapStub(
-      this.getConnection().rpc().watch,
-      'watch',
-      this.renewActivity
-    );
+    return this.domain('watch', (conn) => conn.rpc().watch);
   }
   get tunnels(): SandboxTunnelsAPI {
-    return wrapStub(
-      this.getConnection().rpc().tunnels,
-      'tunnels',
-      this.renewActivity
-    );
+    return this.domain('tunnels', (conn) => conn.rpc().tunnels);
   }
   get terminals(): SandboxTerminalsAPI {
-    return wrapStub(
-      this.getConnection().rpc().terminals,
-      'terminals',
-      this.renewActivity
-    );
+    return this.domain('terminals', (conn) => conn.rpc().terminals);
   }
   get extensions(): SandboxExtensionsAPI {
-    return wrapStub(
-      this.getConnection().rpc().extensions,
-      'extensions',
-      this.renewActivity
-    );
+    return this.domain('extensions', (conn) => conn.rpc().extensions);
   }
 
   /**
@@ -761,7 +475,29 @@ export class ContainerControlClient {
   }
 
   async connect(): Promise<void> {
-    await this.getConnection().connect();
+    const conn = this.getConnection();
+    if (this.compatibleConnection === conn) return;
+    if (this.compatibilityCheck) return this.compatibilityCheck;
+
+    const check = this.connectAndVerify(conn);
+    this.compatibilityCheck = check;
+    try {
+      await check;
+    } finally {
+      if (this.compatibilityCheck === check) {
+        this.compatibilityCheck = null;
+      }
+    }
+  }
+
+  private async connectAndVerify(
+    conn: ContainerControlConnection
+  ): Promise<void> {
+    await conn.connect();
+    await this.verifyRuntimeCompatibility(conn);
+    if (this.conn === conn) {
+      this.compatibleConnection = conn;
+    }
   }
 
   disconnect(): void {
