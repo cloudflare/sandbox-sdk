@@ -68,6 +68,7 @@ export function createOpenCodeProxy<Env>(
   options?: OpenCodeProxyOptions
 ): (handler: ExportedHandler<Env>) => ExportedHandler<Env> {
   return (handler) => ({
+    ...handler,
     async fetch(request, env, ctx) {
       if (handler.fetch) {
         const response = await handler.fetch(request, env, ctx);
