@@ -1,4 +1,3 @@
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { describe, expect, it, vi } from 'vitest';
 import {
   GitCloneError,
@@ -20,17 +19,12 @@ import {
 type ExecResult = { stdout: string; stderr: string; exitCode: number };
 
 function createGit(
-  execImpl: (
-    command: string,
-    sessionId: string,
-    options?: unknown
-  ) => ExecResult,
+  execImpl: (command: string, options?: unknown) => ExecResult,
   envVars?: Record<string, string>,
   registerGitAuthInterceptor?: SandboxLike['registerGitAuthInterceptor']
 ) {
-  const execute = vi.fn(
-    async (command: string, sessionId: string, options?: unknown) =>
-      execImpl(command, sessionId, options)
+  const execute = vi.fn(async (command: string, options?: unknown) =>
+    execImpl(command, options)
   );
   const sandbox = {
     client: { commands: { execute } },
@@ -130,7 +124,7 @@ describe('Git extension', () => {
     expect(result.branch).toBe('main');
     expect(result.targetDir).toBe('/workspace/repo');
     // Sessionless by default.
-    expect(execute.mock.calls[0][1]).toBe(DISABLE_SESSION_TOKEN);
+    expect(execute.mock.calls[0][1]).toBeUndefined();
   });
 
   it('runs in the provided session and target dir', async () => {
@@ -145,9 +139,12 @@ describe('Git extension', () => {
       sessionId: 'sess-1'
     });
 
-    expect(execute.mock.calls[0][1]).toBe('sess-1');
+    expect(execute.mock.calls[0][1]).toEqual({ sessionId: 'sess-1' });
     // Branch query runs with cwd set to the target dir.
-    expect(execute.mock.calls[1][2]).toEqual({ cwd: '/work/app' });
+    expect(execute.mock.calls[1][1]).toEqual({
+      cwd: '/work/app',
+      sessionId: 'sess-1'
+    });
   });
 
   it('rejects an invalid git url before executing', async () => {
@@ -204,8 +201,7 @@ describe('Git extension', () => {
     await git.checkout('https://github.com/owner/repo.git');
 
     for (const call of execute.mock.calls) {
-      expect(call[1]).toBe(DISABLE_SESSION_TOKEN);
-      expect((call[2] as { env?: Record<string, string> }).env).toEqual({
+      expect((call[1] as { env?: Record<string, string> }).env).toEqual({
         GITHUB_TOKEN: 'tok',
         HTTPS_PROXY: 'http://proxy:8080'
       });
@@ -226,13 +222,11 @@ describe('Git extension', () => {
 
   it('registers git auth interception when auth matches the checkout host', async () => {
     const registerGitAuthInterceptor = vi.fn(async () => {});
-    const execute = vi.fn(
-      async (_command: string, _sessionId: string, _options?: unknown) => ({
-        stdout: 'main\n',
-        stderr: '',
-        exitCode: 0
-      })
-    );
+    const execute = vi.fn(async (_command: string, _options?: unknown) => ({
+      stdout: 'main\n',
+      stderr: '',
+      exitCode: 0
+    }));
     const sandbox = {
       client: { commands: { execute } },
       registerGitAuthInterceptor
@@ -325,8 +319,8 @@ describe('Git extension', () => {
     });
 
     for (const call of execute.mock.calls) {
-      expect(call[1]).toBe('sess-1');
-      expect((call[2] as { env?: Record<string, string> }).env).toBeUndefined();
+      expect((call[1] as { sessionId?: string }).sessionId).toBe('sess-1');
+      expect((call[1] as { env?: Record<string, string> }).env).toBeUndefined();
     }
   });
 });
