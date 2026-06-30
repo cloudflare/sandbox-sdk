@@ -1,5 +1,10 @@
 import type { Config } from '@opencode-ai/sdk/v2';
-import { createLogger, type Logger, type SandboxProcess } from '@repo/shared';
+import {
+  createLogger,
+  type Logger,
+  type SandboxProcess,
+  shellEscape
+} from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpenCodeOptions, OpenCodeServer } from './types';
 import { OpenCodeStartupError } from './types';
@@ -20,7 +25,7 @@ const OPENCODE_SERVE = (port: number) =>
  */
 function buildOpenCodeCommand(port: number, directory?: string): string {
   const serve = OPENCODE_SERVE(port);
-  return directory ? `cd ${directory} && ${serve}` : serve;
+  return directory ? `cd ${shellEscape(directory)} && ${serve}` : serve;
 }
 
 /** Stable process id for the OpenCode server on a given port. */

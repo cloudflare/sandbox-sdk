@@ -77,7 +77,7 @@ describe('OpenCode desired-state persistence', () => {
     await revived.start();
 
     expect(second.exec).toHaveBeenCalledWith(
-      'cd /agents && opencode serve --port 8080 --hostname 0.0.0.0',
+      "cd '/agents' && opencode serve --port 8080 --hostname 0.0.0.0",
       expect.any(Object)
     );
   });
@@ -89,7 +89,7 @@ describe('OpenCode desired-state persistence', () => {
     await handle.start();
 
     expect(sandbox.exec).toHaveBeenCalledWith(
-      'cd /defaults && opencode serve --port 4096 --hostname 0.0.0.0',
+      "cd '/defaults' && opencode serve --port 4096 --hostname 0.0.0.0",
       expect.any(Object)
     );
   });
