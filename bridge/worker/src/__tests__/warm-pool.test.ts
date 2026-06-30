@@ -343,6 +343,44 @@ describe('WarmPool', () => {
       );
     });
 
+    it('records the accurate ceiling after a partial-capacity batch', async () => {
+      // Regression: with parallel batches, recordCapacityLimit() runs while a
+      // batch's successful starts are not yet in warmContainers, so it would
+      // infer a ceiling lower than reality and reject available capacity.
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 10,
+          scaleBatchSize: 5,
+          // Two slots already taken by live assignments.
+          assignments: [
+            ['s1', 'a1'],
+            ['s2', 'a2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // Only the first 3 starts succeed; the rest hit the cap.
+              if (startCount > 3) {
+                throw new Error(MAX_INSTANCES_ERROR);
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          // 3 warm + 2 assigned = 5 real containers running.
+          expect(stats.warm).toBe(3);
+          expect(stats.total).toBe(5);
+          // The inferred ceiling must reflect the true total, not the stale
+          // pre-batch count of 2.
+          expect(stats.maxInstances).toBe(5);
+        }
+      );
+    });
+
     it('adds only successful UUIDs from a partial-failure batch', async () => {
       let startCount = 0;
       await withPool(

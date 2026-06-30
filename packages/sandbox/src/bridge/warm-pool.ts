@@ -529,6 +529,13 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
         for (const uuid of results) {
           if (uuid) this.warmContainers.add(uuid);
         }
+        // A start hitting the cap calls recordCapacityLimit() mid-batch, before
+        // this batch's successes were tracked, so it infers a ceiling that is
+        // too low. Re-derive it from the now-accurate total.
+        if (this.capacityExhausted) {
+          this.knownMaxInstances =
+            this.warmContainers.size + this.assignments.size;
+        }
         await this.persist();
       }
     } else if (diff < 0) {
