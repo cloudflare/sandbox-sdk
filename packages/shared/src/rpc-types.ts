@@ -38,7 +38,10 @@ import type {
   WriteFileResult
 } from './types.js';
 
+export const SANDBOX_CONTROL_PROTOCOL_VERSION = 1;
+
 export interface SandboxAPI {
+  runtime: SandboxRuntimeAPI;
   commands: SandboxCommandsAPI;
   files: SandboxFilesAPI;
   processes: SandboxProcessesAPI;
@@ -50,6 +53,15 @@ export interface SandboxAPI {
   tunnels: SandboxTunnelsAPI;
   terminals: SandboxTerminalsAPI;
   extensions: SandboxExtensionsAPI;
+}
+
+export interface SandboxRuntimeInfo {
+  protocolVersion: number;
+  containerVersion?: string;
+}
+
+export interface SandboxRuntimeAPI {
+  getRuntimeInfo(): Promise<SandboxRuntimeInfo>;
 }
 
 export interface CommandExecuteOptions {

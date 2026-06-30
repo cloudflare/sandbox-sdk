@@ -14,6 +14,7 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContainerUnavailableContext,
+  ContainerVersionMismatchContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -51,6 +52,7 @@ import {
   CommandError,
   CommandNotFoundError,
   ContainerUnavailableError,
+  ContainerVersionMismatchError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,
@@ -294,6 +296,11 @@ export function createErrorFromResponse(
     case ErrorCode.CONTAINER_UNAVAILABLE:
       return new ContainerUnavailableError(
         errorResponse as unknown as ErrorResponse<ContainerUnavailableContext>
+      );
+
+    case ErrorCode.CONTAINER_VERSION_MISMATCH:
+      return new ContainerVersionMismatchError(
+        errorResponse as unknown as ErrorResponse<ContainerVersionMismatchContext>
       );
 
     case ErrorCode.OPERATION_INTERRUPTED:

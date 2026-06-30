@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
+import { SANDBOX_CONTROL_PROTOCOL_VERSION } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import {
   type SandboxAPIDeps,
@@ -24,6 +25,24 @@ function buildApi(sessionManager: SessionManager): SandboxControlAPI {
     logger: mockLogger
   } as unknown as SandboxAPIDeps);
 }
+
+describe('SandboxControlAPI runtime.getRuntimeInfo', () => {
+  afterEach(() => {
+    delete process.env.SANDBOX_VERSION;
+  });
+
+  it('returns the control protocol and container version', async () => {
+    process.env.SANDBOX_VERSION = 'container-test-version';
+    const api = new SandboxControlAPI({
+      logger: mockLogger
+    } as unknown as SandboxAPIDeps);
+
+    await expect(api.runtime.getRuntimeInfo()).resolves.toEqual({
+      protocolVersion: SANDBOX_CONTROL_PROTOCOL_VERSION,
+      containerVersion: 'container-test-version'
+    });
+  });
+});
 
 describe('SandboxControlAPI tunnels.ensureTunnelRun', () => {
   it('exposes the runtime-run control methods only', () => {

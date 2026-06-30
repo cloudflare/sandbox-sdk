@@ -46,6 +46,9 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
   [ErrorCode.OPERATION_INTERRUPTED]: 409,
 
+  // 500 Internal Server Error (deployment/runtime configuration)
+  [ErrorCode.CONTAINER_VERSION_MISMATCH]: 500,
+
   // 410 Gone
   [ErrorCode.SESSION_DESTROYED]: 410,
   [ErrorCode.SESSION_TERMINATED]: 410,
