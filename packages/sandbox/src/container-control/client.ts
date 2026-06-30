@@ -78,6 +78,7 @@ import type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
+  SandboxRuntimeAPI,
   SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
@@ -423,6 +424,9 @@ export class ContainerControlClient {
     );
   }
 
+  get runtime(): SandboxRuntimeAPI {
+    return this.domain('runtime', (conn) => conn.rpc().runtime);
+  }
   get commands(): SandboxCommandsAPI {
     return this.domain('commands', (conn) => conn.rpc().commands);
   }
