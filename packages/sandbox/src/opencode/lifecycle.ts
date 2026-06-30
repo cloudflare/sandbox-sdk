@@ -147,10 +147,18 @@ export class OpenCodeHandle extends SandboxExtension {
     return this.#sandbox.containerFetch(request, server.port);
   }
 
-  /** Persist resolved desired-state so a cold DO can recover it. Best-effort. */
+  /**
+   * Persist resolved desired-state so a cold DO can recover it. Best-effort.
+   *
+   * Secret-bearing fields (`config`, `env`) are never written to storage. They
+   * are sourced fresh from the handle's defaults — which the Sandbox rebuilds
+   * from the environment on every construction — so a cold start always uses
+   * current credentials rather than a durable copy.
+   */
   async #persist(options: OpenCodeOptions): Promise<void> {
     if (!this.#storage) return;
-    await this.#storage.put(this.#stateKey, options);
+    const { config: _config, env: _env, ...safe } = options;
+    await this.#storage.put(this.#stateKey, safe);
   }
 
   /** Read persisted desired-state, if any, after a DO eviction. */

@@ -94,6 +94,45 @@ describe('OpenCode desired-state persistence', () => {
     );
   });
 
+  it('never persists config or env secrets to storage', async () => {
+    const sandbox = createMockSandbox();
+    const handle = withOpenCode(sandbox, {
+      directory: '/agents',
+      config: { provider: { anthropic: { options: { apiKey: 'secret' } } } },
+      env: { CUSTOM_TOKEN: 'secret-token' },
+      storage
+    });
+
+    await handle.start({ port: 8080 });
+
+    const persisted = [...storage.map.values()][0] as Record<string, unknown>;
+    expect(persisted).toMatchObject({ directory: '/agents', port: 8080 });
+    expect(persisted).not.toHaveProperty('config');
+    expect(persisted).not.toHaveProperty('env');
+  });
+
+  it('recovers config from fresh defaults, not storage, on a cold start', async () => {
+    // First instance starts with one set of credentials.
+    const first = createMockSandbox();
+    await withOpenCode(first, {
+      config: { provider: { anthropic: { options: { apiKey: 'stale' } } } },
+      storage
+    }).start({ port: 8080 });
+
+    // Cold DO: defaults are rebuilt from the (now rotated) environment.
+    const second = createMockSandbox();
+    const revived = withOpenCode(second, {
+      config: { provider: { anthropic: { options: { apiKey: 'fresh' } } } },
+      storage
+    });
+
+    await revived.start();
+
+    const startEnv = (second.exec as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      .env as Record<string, string>;
+    expect(startEnv.ANTHROPIC_API_KEY).toBe('fresh');
+  });
+
   it('works without storage (in-memory only)', async () => {
     const sandbox = createMockSandbox();
     const handle = withOpenCode(sandbox, { directory: '/agents' });
@@ -114,9 +153,9 @@ describe('OpenCode desired-state persistence', () => {
     await a2.start();
     await b2.start();
 
-    const commands = (
-      second.exec as ReturnType<typeof vi.fn>
-    ).mock.calls.map((call) => call[0]);
+    const commands = (second.exec as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0]
+    );
     expect(commands).toContain('opencode serve --port 4096 --hostname 0.0.0.0');
     expect(commands).toContain('opencode serve --port 5000 --hostname 0.0.0.0');
   });
