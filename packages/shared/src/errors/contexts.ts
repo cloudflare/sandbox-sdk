@@ -290,31 +290,6 @@ export interface OperationInterruptedContext {
 }
 
 /**
- * Version-skew error context. Surfaced when the SDK/container compatibility
- * handshake fails.
- *
- * Indicates a mismatch between the `@cloudflare/sandbox` package version and
- * the deployed container image. Redeploy both the Worker and the container
- * image with matching versions to resolve.
- */
-export type ContainerVersionMismatchReason =
-  | 'missing_handshake'
-  | 'unsupported_protocol';
-
-export interface ContainerVersionMismatchContext {
-  /** Why the SDK rejected the container runtime. */
-  reason: ContainerVersionMismatchReason;
-  /** The @cloudflare/sandbox package version that made the call, if known. */
-  sdkVersion?: string;
-  /** The container image version reported by the container, if known. */
-  containerVersion?: string;
-  /** The protocol version supported by this SDK. */
-  supportedProtocolVersion?: number;
-  /** The protocol version reported by the container, if known. */
-  containerProtocolVersion?: number;
-}
-
-/**
  * RPC transport error contexts. Surfaced when the capnweb WebSocket session
  * fails on the SDK side rather than the container reporting a structured
  * error. Always retryable — the next call will open a fresh connection.

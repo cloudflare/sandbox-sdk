@@ -102,8 +102,6 @@ export type {
   SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
-  SandboxRuntimeAPI,
-  SandboxRuntimeInfo,
   SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
@@ -120,10 +118,7 @@ export type {
   WriteFileOptions
 } from './rpc-types.js';
 // RPC interface types (shared between SDK and container)
-export {
-  EXTENSION_TARBALL_REQUIRED,
-  SANDBOX_CONTROL_PROTOCOL_VERSION
-} from './rpc-types.js';
+export { EXTENSION_TARBALL_REQUIRED } from './rpc-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
 // Export SSE utilities

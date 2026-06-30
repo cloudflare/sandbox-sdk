@@ -139,9 +139,6 @@ export function getSuggestion(
       }
     }
 
-    case ErrorCode.CONTAINER_VERSION_MISMATCH:
-      return 'Redeploy the sandbox Worker and container image so the @cloudflare/sandbox package and sandbox container use matching versions.';
-
     // Generic fallback for other errors
     default:
       return undefined;

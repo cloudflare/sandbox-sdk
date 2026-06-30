@@ -12,11 +12,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let stats = { imports: 1, exports: 1 };
 let connected = true;
-let nextConnectionId = 1;
-const connectionIds: number[] = [];
-const commandCalls: number[] = [];
-const connectResolvers: Array<() => void> = [];
-let deferConnect = false;
 const disconnects: number[] = [];
 /**
  * onClose callbacks installed by `ContainerControlClient` on the active
@@ -43,10 +38,7 @@ function triggerPeerClose(): boolean {
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
-    readonly id = nextConnectionId++;
-
     constructor(options: { onClose?: () => void } = {}) {
-      connectionIds.push(this.id);
       if (options.onClose) onCloseHandlers.push(options.onClose);
     }
     isConnected() {
@@ -60,45 +52,24 @@ vi.mock('../src/container-control/connection', () => ({
       disconnects.push(Date.now());
     }
     rpc() {
-      return {
-        runtime: {
-          getRuntimeInfo: async () => ({ protocolVersion: 1 })
-        },
-        commands: {
-          execute: async () => {
-            commandCalls.push(this.id);
-            return {
-              success: true,
-              exitCode: 0,
-              stdout: '',
-              stderr: '',
-              command: 'true',
-              timestamp: '2026-06-29T00:00:00.000Z'
-            };
-          }
-        }
-      };
+      // Stub sub-clients so wrapStub() has something to Proxy. Tests in
+      // this file don't actually invoke any RPC method.
+      return new Proxy({}, { get: () => ({}) });
     }
-    async connect() {
-      if (!deferConnect) return;
-      await new Promise<void>((resolve) => connectResolvers.push(resolve));
-    }
+    async connect() {}
   }
 }));
 
-import { ContainerControlClient } from '../src/container-control/client';
-import { translateRPCError } from '../src/container-control/errors';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
 
 describe('ContainerControlClient busy/idle tracking', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     stats = { imports: 1, exports: 1 };
     connected = true;
-    nextConnectionId = 1;
-    connectionIds.length = 0;
-    commandCalls.length = 0;
-    connectResolvers.length = 0;
-    deferConnect = false;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
   });
@@ -213,36 +184,6 @@ describe('ContainerControlClient busy/idle tracking', () => {
     vi.advanceTimersByTime(5_000);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
     expect(disconnects).toHaveLength(1);
-  });
-
-  it('cached domain facades use the active connection after reconnect', async () => {
-    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
-    const commands = client.commands;
-
-    await commands.execute('true');
-    client.disconnect();
-    connected = true;
-    await commands.execute('true');
-
-    expect(commandCalls).toEqual([1, 2]);
-  });
-
-  it('does not mark a destroyed in-flight handshake as verified', async () => {
-    deferConnect = true;
-    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
-
-    const pendingConnect = client.connect();
-    client.disconnect();
-    connected = true;
-    connectResolvers.splice(0).forEach((resolve) => {
-      resolve();
-    });
-    await pendingConnect;
-    deferConnect = false;
-
-    await client.connect();
-
-    expect(connectionIds).toEqual([1, 2]);
   });
 
   it('does not tear down a connection that has not finished its WebSocket upgrade', () => {

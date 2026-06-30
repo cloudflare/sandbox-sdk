@@ -14,7 +14,6 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContainerUnavailableContext,
-  ContainerVersionMismatchContext,
   ContextNotFoundContext,
   ErrorResponse,
   FileExistsContext,
@@ -858,27 +857,6 @@ export class OperationInterruptedError extends SandboxError<OperationInterrupted
 
   get operationName() {
     return this.context.operation;
-  }
-}
-
-// ============================================================================
-// Version-skew Errors (SDK-side)
-// ============================================================================
-
-/**
- * Raised when the SDK/container compatibility handshake fails.
- *
- * This indicates a version mismatch between the `@cloudflare/sandbox` package
- * and the deployed container image. Redeploy both the Worker and the container
- * image with matching versions to resolve.
- */
-export class ContainerVersionMismatchError extends SandboxError<ContainerVersionMismatchContext> {
-  constructor(
-    errorResponse: ErrorResponse<ContainerVersionMismatchContext>,
-    options?: { cause?: unknown }
-  ) {
-    super(errorResponse, options);
-    this.name = 'ContainerVersionMismatchError';
   }
 }
 

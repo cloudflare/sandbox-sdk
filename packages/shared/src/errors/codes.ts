@@ -153,11 +153,7 @@ export const ErrorCode = {
   // mid-call (peer close), the WebSocket failed before/after upgrade, the
   // peer sent a frame the transport cannot handle, or the session was
   // disposed while a call was in flight.
-  RPC_TRANSPORT_ERROR: 'RPC_TRANSPORT_ERROR',
-
-  // Version-skew Errors (500) — the SDK/container compatibility handshake
-  // failed. Redeploy both the Worker and the container image so versions match.
-  CONTAINER_VERSION_MISMATCH: 'CONTAINER_VERSION_MISMATCH'
+  RPC_TRANSPORT_ERROR: 'RPC_TRANSPORT_ERROR'
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -41,8 +41,10 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
-import { ContainerControlClient } from '../src/container-control/client';
-import { translateRPCError } from '../src/container-control/errors';
+import {
+  ContainerControlClient,
+  translateRPCError
+} from '../src/container-control/client';
 
 describe('translateRPCError operation interruption mapping', () => {
   function translateWithOperation(error: Error): never {

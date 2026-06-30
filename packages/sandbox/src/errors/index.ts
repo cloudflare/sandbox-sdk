@@ -48,8 +48,6 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContainerUnavailableContext,
-  ContainerVersionMismatchContext,
-  ContainerVersionMismatchReason,
   ContextNotFoundContext,
   ErrorCodeType,
   ErrorResponse,
@@ -97,7 +95,6 @@ export {
   // Command Errors
   CommandNotFoundError,
   ContainerUnavailableError,
-  ContainerVersionMismatchError,
   ContextNotFoundError,
   CustomDomainRequiredError,
   FileExistsError,

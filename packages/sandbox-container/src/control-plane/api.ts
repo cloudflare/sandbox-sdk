@@ -20,7 +20,6 @@ import type {
   ReadFileOptions,
   ReadFileStreamOptions,
   SandboxAPI,
-  SandboxRuntimeInfo,
   SessionCreateOptions,
   StopTunnelRunRequest,
   StopTunnelRunResult,
@@ -28,7 +27,6 @@ import type {
   WatchRequest,
   WriteFileOptions
 } from '@repo/shared';
-import { SANDBOX_CONTROL_PROTOCOL_VERSION } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { RpcTarget } from 'capnweb';
 import type {
@@ -97,9 +95,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
 
   // --- Domain sub-stubs (nested RpcTargets) --------------------------------
 
-  get runtime() {
-    return new RuntimeRPCAPI();
-  }
   get commands() {
     return new CommandsRPCAPI(this.#deps.processService);
   }
@@ -132,19 +127,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   }
   get extensions() {
     return new ExtensionsRPCAPI(this.#deps.extensionHost);
-  }
-}
-
-// ===========================================================================
-// Runtime compatibility
-// ===========================================================================
-
-class RuntimeRPCAPI extends RpcTarget {
-  async getRuntimeInfo(): Promise<SandboxRuntimeInfo> {
-    return {
-      protocolVersion: SANDBOX_CONTROL_PROTOCOL_VERSION,
-      containerVersion: process.env.SANDBOX_VERSION
-    };
   }
 }
 
