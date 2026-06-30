@@ -20,7 +20,9 @@ import {
   type BackupRestoreOperationRecord,
   type BackupRestoreOperationResult,
   BackupRestoreOperationStore,
-  createBackupRestoreOperationRecord
+  backupRestoreOperationKey,
+  createBackupRestoreOperationRecord,
+  nextBackupRestoreAttempt
 } from './restore-operation-store';
 
 type RestoreLifecycleDeps = {
@@ -60,131 +62,171 @@ export class RestoreLifecycleRunner {
       context: RestoreLifecycleContext
     ) => Promise<BackupRestoreOperationResult>;
   }): Promise<BackupRestoreOperationResult> {
-    return await this.runWithRecovery(async () => {
-      const { lifetime, operation } = await this.startOperation(
-        params.backupId,
-        params.dir
-      );
-      let currentOperation = operation;
-      let runtime: RuntimeIdentity | undefined;
+    const lifetime = await this.deps.currentLifetime.getOrCreate();
+    const operationKey = backupRestoreOperationKey(params.backupId, params.dir);
+    const existing = await this.operationRecords.getCurrent(
+      operationKey,
+      lifetime.id
+    );
 
-      const context: RestoreLifecycleContext = {
-        lifetime,
-        runtimeReady: async (archiveSize) => {
-          try {
-            runtime = await this.captureRuntime();
-            await this.deps.currentLifetime.assertCurrent(lifetime);
-          } catch (error) {
-            const interrupted = await this.translateFenceError(
-              error,
-              currentOperation,
-              'validating',
-              'unknown'
-            );
-            throw interrupted ?? error;
-          }
-          currentOperation = await this.markRuntimeReady(
-            currentOperation,
-            runtime,
-            archiveSize
-          );
-          return { runtime, operation: currentOperation };
-        },
-        archiveReady: async (archiveSize) => {
-          if (!runtime) {
-            throw new Error(
-              'Backup restore archiveReady requires runtimeReady()'
-            );
-          }
-          try {
-            await this.assertFences(runtime, lifetime);
-          } catch (error) {
-            const interrupted = await this.translateFenceError(
-              error,
-              currentOperation,
-              currentOperation.phase,
-              true
-            );
-            throw interrupted ?? error;
-          }
-          currentOperation = await this.markArchiveReady(
-            currentOperation,
-            runtime,
-            archiveSize
-          );
-          const fault = await this.deps.faultInjector.maybeFault(
-            'after_archive_ready',
-            currentOperation
-          );
-          if (fault) {
-            const message =
-              'Backup restore was interrupted before completion could be verified';
-            const interrupted = await this.markInterrupted(
-              currentOperation,
-              message
-            );
-            throw this.createInterruptedError({
-              operation: interrupted,
-              reason: fault.reason,
-              phase: currentOperation.phase,
-              admitted: fault.admitted,
-              message
-            });
-          }
-          return { runtime, operation: currentOperation };
-        },
-        verify: async (result, archiveSize) => {
-          if (!runtime) {
-            throw new Error(
-              'Backup restore verification requires archiveReady()'
-            );
-          }
-          try {
-            await this.assertFences(runtime, lifetime);
-          } catch (error) {
-            const interrupted = await this.translateFenceError(
-              error,
-              currentOperation,
-              'archive_ready'
-            );
-            throw interrupted ?? error;
-          }
-          currentOperation = await this.markVerified(
-            currentOperation,
-            runtime,
-            result,
-            archiveSize
-          );
-          return currentOperation;
-        }
-      };
+    // Short-circuit: return the stored result without restoring again.
+    if (existing?.status === 'committed' && existing.result) {
+      return existing.result;
+    }
 
-      try {
-        return await params.attempt(context);
-      } catch (error) {
-        const translated = await this.translateRPCError(
-          error,
-          currentOperation
-        );
-        if (translated) {
-          throw translated;
-        }
-        if (!(error instanceof OperationInterruptedError)) {
-          await this.markFailed(currentOperation, error);
-        }
-        throw error;
-      }
-    });
+    const now = new Date().toISOString();
+    let operation: BackupRestoreOperationRecord;
+
+    const isRetryable =
+      existing !== null &&
+      (existing.status === 'interrupted' || existing.status === 'running') &&
+      existing.error?.retryable !== false;
+
+    if (isRetryable) {
+      // Resume with the same operationId so callers can reconcile the record.
+      operation = nextBackupRestoreAttempt(existing, now);
+    } else {
+      operation = createBackupRestoreOperationRecord({
+        operationId: crypto.randomUUID(),
+        sandboxLifetimeID: lifetime.id,
+        backupId: params.backupId,
+        dir: params.dir,
+        now
+      });
+    }
+    await this.operationRecords.put(operation);
+
+    return await this.runWithRecovery(operation, lifetime, params.attempt);
   }
 
-  private async runWithRecovery<T>(
-    restoreAttempt: () => Promise<T>
-  ): Promise<T> {
+  private async runAttempt(
+    operation: BackupRestoreOperationRecord,
+    lifetime: SandboxLifetime,
+    attempt: (
+      context: RestoreLifecycleContext
+    ) => Promise<BackupRestoreOperationResult>
+  ): Promise<BackupRestoreOperationResult> {
+    let currentOperation = operation;
+    let runtime: RuntimeIdentity | undefined;
+
+    const context: RestoreLifecycleContext = {
+      lifetime,
+      runtimeReady: async (archiveSize) => {
+        try {
+          runtime = await this.captureRuntime();
+          await this.deps.currentLifetime.assertCurrent(lifetime);
+        } catch (error) {
+          const interrupted = await this.translateFenceError(
+            error,
+            currentOperation,
+            'validating',
+            'unknown'
+          );
+          throw interrupted ?? error;
+        }
+        currentOperation = await this.markRuntimeReady(
+          currentOperation,
+          runtime,
+          archiveSize
+        );
+        return { runtime, operation: currentOperation };
+      },
+      archiveReady: async (archiveSize) => {
+        if (!runtime) {
+          throw new Error(
+            'Backup restore archiveReady requires runtimeReady()'
+          );
+        }
+        try {
+          await this.assertFences(runtime, lifetime);
+        } catch (error) {
+          const interrupted = await this.translateFenceError(
+            error,
+            currentOperation,
+            currentOperation.phase,
+            true
+          );
+          throw interrupted ?? error;
+        }
+        currentOperation = await this.markArchiveReady(
+          currentOperation,
+          runtime,
+          archiveSize
+        );
+        const fault = await this.deps.faultInjector.maybeFault(
+          'after_archive_ready',
+          currentOperation
+        );
+        if (fault) {
+          const message =
+            'Backup restore was interrupted before completion could be verified';
+          const interrupted = await this.markInterrupted(
+            currentOperation,
+            message
+          );
+          throw this.createInterruptedError({
+            operation: interrupted,
+            reason: fault.reason,
+            phase: currentOperation.phase,
+            admitted: fault.admitted,
+            message
+          });
+        }
+        return { runtime, operation: currentOperation };
+      },
+      verify: async (result, archiveSize) => {
+        if (!runtime) {
+          throw new Error(
+            'Backup restore verification requires archiveReady()'
+          );
+        }
+        try {
+          await this.assertFences(runtime, lifetime);
+        } catch (error) {
+          const interrupted = await this.translateFenceError(
+            error,
+            currentOperation,
+            'archive_ready'
+          );
+          throw interrupted ?? error;
+        }
+        currentOperation = await this.markVerified(
+          currentOperation,
+          runtime,
+          result,
+          archiveSize
+        );
+        return currentOperation;
+      }
+    };
+
+    try {
+      return await attempt(context);
+    } catch (error) {
+      const translated = await this.translateRPCError(error, currentOperation);
+      if (translated) {
+        throw translated;
+      }
+      if (!(error instanceof OperationInterruptedError)) {
+        await this.markFailed(currentOperation, error);
+      }
+      throw error;
+    }
+  }
+
+  private async runWithRecovery(
+    initialOperation: BackupRestoreOperationRecord,
+    lifetime: SandboxLifetime,
+    attempt: (
+      context: RestoreLifecycleContext
+    ) => Promise<BackupRestoreOperationResult>
+  ): Promise<BackupRestoreOperationResult> {
     let recoveryAttempts = 0;
+    let currentOperation = initialOperation;
 
     while (true) {
       try {
-        return await restoreAttempt();
+        return await this.runAttempt(currentOperation, lifetime, attempt);
       } catch (error) {
         if (!(error instanceof OperationInterruptedError)) {
           throw error;
@@ -199,27 +241,16 @@ export class RestoreLifecycleRunner {
         }
 
         recoveryAttempts++;
+        // Re-read the interrupted record written by markInterrupted() and
+        // advance to the next attempt while preserving the operationId.
+        const interrupted =
+          (await this.operationRecords.get(currentOperation.operationKey)) ??
+          currentOperation;
+        const now = new Date().toISOString();
+        currentOperation = nextBackupRestoreAttempt(interrupted, now);
+        await this.operationRecords.put(currentOperation);
       }
     }
-  }
-
-  async startOperation(
-    backupId: string,
-    dir: string
-  ): Promise<{
-    lifetime: SandboxLifetime;
-    operation: BackupRestoreOperationRecord;
-  }> {
-    const lifetime = await this.deps.currentLifetime.getOrCreate();
-    const operation = createBackupRestoreOperationRecord({
-      operationId: crypto.randomUUID(),
-      sandboxLifetimeID: lifetime.id,
-      backupId,
-      dir,
-      now: new Date().toISOString()
-    });
-    await this.operationRecords.put(operation);
-    return { lifetime, operation };
   }
 
   async captureRuntime(): Promise<RuntimeIdentity> {
@@ -388,6 +419,7 @@ export class RestoreLifecycleRunner {
     message: string,
     retryable = true
   ): Promise<BackupRestoreOperationRecord> {
+    const now = new Date().toISOString();
     const next = {
       ...operation,
       phase: 'interrupted' as const,
@@ -397,7 +429,8 @@ export class RestoreLifecycleRunner {
         message,
         retryable
       },
-      updatedAt: new Date().toISOString()
+      lastInterruptedAt: now,
+      updatedAt: now
     };
     await this.operationRecords.put(next);
     return next;

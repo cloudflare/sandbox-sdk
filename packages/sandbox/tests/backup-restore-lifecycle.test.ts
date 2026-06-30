@@ -6,6 +6,7 @@ import {
   RPCTransportError
 } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
+import type { SandboxLifetimeID } from '../src/sandbox-lifetime';
 import { createMockControlClient } from './helpers/mock-control-client';
 
 vi.mock('@cloudflare/containers', () => {
@@ -160,13 +161,13 @@ async function createBackupSandbox(params?: {
     timestamp: '2026-06-15T12:00:00.000Z'
   } as never);
   const sandboxInternals = sandbox as unknown as {
-    execWithSession: () => Promise<{
+    executeCommand: () => Promise<{
       stdout: string;
       stderr: string;
       exitCode: number;
     }>;
   };
-  vi.spyOn(sandboxInternals, 'execWithSession').mockResolvedValue({
+  vi.spyOn(sandboxInternals, 'executeCommand').mockResolvedValue({
     stdout: '42',
     stderr: '',
     exitCode: 0
@@ -333,6 +334,71 @@ describe('backup restore lifecycle', () => {
     expect(record.phase).toBe('interrupted');
   });
 
+  it('preserves the same operation id across internal restore recovery attempts', async () => {
+    const operationIds: string[] = [];
+    const { sandbox, storageMap } = await createBackupSandbox({
+      storageHooks: {
+        onPut: (_key, value) => {
+          const record = value as Partial<BackupRestoreOperationRecord>;
+          if (record.kind === 'backup.restore' && record.operationId) {
+            operationIds.push(record.operationId);
+          }
+        }
+      }
+    });
+    const backupId = crypto.randomUUID();
+    vi.spyOn(sandbox.client.backup, 'restoreArchive')
+      .mockRejectedValueOnce(createDisposedRPCError())
+      .mockResolvedValueOnce({
+        success: true,
+        dir: '/workspace/project'
+      } as never);
+
+    await sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' });
+
+    expect(new Set(operationIds).size).toBe(1);
+    const record = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(record.operationId).toBe(operationIds[0]);
+    expect(record.status).toBe('committed');
+  });
+
+  it('reuses an interrupted operation id when the caller retries restoreBackup with the same backup handle', async () => {
+    const { sandbox, storageMap } = await createBackupSandbox();
+    const backupId = crypto.randomUUID();
+
+    // Three consecutive failures exhaust the two internal recovery attempts
+    // so the first restoreBackup() call surfaces OperationInterruptedError to
+    // the caller instead of being swallowed by internal retry.
+    vi.spyOn(sandbox.client.backup, 'restoreArchive')
+      .mockRejectedValueOnce(createDisposedRPCError())
+      .mockRejectedValueOnce(createDisposedRPCError())
+      .mockRejectedValueOnce(createDisposedRPCError())
+      // Second restoreBackup() call: succeeds on the first attempt.
+      .mockResolvedValueOnce({
+        success: true,
+        dir: '/workspace/project'
+      } as never);
+
+    await expect(
+      sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' })
+    ).rejects.toBeInstanceOf(OperationInterruptedError);
+
+    const interruptedRecord = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(interruptedRecord).toBeDefined();
+
+    await sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' });
+
+    const committedRecord = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(committedRecord.operationId).toBe(interruptedRecord.operationId);
+    expect(committedRecord.status).toBe('committed');
+  });
+
   it('recovers internally when the runtime changes after restoreArchive returns', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
@@ -413,6 +479,37 @@ describe('backup restore lifecycle', () => {
     expect(record.status).toBe('interrupted');
     expect(record.phase).toBe('interrupted');
     expect(record.error?.retryable).toBe(false);
+  });
+
+  it('returns a committed restore result from durable operation state without restoring again', async () => {
+    const backupId = crypto.randomUUID();
+    const storageMap = new Map<string, StoredValue>();
+    storageMap.set(`operations:restore:${backupId}:/workspace/project`, {
+      operationId: 'operation-1',
+      operationKey: `restore:${backupId}:/workspace/project`,
+      kind: 'backup.restore',
+      sandboxLifetimeID: 'lifetime-1' as SandboxLifetimeID,
+      phase: 'verified',
+      status: 'committed',
+      attempt: 1,
+      payload: { backupId, dir: '/workspace/project', archiveSize: 42 },
+      result: { success: true, id: backupId, dir: '/workspace/project' },
+      createdAt: '2026-06-15T12:00:00.000Z',
+      updatedAt: '2026-06-15T12:00:00.000Z',
+      completedAt: '2026-06-15T12:00:00.000Z'
+    } satisfies BackupRestoreOperationRecord);
+
+    const { sandbox } = await createBackupSandbox({ storageMap });
+    const restoreArchiveSpy = vi.spyOn(sandbox.client.backup, 'restoreArchive');
+
+    await expect(
+      sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' })
+    ).resolves.toEqual({
+      success: true,
+      id: backupId,
+      dir: '/workspace/project'
+    });
+    expect(restoreArchiveSpy).not.toHaveBeenCalled();
   });
 
   it('does not retry restore across a sandbox lifetime change', async () => {
