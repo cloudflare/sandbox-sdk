@@ -2,4 +2,6 @@
 '@cloudflare/sandbox': minor
 ---
 
-Remove hidden default-session routing from top-level sandbox APIs. Top-level `exec()`, `startProcess()`, file, watch, git, and backup operations now run without persistent shell state unless you pass an explicit `sessionId`; use `sandbox.createSession()` when commands or file operations need to share state. Session IDs now live in options objects across command, process, file, git, and backup APIs, process reads use `listProcesses({ sessionId })` / `getProcess(id, { sessionId })`, and process kill methods no longer accept unsupported signal arguments.
+Top-level execution is now stateless by default. `exec()`, `startProcess()`, file, watch, git, and backup calls no longer reuse a hidden default session; pass an explicit `sessionId` or `sandbox.createSession()` when commands need to share shell state. Process reads use `listProcesses({ sessionId })` / `getProcess(id, { sessionId })`, and process kill methods no longer accept signal arguments.
+
+Streaming command execution has moved to `startProcess()` — `execStream()` and `exec({ stream, onOutput, onComplete, onError, signal })` are removed. Interactive terminals are now explicit resources: use `sandbox.terminal({ id, cwd, shell }).connect(request, { cols, rows })` instead of the removed `ExecutionSession.terminal()`.

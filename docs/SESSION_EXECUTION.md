@@ -118,16 +118,22 @@ SSE framing semantics. The execution package owns the shell/process mechanics.
 
 Terminals are independent PTY resources, not command-session helpers.
 
+`sandbox.terminal()` returns a terminal resource handle. Terminal IDs are
+stable resource names, not durable shell sessions: reconnecting with the same
+ID reattaches to the same live PTY while the container runtime is still alive.
+If the runtime restarts, connecting with the same ID creates a fresh shell, and
+command history and process state from the prior runtime are gone. Terminal PTY
+state is separate from command-session state and does not provide structured
+stdout/stderr command results.
+
 ```text
 sandbox.terminal({ id, cwd, shell })
   -> terminals.createTerminal({ id, cwd, shell, cols, rows }) over RPC
   -> /ws/terminal?terminalId=... for byte transport
 ```
 
-Terminal output is a PTY byte stream suitable for xterm-like clients. It does
-not promise structured stdout/stderr separation. Terminal lifecycle operations
-such as `destroy()` use semantic RPC methods; `/ws/terminal` is the byte
-transport for attaching to an existing terminal.
+Terminal lifecycle operations such as `destroy()` use semantic RPC methods;
+`/ws/terminal` is the byte transport for attaching to an existing terminal.
 
 ## Completion-Only Persistent Exec Mechanics
 

@@ -732,6 +732,9 @@ export const OPENAPI_SCHEMA = {
         summary: 'Open a terminal via WebSocket',
         description:
           'Upgrades the HTTP connection to a WebSocket and proxies it to a PTY shell inside the sandbox.\n\n' +
+          '**A terminal ID is required**, supplied via either the `terminalId` query parameter or the `Terminal-Id` header (header takes precedence). ' +
+          'The terminal ID is a stable resource name: reconnecting with the same ID reattaches to the same live PTY while the sandbox container is alive. ' +
+          'If the sandbox container restarts (for example after it sleeps), connecting with the same ID creates a fresh shell — prior PTY state and process history are not preserved.\n\n' +
           '**WebSocket frame protocol:**\n\n' +
           '| Direction | Frame type | Content |\n' +
           '|-----------|------------|--------------------------------------------------|\n' +
@@ -743,7 +746,7 @@ export const OPENAPI_SCHEMA = {
           '- `{"type":"ready"}` — PTY is accepting input\n' +
           '- `{"type":"exit","code":0,"signal":"SIGTERM"}` — PTY exited\n' +
           '- `{"type":"error","message":"..."}` — error occurred\n\n' +
-          'If the client disconnects, the terminal stays alive; reconnecting with the same terminal ID replays buffered output.',
+          'If the client disconnects, the terminal stays alive while the sandbox container is alive; reconnect with the same terminal ID to reattach.',
         'x-codeSamples': [
           {
             lang: 'JavaScript',
@@ -795,9 +798,13 @@ export const OPENAPI_SCHEMA = {
           {
             name: 'terminalId',
             in: 'query',
-            required: true,
+            required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
-            description: 'Terminal resource ID for reconnecting later.'
+            description:
+              'Terminal resource ID. Required unless the `Terminal-Id` request header is supplied. ' +
+              'Stable name for this terminal resource: reuse the same ID across reconnects to reattach to the same live PTY. ' +
+              'After the sandbox container restarts, the same ID creates a new shell. ' +
+              'Ignored when `Terminal-Id` header is also present (header takes precedence).'
           },
           {
             name: 'Terminal-Id',
@@ -805,7 +812,9 @@ export const OPENAPI_SCHEMA = {
             required: false,
             schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]{1,128}$' },
             description:
-              'Terminal resource ID. Takes precedence over the terminalId query parameter.'
+              'Terminal resource ID. Required unless the `terminalId` query parameter is supplied. ' +
+              'Takes precedence over the `terminalId` query parameter when both are present. ' +
+              'Same stable-ID semantics apply: same ID reattaches to the live PTY; after the sandbox container restarts a new shell is created.'
           }
         ],
         responses: {
