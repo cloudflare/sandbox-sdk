@@ -44,9 +44,13 @@ export type BackupRestoreOperationRecord = {
   payload: BackupRestoreOperationPayload;
   result?: BackupRestoreOperationResult;
   error?: BackupRestoreOperationError;
+  /** The 1-based attempt number for this operation record. */
+  attempt: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** ISO timestamp of the most recent interruption, if any. */
+  lastInterruptedAt?: string;
 };
 
 type OperationRecordStorage = Pick<DurableObjectStorage, 'get' | 'put'>;
@@ -74,12 +78,32 @@ export function createBackupRestoreOperationRecord(params: {
     sandboxLifetimeID: params.sandboxLifetimeID,
     phase: 'validating',
     status: 'running',
+    attempt: 1,
     payload: {
       backupId: params.backupId,
       dir: params.dir
     },
     createdAt: params.now,
     updatedAt: params.now
+  };
+}
+
+/**
+ * Produce a next-attempt record that resets phase and status while
+ * preserving the operationId so callers can reconcile restore history.
+ */
+export function nextBackupRestoreAttempt(
+  record: BackupRestoreOperationRecord,
+  now: string
+): BackupRestoreOperationRecord {
+  return {
+    ...record,
+    phase: 'validating',
+    status: 'running',
+    error: undefined,
+    completedAt: undefined,
+    updatedAt: now,
+    attempt: (record.attempt ?? 0) + 1
   };
 }
 
