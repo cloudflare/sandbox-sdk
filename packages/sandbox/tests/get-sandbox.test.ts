@@ -535,59 +535,17 @@ describe('getSandbox', () => {
       });
     });
 
-    it('routes implicit git checkout without a session ID', async () => {
-      mockStub.gitCheckout = vi.fn().mockResolvedValue({
-        success: true,
-        stdout: 'Cloned',
-        stderr: '',
-        branch: 'main',
-        targetDir: '/workspace/repo',
-        timestamp: new Date().toISOString()
-      });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.gitCheckout('https://github.com/test/repo.git', {
-        branch: 'main',
-        targetDir: '/workspace/repo',
-        depth: 1,
-        cloneTimeoutMs: 90_000
-      });
-
-      expect(mockStub.gitCheckout).toHaveBeenCalledWith(
-        'https://github.com/test/repo.git',
-        {
-          branch: 'main',
-          targetDir: '/workspace/repo',
-          depth: 1,
-          cloneTimeoutMs: 90_000
-        }
-      );
-    });
-
-    it('passes explicit session IDs through watch, change checks, and git checkout', async () => {
+    it('passes explicit session IDs through watch and change checks', async () => {
       mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
       mockStub.checkChanges = vi
         .fn()
         .mockResolvedValue({ status: 'unchanged', version: 1 });
-      mockStub.gitCheckout = vi.fn().mockResolvedValue({
-        success: true,
-        stdout: 'Cloned',
-        stderr: '',
-        branch: 'main',
-        targetDir: '/workspace/repo',
-        timestamp: new Date().toISOString()
-      });
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
       await sandbox.watch('/workspace', { sessionId: 'my-session' });
       await sandbox.checkChanges('/workspace', { sessionId: 'my-session' });
-      await sandbox.gitCheckout('https://github.com/test/repo.git', {
-        sessionId: 'my-session'
-      });
 
       expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
         sessionId: 'my-session'
@@ -595,12 +553,6 @@ describe('getSandbox', () => {
       expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
         sessionId: 'my-session'
       });
-      expect(mockStub.gitCheckout).toHaveBeenCalledWith(
-        'https://github.com/test/repo.git',
-        {
-          sessionId: 'my-session'
-        }
-      );
     });
 
     it('routes terminal handle connections with explicit terminal IDs', async () => {

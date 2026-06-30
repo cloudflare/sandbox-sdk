@@ -31,7 +31,6 @@ import {
   type ErrorResponse,
   getHttpStatus
 } from '@repo/shared/errors';
-import { DISABLE_SESSION_TOKEN } from '@repo/shared/internal';
 import { createErrorFromResponse } from '../errors/index.js';
 import { SandboxExtension, type SandboxLike } from '../extensions/index.js';
 import {
@@ -371,8 +370,8 @@ export class Git extends SandboxExtension {
     return hosts;
   }
 
-  #sessionId(options: GitSessionOptions): string {
-    return options.sessionId ?? DISABLE_SESSION_TOKEN;
+  #sessionId(options: GitSessionOptions): string | undefined {
+    return options.sessionId;
   }
 
   /**
@@ -381,8 +380,8 @@ export class Git extends SandboxExtension {
    * the Sandbox's own sessionless execution does. A real session already
    * carries its own env, so nothing extra is injected there.
    */
-  #execEnv(sessionId: string): Record<string, string> | undefined {
-    if (sessionId !== DISABLE_SESSION_TOKEN) {
+  #execEnv(sessionId: string | undefined): Record<string, string> | undefined {
+    if (sessionId !== undefined) {
       return undefined;
     }
     const env = filterEnvVars(this.envVars);
@@ -395,13 +394,19 @@ export class Git extends SandboxExtension {
 
   async #exec(
     command: string,
-    sessionId: string,
+    sessionId: string | undefined,
     cwd?: string
   ): Promise<ExecOutcome> {
-    const result = await this.client.commands.execute(command, sessionId, {
-      cwd,
-      env: this.#execEnv(sessionId)
-    });
+    const env = this.#execEnv(sessionId);
+    const options = {
+      ...(sessionId !== undefined && { sessionId }),
+      ...(cwd !== undefined && { cwd }),
+      ...(env !== undefined && { env })
+    };
+    const result = await this.client.commands.execute(
+      command,
+      Object.keys(options).length > 0 ? options : undefined
+    );
     return {
       stdout: result.stdout,
       stderr: result.stderr,

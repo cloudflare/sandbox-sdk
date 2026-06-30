@@ -1144,7 +1144,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger,
       getClient: () => this.client,
       execWithSession: (command, sessionId, options) =>
-        this.executeCommand(command, sessionId, options),
+        this.execWithSession(command, sessionId, options),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime
     });
@@ -3593,6 +3593,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.executeCommand(command, undefined, {
       origin: 'internal'
     });
+  }
+
+  private async execWithSession(
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    return this.executeCommand(command, sessionId, options);
   }
 
   /**
