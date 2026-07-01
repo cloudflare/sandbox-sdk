@@ -45,6 +45,55 @@ describe('ContainerControlConnection', () => {
       conn.disconnect();
       expect(conn.isConnected()).toBe(false);
     });
+
+    it('fires onConnectionError with the provided cause before disposing', () => {
+      const onConnectionError = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        onConnectionError
+      });
+      const cause = new Error('sandbox stopped');
+      conn.disconnect(cause);
+      expect(onConnectionError).toHaveBeenCalledWith(cause);
+    });
+
+    it('does not fire onConnectionError when disconnected without a cause', () => {
+      const onConnectionError = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        onConnectionError
+      });
+      conn.disconnect();
+      expect(onConnectionError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('connection-attempt state', () => {
+    it('reports isConnecting() while a connect is in flight and clears after it settles', async () => {
+      let resolveFetch: (r: Response) => void = () => {};
+      const fetchGate = new Promise<Response>((res) => {
+        resolveFetch = res;
+      });
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn().mockReturnValue(fetchGate) },
+        retryTimeoutMs: 0
+      });
+
+      expect(conn.isConnecting()).toBe(false);
+      const connectPromise = conn.connect().catch(() => {});
+      expect(conn.isConnecting()).toBe(true);
+
+      // Fail the upgrade so the attempt settles.
+      resolveFetch(new Response('nope', { status: 404 }));
+      await conn.whenSettled();
+      await connectPromise;
+      expect(conn.isConnecting()).toBe(false);
+    });
+
+    it('whenSettled() resolves immediately when no attempt is in flight', async () => {
+      const conn = new ContainerControlConnection({ stub: { fetch: vi.fn() } });
+      await expect(conn.whenSettled()).resolves.toBeUndefined();
+    });
   });
 
   describe('connect', () => {
@@ -339,6 +388,43 @@ describe('ContainerControlConnection', () => {
       });
       // The upgrade fetch is never attempted when start fails.
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('stamps onConnectionError as soon as startContainer first throws (before the retry budget is exhausted)', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'There is no container instance that can be provided to this Durable Object, try again later';
+        const onConnectionError = vi.fn();
+        const startContainer = vi
+          .fn<() => Promise<void>>()
+          .mockRejectedValue(new Error(platformMessage));
+        const conn = new ContainerControlConnection({
+          stub: { fetch: vi.fn() },
+          startContainer,
+          onConnectionError,
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect().catch(() => {});
+        // Let the first attempt run and throw.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startContainer).toHaveBeenCalledTimes(1);
+        // The cause is stamped immediately, well before the retry budget or
+        // any teardown — as a typed ContainerUnavailableError.
+        expect(onConnectionError).toHaveBeenCalled();
+        const stamped = onConnectionError.mock.calls[0][0];
+        expect((stamped as { code?: string }).code).toBe(
+          'CONTAINER_UNAVAILABLE'
+        );
+
+        // Clean up the pending retry loop.
+        conn.disconnect();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await connectPromise;
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('retries a thrown startContainer platform error, then upgrades on success', async () => {

@@ -28,6 +28,7 @@ import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
 } from '../response-retry';
+import { traceEvent, withSpan } from './tracing';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -372,6 +373,26 @@ export class ContainerControlConnection {
     return this.connected;
   }
 
+  /**
+   * True while a connection attempt is in progress (upgrade not yet
+   * established and not yet failed). Owners use this to avoid tearing the
+   * connection down mid-attempt.
+   */
+  isConnecting(): boolean {
+    return this.connectPromise !== null;
+  }
+
+  /**
+   * Resolve once any in-flight connection attempt settles (success or
+   * failure). Resolves immediately when no attempt is in progress. Never
+   * rejects — callers only care that the attempt is done.
+   */
+  async whenSettled(): Promise<void> {
+    const pending = this.connectPromise;
+    if (!pending) return;
+    await pending.catch(() => {});
+  }
+
   async connect(): Promise<void> {
     if (this.connected) return;
 
@@ -387,7 +408,22 @@ export class ContainerControlConnection {
     }
   }
 
-  disconnect(): void {
+  /**
+   * Tear down the connection. When `cause` is provided (e.g. a lifecycle
+   * teardown from the owning DO), it is handed to `onConnectionError` first
+   * so any RPC calls queued on the transport reject with that real cause
+   * rather than the generic capnweb "disposing the main stub" message.
+   */
+  disconnect(cause?: unknown): void {
+    if (cause !== undefined) {
+      this.fireConnectionError(cause);
+      traceEvent('rpc.disconnect', {
+        port: this.port,
+        reason: cause instanceof Error ? cause.message : String(cause)
+      });
+    } else {
+      traceEvent('rpc.disconnect', { port: this.port });
+    }
     try {
       (this.stub as unknown as Disposable)[Symbol.dispose]?.();
     } catch {
@@ -544,6 +580,7 @@ export class ContainerControlConnection {
         );
       }
 
+      traceEvent('rpc.connect', { port: this.port, outcome: 'established' });
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
@@ -616,31 +653,43 @@ export class ContainerControlConnection {
    *     each retry has an independent connect timeout for the *upgrade only*.
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
-    // Explicitly start the container first (when a hook is provided), under
-    // its own budget — no per-attempt abort signal.
-    if (this.startContainer) {
-      await this.startContainer();
-    }
+    return withSpan('rpc.connect.attempt', { port: this.port }, async () => {
+      // Explicitly start the container first (when a hook is provided),
+      // under its own budget — no per-attempt abort signal.
+      if (this.startContainer) {
+        try {
+          await this.startContainer();
+        } catch (error) {
+          // Stamp the real cause on the owner as soon as the first
+          // container-admission failure surfaces — before any retry/abort
+          // can mask it — so a teardown mid-retry still surfaces this.
+          this.fireConnectionError(
+            tryConvertPlatformUnavailable(error) ?? error
+          );
+          throw error;
+        }
+      }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      DEFAULT_CONNECT_TIMEOUT_MS
-    );
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        DEFAULT_CONNECT_TIMEOUT_MS
+      );
 
-    try {
-      const url = `http://localhost:${this.port}/rpc`;
-      const request = new Request(url, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-      return await this.containerStub.fetch(request);
-    } finally {
-      clearTimeout(timeout);
-    }
+      try {
+        const url = `http://localhost:${this.port}/rpc`;
+        const request = new Request(url, {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade'
+          },
+          signal: controller.signal
+        });
+        return await this.containerStub.fetch(request);
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
   }
 }
 

@@ -101,6 +101,7 @@ import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
 } from './connection';
+import { withSpan } from './tracing';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -581,15 +582,17 @@ function wrapStub<T extends object>(
             result != null &&
             typeof (result as { then?: unknown }).then === 'function'
           ) {
-            return (result as Promise<unknown>)
-              .catch((err: unknown) =>
+            // Span the RPC call so each method invocation (and its failure,
+            // with error/error.stack attributes) is visible in traces.
+            return withSpan('rpc.call', { operation }, () =>
+              (result as Promise<unknown>).catch((err: unknown) =>
                 translateRPCError(err, {
                   operation,
                   connectionError: getConnectionError(),
                   sessionEstablished: getSessionEstablished()
                 })
               )
-              .finally(onCallSettled);
+            ).finally(onCallSettled);
           }
           onCallSettled();
           return result;
@@ -888,7 +891,7 @@ export class ContainerControlClient {
     }
   }
 
-  private destroyConnection(): void {
+  private destroyConnection(cause?: unknown): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
     this.activeCalls = 0;
@@ -899,7 +902,10 @@ export class ContainerControlClient {
       this.onSessionIdle?.();
     }
     if (this.conn) {
-      this.conn.disconnect();
+      // Pass the cause so queued RPC calls reject with the real reason
+      // (stamped into lastConnectionError via onConnectionError) instead of
+      // the generic capnweb disposal message.
+      this.conn.disconnect(cause);
       this.conn = null;
     }
   }
@@ -1036,8 +1042,33 @@ export class ContainerControlClient {
     await this.getConnection().connect();
   }
 
-  disconnect(): void {
-    this.destroyConnection();
+  /**
+   * Tear down the active connection.
+   *
+   * When a connection attempt is still in progress, the teardown is deferred
+   * until that attempt settles — so a lifecycle disconnect (e.g. the DO's
+   * alarm firing `onStop`) cannot rip the transport out from under an
+   * in-flight connect and reject queued calls with a generic disposal error.
+   * The provided `cause` is stamped immediately so that if the attempt fails,
+   * queued calls surface it; if the attempt succeeds, the (now-established)
+   * connection is then torn down cleanly with the cause.
+   *
+   * `cause` should be a typed `SandboxError` describing why the connection is
+   * being torn down (sandbox stopping, lifetime change, transport switch).
+   */
+  disconnect(cause?: unknown): void {
+    const conn = this.conn;
+    if (conn?.isConnecting()) {
+      // Stamp the cause now so an in-flight-attempt failure surfaces it.
+      if (cause !== undefined) this.lastConnectionError = cause;
+      // Defer the actual teardown until the attempt settles. Guard with an
+      // identity check so we don't destroy a newer connection.
+      void conn.whenSettled().then(() => {
+        if (this.conn === conn) this.destroyConnection(cause);
+      });
+      return;
+    }
+    this.destroyConnection(cause);
   }
 }
 

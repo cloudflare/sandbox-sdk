@@ -1399,7 +1399,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.tunnelsHandler = null;
         this.tunnelExitHandler = null;
         this.destroyAllTunnels = null;
-        previousClient.disconnect();
+        previousClient.disconnect(
+          this.buildDisconnectCause(
+            'runtime_replaced',
+            'The sandbox transport was switched while the operation was pending.'
+          )
+        );
       }
       if (storedTransport) {
         this.hasStoredTransport = true;
@@ -1604,7 +1609,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.tunnelsHandler = null;
     this.tunnelExitHandler = null;
     this.destroyAllTunnels = null;
-    previousClient.disconnect();
+    previousClient.disconnect(
+      this.buildDisconnectCause(
+        'runtime_replaced',
+        'The sandbox transport was switched while the operation was pending.'
+      )
+    );
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
   }
@@ -2823,8 +2833,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
 
-      // Disconnect transport after all cleanup commands have completed
-      this.client.disconnect();
+      // Disconnect transport after all cleanup commands have completed.
+      // Stamp a lifetime-changed cause so any RPC still queued on the
+      // transport rejects with an actionable (non-retryable) error rather
+      // than a generic capnweb disposal string.
+      this.client.disconnect(
+        this.buildDisconnectCause(
+          'sandbox_lifetime_changed',
+          'The sandbox was destroyed while the operation was pending.'
+        )
+      );
 
       outcome = 'success';
       try {
@@ -3026,7 +3044,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Disconnect the active client so open sockets do not hold the DO alive.
-    this.client.disconnect();
+    // Stamp a runtime-replaced cause so a pending RPC surfaces a retryable
+    // interruption instead of a generic disposal string.
+    this.client.disconnect(
+      this.buildDisconnectCause(
+        'runtime_replaced',
+        'The sandbox container stopped while the operation was pending.'
+      )
+    );
 
     // Stop local sync managers before clearing the map.
     let hadR2EgressMount = false;
@@ -3355,6 +3380,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       { cause: error }
     );
+  }
+
+  /**
+   * Build a typed lifecycle cause to stamp on the RPC transport when the DO
+   * tears the connection down for its own reasons (container stopped, sandbox
+   * destroyed, transport switched). Handed to `client.disconnect(cause)` so
+   * any RPC calls queued on the transport reject with this actionable reason
+   * instead of the generic capnweb "disposing the main stub" message.
+   */
+  private buildDisconnectCause(
+    reason: 'runtime_replaced' | 'sandbox_lifetime_changed',
+    detail: string
+  ): OperationInterruptedError {
+    const retryable = reason === 'runtime_replaced';
+    const context = {
+      reason,
+      operation: 'rpc.connect',
+      phase: 'connection',
+      admitted: 'unknown' as const,
+      retryable
+    };
+    return new OperationInterruptedError({
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: detail,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+      suggestion: getSuggestion(
+        ErrorCode.OPERATION_INTERRUPTED,
+        context as unknown as Record<string, unknown>
+      ),
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**

@@ -49,6 +49,10 @@ vi.mock('../src/container-control/connection', () => ({
     isConnected() {
       return connected;
     }
+    isConnecting() {
+      return false;
+    }
+    async whenSettled() {}
     getStats() {
       return stats;
     }
