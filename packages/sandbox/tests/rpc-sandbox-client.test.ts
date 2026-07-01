@@ -800,13 +800,15 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
   });
 
-  it('surfaces the transport error (not OPERATION_INTERRUPTED) when the session never established', async () => {
+  it('surfaces a retryable ContainerUnavailableError (not a raw transport string) when the session never established', async () => {
     // The container never started, so the session never connected. A queued
     // call rejecting with capnweb's disposal message must NOT be reported as
-    // an interruption — the operation was never admitted. Surface the raw
-    // transport error instead.
+    // an interruption (nothing was admitted) and must NOT leak the raw
+    // capnweb string. Surface a clean, retryable CONTAINER_UNAVAILABLE that
+    // preserves the transport message for diagnostics.
     const translateRPCError = await loadFn();
-    const { RPCTransportError, OperationInterruptedError } = await loadErr();
+    const { ContainerUnavailableError, OperationInterruptedError } =
+      await loadErr();
     let thrown: unknown;
     try {
       translateRPCError(
@@ -817,9 +819,35 @@ describe('translateRPCError', () => {
       thrown = e;
     }
     expect(thrown).not.toBeInstanceOf(OperationInterruptedError);
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.context.retryable).toBe(true);
+    expect(err.context.originalMessage).toBe(
+      'RPC session was shut down by disposing the main stub'
+    );
+    // The raw capnweb string must not be the user-facing message.
+    expect((err as Error).message).not.toContain('disposing the main stub');
+  });
+
+  it('does not synthesize CONTAINER_UNAVAILABLE for a never-established non-teardown transport error', async () => {
+    // An invalid-frame / protocol error is not a teardown-family kind, so it
+    // should still surface as the transport error rather than being
+    // reclassified as container-unavailable.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new TypeError('Received non-string message from WebSocket.'),
+        { operation: 'utils.createSession', sessionEstablished: false }
+      );
+    } catch (e) {
+      thrown = e;
+    }
     expect(thrown).toBeInstanceOf(RPCTransportError);
     expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
-      'session_disposed'
+      'invalid_frame'
     );
   });
 

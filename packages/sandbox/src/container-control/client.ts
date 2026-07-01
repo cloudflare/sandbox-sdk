@@ -85,6 +85,7 @@ import type {
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
+  type ContainerUnavailableContext,
   ErrorCode,
   type ErrorResponse,
   getHttpStatus,
@@ -255,17 +256,27 @@ export function translateRPCError(
     // connection-failure message capnweb raises on the queued call.
     const captured = maybePreferConnectionError(transportResponse, context);
     if (captured) throw captured;
-    // Only map to OPERATION_INTERRUPTED when the session actually established
-    // a live connection to a running container and was then interrupted. If
-    // it never connected (container never started), surface the thrown
-    // transport error directly — the operation was never admitted, so
-    // "interrupted" would be misleading. `sessionEstablished` defaults to
-    // undefined for callers that don't track it (e.g. direct unit tests),
-    // preserving the prior behavior in that case.
-    const interruptedResponse =
-      context.sessionEstablished === false
-        ? null
-        : buildInterruptedOperationResponse(transportResponse, context);
+    // If the session never established a live connection, don't map to
+    // OPERATION_INTERRUPTED (nothing was admitted, so "interrupted" is
+    // misleading) and don't leak the raw capnweb disposal string. A
+    // teardown-family error here means the container was never reachable —
+    // surface a clean, retryable CONTAINER_UNAVAILABLE. `sessionEstablished`
+    // defaults to undefined for callers that don't track it (e.g. direct unit
+    // tests), preserving the prior behavior in that case.
+    if (context.sessionEstablished === false) {
+      const neverConnected = buildNeverConnectedUnavailableResponse(
+        transportResponse,
+        context
+      );
+      throw createErrorFromResponse(
+        (neverConnected ?? transportResponse) as unknown as ErrorResponse,
+        { cause: error }
+      );
+    }
+    const interruptedResponse = buildInterruptedOperationResponse(
+      transportResponse,
+      context
+    );
     throw createErrorFromResponse(
       (interruptedResponse ?? transportResponse) as unknown as ErrorResponse,
       { cause: error }
@@ -437,6 +448,53 @@ function maybePreferConnectionError(
   }
 
   return null;
+}
+
+/**
+ * When the session never established a live connection and a queued RPC call
+ * rejects with a teardown-family transport error (disposed / connection
+ * failed / peer closed), surface a clean, retryable `ContainerUnavailableError`
+ * instead of the raw capnweb string (e.g. "RPC session was shut down by
+ * disposing the main stub").
+ *
+ * Reaching this point means: the container never became reachable (so no
+ * OPERATION_INTERRUPTED — nothing was admitted) AND no structured connection
+ * error was captured (so `maybePreferConnectionError` didn't fire). That's the
+ * Durable Object being torn down/evicted mid-startup under capacity pressure
+ * before `doConnect` recorded a cause — which is, from the caller's view, the
+ * container being unavailable. Retryable, with the raw transport message
+ * preserved as `originalMessage` for diagnostics.
+ */
+function buildNeverConnectedUnavailableResponse(
+  transportResponse: ErrorResponse<RPCTransportContext>,
+  context: RPCTranslationContext
+): ErrorResponse<ContainerUnavailableContext> | null {
+  if (context.sessionEstablished !== false) return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'connection_failed' &&
+    kind !== 'peer_closed'
+  ) {
+    return null;
+  }
+  const ctx: ContainerUnavailableContext = {
+    reason: 'container_replaced',
+    retryable: true,
+    originalMessage: transportResponse.context.originalMessage
+  };
+  return {
+    code: ErrorCode.CONTAINER_UNAVAILABLE,
+    message:
+      'The sandbox container could not be reached before the connection was torn down; it may be starting or temporarily unavailable.',
+    context: ctx,
+    httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+    suggestion: getSuggestion(
+      ErrorCode.CONTAINER_UNAVAILABLE,
+      ctx as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  };
 }
 
 function buildInterruptedOperationResponse(
