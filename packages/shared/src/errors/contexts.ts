@@ -250,12 +250,24 @@ export interface ContainerUnavailableContext {
   /**
    * Categorical reason distinguishing startup unavailability from runtime
    * replacement and exhausted upgrade retries.
+   *
+   * `no_container_instance_available` is raised when the Containers platform
+   * cannot allocate an instance for the Durable Object during connection
+   * startup ("There is no container instance that can be provided to this
+   * Durable Object, try again later").
+   *
+   * `max_container_instances_exceeded` is raised when the account has reached
+   * its configured concurrent-instance ceiling ("Maximum number of running
+   * container instances exceeded. Try again later, or try configuring a
+   * higher value for max_instances").
    */
   reason:
     | 'container_starting'
     | 'container_unhealthy'
     | 'container_replaced'
-    | 'rpc_upgrade_failed';
+    | 'rpc_upgrade_failed'
+    | 'no_container_instance_available'
+    | 'max_container_instances_exceeded';
   /**
    * Always true — this error represents a transient unavailability, not a
    * permanent failure. Callers should retry the same operation.
@@ -263,6 +275,12 @@ export interface ContainerUnavailableContext {
   retryable: true;
   /** Suggested delay in milliseconds before the next retry attempt. */
   retryAfterMs?: number;
+  /**
+   * Original platform/transport error message, preserved verbatim when the
+   * unavailability was detected from a lower-level error (e.g. the platform
+   * container-allocation failure) rather than a structured response body.
+   */
+  originalMessage?: string;
 }
 
 /**

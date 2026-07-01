@@ -699,6 +699,92 @@ describe('translateRPCError', () => {
     expect((thrown as Error).cause).toBe(original);
   });
 
+  // -------------------------------------------------------------------------
+  // Captured connection error preference
+  // -------------------------------------------------------------------------
+
+  it('prefers a captured connection error over a masking session_disposed transport error', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    // The typed error the connection layer captures for the platform
+    // "no container instance" failure.
+    const platformMessage =
+      'There is no container instance that can be provided to this Durable Object, try again later';
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: platformMessage,
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: platformMessage
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', connectionError }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('no_container_instance_available');
+    expect(err.context.retryable).toBe(true);
+    expect(err.context.originalMessage).toBe(platformMessage);
+  });
+
+  it('ignores a captured connection error for container-side structured errors', async () => {
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError, ContainerUnavailableError } = await loadErr();
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no container',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no container'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    const payload = JSON.stringify({
+      code: 'FILE_NOT_FOUND',
+      message: 'no such file',
+      context: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error(payload), {
+        operation: 'files.readFile',
+        connectionError
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+  });
+
+  it('falls back to the transport error when no connection error was captured', async () => {
+    const translateRPCError = await loadFn();
+    const { OperationInterruptedError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession' }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+  });
+
   it('does not set `cause` on errors translated from JSON-encoded structured payloads', async () => {
     // The container-side errors flow through createErrorFromResponse without
     // an `options` argument, so `cause` stays unset (matching pre-fix

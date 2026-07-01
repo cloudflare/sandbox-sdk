@@ -167,6 +167,14 @@ interface RPCErrorPayload {
 export interface RPCTranslationContext {
   /** Public operation name, e.g. `commands.execute` or `files.writeFile`. */
   operation?: string;
+  /**
+   * Error captured by `ContainerControlConnection` during connection startup
+   * (e.g. a platform container-allocation failure). When the RPC call rejects
+   * with a generic capnweb disposal / connection-failure error caused by that
+   * same startup abort, this captured error is the real, actionable cause and
+   * is preferred over the masking transport error.
+   */
+  connectionError?: unknown;
 }
 
 export function translateRPCError(
@@ -230,6 +238,12 @@ export function translateRPCError(
     // errors so consumers can branch on public SDK contracts instead of
     // substring-matching transport internals.
     const transportResponse = buildTransportErrorResponse(error);
+    // If this call rejected because a connection-startup failure aborted the
+    // transport, prefer that captured error — it carries the real, actionable
+    // cause (e.g. CONTAINER_UNAVAILABLE) instead of the generic disposal /
+    // connection-failure message capnweb raises on the queued call.
+    const captured = maybePreferConnectionError(transportResponse, context);
+    if (captured) throw captured;
     const interruptedResponse = buildInterruptedOperationResponse(
       transportResponse,
       context
@@ -330,6 +344,34 @@ function buildTransportErrorResponse(
   };
 }
 
+/**
+ * When a queued RPC call rejects with a transport error that a connection
+ * abort could have caused (session disposed, connection failed, upgrade
+ * failed, or peer closed), and the connection captured a real startup error,
+ * return that captured error. `SandboxError` instances (e.g. the typed
+ * ContainerUnavailableError) are surfaced as-is; anything else is returned
+ * untouched so the caller falls back to normal transport classification.
+ */
+function maybePreferConnectionError(
+  transportResponse: ErrorResponse<RPCTransportContext>,
+  context: RPCTranslationContext
+): SandboxError | null {
+  if (!context.connectionError) return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'connection_failed' &&
+    kind !== 'upgrade_failed' &&
+    kind !== 'peer_closed'
+  ) {
+    return null;
+  }
+  if (context.connectionError instanceof SandboxError) {
+    return context.connectionError;
+  }
+  return null;
+}
+
 function buildInterruptedOperationResponse(
   transportResponse: ErrorResponse<RPCTransportContext>,
   context: RPCTranslationContext
@@ -388,7 +430,8 @@ function wrapStub<T extends object>(
   stub: T,
   domain: string,
   onCallStarted: () => void,
-  onCallSettled: () => void
+  onCallSettled: () => void,
+  getConnectionError: () => unknown
 ): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
@@ -413,14 +456,22 @@ function wrapStub<T extends object>(
             typeof (result as { then?: unknown }).then === 'function'
           ) {
             return (result as Promise<unknown>)
-              .catch((err: unknown) => translateRPCError(err, { operation }))
+              .catch((err: unknown) =>
+                translateRPCError(err, {
+                  operation,
+                  connectionError: getConnectionError()
+                })
+              )
               .finally(onCallSettled);
           }
           onCallSettled();
           return result;
         } catch (err) {
           onCallSettled();
-          translateRPCError(err, { operation });
+          translateRPCError(err, {
+            operation,
+            connectionError: getConnectionError()
+          });
         }
       };
     }
@@ -482,6 +533,13 @@ export class ContainerControlClient {
   private readonly onSessionIdle: (() => void) | undefined;
 
   private conn: ContainerControlConnection | null = null;
+  /**
+   * Real cause captured by the connection during startup failure (e.g. a
+   * platform container-allocation error). Preferred over the generic capnweb
+   * disposal error when translating queued RPC rejections. Cleared each time a
+   * fresh connection is created.
+   */
+  private lastConnectionError: unknown = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Number of RPC method promises that have started but not settled. */
@@ -505,6 +563,12 @@ export class ContainerControlClient {
       // every in-flight RPC rejects with a peer-closed error.
       onClose: () => {
         if (this.conn) this.destroyConnection();
+      },
+      // Capture the real startup failure before capnweb masks it on the
+      // queued RPC rejections. `translateRPCError` prefers this over the
+      // generic disposal / connection-failure transport error.
+      onConnectionError: (error: unknown) => {
+        this.lastConnectionError = error;
       }
     };
     this.idleDisconnectMs =
@@ -527,6 +591,7 @@ export class ContainerControlClient {
    */
   private getConnection(): ContainerControlConnection {
     if (!this.conn) {
+      this.lastConnectionError = null;
       this.conn = new ContainerControlConnection(this.connOptions);
       this.startBusyPoll();
     }
@@ -588,6 +653,9 @@ export class ContainerControlClient {
     this.activeCalls = Math.max(0, this.activeCalls - 1);
     this.maybeTransitionIdle();
   };
+
+  /** Return the last connection-startup error captured, if any. */
+  private getLastConnectionError = (): unknown => this.lastConnectionError;
 
   /**
    * Sample `getStats()` and update busy/idle state. While busy, renews the
@@ -700,7 +768,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().commands,
       'commands',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get files(): SandboxFilesAPI {
@@ -708,7 +777,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().files,
       'files',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
@@ -716,7 +786,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().processes,
       'processes',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get ports(): SandboxPortsAPI {
@@ -724,7 +795,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().ports,
       'ports',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get git(): SandboxGitAPI {
@@ -732,7 +804,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().git,
       'git',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get utils(): SandboxUtilsAPI {
@@ -740,7 +813,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().utils,
       'utils',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get backup(): SandboxBackupAPI {
@@ -748,7 +822,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().backup,
       'backup',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get watch(): SandboxWatchAPI {
@@ -756,7 +831,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().watch,
       'watch',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get tunnels(): SandboxTunnelsAPI {
@@ -764,7 +840,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().tunnels,
       'tunnels',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
   get interpreter(): SandboxInterpreterAPI {
@@ -772,7 +849,8 @@ export class ContainerControlClient {
       this.getConnection().rpc().interpreter,
       'interpreter',
       this.recordCallStarted,
-      this.recordCallSettled
+      this.recordCallSettled,
+      this.getLastConnectionError
     );
   }
 

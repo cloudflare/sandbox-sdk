@@ -86,6 +86,73 @@ async function tryParseContainerUnavailable(
   }
 }
 
+/**
+ * Platform messages emitted by the Containers runtime when it cannot admit a
+ * container for a Durable Object during startup. They surface as plain Errors
+ * thrown from the container-binding fetch, before the capnweb session is
+ * established. Each maps to a categorical `ContainerUnavailableContext.reason`.
+ */
+const PLATFORM_UNAVAILABLE_SIGNATURES: ReadonlyArray<{
+  substring: string;
+  reason:
+    | 'no_container_instance_available'
+    | 'max_container_instances_exceeded';
+}> = [
+  {
+    substring:
+      'There is no container instance that can be provided to this Durable Object',
+    reason: 'no_container_instance_available'
+  },
+  {
+    substring: 'Maximum number of running container instances exceeded',
+    reason: 'max_container_instances_exceeded'
+  }
+];
+
+/**
+ * True when a thrown connection-startup error matches a known platform
+ * container-admission failure. These are transient: the platform asks the
+ * caller to try again later, so they are safe to retry within the budget.
+ */
+function isPlatformUnavailableError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    PLATFORM_UNAVAILABLE_SIGNATURES.some((sig) =>
+      error.message.includes(sig.substring)
+    )
+  );
+}
+
+/**
+ * Convert a raw connection-startup error into a typed ContainerUnavailableError
+ * when it matches a known platform container-admission failure. Returns null
+ * for anything else so the caller preserves the original error.
+ */
+function tryConvertPlatformUnavailable(error: unknown): Error | null {
+  if (!(error instanceof Error)) return null;
+  const match = PLATFORM_UNAVAILABLE_SIGNATURES.find((sig) =>
+    error.message.includes(sig.substring)
+  );
+  if (!match) return null;
+
+  const context = {
+    reason: match.reason,
+    retryable: true as const,
+    originalMessage: error.message
+  };
+  return createErrorFromResponse(
+    {
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: error.message,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+      suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+      timestamp: new Date().toISOString()
+    },
+    { cause: error }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Connection manager
 // ---------------------------------------------------------------------------
@@ -126,6 +193,16 @@ export interface ContainerControlConnectionOptions {
    * Not fired for `disconnect()`.
    */
   onClose?: () => void;
+  /**
+   * Invoked with the connection-startup error just before the deferred
+   * transport is aborted. Lets the owner capture the *real* failure cause
+   * (e.g. a platform container-allocation error) before capnweb replaces it
+   * with a generic "RPC session was shut down" message on the queued calls
+   * that reject as a result of the abort.
+   *
+   * Fired at most once per connection attempt. Not fired for `disconnect()`.
+   */
+  onConnectionError?: (error: unknown) => void;
 }
 
 /**
@@ -147,6 +224,7 @@ export class ContainerControlConnection {
   private readonly logger: Logger;
   private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
+  private readonly onConnectionError: ((error: unknown) => void) | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -154,6 +232,7 @@ export class ContainerControlConnection {
     this.logger = options.logger ?? createNoOpLogger();
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
     this.onClose = options.onClose;
+    this.onConnectionError = options.onConnectionError;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -260,6 +339,22 @@ export class ContainerControlConnection {
   }
 
   /**
+   * Run the owner-provided `onConnectionError` callback exactly once per
+   * failed connection attempt, swallowing any listener errors.
+   */
+  private fireConnectionError(error: unknown): void {
+    if (!this.onConnectionError) return;
+    try {
+      this.onConnectionError(error);
+    } catch (err) {
+      this.logger.warn(
+        'ContainerControlConnection onConnectionError handler threw',
+        { error: err instanceof Error ? err.message : String(err) }
+      );
+    }
+  }
+
+  /**
    * WebSocket `close` listener. Defined as a bound arrow field so the
    * same reference can be passed to both `addEventListener` and
    * `removeEventListener` — a fresh anonymous lambda would silently
@@ -338,7 +433,15 @@ export class ContainerControlConnection {
       });
     } catch (error) {
       this.connected = false;
-      this.transport.abort(error);
+      // Convert the platform container-allocation failure into a typed
+      // ContainerUnavailableError so the real cause survives. capnweb will
+      // otherwise mask it: `transport.abort()` below rejects the queued RPC
+      // calls with a generic "RPC session was shut down" message.
+      const connectionError = tryConvertPlatformUnavailable(error) ?? error;
+      // Hand the owner the real cause before aborting the transport, so it can
+      // prefer this over the masking disposal error on queued RPC rejections.
+      this.fireConnectionError(connectionError);
+      this.transport.abort(connectionError);
       // Signal the client to discard this connection. The transport is now
       // permanently aborted; any in-flight or future stub calls would fail
       // immediately. Firing onClose here lets the client null out its
@@ -346,9 +449,11 @@ export class ContainerControlConnection {
       this.fireOnClose();
       this.logger.error(
         'ContainerControlConnection failed',
-        error instanceof Error ? error : new Error(String(error))
+        connectionError instanceof Error
+          ? connectionError
+          : new Error(String(connectionError))
       );
-      throw error;
+      throw connectionError;
     }
   }
 
@@ -364,7 +469,11 @@ export class ContainerControlConnection {
       logger: this.logger,
       retryLogMessage:
         'ContainerControlConnection upgrade returned retryable status, retrying',
-      shouldRetry: isRetryableWebSocketUpgradeResponse
+      shouldRetry: isRetryableWebSocketUpgradeResponse,
+      // The Containers platform signals transient container-admission failure
+      // by *throwing* (e.g. "There is no container instance...") rather than
+      // returning a retryable status. Retry those within the same budget.
+      shouldRetryError: isPlatformUnavailableError
     });
   }
 

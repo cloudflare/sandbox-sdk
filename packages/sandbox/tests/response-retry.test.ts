@@ -102,5 +102,91 @@ describe('response retry helpers', () => {
         response: response503
       });
     });
+
+    it('retries thrown errors matched by shouldRetryError until success', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const fetchResponse = vi
+          .fn<() => Promise<Response>>()
+          .mockRejectedValueOnce(new Error('no container instance'))
+          .mockResolvedValueOnce(responseWithStatus(200));
+
+        const retrying = fetchWithResponseRetry(fetchResponse, {
+          retryTimeoutMs: 20_000,
+          minTimeForRetryMs: 15_000,
+          logger: createNoOpLogger(),
+          retryLogMessage: 'retrying test response',
+          shouldRetry: () => false,
+          shouldRetryError: (err) =>
+            err instanceof Error && err.message === 'no container instance'
+        });
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchResponse).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        const response = await retrying;
+
+        expect(fetchResponse).toHaveBeenCalledTimes(2);
+        expect(response.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rethrows thrown errors that shouldRetryError does not match', async () => {
+      const fetchResponse = vi
+        .fn<() => Promise<Response>>()
+        .mockRejectedValue(new Error('fatal'));
+
+      await expect(
+        fetchWithResponseRetry(fetchResponse, {
+          retryTimeoutMs: 20_000,
+          minTimeForRetryMs: 15_000,
+          logger: createNoOpLogger(),
+          retryLogMessage: 'retrying test response',
+          shouldRetry: () => false,
+          shouldRetryError: (err) =>
+            err instanceof Error && err.message === 'no container instance'
+        })
+      ).rejects.toThrow('fatal');
+      expect(fetchResponse).toHaveBeenCalledTimes(1);
+    });
+
+    it('rethrows the last error when the retry budget is exhausted', async () => {
+      const fetchResponse = vi
+        .fn<() => Promise<Response>>()
+        .mockRejectedValue(new Error('no container instance'));
+
+      await expect(
+        fetchWithResponseRetry(fetchResponse, {
+          retryTimeoutMs: 0,
+          minTimeForRetryMs: 15_000,
+          logger: createNoOpLogger(),
+          retryLogMessage: 'retrying test response',
+          shouldRetry: () => false,
+          shouldRetryError: () => true
+        })
+      ).rejects.toThrow('no container instance');
+      expect(fetchResponse).toHaveBeenCalledTimes(1);
+    });
+
+    it('rethrows a thrown error without retrying when no shouldRetryError is provided', async () => {
+      const fetchResponse = vi
+        .fn<() => Promise<Response>>()
+        .mockRejectedValue(new Error('boom'));
+
+      await expect(
+        fetchWithResponseRetry(fetchResponse, {
+          retryTimeoutMs: 20_000,
+          minTimeForRetryMs: 15_000,
+          logger: createNoOpLogger(),
+          retryLogMessage: 'retrying test response',
+          shouldRetry: () => false
+        })
+      ).rejects.toThrow('boom');
+      expect(fetchResponse).toHaveBeenCalledTimes(1);
+    });
   });
 });
