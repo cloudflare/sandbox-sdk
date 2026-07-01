@@ -103,6 +103,11 @@
       "types": "./dist/bridge/index.d.ts",
       "import": "./dist/bridge/index.js",
       "require": "./dist/bridge/index.js"
+    },
+    "./tunnels": {
+      "types": "./dist/tunnels/index.d.ts",
+      "import": "./dist/tunnels/index.js",
+      "require": "./dist/tunnels/index.js"
     }
   },
   "keywords": [],
