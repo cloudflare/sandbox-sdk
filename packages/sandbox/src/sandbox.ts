@@ -81,10 +81,15 @@ import {
   ProcessReadyTimeoutError,
   SandboxError
 } from './errors';
-import { SandboxExtension } from './extensions';
+import {
+  EXTENSION_HTTP_PROXY_HOST,
+  type ExtensionHTTPProxyLease,
+  type ExtensionHTTPProxyLeaseConfig,
+  type ExtensionHTTPProxyParams,
+  SandboxExtension
+} from './extensions';
+import { extensionHTTPProxyHandler } from './extensions/http-proxy-handler';
 import { collectFile, streamFile } from './file-stream';
-import { gitCredentialProxyHandler } from './git/credential-proxy-handler';
-import type { GitAuthInterceptorParams } from './git/types';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { isPlatformTransientError } from './platform-errors';
 import {
@@ -238,7 +243,7 @@ type EgressContainerState = DurableObjectState<{}> & {
             params:
               | R2EgressParams
               | S3CredentialProxyParams
-              | GitAuthInterceptorParams;
+              | ExtensionHTTPProxyParams;
           }
         >;
       };
@@ -279,7 +284,7 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
 ).outboundHandlers = {
   r2EgressMount: r2EgressHandler,
   s3CredentialProxyMount: s3CredentialProxyHandler,
-  gitCredentialProxy: gitCredentialProxyHandler
+  extensionHTTPProxy: extensionHTTPProxyHandler
 };
 
 /**
@@ -324,11 +329,11 @@ export class ContainerProxy extends BaseContainerProxy {
           handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
         );
       }
-      if (override.method === 'gitCredentialProxy') {
-        return gitCredentialProxyHandler(
+      if (override.method === 'extensionHTTPProxy') {
+        return extensionHTTPProxyHandler(
           request,
           this.env as Cloudflare.Env,
-          handlerCtx as OutboundHandlerContext<GitAuthInterceptorParams>
+          handlerCtx as OutboundHandlerContext<ExtensionHTTPProxyParams>
         );
       }
     }
@@ -966,6 +971,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
+  private extensionHTTPProxyLeases = new Map<
+    string,
+    ExtensionHTTPProxyLeaseConfig & { id: string; internalBaseURL: string }
+  >();
+  private extensionHTTPProxyLeaseQueue: Promise<void> = Promise.resolve();
 
   private r2AccessKeyId: string | null = null;
   private r2SecretAccessKey: string | null = null;
@@ -5102,38 +5112,116 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.backupService.setRestoreFaultForTesting(fault);
   }
 
-  async registerGitAuthInterceptor(
-    params: GitAuthInterceptorParams
-  ): Promise<void> {
+  async registerExtensionHTTPProxyLease(
+    config: ExtensionHTTPProxyLeaseConfig
+  ): Promise<ExtensionHTTPProxyLease> {
+    return this.withExtensionHTTPProxyLeaseMutation(async () => {
+      const id = config.operationId ?? crypto.randomUUID();
+      if (!/^[A-Za-z0-9._~-]{1,128}$/.test(id)) {
+        throw new InvalidMountConfigError(
+          'Extension HTTP proxy operation IDs must be 1-128 URL-safe characters'
+        );
+      }
+      if (config.routes.length === 0) {
+        throw new InvalidMountConfigError(
+          'Extension HTTP proxy leases require at least one route'
+        );
+      }
+      if (this.extensionHTTPProxyLeases.has(id)) {
+        throw new InvalidMountConfigError(
+          `Extension HTTP proxy lease '${id}' already exists`
+        );
+      }
+
+      const leaseRecord = {
+        ...config,
+        id,
+        internalBaseURL: `http://${EXTENSION_HTTP_PROXY_HOST}/${id}`
+      };
+      const previousLeases = new Map(this.extensionHTTPProxyLeases);
+      this.extensionHTTPProxyLeases.set(id, leaseRecord);
+      try {
+        await this.configureExtensionHTTPProxyOutbound();
+      } catch (error) {
+        this.extensionHTTPProxyLeases = previousLeases;
+        await this.configureExtensionHTTPProxyOutbound().catch(() => {});
+        throw error;
+      }
+
+      let disposed = false;
+      return {
+        id,
+        internalBaseURL: leaseRecord.internalBaseURL,
+        dispose: async () => {
+          if (disposed) return;
+          await this.withExtensionHTTPProxyLeaseMutation(async () => {
+            if (this.extensionHTTPProxyLeases.get(id) !== leaseRecord) {
+              disposed = true;
+              return;
+            }
+            const previousLeases = new Map(this.extensionHTTPProxyLeases);
+            this.extensionHTTPProxyLeases.delete(id);
+            try {
+              await this.configureExtensionHTTPProxyOutbound();
+              disposed = true;
+            } catch (error) {
+              this.extensionHTTPProxyLeases = previousLeases;
+              await this.configureExtensionHTTPProxyOutbound().catch(() => {});
+              throw error;
+            }
+          });
+        }
+      };
+    });
+  }
+
+  private async withExtensionHTTPProxyLeaseMutation<T>(
+    callback: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.extensionHTTPProxyLeaseQueue;
+    let release: () => void = () => {};
+    this.extensionHTTPProxyLeaseQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      return await callback();
+    } finally {
+      release();
+    }
+  }
+
+  private async configureExtensionHTTPProxyOutbound(): Promise<void> {
     const ctx = this.ctx as EgressContainerState;
     if (!ctx.container?.interceptOutboundHttp) {
       throw new InvalidMountConfigError(
-        'Git extension authentication requires container outbound interception support'
+        'Extension HTTP proxying requires container outbound interception support'
       );
     }
     if (!ctx.exports?.ContainerProxy) {
       throw new InvalidMountConfigError(
-        'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.'
+        'Extension HTTP proxying requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use extension HTTP proxying.'
       );
     }
 
     const registry = this.constructor as unknown as OutboundHandlerRegistry;
     registry.outboundHandlers = {
       ...registry.outboundHandlers,
-      gitCredentialProxy: gitCredentialProxyHandler
+      extensionHTTPProxy: extensionHTTPProxyHandler
     };
 
-    const hostOverrides: Record<
-      string,
-      { method: string; params: GitAuthInterceptorParams }
-    > = {};
-    for (const host of Object.keys(params.hosts)) {
-      hostOverrides[host] = { method: 'gitCredentialProxy', params };
-      await this.setOutboundByHost<GitAuthInterceptorParams>(
-        host,
-        'gitCredentialProxy',
+    const params: ExtensionHTTPProxyParams = {
+      leases: Object.fromEntries(this.extensionHTTPProxyLeases)
+    };
+
+    if (this.extensionHTTPProxyLeases.size > 0) {
+      await this.setOutboundByHost<ExtensionHTTPProxyParams>(
+        EXTENSION_HTTP_PROXY_HOST,
+        'extensionHTTPProxy',
         params
       );
+    } else {
+      await this.removeOutboundByHost(EXTENSION_HTTP_PROXY_HOST);
     }
 
     const fetcher = ctx.exports.ContainerProxy({
@@ -5141,18 +5229,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         enableInternet: this.enableInternet,
         containerId: this.ctx.id.toString(),
         className: CONTAINER_PROXY_CLASS_NAME,
-        outboundByHostOverrides: hostOverrides
+        outboundByHostOverrides: {
+          [EXTENSION_HTTP_PROXY_HOST]: {
+            method: 'extensionHTTPProxy',
+            params
+          }
+        }
       }
     });
     if (!isFetcher(fetcher)) {
       throw new InvalidMountConfigError(
-        'Git extension authentication requires ContainerProxy to return a valid Fetcher'
+        'Extension HTTP proxying requires ContainerProxy to return a valid Fetcher'
       );
     }
 
-    for (const host of Object.keys(params.hosts)) {
-      await ctx.container.interceptOutboundHttp(host, fetcher);
-    }
+    await ctx.container.interceptOutboundHttp(
+      EXTENSION_HTTP_PROXY_HOST,
+      fetcher
+    );
   }
 
   private async configureR2EgressOutbound(

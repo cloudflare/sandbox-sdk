@@ -1,6 +1,7 @@
 import { getContainer } from '@cloudflare/containers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
+import { EXTENSION_HTTP_PROXY_HOST } from '../src/extensions';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
@@ -791,6 +792,10 @@ describe('Sandbox credential proxy mounts', () => {
 
 describe('Sandbox R2 egress mounts', () => {
   describe('SDK ContainerProxy dispatch', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     it('routes r2.internal through the SDK proxy path by default', async () => {
       const bucket = createMockR2Bucket();
       const proxy = new ContainerProxy(
@@ -840,6 +845,174 @@ describe('Sandbox R2 egress mounts', () => {
       expect(await res.text()).toBe('OK');
     });
 
+    it('routes extension proxy git smart HTTP paths to the configured upstream', async () => {
+      const fetch = vi.fn(async () => new Response('ok'));
+      vi.stubGlobal('fetch', fetch);
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-extension',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            [EXTENSION_HTTP_PROXY_HOST]: {
+              method: 'extensionHTTPProxy',
+              params: {
+                leases: {
+                  lease1: {
+                    id: 'lease1',
+                    extensionId: 'git',
+                    internalBaseURL: `http://${EXTENSION_HTTP_PROXY_HOST}/lease1`,
+                    routes: [
+                      {
+                        upstreamOrigin: 'https://github.com',
+                        allowedPathPrefix: '/owner/repo.git',
+                        injectHeaders: { authorization: 'Basic abc' }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }),
+        {}
+      );
+
+      const getResponse = await proxy.fetch(
+        new Request(
+          `http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git/info/refs?service=git-upload-pack`
+        )
+      );
+      const postResponse = await proxy.fetch(
+        new Request(
+          `http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git/git-upload-pack`,
+          { method: 'POST', body: '0000' }
+        )
+      );
+
+      expect(getResponse.status).toBe(200);
+      expect(postResponse.status).toBe(200);
+      expect(fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://github.com/owner/repo.git/info/refs?service=git-upload-pack',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.any(Headers),
+          redirect: 'manual'
+        })
+      );
+      const firstFetchCall = fetch.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ];
+      const firstFetchHeaders = firstFetchCall[1].headers as Headers;
+      expect(firstFetchHeaders).toHaveProperty('get');
+      expect(firstFetchHeaders.get('authorization')).toBe('Basic abc');
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://github.com/owner/repo.git/git-upload-pack',
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+
+    it('rejects extension proxy sibling paths outside the allowed prefix', async () => {
+      const fetch = vi.fn(async () => new Response('ok'));
+      vi.stubGlobal('fetch', fetch);
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-extension',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            [EXTENSION_HTTP_PROXY_HOST]: {
+              method: 'extensionHTTPProxy',
+              params: {
+                leases: {
+                  lease1: {
+                    id: 'lease1',
+                    extensionId: 'git',
+                    internalBaseURL: `http://${EXTENSION_HTTP_PROXY_HOST}/lease1`,
+                    routes: [
+                      {
+                        upstreamOrigin: 'https://github.com',
+                        allowedPathPrefix: '/owner/repo.git'
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }),
+        {}
+      );
+
+      const res = await proxy.fetch(
+        new Request(
+          `http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git-malicious/info/refs`
+        )
+      );
+
+      expect(res.status).toBe(403);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('rewrites same-origin redirects and rejects cross-origin redirects', async () => {
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 302,
+            headers: { location: '/owner/repo.git/info/refs?next=1' }
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 302,
+            headers: { location: 'https://evil.example/repo.git' }
+          })
+        );
+      vi.stubGlobal('fetch', fetch);
+      const proxy = new ContainerProxy(
+        createContainerProxyCtx({
+          containerId: 'ctr-extension',
+          className: 'ContainerProxy',
+          outboundByHostOverrides: {
+            [EXTENSION_HTTP_PROXY_HOST]: {
+              method: 'extensionHTTPProxy',
+              params: {
+                leases: {
+                  lease1: {
+                    id: 'lease1',
+                    extensionId: 'git',
+                    internalBaseURL: `http://${EXTENSION_HTTP_PROXY_HOST}/lease1`,
+                    routes: [
+                      {
+                        upstreamOrigin: 'https://github.com',
+                        allowedPathPrefix: '/owner/repo.git'
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }),
+        {}
+      );
+
+      const sameOrigin = await proxy.fetch(
+        new Request(`http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git`)
+      );
+      const crossOrigin = await proxy.fetch(
+        new Request(`http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git`)
+      );
+
+      expect(sameOrigin.status).toBe(302);
+      expect(sameOrigin.headers.get('location')).toBe(
+        `http://${EXTENSION_HTTP_PROXY_HOST}/lease1/owner/repo.git/info/refs?next=1`
+      );
+      expect(crossOrigin.status).toBe(502);
+    });
+
     it('delegates unrelated outbound hosts to the base container proxy', async () => {
       const proxy = new ContainerProxy(
         createContainerProxyCtx({
@@ -864,6 +1037,144 @@ describe('Sandbox R2 egress mounts', () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe('Mock Container fetch');
     });
+  });
+
+  it('rejects duplicate extension HTTP proxy operation IDs', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    await Promise.all(
+      (
+        mockCtx.blockConcurrencyWhile as ReturnType<typeof vi.fn>
+      ).mock.results.map((result) => result.value)
+    );
+
+    const lease = await sandbox.registerExtensionHTTPProxyLease({
+      extensionId: 'test-extension',
+      operationId: 'same-id',
+      routes: [
+        {
+          upstreamOrigin: 'https://example.com',
+          allowedPathPrefix: '/repo.git'
+        }
+      ]
+    });
+
+    await expect(
+      sandbox.registerExtensionHTTPProxyLease({
+        extensionId: 'test-extension',
+        operationId: 'same-id',
+        routes: [
+          {
+            upstreamOrigin: 'https://example.com',
+            allowedPathPrefix: '/repo.git'
+          }
+        ]
+      })
+    ).rejects.toThrow(/already exists/);
+
+    await lease.dispose();
+  });
+
+  it('rolls back extension HTTP proxy leases when registration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    await Promise.all(
+      (
+        mockCtx.blockConcurrencyWhile as ReturnType<typeof vi.fn>
+      ).mock.results.map((result) => result.value)
+    );
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('intercept failed')
+    );
+
+    await expect(
+      sandbox.registerExtensionHTTPProxyLease({
+        extensionId: 'test-extension',
+        operationId: 'failed-id',
+        routes: [
+          {
+            upstreamOrigin: 'https://example.com',
+            allowedPathPrefix: '/failed.git',
+            injectHeaders: { authorization: 'Bearer secret' }
+          }
+        ]
+      })
+    ).rejects.toThrow('intercept failed');
+
+    await sandbox.registerExtensionHTTPProxyLease({
+      extensionId: 'test-extension',
+      operationId: 'active-id',
+      routes: [
+        {
+          upstreamOrigin: 'https://example.com',
+          allowedPathPrefix: '/active.git'
+        }
+      ]
+    });
+
+    const lastCall = mockCtx.exports.ContainerProxy!.mock.calls.at(-1)!;
+    const leases = lastCall[0].props.outboundByHostOverrides?.[
+      EXTENSION_HTTP_PROXY_HOST
+    ]?.params as { leases: Record<string, unknown> };
+    expect(Object.keys(leases.leases)).toEqual(['active-id']);
+  });
+
+  it('keeps extension HTTP proxy leases retryable when disposal reconfiguration fails', async () => {
+    const mockCtx = createMockCtx();
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      {}
+    );
+    await Promise.all(
+      (
+        mockCtx.blockConcurrencyWhile as ReturnType<typeof vi.fn>
+      ).mock.results.map((result) => result.value)
+    );
+
+    const lease = await sandbox.registerExtensionHTTPProxyLease({
+      extensionId: 'test-extension',
+      operationId: 'retry-dispose',
+      routes: [
+        {
+          upstreamOrigin: 'https://example.com',
+          allowedPathPrefix: '/retry.git',
+          injectHeaders: { authorization: 'Bearer secret' }
+        }
+      ]
+    });
+
+    mockCtx.container.interceptOutboundHttp.mockRejectedValueOnce(
+      new Error('cleanup failed')
+    );
+
+    await expect(lease.dispose()).rejects.toThrow('cleanup failed');
+    await expect(
+      sandbox.registerExtensionHTTPProxyLease({
+        extensionId: 'test-extension',
+        operationId: 'retry-dispose',
+        routes: [
+          {
+            upstreamOrigin: 'https://example.com',
+            allowedPathPrefix: '/retry.git'
+          }
+        ]
+      })
+    ).rejects.toThrow(/already exists/);
+
+    await lease.dispose();
+
+    const lastCall = mockCtx.exports.ContainerProxy!.mock.calls.at(-1)!;
+    const leases = lastCall[0].props.outboundByHostOverrides?.[
+      EXTENSION_HTTP_PROXY_HOST
+    ]?.params as { leases: Record<string, unknown> };
+    expect(Object.keys(leases.leases)).toEqual([]);
   });
 
   it('does not set up outbound interception at construction time for Sandbox subclasses', () => {

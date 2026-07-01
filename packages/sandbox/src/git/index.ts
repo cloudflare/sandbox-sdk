@@ -75,6 +75,17 @@ interface ExecOutcome {
   exitCode: number;
 }
 
+interface CheckoutURLPlan {
+  publicRepoUrl: string;
+  cloneRepoUrl: string;
+  proxy?: {
+    upstreamOrigin: string;
+    allowedPathPrefix: string;
+    proxiedPath: string;
+    authorization: string;
+  };
+}
+
 /**
  * The git extension. Drives `git` in the container through the commands
  * control sub-API and translates failures into the SDK's typed git errors.
@@ -100,7 +111,9 @@ export class Git extends SandboxExtension {
       this.#throwValidation('repoUrl', urlValidation.errors, 'INVALID_GIT_URL');
     }
 
-    const targetDir = options.targetDir || generateTargetDirectory(repoUrl);
+    const urlPlan = this.#checkoutURLPlan(repoUrl, options.auth);
+    const targetDir =
+      options.targetDir || generateTargetDirectory(urlPlan.publicRepoUrl);
     const cloneTimeoutMs =
       options.cloneTimeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
 
@@ -126,14 +139,41 @@ export class Git extends SandboxExtension {
       this.#throwValidation('targetDir', pathValidation.errors, 'INVALID_PATH');
     }
 
-    await this.#configureAuth(repoUrl, options.auth);
-
     const sessionId = this.#sessionId(options);
-    const cloneResult = await this.#exec(
-      buildCloneArgs(repoUrl, targetDir, options),
-      sessionId,
-      undefined,
-      cloneTimeoutMs + CLONE_PROCESS_TIMEOUT_BUFFER_MS
+    const cloneResult = await this.#withCloneURL(
+      urlPlan,
+      cloneTimeoutMs + CLONE_PROCESS_TIMEOUT_BUFFER_MS,
+      async (cloneUrl) => {
+        const result = await this.#exec(
+          buildCloneArgs(cloneUrl, targetDir, options),
+          sessionId,
+          undefined,
+          cloneTimeoutMs + CLONE_PROCESS_TIMEOUT_BUFFER_MS
+        );
+
+        if (result.exitCode === 0 && urlPlan.proxy) {
+          const remoteResult = await this.#exec(
+            ['git', 'remote', 'set-url', 'origin', urlPlan.publicRepoUrl],
+            sessionId,
+            targetDir
+          );
+          if (remoteResult.exitCode !== 0) {
+            this.#throwError(
+              ErrorCode.GIT_OPERATION_FAILED,
+              `Failed to reset git remote URL in '${targetDir}': ${
+                remoteResult.stderr || `exit code ${remoteResult.exitCode}`
+              }`,
+              {
+                targetDir,
+                exitCode: remoteResult.exitCode,
+                stderr: remoteResult.stderr
+              }
+            );
+          }
+        }
+
+        return result;
+      }
     );
 
     if (cloneResult.exitCode !== 0) {
@@ -142,9 +182,9 @@ export class Git extends SandboxExtension {
           ErrorCode.GIT_NETWORK_ERROR,
           `Git clone timed out after ${gitCloneTimeoutSeconds(
             cloneTimeoutMs
-          )} seconds for '${redactCommand(repoUrl)}'`,
+          )} seconds for '${redactCommand(urlPlan.publicRepoUrl)}'`,
           {
-            repository: redactCommand(repoUrl),
+            repository: redactCommand(urlPlan.publicRepoUrl),
             targetDir,
             exitCode: 124,
             stderr: 'Operation timed out'
@@ -159,12 +199,12 @@ export class Git extends SandboxExtension {
       );
       this.#throwError(
         code,
-        `Failed to clone repository '${redactCommand(repoUrl)}': ${
+        `Failed to clone repository '${redactCommand(urlPlan.publicRepoUrl)}': ${
           redactCommand(cloneResult.stderr || '') ||
           `exit code ${cloneResult.exitCode}`
         }`,
         {
-          repository: redactCommand(repoUrl),
+          repository: redactCommand(urlPlan.publicRepoUrl),
           targetDir,
           exitCode: cloneResult.exitCode,
           stderr: redactCommand(cloneResult.stderr || '')
@@ -185,7 +225,7 @@ export class Git extends SandboxExtension {
 
     return {
       success: true,
-      repoUrl,
+      repoUrl: urlPlan.publicRepoUrl,
       branch,
       targetDir,
       timestamp: new Date().toISOString()
@@ -323,40 +363,106 @@ export class Git extends SandboxExtension {
 
   // --- internals -----------------------------------------------------------
 
-  async #configureAuth(
+  async #withCloneURL<T>(
+    plan: CheckoutURLPlan,
+    leaseDurationMs: number,
+    callback: (cloneUrl: string) => Promise<T>
+  ): Promise<T> {
+    if (!plan.proxy) {
+      return callback(plan.cloneRepoUrl);
+    }
+
+    return this.withHTTPProxyLease(
+      {
+        extensionId: 'git',
+        routes: [
+          {
+            upstreamOrigin: plan.proxy.upstreamOrigin,
+            allowedPathPrefix: plan.proxy.allowedPathPrefix,
+            injectHeaders: { authorization: plan.proxy.authorization },
+            expiresAt: Date.now() + leaseDurationMs
+          }
+        ]
+      },
+      (lease) => callback(`${lease.internalBaseURL}${plan.proxy!.proxiedPath}`)
+    );
+  }
+
+  #checkoutURLPlan(
     repoUrl: string,
     authOverride: GitCheckoutOptions['auth']
-  ): Promise<void> {
-    const hosts = this.#authHosts(authOverride);
-    if (Object.keys(hosts).length === 0) {
-      return;
+  ): CheckoutURLPlan {
+    let parsed: URL;
+    try {
+      parsed = new URL(repoUrl);
+    } catch {
+      return { publicRepoUrl: repoUrl, cloneRepoUrl: repoUrl };
     }
 
-    const hostname = this.#authHostname(repoUrl);
-    if (hostname === undefined || !hosts[hostname]) {
-      return;
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { publicRepoUrl: repoUrl, cloneRepoUrl: repoUrl };
     }
 
-    if (!this.httpAuthInterceptor) {
+    const urlAuth = this.#authFromURL(parsed);
+    const publicRepoUrl = this.#stripURLCredentials(parsed);
+    const hostAuth = this.#authHosts(authOverride)[parsed.hostname];
+    const auth = urlAuth ?? hostAuth;
+
+    if (parsed.protocol === 'http:' && auth) {
       this.#throwError(
         ErrorCode.VALIDATION_FAILED,
-        'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.',
-        {
-          repository: redactCommand(repoUrl),
-          host: hostname
-        }
+        'Git authentication proxying only supports HTTPS Git URLs. Use an HTTPS repository URL or disable git auth for this checkout.',
+        { repository: redactCommand(publicRepoUrl) }
       );
     }
 
-    await this.httpAuthInterceptor({ hosts: { [hostname]: hosts[hostname] } });
+    if (urlAuth && authOverride === false) {
+      this.#throwError(
+        ErrorCode.VALIDATION_FAILED,
+        'Unsafe credential-bearing Git URLs are not allowed when git auth is explicitly disabled. Pass credentials through the git extension auth option or remove credentials from the URL.',
+        { repository: redactCommand(publicRepoUrl) }
+      );
+    }
+
+    if (!auth) {
+      return { publicRepoUrl, cloneRepoUrl: publicRepoUrl };
+    }
+
+    return {
+      publicRepoUrl,
+      cloneRepoUrl: publicRepoUrl,
+      proxy: {
+        upstreamOrigin: parsed.origin,
+        allowedPathPrefix: parsed.pathname,
+        proxiedPath: `${parsed.pathname}${parsed.search}`,
+        authorization: this.#authorizationHeader(auth)
+      }
+    };
   }
 
-  #authHostname(repoUrl: string): string | undefined {
-    try {
-      return new URL(repoUrl).hostname;
-    } catch {
-      return undefined;
+  #authFromURL(url: URL): GitHostAuth | undefined {
+    if (!url.username && !url.password) return undefined;
+    const username = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    if (password) {
+      return { type: 'basic', username, token: password };
     }
+    return { token: username };
+  }
+
+  #stripURLCredentials(url: URL): string {
+    const copy = new URL(url.toString());
+    copy.username = '';
+    copy.password = '';
+    return copy.toString();
+  }
+
+  #authorizationHeader(auth: GitHostAuth): string {
+    if (auth.type === 'bearer') {
+      return `Bearer ${auth.token}`;
+    }
+    const username = auth.username ?? 'x-access-token';
+    return `Basic ${btoa(`${username}:${auth.token}`)}`;
   }
 
   #authHosts(

@@ -49,7 +49,7 @@ The musl image is a lightweight, functional sandbox. It supports all core SDK me
 | ------------------------------------------ | --------- | --------------------------------------------------------------- |
 | `exec()`, `startProcess()`                 | ✅        | Shell commands via `bash`                                       |
 | `readFile()`, `writeFile()`, `listFiles()` | ✅        | Requires `file` (included)                                      |
-| `gitCheckout()`, `listBranches()`          | ✅        | Requires `git` (included)                                       |
+| `@cloudflare/sandbox/git` extension        | ✅        | Requires `git` (included); attach with `withGit(this)`          |
 | `mountBucket()`, `unmountBucket()`         | ✅        | Requires `s3fs-fuse` and `fuse` (included)                      |
 | `exposePort()`                             | ✅        |                                                                 |
 | `runCode()` (JavaScript/TypeScript)        | ❌        | Needs `node` or `bun` on PATH — `apk add nodejs`                |
@@ -69,7 +69,7 @@ The `/sandbox` binary acts as a supervisor:
 | Dependency           | Required For                                    | Install Command            |
 | -------------------- | ----------------------------------------------- | -------------------------- |
 | `file`               | `readFile()`, `writeFile()`, any file operation | `apt-get install file`     |
-| `git`                | `gitCheckout()`, `listBranches()`               | `apt-get install git`      |
+| `git`                | `@cloudflare/sandbox/git` extension             | `apt-get install git`      |
 | `bash`               | Everything (core requirement)                   | Usually pre-installed      |
 | `libstdc++` `libgcc` | Alpine/musl only: Bun runtime C++ dependencies  | `apk add libstdc++ libgcc` |
 

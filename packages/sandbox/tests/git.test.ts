@@ -3,7 +3,7 @@ import type {
   SandboxExecStringOutput,
   SandboxProcessPromise
 } from '@repo/shared';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   GitCloneError,
   GitNetworkError,
@@ -25,6 +25,11 @@ type ExecResult = { stdout: string; stderr: string; exitCode: number };
 
 type GitCommand = string | string[];
 
+function decodeBasicAuthorization(header: string | undefined): string {
+  if (!header?.startsWith('Basic ')) return '';
+  return atob(header.slice('Basic '.length));
+}
+
 function outputFor(
   command: GitCommand,
   result: ExecResult
@@ -41,7 +46,19 @@ function outputFor(
 function createGit(
   execImpl: (command: GitCommand, options?: SandboxExecOptions) => ExecResult,
   envVars?: Record<string, string>,
-  registerGitAuthInterceptor?: SandboxLike['registerGitAuthInterceptor']
+  registerExtensionHTTPProxyLease?: (config: {
+    extensionId: string;
+    operationId?: string;
+    routes: Array<{
+      upstreamOrigin: string;
+      allowedPathPrefix: string;
+      injectHeaders?: Record<string, string>;
+    }>;
+  }) => Promise<{
+    id: string;
+    internalBaseURL: string;
+    dispose: () => Promise<void>;
+  }>
 ) {
   const exec = vi.fn((command: GitCommand, options?: SandboxExecOptions) => {
     const result = execImpl(command, options);
@@ -53,7 +70,7 @@ function createGit(
     client: { commands: { execute: vi.fn() } },
     exec,
     envVars,
-    registerGitAuthInterceptor
+    registerExtensionHTTPProxyLease
   } as unknown as SandboxLike;
   return { git: withGit(sandbox), exec };
 }
@@ -129,6 +146,11 @@ describe('git manager (pure logic)', () => {
 });
 
 describe('Git extension', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it('is constructed via withGit', () => {
     const { git } = createGit(() => ({ stdout: '', stderr: '', exitCode: 0 }));
     expect(git).toBeInstanceOf(Git);
@@ -249,8 +271,15 @@ describe('Git extension', () => {
     expect(exec).toHaveBeenCalled();
   });
 
-  it('registers git auth interception when auth matches the checkout host', async () => {
-    const registerGitAuthInterceptor = vi.fn(async () => {});
+  it('uses an operation-scoped internal proxy lease for configured HTTPS auth', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-01T00:00:00Z'));
+    const dispose = vi.fn(async () => {});
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose
+    }));
     const exec = vi.fn((command: GitCommand) => {
       const result = { stdout: 'main\n', stderr: '', exitCode: 0 };
       return {
@@ -260,7 +289,7 @@ describe('Git extension', () => {
     const sandbox = {
       client: { commands: { execute: vi.fn() } },
       exec,
-      registerGitAuthInterceptor
+      registerExtensionHTTPProxyLease
     } as unknown as SandboxLike;
     const git = withGit(sandbox, {
       auth: { github: { token: 'secret-token' } }
@@ -268,17 +297,58 @@ describe('Git extension', () => {
 
     await git.checkout('https://github.com/owner/repo.git');
 
-    expect(registerGitAuthInterceptor).toHaveBeenCalledWith({
-      hosts: { 'github.com': { token: 'secret-token' } }
+    expect(registerExtensionHTTPProxyLease).toHaveBeenCalledWith({
+      extensionId: 'git',
+      routes: [
+        expect.objectContaining({
+          upstreamOrigin: 'https://github.com',
+          allowedPathPrefix: '/owner/repo.git',
+          injectHeaders: {
+            authorization: expect.stringMatching(/^Basic /)
+          }
+        })
+      ]
     });
+    const [leaseConfig] = registerExtensionHTTPProxyLease.mock
+      .calls[0] as unknown as [
+      Parameters<NonNullable<SandboxLike['registerExtensionHTTPProxyLease']>>[0]
+    ];
+    const route = leaseConfig.routes[0]!;
+    expect(route.expiresAt).toBe(
+      Date.parse('2026-07-01T00:00:00Z') + 600_000 + 10_000
+    );
+    const cloneCommand = exec.mock.calls[0][0] as string[];
+    expect(cloneCommand).toContain(
+      'http://sandbox-extension-proxy.internal/lease-1/owner/repo.git'
+    );
+    expect(cloneCommand).not.toContain('https://github.com/owner/repo.git');
+    const remoteSetURLCall = exec.mock.calls[1] as unknown as [
+      GitCommand,
+      SandboxExecOptions | undefined
+    ];
+    expect(remoteSetURLCall[0]).toEqual([
+      'git',
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/owner/repo.git'
+    ]);
+    expect(remoteSetURLCall[1]).toEqual(
+      expect.objectContaining({ cwd: '/workspace/repo' })
+    );
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('registers only the checkout host credentials', async () => {
-    const registerGitAuthInterceptor = vi.fn(async () => {});
+  it('uses only the checkout host credentials in the proxy lease', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
     const { git } = createGit(
       () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
       undefined,
-      registerGitAuthInterceptor
+      registerExtensionHTTPProxyLease
     );
 
     await git.checkout('https://github.com/owner/repo.git', {
@@ -288,69 +358,207 @@ describe('Git extension', () => {
       }
     });
 
-    expect(registerGitAuthInterceptor).toHaveBeenCalledWith({
-      hosts: { 'github.com': { token: 'github-token' } }
-    });
+    expect(registerExtensionHTTPProxyLease).toHaveBeenCalledOnce();
+    const [leaseConfig] = registerExtensionHTTPProxyLease.mock
+      .calls[0] as unknown as [
+      Parameters<NonNullable<SandboxLike['registerExtensionHTTPProxyLease']>>[0]
+    ];
+    const route = leaseConfig.routes[0]!;
+    expect(route.upstreamOrigin).toBe('https://github.com');
+    expect(decodeBasicAuthorization(route.injectHeaders?.authorization)).toBe(
+      'x-access-token:github-token'
+    );
   });
 
-  it('skips HTTP auth interception for SSH-style repository URLs', async () => {
-    const registerGitAuthInterceptor = vi.fn(async () => {});
+  it('supports URL username/password credentials without exposing them to git argv', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
     const { git, exec } = createGit(
       () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
       undefined,
-      registerGitAuthInterceptor
+      registerExtensionHTTPProxyLease
+    );
+
+    await git.checkout('https://octo:secret-token@github.com/owner/repo.git');
+
+    const [leaseConfig] = registerExtensionHTTPProxyLease.mock
+      .calls[0] as unknown as [
+      Parameters<NonNullable<SandboxLike['registerExtensionHTTPProxyLease']>>[0]
+    ];
+    const route = leaseConfig.routes[0]!;
+    expect(decodeBasicAuthorization(route.injectHeaders?.authorization)).toBe(
+      'octo:secret-token'
+    );
+    expect((exec.mock.calls[0][0] as string[]).join(' ')).not.toContain(
+      'secret-token'
+    );
+  });
+
+  it('uses bearer auth headers when configured', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const { git } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
+    );
+
+    await git.checkout('https://github.com/owner/repo.git', {
+      auth: { github: { type: 'bearer', token: 'bearer-token' } }
+    });
+
+    const [leaseConfig] = registerExtensionHTTPProxyLease.mock
+      .calls[0] as unknown as [
+      Parameters<NonNullable<SandboxLike['registerExtensionHTTPProxyLease']>>[0]
+    ];
+    expect(leaseConfig.routes[0]!.injectHeaders?.authorization).toBe(
+      'Bearer bearer-token'
+    );
+  });
+
+  it('skips HTTP auth proxying for SSH-style repository URLs', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
     );
 
     await git.checkout('git@github.com:owner/repo.git', {
       auth: { github: { token: 'github-token' } }
     });
 
-    expect(registerGitAuthInterceptor).not.toHaveBeenCalled();
+    expect(registerExtensionHTTPProxyLease).not.toHaveBeenCalled();
     expect(exec).toHaveBeenCalled();
   });
 
-  it('does not register git auth interception when auth is disabled per checkout', async () => {
-    const registerGitAuthInterceptor = vi.fn(async () => {});
-    const { git } = createGit(
-      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
-      undefined,
-      registerGitAuthInterceptor
-    );
+  it('does not create a proxy lease when auth is disabled per checkout', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const exec = vi.fn((command: GitCommand) => {
+      const result = { stdout: 'main\n', stderr: '', exitCode: 0 };
+      return {
+        output: vi.fn(async () => outputFor(command, result))
+      } as unknown as SandboxProcessPromise;
+    });
     const configuredGit = withGit(
       {
         client: { commands: { execute: vi.fn() } },
-        exec: vi.fn((command: GitCommand) => {
-          const result = { stdout: 'main\n', stderr: '', exitCode: 0 };
-          return {
-            output: vi.fn(async () => outputFor(command, result))
-          } as unknown as SandboxProcessPromise;
-        }),
-        registerGitAuthInterceptor
+        exec,
+        registerExtensionHTTPProxyLease
       } as unknown as SandboxLike,
       { auth: { github: { token: 'secret-token' } } }
     );
 
-    await git.checkout('https://github.com/owner/repo.git', { auth: false });
     await configuredGit.checkout('https://github.com/owner/repo.git', {
       auth: false
     });
 
-    expect(registerGitAuthInterceptor).not.toHaveBeenCalled();
+    expect(registerExtensionHTTPProxyLease).not.toHaveBeenCalled();
+    expect(exec.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(['https://github.com/owner/repo.git'])
+    );
   });
 
-  it('throws an obvious ContainerProxy error when auth is configured without interception support', async () => {
-    const { git, exec } = createGit(() => ({
-      stdout: 'main\n',
-      stderr: '',
-      exitCode: 0
+  it('converts credential-bearing HTTPS URLs into proxy auth without exposing the token', async () => {
+    const dispose = vi.fn(async () => {});
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose
     }));
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
+    );
+
+    const result = await git.checkout(
+      'https://secret-token@github.com/owner/repo.git'
+    );
+
+    expect(result.repoUrl).toBe('https://github.com/owner/repo.git');
+    const cloneCommand = exec.mock.calls[0][0] as string[];
+    expect(cloneCommand.join(' ')).not.toContain('secret-token');
+    expect(cloneCommand).toContain(
+      'http://sandbox-extension-proxy.internal/lease-1/owner/repo.git'
+    );
+    expect(registerExtensionHTTPProxyLease).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('rejects configured auth for cleartext HTTP repository URLs', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
+    );
 
     await expect(
-      git.checkout('https://github.com/owner/repo.git', {
+      git.checkout('http://github.com/owner/repo.git', {
         auth: { github: { token: 'secret-token' } }
       })
-    ).rejects.toThrow(/exporting ContainerProxy/);
+    ).rejects.toThrow(/HTTPS Git URLs/);
     expect(exec).not.toHaveBeenCalled();
+    expect(registerExtensionHTTPProxyLease).not.toHaveBeenCalled();
+  });
+
+  it('rejects credential-bearing cleartext HTTP repository URLs', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
+    );
+
+    await expect(
+      git.checkout('http://secret-token@github.com/owner/repo.git')
+    ).rejects.toThrow(/HTTPS Git URLs/);
+    expect(exec).not.toHaveBeenCalled();
+    expect(registerExtensionHTTPProxyLease).not.toHaveBeenCalled();
+  });
+
+  it('rejects credential-bearing URLs when auth is explicitly disabled', async () => {
+    const registerExtensionHTTPProxyLease = vi.fn(async () => ({
+      id: 'lease-1',
+      internalBaseURL: 'http://sandbox-extension-proxy.internal/lease-1',
+      dispose: vi.fn(async () => {})
+    }));
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerExtensionHTTPProxyLease
+    );
+
+    await expect(
+      git.checkout('https://secret-token@github.com/owner/repo.git', {
+        auth: false
+      })
+    ).rejects.toThrow(/credential-bearing Git URLs/);
+    expect(exec).not.toHaveBeenCalled();
+    expect(registerExtensionHTTPProxyLease).not.toHaveBeenCalled();
   });
 
   it('does not inject sandbox env vars when a session is provided', async () => {

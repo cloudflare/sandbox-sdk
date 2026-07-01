@@ -2,11 +2,6 @@
  * Public types for the git extension.
  */
 
-import type {
-  HTTPAuthHostConfig,
-  HTTPAuthInterceptorParams
-} from '../extensions/index.js';
-
 /** Result of a git clone (`checkout`) operation. */
 export interface GitCheckoutResult {
   success: boolean;
@@ -17,7 +12,11 @@ export interface GitCheckoutResult {
   exitCode?: number;
 }
 
-export type GitHostAuth = HTTPAuthHostConfig;
+export interface GitHostAuth {
+  token: string;
+  username?: string;
+  type?: 'basic' | 'bearer';
+}
 
 export interface GitAuthConfig {
   github?: GitHostAuth;
@@ -25,8 +24,6 @@ export interface GitAuthConfig {
   bitbucket?: GitHostAuth;
   hosts?: Record<string, GitHostAuth>;
 }
-
-export type GitAuthInterceptorParams = HTTPAuthInterceptorParams;
 
 export interface GitExtensionOptions {
   auth?: GitAuthConfig;

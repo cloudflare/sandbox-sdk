@@ -33,14 +33,35 @@ import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 // subpath without reaching into `@repo/shared` directly.
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
 
-export interface HTTPAuthHostConfig {
-  token: string;
-  username?: string;
-  type?: 'basic' | 'bearer';
+export const EXTENSION_HTTP_PROXY_HOST = 'sandbox-extension-proxy.internal';
+
+export interface ExtensionHTTPProxyRoute {
+  upstreamOrigin: string;
+  allowedPathPrefix: string;
+  injectHeaders?: Record<string, string>;
+  expiresAt?: number;
 }
 
-export interface HTTPAuthInterceptorParams {
-  hosts: Record<string, HTTPAuthHostConfig>;
+export interface ExtensionHTTPProxyLeaseConfig {
+  extensionId: string;
+  operationId?: string;
+  routes: ExtensionHTTPProxyRoute[];
+}
+
+export interface ExtensionHTTPProxyLease {
+  id: string;
+  internalBaseURL: string;
+  dispose(): Promise<void>;
+}
+
+export interface ExtensionHTTPProxyParams {
+  leases: Record<
+    string,
+    ExtensionHTTPProxyLeaseConfig & {
+      id: string;
+      internalBaseURL: string;
+    }
+  >;
 }
 
 /**
@@ -59,9 +80,9 @@ export type SandboxLike = {
     options?: SandboxExecOptions
   ) => SandboxProcessPromise;
   readonly envVars?: Record<string, string>;
-  registerGitAuthInterceptor?: (
-    params: HTTPAuthInterceptorParams
-  ) => Promise<void>;
+  registerExtensionHTTPProxyLease?: (
+    config: ExtensionHTTPProxyLeaseConfig
+  ) => Promise<ExtensionHTTPProxyLease>;
 };
 
 /**
@@ -140,13 +161,23 @@ export abstract class SandboxExtension extends RpcTarget {
     return this.#sandbox.envVars ?? {};
   }
 
-  protected get httpAuthInterceptor():
-    | ((params: HTTPAuthInterceptorParams) => Promise<void>)
-    | undefined {
-    const register = this.#sandbox.registerGitAuthInterceptor;
-    return register
-      ? (params) => register.call(this.#sandbox, params)
-      : undefined;
+  protected async withHTTPProxyLease<T>(
+    config: ExtensionHTTPProxyLeaseConfig,
+    callback: (lease: ExtensionHTTPProxyLease) => Promise<T>
+  ): Promise<T> {
+    const register = this.#sandbox.registerExtensionHTTPProxyLease;
+    if (!register) {
+      throw new Error(
+        'Sandbox extension HTTP proxying requires the owning Sandbox to expose extension HTTP proxy leases'
+      );
+    }
+
+    const lease = await register.call(this.#sandbox, config);
+    try {
+      return await callback(lease);
+    } finally {
+      await lease.dispose();
+    }
   }
 
   /**
