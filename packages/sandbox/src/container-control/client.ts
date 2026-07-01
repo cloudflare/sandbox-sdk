@@ -348,15 +348,25 @@ function buildTransportErrorResponse(
  * When a queued RPC call rejects with a transport error that a connection
  * abort could have caused (session disposed, connection failed, upgrade
  * failed, or peer closed), and the connection captured a real startup error,
- * return that captured error. `SandboxError` instances (e.g. the typed
- * ContainerUnavailableError) are surfaced as-is; anything else is returned
- * untouched so the caller falls back to normal transport classification.
+ * return that captured error in preference to the masking transport error.
+ *
+ * The captured error is accepted whether it is:
+ *   - a same-realm `SandboxError` (surfaced as-is), or
+ *   - any structured, error-like value carrying a recognized `code` — e.g. a
+ *     raw or cross-realm error decorated with `code: 'CONTAINER_UNAVAILABLE'`
+ *     and optional `context`/`details`/`message`. Such values are rehydrated
+ *     via `createErrorFromResponse` so the caller still receives a proper
+ *     typed SandboxError instead of a masked OperationInterruptedError.
+ *
+ * Anything without a recognized code is ignored so the caller falls back to
+ * normal transport classification.
  */
 function maybePreferConnectionError(
   transportResponse: ErrorResponse<RPCTransportContext>,
   context: RPCTranslationContext
 ): SandboxError | null {
-  if (!context.connectionError) return null;
+  const captured = context.connectionError;
+  if (!captured) return null;
   const { kind } = transportResponse.context;
   if (
     kind !== 'session_disposed' &&
@@ -366,9 +376,48 @@ function maybePreferConnectionError(
   ) {
     return null;
   }
-  if (context.connectionError instanceof SandboxError) {
-    return context.connectionError;
+
+  // Same-realm typed error: surface as-is.
+  if (captured instanceof SandboxError) {
+    return captured;
   }
+
+  // Structured, error-like value (raw/cross-realm) carrying a recognized
+  // code. Rehydrate into a typed SandboxError. Reads `context` or `details`
+  // for the structured payload, matching the two wire formats handled by
+  // `translateRPCError`.
+  const shape = captured as {
+    code?: unknown;
+    message?: unknown;
+    context?: unknown;
+    details?: unknown;
+  } | null;
+  if (
+    shape &&
+    typeof shape.code === 'string' &&
+    Object.hasOwn(ErrorCode, shape.code)
+  ) {
+    const code = shape.code as ErrorCode;
+    const structured =
+      shape.context && typeof shape.context === 'object'
+        ? (shape.context as Record<string, unknown>)
+        : shape.details && typeof shape.details === 'object'
+          ? (shape.details as Record<string, unknown>)
+          : {};
+    const message = typeof shape.message === 'string' ? shape.message : code;
+    return createErrorFromResponse(
+      {
+        code,
+        message,
+        context: structured,
+        httpStatus: getHttpStatus(code),
+        suggestion: getSuggestion(code, structured as Record<string, unknown>),
+        timestamp: new Date().toISOString()
+      },
+      { cause: captured }
+    ) as SandboxError;
+  }
+
   return null;
 }
 

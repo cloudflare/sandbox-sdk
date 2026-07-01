@@ -785,6 +785,68 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
   });
 
+  it('prefers a structured (non-instanceof) CONTAINER_UNAVAILABLE connection error over the disposal error', async () => {
+    // Reproduces the masked failure: a queued createSession rejects with
+    // capnweb's disposal message, and the connection captured a *structured*
+    // but cross-realm error-like object (not an instanceof SandboxError). It
+    // must still surface as ContainerUnavailableError, not
+    // OperationInterruptedError.
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = {
+      name: 'Error',
+      code: 'CONTAINER_UNAVAILABLE',
+      message:
+        'There is no container instance that can be provided to this Durable Object, try again later',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage:
+          'There is no container instance that can be provided to this Durable Object, try again later'
+      }
+    };
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', connectionError }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('no_container_instance_available');
+    expect(err.context.retryable).toBe(true);
+  });
+
+  it('rehydrates a structured connection error carried in `details`', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = {
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no instance',
+      details: {
+        reason: 'max_container_instances_exceeded',
+        retryable: true
+      }
+    };
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('WebSocket connection failed.'), {
+        operation: 'utils.createSession',
+        connectionError
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    expect(
+      (thrown as InstanceType<typeof ContainerUnavailableError>).reason
+    ).toBe('max_container_instances_exceeded');
+  });
+
   it('does not set `cause` on errors translated from JSON-encoded structured payloads', async () => {
     // The container-side errors flow through createErrorFromResponse without
     // an `options` argument, so `cause` stays unset (matching pre-fix

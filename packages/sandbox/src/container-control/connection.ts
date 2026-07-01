@@ -52,35 +52,52 @@ async function tryParseContainerUnavailable(
   response: Response
 ): Promise<Error | null> {
   const contentType = response.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) return null;
 
+  // JSON path: structured CONTAINER_UNAVAILABLE body emitted by the SDK's own
+  // container-side handlers.
+  if (contentType.includes('application/json')) {
+    try {
+      const body = (await response.clone().json()) as StructuredErrorBody;
+      if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
+
+      const reason =
+        body.context?.reason === 'container_starting' ||
+        body.context?.reason === 'container_unhealthy' ||
+        body.context?.reason === 'container_replaced' ||
+        body.context?.reason === 'rpc_upgrade_failed'
+          ? body.context.reason
+          : 'container_replaced';
+      const context = {
+        reason,
+        retryable: true as const,
+        ...(typeof body.context?.retryAfterMs === 'number' && {
+          retryAfterMs: body.context.retryAfterMs
+        })
+      };
+
+      return createErrorFromResponse({
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        message: body.message ?? 'Container is unavailable',
+        context,
+        httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+        suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+        timestamp: new Date().toISOString()
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // Plain-text path: the @cloudflare/containers base class returns a plain
+  // text 503 ("There is no Container instance available at this time...")
+  // when it cannot admit a container. Classify the body so an exhausted retry
+  // budget still surfaces a typed ContainerUnavailableError rather than a
+  // generic rpc_upgrade_failed.
   try {
-    const body = (await response.clone().json()) as StructuredErrorBody;
-    if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
-
-    const reason =
-      body.context?.reason === 'container_starting' ||
-      body.context?.reason === 'container_unhealthy' ||
-      body.context?.reason === 'container_replaced' ||
-      body.context?.reason === 'rpc_upgrade_failed'
-        ? body.context.reason
-        : 'container_replaced';
-    const context = {
-      reason,
-      retryable: true as const,
-      ...(typeof body.context?.retryAfterMs === 'number' && {
-        retryAfterMs: body.context.retryAfterMs
-      })
-    };
-
-    return createErrorFromResponse({
-      code: ErrorCode.CONTAINER_UNAVAILABLE,
-      message: body.message ?? 'Container is unavailable',
-      context,
-      httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
-      suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
-      timestamp: new Date().toISOString()
-    });
+    const text = await response.clone().text();
+    const match = matchPlatformUnavailable(text);
+    if (!match) return null;
+    return buildContainerUnavailableError(match.reason, text);
   } catch {
     return null;
   }
@@ -93,21 +110,59 @@ async function tryParseContainerUnavailable(
  * established. Each maps to a categorical `ContainerUnavailableContext.reason`.
  */
 const PLATFORM_UNAVAILABLE_SIGNATURES: ReadonlyArray<{
+  /** Lowercase substring matched case-insensitively against the error text. */
   substring: string;
   reason:
     | 'no_container_instance_available'
     | 'max_container_instances_exceeded';
 }> = [
   {
+    // Platform error thrown from the container binding during startup.
     substring:
-      'There is no container instance that can be provided to this Durable Object',
+      'there is no container instance that can be provided to this durable object',
     reason: 'no_container_instance_available'
   },
   {
-    substring: 'Maximum number of running container instances exceeded',
+    // Plain-text 503 body returned by @cloudflare/containers' containerFetch
+    // when no instance can be admitted (see container.ts).
+    substring: 'there is no container instance available at this time',
+    reason: 'no_container_instance_available'
+  },
+  {
+    substring: 'maximum number of running container instances exceeded',
     reason: 'max_container_instances_exceeded'
   }
 ];
+
+/**
+ * Extract a matchable message string from any thrown value.
+ *
+ * Deliberately avoids `instanceof Error`: the platform's container-admission
+ * errors are raised by the workerd container binding, which may live in a
+ * different realm than this SDK bundle, so `instanceof Error` can be false
+ * even for a genuine Error (the same cross-realm trap documented in
+ * container-control/client.ts). Mirrors the base `@cloudflare/containers`
+ * `isErrorOfType` helper: coerce to string, then match case-insensitively.
+ */
+function errorText(error: unknown): string {
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return (typeof message === 'string' ? message : String(error)).toLowerCase();
+}
+
+/**
+ * Find the platform container-admission signature matching a thrown value,
+ * or null. Case-insensitive and realm-safe (does not use `instanceof`).
+ */
+function matchPlatformUnavailable(
+  error: unknown
+): (typeof PLATFORM_UNAVAILABLE_SIGNATURES)[number] | null {
+  const text = errorText(error);
+  return (
+    PLATFORM_UNAVAILABLE_SIGNATURES.find((sig) =>
+      text.includes(sig.substring)
+    ) ?? null
+  );
+}
 
 /**
  * True when a thrown connection-startup error matches a known platform
@@ -115,11 +170,33 @@ const PLATFORM_UNAVAILABLE_SIGNATURES: ReadonlyArray<{
  * caller to try again later, so they are safe to retry within the budget.
  */
 function isPlatformUnavailableError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    PLATFORM_UNAVAILABLE_SIGNATURES.some((sig) =>
-      error.message.includes(sig.substring)
-    )
+  return matchPlatformUnavailable(error) !== null;
+}
+
+/**
+ * Build a typed ContainerUnavailableError for a matched platform
+ * container-admission failure, preserving the original message verbatim.
+ */
+function buildContainerUnavailableError(
+  reason: (typeof PLATFORM_UNAVAILABLE_SIGNATURES)[number]['reason'],
+  originalMessage: string,
+  cause?: unknown
+): Error {
+  const context = {
+    reason,
+    retryable: true as const,
+    originalMessage
+  };
+  return createErrorFromResponse(
+    {
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: originalMessage,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+      suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+      timestamp: new Date().toISOString()
+    },
+    cause !== undefined ? { cause } : undefined
   );
 }
 
@@ -129,28 +206,12 @@ function isPlatformUnavailableError(error: unknown): boolean {
  * for anything else so the caller preserves the original error.
  */
 function tryConvertPlatformUnavailable(error: unknown): Error | null {
-  if (!(error instanceof Error)) return null;
-  const match = PLATFORM_UNAVAILABLE_SIGNATURES.find((sig) =>
-    error.message.includes(sig.substring)
-  );
+  const match = matchPlatformUnavailable(error);
   if (!match) return null;
 
-  const context = {
-    reason: match.reason,
-    retryable: true as const,
-    originalMessage: error.message
-  };
-  return createErrorFromResponse(
-    {
-      code: ErrorCode.CONTAINER_UNAVAILABLE,
-      message: error.message,
-      context,
-      httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
-      suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
-      timestamp: new Date().toISOString()
-    },
-    { cause: error }
-  );
+  const originalMessage =
+    error instanceof Error ? error.message : String(error);
+  return buildContainerUnavailableError(match.reason, originalMessage, error);
 }
 
 // ---------------------------------------------------------------------------

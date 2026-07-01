@@ -387,6 +387,68 @@ describe('ContainerControlConnection', () => {
       }
     });
 
+    it('retries a thrown lower-case no-instance error (containers-library form) until success', async () => {
+      vi.useFakeTimers();
+      try {
+        // The @cloudflare/containers package uses a lower-case message; the
+        // matcher must be case-insensitive or this failure skips the retry
+        // loop entirely (the ~2s failures seen in the repro).
+        const lowerMessage =
+          'there is no container instance that can be provided to this durable object';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValueOnce(new Error(lowerMessage))
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exhausts the retry budget on a lower-case no-instance error and surfaces ContainerUnavailableError', async () => {
+      vi.useFakeTimers();
+      try {
+        const lowerMessage =
+          'there is no container instance that can be provided to this durable object';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValue(new Error(lowerMessage));
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 20_000
+        });
+
+        const connectPromise = conn.connect();
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          code: 'CONTAINER_UNAVAILABLE',
+          context: {
+            reason: 'no_container_instance_available',
+            retryable: true
+          }
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await assertion;
+        expect(conn.isConnected()).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('retries a thrown platform "no container instance" error until success', async () => {
       vi.useFakeTimers();
       try {
@@ -627,6 +689,41 @@ describe('ContainerControlConnection', () => {
   });
 
   describe('structured error classification', () => {
+    it('classifies a plain-text 503 no-instance body as ContainerUnavailableError', async () => {
+      // The @cloudflare/containers base class returns a plain-text 503 (not
+      // JSON) when it cannot admit an instance. After the retry budget is
+      // exhausted this must still surface as a typed ContainerUnavailableError.
+      const body =
+        'There is no Container instance available at this time.\nThis is likely because you have reached your max concurrent instance count.';
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'text/plain' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect((error as Error).constructor.name).toBe(
+        'ContainerUnavailableError'
+      );
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true
+        }
+      });
+      expect(
+        (error as { context?: { originalMessage?: string } }).context
+          ?.originalMessage
+      ).toContain('no Container instance available');
+    });
+
     it('throws ContainerUnavailableError when upgrade response contains structured CONTAINER_UNAVAILABLE body', async () => {
       const body = JSON.stringify({
         code: 'CONTAINER_UNAVAILABLE',
