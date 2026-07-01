@@ -28,11 +28,20 @@ import type {
   SandboxProcessPromise
 } from '@repo/shared';
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
-import type { GitAuthInterceptorParams } from '../git/types.js';
 
 // Re-export the wire types so consumers can author extensions from this
 // subpath without reaching into `@repo/shared` directly.
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
+
+export interface HTTPAuthHostConfig {
+  token: string;
+  username?: string;
+  type?: 'basic' | 'bearer';
+}
+
+export interface HTTPAuthInterceptorParams {
+  hosts: Record<string, HTTPAuthHostConfig>;
+}
 
 /**
  * The slice of the Sandbox an extension captures: its control `client`, unified
@@ -51,7 +60,7 @@ export type SandboxLike = {
   ) => SandboxProcessPromise;
   readonly envVars?: Record<string, string>;
   registerGitAuthInterceptor?: (
-    params: GitAuthInterceptorParams
+    params: HTTPAuthInterceptorParams
   ) => Promise<void>;
 };
 
@@ -131,8 +140,8 @@ export abstract class SandboxExtension extends RpcTarget {
     return this.#sandbox.envVars ?? {};
   }
 
-  protected get gitAuthInterceptor():
-    | ((params: GitAuthInterceptorParams) => Promise<void>)
+  protected get httpAuthInterceptor():
+    | ((params: HTTPAuthInterceptorParams) => Promise<void>)
     | undefined {
     const register = this.#sandbox.registerGitAuthInterceptor;
     return register
