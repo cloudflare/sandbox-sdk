@@ -241,6 +241,34 @@ export interface InternalErrorContext {
 }
 
 /**
+ * Reason the sandbox container could not accept the incoming RPC connection.
+ * Callers may branch on this to distinguish container-startup unavailability
+ * from account-level capacity limits. `retryable` is always true regardless
+ * of reason.
+ */
+export type ContainerUnavailableReason =
+  /** The container is still booting. */
+  | 'container_starting'
+  /** The container is temporarily unhealthy. */
+  | 'container_unhealthy'
+  /** The container was replaced while the connection attempt was in progress. */
+  | 'container_replaced'
+  /** The WebSocket upgrade retry budget was exhausted. */
+  | 'rpc_upgrade_failed'
+  /**
+   * The Containers platform could not allocate an instance for the Durable
+   * Object during connection startup ("There is no container instance that
+   * can be provided to this Durable Object, try again later").
+   */
+  | 'no_container_instance_available'
+  /**
+   * The account reached its configured concurrent-instance ceiling
+   * ("Maximum number of running container instances exceeded. Try again
+   * later, or try configuring a higher value for max_instances").
+   */
+  | 'max_container_instances_exceeded';
+
+/**
  * Container availability error context. Surfaced when the sandbox container
  * cannot accept the incoming RPC connection. The container may be starting
  * up, undergoing a runtime replacement, or temporarily unhealthy. The
@@ -249,25 +277,9 @@ export interface InternalErrorContext {
 export interface ContainerUnavailableContext {
   /**
    * Categorical reason distinguishing startup unavailability from runtime
-   * replacement and exhausted upgrade retries.
-   *
-   * `no_container_instance_available` is raised when the Containers platform
-   * cannot allocate an instance for the Durable Object during connection
-   * startup ("There is no container instance that can be provided to this
-   * Durable Object, try again later").
-   *
-   * `max_container_instances_exceeded` is raised when the account has reached
-   * its configured concurrent-instance ceiling ("Maximum number of running
-   * container instances exceeded. Try again later, or try configuring a
-   * higher value for max_instances").
+   * replacement, exhausted upgrade retries, and account capacity limits.
    */
-  reason:
-    | 'container_starting'
-    | 'container_unhealthy'
-    | 'container_replaced'
-    | 'rpc_upgrade_failed'
-    | 'no_container_instance_available'
-    | 'max_container_instances_exceeded';
+  reason: ContainerUnavailableReason;
   /**
    * Always true — this error represents a transient unavailability, not a
    * permanent failure. Callers should retry the same operation.
