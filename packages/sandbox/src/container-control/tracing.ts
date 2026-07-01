@@ -10,6 +10,13 @@
  * span attributes specially (this differs from the OpenTelemetry standard,
  * which uses exception events). We therefore stamp both attributes on the span
  * when the wrapped work throws, so failures are visible in the GUI.
+ *
+ * Cause chain: the base `@cloudflare/containers` class wraps the true failure
+ * inside `new Error(NO_CONTAINER_INSTANCE_ERROR, { cause })`, so the real
+ * reason (e.g. "the container is not listening", "Network connection lost", a
+ * non-zero exit code) is only visible on `.cause`. Every distinct failure mode
+ * therefore collapses to the same generic top-level message in traces. We walk
+ * the cause chain and stamp it so a trace names the actual root cause.
  */
 
 import { tracing } from 'cloudflare:workers';
@@ -21,22 +28,81 @@ export interface TraceSpan {
 
 type SpanAttributes = Record<string, boolean | number | string | undefined>;
 
+/** Bound on cause-chain traversal — guards against cycles and runaway depth. */
+const MAX_CAUSE_DEPTH = 8;
+
+/** Read a string `code` property off an arbitrary value, if present. */
+function stringCode(value: unknown): string | undefined {
+  const code = (value as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/** Render any thrown value as a short human-readable message. */
+function messageOf(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
+
+/**
+ * Compute the Cloudflare-convention error span attributes for any thrown value,
+ * including the wrapped `.cause` chain. Pure and side-effect-free so it can be
+ * unit-tested without a live tracer.
+ *
+ * Emits:
+ *   - `error`            — top-level message (or stringified non-Error)
+ *   - `error.stack`      — top-level stack, when available
+ *   - `error.code`       — top-level string `code`, when available
+ *   - `error.cause`      — immediate cause message, when a cause exists
+ *   - `error.cause.code` — immediate cause string `code`, when available
+ *   - `error.cause_chain`— all nested cause messages joined by " <- "
+ */
+export function computeErrorAttributes(error: unknown): SpanAttributes {
+  const attrs: SpanAttributes = {};
+
+  if (error instanceof Error) {
+    attrs.error = error.message;
+    if (typeof error.stack === 'string') attrs['error.stack'] = error.stack;
+    const code = stringCode(error);
+    if (code !== undefined) attrs['error.code'] = code;
+  } else {
+    attrs.error = String(error);
+    return attrs;
+  }
+
+  // Walk the cause chain, guarding against cycles and runaway depth.
+  const chain: string[] = [];
+  const seen = new Set<unknown>([error]);
+  let current: unknown = (error as { cause?: unknown }).cause;
+  let depth = 0;
+  while (current !== undefined && current !== null && depth < MAX_CAUSE_DEPTH) {
+    if (seen.has(current)) break;
+    seen.add(current);
+
+    if (depth === 0) {
+      attrs['error.cause'] = messageOf(current);
+      const causeCode = stringCode(current);
+      if (causeCode !== undefined) attrs['error.cause.code'] = causeCode;
+    }
+    chain.push(messageOf(current));
+
+    current =
+      current instanceof Error
+        ? (current as { cause?: unknown }).cause
+        : undefined;
+    depth++;
+  }
+
+  if (chain.length > 0) attrs['error.cause_chain'] = chain.join(' <- ');
+  return attrs;
+}
+
 /**
  * Stamp the Cloudflare-convention error attributes onto a span. Safe to call
  * with any thrown value.
  */
 function setErrorAttributes(span: TraceSpan, error: unknown): void {
-  if (error instanceof Error) {
-    span.setAttribute('error', error.message);
-    if (typeof error.stack === 'string') {
-      span.setAttribute('error.stack', error.stack);
-    }
-    // A code (e.g. SandboxError.code) is high-signal for filtering.
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === 'string') span.setAttribute('error.code', code);
-    return;
+  for (const [key, value] of Object.entries(computeErrorAttributes(error))) {
+    if (value !== undefined) span.setAttribute(key, value);
   }
-  span.setAttribute('error', String(error));
 }
 
 /**
