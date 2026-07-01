@@ -558,7 +558,8 @@ function wrapStub<T extends object>(
   onCallStarted: () => void,
   onCallSettled: () => void,
   getConnectionError: () => unknown,
-  getSessionEstablished: () => boolean
+  getSessionEstablished: () => boolean,
+  getSpanAttrs: () => Record<string, string | undefined>
 ): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
@@ -584,14 +585,17 @@ function wrapStub<T extends object>(
           ) {
             // Span the RPC call so each method invocation (and its failure,
             // with error/error.stack attributes) is visible in traces.
-            return withSpan('rpc.call', { operation }, () =>
-              (result as Promise<unknown>).catch((err: unknown) =>
-                translateRPCError(err, {
-                  operation,
-                  connectionError: getConnectionError(),
-                  sessionEstablished: getSessionEstablished()
-                })
-              )
+            return withSpan(
+              'sandbox.rpc.call',
+              { ...getSpanAttrs(), operation },
+              () =>
+                (result as Promise<unknown>).catch((err: unknown) =>
+                  translateRPCError(err, {
+                    operation,
+                    connectionError: getConnectionError(),
+                    sessionEstablished: getSessionEstablished()
+                  })
+                )
             ).finally(onCallSettled);
           }
           onCallSettled();
@@ -693,6 +697,8 @@ export class ContainerControlClient {
       localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
+      sandboxId: options.sandboxId,
+      sandboxName: options.sandboxName,
       // Explicit container-start hook: when provided, the connection starts
       // the container in its own retry loop before the WebSocket upgrade so
       // capacity failures throw where we can classify them directly.
@@ -811,6 +817,20 @@ export class ContainerControlClient {
   private getSessionEstablished = (): boolean => this.sessionEstablished;
 
   /**
+   * Base span attributes for RPC-call spans: sandbox identifiers plus the
+   * container port. Mirrors the connection's `spanAttrs()` so all
+   * `sandbox.rpc.*` spans share a consistent shape.
+   */
+  private getSpanAttrs = (): Record<string, string | undefined> => ({
+    'sandbox.id': this.connOptions.sandboxId,
+    'sandbox.name': this.connOptions.sandboxName,
+    'sandbox.rpc.port':
+      this.connOptions.port !== undefined
+        ? String(this.connOptions.port)
+        : undefined
+  });
+
+  /**
    * Sample `getStats()` and update busy/idle state. While busy, renews the
    * activity timeout each tick so an in-flight stream keeps pushing the
    * sleepAfter deadline forward. On the busy → idle edge, fires
@@ -926,7 +946,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get files(): SandboxFilesAPI {
@@ -936,7 +957,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
@@ -946,7 +968,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get ports(): SandboxPortsAPI {
@@ -956,7 +979,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get git(): SandboxGitAPI {
@@ -966,7 +990,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get utils(): SandboxUtilsAPI {
@@ -976,7 +1001,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get backup(): SandboxBackupAPI {
@@ -986,7 +1012,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get watch(): SandboxWatchAPI {
@@ -996,7 +1023,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get tunnels(): SandboxTunnelsAPI {
@@ -1006,7 +1034,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get interpreter(): SandboxInterpreterAPI {
@@ -1016,7 +1045,8 @@ export class ContainerControlClient {
       this.recordCallStarted,
       this.recordCallSettled,
       this.getLastConnectionError,
-      this.getSessionEstablished
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
 

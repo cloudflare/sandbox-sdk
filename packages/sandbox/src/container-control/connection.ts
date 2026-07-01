@@ -242,6 +242,10 @@ export interface ContainerControlConnectionOptions {
   stub: ContainerFetchStub;
   port?: number;
   logger?: Logger;
+  /** Durable Object id (`ctx.id`), stamped on spans as `sandbox.id`. */
+  sandboxId?: string;
+  /** User-provided sandbox name, stamped on spans as `sandbox.name`. */
+  sandboxName?: string;
   /**
    * Optional hook to explicitly start the container (and wait for its ports)
    * before issuing the WebSocket upgrade.
@@ -327,6 +331,8 @@ export class ContainerControlConnection {
   private readonly onConnectionError: ((error: unknown) => void) | undefined;
   private readonly onConnected: (() => void) | undefined;
   private readonly startContainer: (() => Promise<void>) | undefined;
+  private readonly sandboxId: string | undefined;
+  private readonly sandboxName: string | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -337,6 +343,8 @@ export class ContainerControlConnection {
     this.onConnectionError = options.onConnectionError;
     this.onConnected = options.onConnected;
     this.startContainer = options.startContainer;
+    this.sandboxId = options.sandboxId;
+    this.sandboxName = options.sandboxName;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -417,12 +425,12 @@ export class ContainerControlConnection {
   disconnect(cause?: unknown): void {
     if (cause !== undefined) {
       this.fireConnectionError(cause);
-      traceEvent('rpc.disconnect', {
-        port: this.port,
+      traceEvent('sandbox.rpc.disconnect', {
+        ...this.spanAttrs(),
         reason: cause instanceof Error ? cause.message : String(cause)
       });
     } else {
-      traceEvent('rpc.disconnect', { port: this.port });
+      traceEvent('sandbox.rpc.disconnect', this.spanAttrs());
     }
     try {
       (this.stub as unknown as Disposable)[Symbol.dispose]?.();
@@ -460,6 +468,19 @@ export class ContainerControlConnection {
   // -----------------------------------------------------------------------
   // Internal
   // -----------------------------------------------------------------------
+
+  /**
+   * Base span attributes for this connection: the container port plus the
+   * sandbox identifiers (`sandbox.id` = DO id, `sandbox.name` = user name)
+   * when available.
+   */
+  private spanAttrs(): Record<string, string | number | undefined> {
+    return {
+      'sandbox.rpc.port': this.port,
+      'sandbox.id': this.sandboxId,
+      'sandbox.name': this.sandboxName
+    };
+  }
 
   /**
    * Run the owner-provided `onClose` callback exactly once per call,
@@ -580,7 +601,10 @@ export class ContainerControlConnection {
         );
       }
 
-      traceEvent('rpc.connect', { port: this.port, outcome: 'established' });
+      traceEvent('sandbox.rpc.connect', {
+        ...this.spanAttrs(),
+        outcome: 'established'
+      });
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
@@ -653,43 +677,47 @@ export class ContainerControlConnection {
    *     each retry has an independent connect timeout for the *upgrade only*.
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
-    return withSpan('rpc.connect.attempt', { port: this.port }, async () => {
-      // Explicitly start the container first (when a hook is provided),
-      // under its own budget — no per-attempt abort signal.
-      if (this.startContainer) {
+    return withSpan(
+      'sandbox.rpc.connect.attempt',
+      this.spanAttrs(),
+      async () => {
+        // Explicitly start the container first (when a hook is provided),
+        // under its own budget — no per-attempt abort signal.
+        if (this.startContainer) {
+          try {
+            await this.startContainer();
+          } catch (error) {
+            // Stamp the real cause on the owner as soon as the first
+            // container-admission failure surfaces — before any retry/abort
+            // can mask it — so a teardown mid-retry still surfaces this.
+            this.fireConnectionError(
+              tryConvertPlatformUnavailable(error) ?? error
+            );
+            throw error;
+          }
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          DEFAULT_CONNECT_TIMEOUT_MS
+        );
+
         try {
-          await this.startContainer();
-        } catch (error) {
-          // Stamp the real cause on the owner as soon as the first
-          // container-admission failure surfaces — before any retry/abort
-          // can mask it — so a teardown mid-retry still surfaces this.
-          this.fireConnectionError(
-            tryConvertPlatformUnavailable(error) ?? error
-          );
-          throw error;
+          const url = `http://localhost:${this.port}/rpc`;
+          const request = new Request(url, {
+            headers: {
+              Upgrade: 'websocket',
+              Connection: 'Upgrade'
+            },
+            signal: controller.signal
+          });
+          return await this.containerStub.fetch(request);
+        } finally {
+          clearTimeout(timeout);
         }
       }
-
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        DEFAULT_CONNECT_TIMEOUT_MS
-      );
-
-      try {
-        const url = `http://localhost:${this.port}/rpc`;
-        const request = new Request(url, {
-          headers: {
-            Upgrade: 'websocket',
-            Connection: 'Upgrade'
-          },
-          signal: controller.signal
-        });
-        return await this.containerStub.fetch(request);
-      } finally {
-        clearTimeout(timeout);
-      }
-    });
+    );
   }
 }
 
