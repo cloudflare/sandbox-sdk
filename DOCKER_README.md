@@ -18,7 +18,7 @@ All images are published as tags on `cloudflare/sandbox`:
 These images are designed to be used with the [`@cloudflare/sandbox`](https://www.npmjs.com/package/@cloudflare/sandbox) SDK. Reference them in your project's `Dockerfile`:
 
 ```dockerfile
-FROM cloudflare/sandbox:0.12.2-python
+FROM cloudflare/sandbox:0.12.3-python
 ```
 
 Then configure your `wrangler.toml` to use the image:
