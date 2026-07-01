@@ -48,23 +48,30 @@ vi.mock('@cloudflare/containers', () => {
       this.ctx = ctx;
       this.env = env;
     }
+    // Base-class fetch: mirrors @cloudflare/containers, which forwards all
+    // requests (including the RPC WebSocket upgrade) to containerFetch.
+    // Dynamic dispatch routes this to Sandbox.containerFetch (the override),
+    // so the platform no-instance error flows through the SDK's real
+    // classification path rather than being thrown straight to the caller.
     async fetch(request: Request): Promise<Response> {
-      const upgradeHeader = request.headers.get('Upgrade');
-      if (upgradeHeader?.toLowerCase() === 'websocket') {
-        // The container binding cannot admit an instance: throw the platform
-        // error exactly as workerd does. This is the RPC upgrade path.
-        throw upgradeError;
-      }
-      return new Response('Mock Container fetch');
+      return (
+        this as unknown as {
+          containerFetch: (req: Request, port?: number) => Promise<Response>;
+        }
+      ).containerFetch(request, 3000);
     }
-    async containerFetch(): Promise<Response> {
-      return new Response('Mock Container HTTP fetch');
+    // Base-class startAndWaitForPorts: the platform cannot admit an instance.
+    // Throwing here is exactly what workerd's container binding does; the
+    // Sandbox.containerFetch override catches it via isNoInstanceError and
+    // converts it into a structured CONTAINER_UNAVAILABLE 503 response.
+    async startAndWaitForPorts(): Promise<void> {
+      throw upgradeError;
     }
-    async startAndWaitForPorts(): Promise<void> {}
     async destroy(): Promise<void> {}
     async stop(): Promise<void> {}
     async getState() {
-      return { status: 'healthy' };
+      // Non-healthy so containerFetch runs its startup path.
+      return { status: 'stopped' };
     }
     renewActivityTimeout() {}
   };

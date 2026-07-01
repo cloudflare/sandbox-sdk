@@ -3052,17 +3052,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         });
       } catch (e) {
-        // 1. Provisioning: Container VM not yet available
-        if (this.isNoInstanceError(e)) {
+        // 1. Provisioning: the Containers platform cannot admit an instance
+        // yet ("There is no container instance that can be provided...").
+        // Emit a structured CONTAINER_UNAVAILABLE body and preserve the
+        // original platform message so the caller — including the RPC
+        // control connection's upgrade-response classifier — surfaces a
+        // typed ContainerUnavailableError with an actionable reason rather
+        // than a generic INTERNAL_ERROR / rpc_upgrade_failed.
+        const admissionReason = this.classifyContainerAdmissionError(e);
+        if (admissionReason) {
+          const originalMessage = e instanceof Error ? e.message : String(e);
+          const context = {
+            reason: admissionReason,
+            retryable: true as const,
+            originalMessage
+          };
           const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message:
-              'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { phase: 'provisioning' },
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
+            message: originalMessage,
+            context,
             httpStatus: 503,
             timestamp: new Date().toISOString(),
-            suggestion:
-              'This is expected during first deployment. The SDK will retry automatically.'
+            suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context)
           };
           return new Response(JSON.stringify(errorBody), {
             status: 503,
@@ -3182,10 +3193,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * This indicates the container VM is still being provisioned.
    */
   private isNoInstanceError(error: unknown): boolean {
-    return (
-      error instanceof Error &&
-      error.message.toLowerCase().includes('no container instance')
-    );
+    return this.classifyContainerAdmissionError(error) !== null;
+  }
+
+  /**
+   * Classify a container-startup error as a platform admission/capacity
+   * failure, returning the categorical `ContainerUnavailableContext.reason`
+   * or null if it is not a recognized admission failure.
+   *
+   * Realm-safe and case-insensitive: the platform raises these from the
+   * container binding, which may live in a different realm, so we coerce to
+   * a string rather than gating on `instanceof Error`.
+   */
+  private classifyContainerAdmissionError(
+    error: unknown
+  ):
+    | 'no_container_instance_available'
+    | 'max_container_instances_exceeded'
+    | null {
+    const message =
+      (error as { message?: unknown } | null | undefined)?.message ?? error;
+    const text = (
+      typeof message === 'string' ? message : String(message)
+    ).toLowerCase();
+    if (text.includes('no container instance')) {
+      return 'no_container_instance_available';
+    }
+    if (
+      text.includes('maximum number of running container instances exceeded')
+    ) {
+      return 'max_container_instances_exceeded';
+    }
+    return null;
   }
 
   /**

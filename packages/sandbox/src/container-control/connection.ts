@@ -64,7 +64,9 @@ async function tryParseContainerUnavailable(
         body.context?.reason === 'container_starting' ||
         body.context?.reason === 'container_unhealthy' ||
         body.context?.reason === 'container_replaced' ||
-        body.context?.reason === 'rpc_upgrade_failed'
+        body.context?.reason === 'rpc_upgrade_failed' ||
+        body.context?.reason === 'no_container_instance_available' ||
+        body.context?.reason === 'max_container_instances_exceeded'
           ? body.context.reason
           : 'container_replaced';
       const context = {
@@ -72,6 +74,9 @@ async function tryParseContainerUnavailable(
         retryable: true as const,
         ...(typeof body.context?.retryAfterMs === 'number' && {
           retryAfterMs: body.context.retryAfterMs
+        }),
+        ...(typeof body.context?.originalMessage === 'string' && {
+          originalMessage: body.context.originalMessage
         })
       };
 

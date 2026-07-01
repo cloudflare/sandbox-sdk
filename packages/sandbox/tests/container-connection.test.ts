@@ -724,6 +724,43 @@ describe('ContainerControlConnection', () => {
       ).toContain('no Container instance available');
     });
 
+    it('preserves reason and originalMessage from a structured no-instance JSON body', async () => {
+      // Mirrors what Sandbox.containerFetch now emits for the platform
+      // no-instance failure: a JSON 503 with the real reason + message.
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const body = JSON.stringify({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: platformMessage,
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+    });
+
     it('throws ContainerUnavailableError when upgrade response contains structured CONTAINER_UNAVAILABLE body', async () => {
       const body = JSON.stringify({
         code: 'CONTAINER_UNAVAILABLE',
