@@ -16,16 +16,7 @@
  *   stops two sandboxes from racing on the same hostname.
  */
 
-const API_BASE = 'https://api.cloudflare.com/client/v4';
-
-/** Cloudflare's standard envelope around every response. */
-interface CloudflareResponse<T> {
-  success: boolean;
-  result?: T;
-  errors?: Array<{ code?: number; message?: string }>;
-}
-
-type Fetcher = typeof fetch;
+import { API_BASE, cfRequest, type Fetcher } from './request';
 
 interface BaseArgs {
   token: string;
@@ -42,96 +33,6 @@ export interface TunnelMetadata {
   createdBy: 'sandbox-sdk';
   name: string;
   port: number;
-}
-
-interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  body?: unknown;
-  /** Treat these HTTP statuses as success and skip envelope parsing. */
-  acceptStatuses?: number[];
-  /**
-   * Per-request timeout in milliseconds. Defaults to `DEFAULT_TIMEOUT_MS`.
-   * Without a timeout a hung Cloudflare call wedges the per-port lock in
-   * `rpc-target.ts` indefinitely, which then blocks every subsequent
-   * `get(port)` / `destroy(port)` on that port. The shared
-   * `#zoneNamePromise` makes the impact span every port for named
-   * tunnels.
-   */
-  timeoutMs?: number;
-}
-
-/**
- * Default request timeout. Cloudflare API P99 latency is well under
- * this; values much smaller risk false positives on cold control-plane
- * paths (e.g. first `cfd_tunnel` POST in a new account).
- */
-const DEFAULT_TIMEOUT_MS = 10_000;
-
-/**
- * Internal request helper. Centralises auth header, JSON encoding,
- * timeout enforcement, and envelope unwrapping so each wrapper above
- * stays declarative.
- */
-async function cfRequest<T>(
-  url: string,
-  token: string,
-  fetcher: Fetcher,
-  options: RequestOptions = {}
-): Promise<T | undefined> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const init: RequestInit = {
-    method: options.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json'
-    },
-    signal: AbortSignal.timeout(timeoutMs)
-  };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-  }
-
-  let response: Response;
-  try {
-    response = await fetcher(url, init);
-  } catch (err) {
-    // `AbortSignal.timeout` rejects with a DOMException whose name is
-    // 'TimeoutError'. Surface it as a clearly-labelled error so callers
-    // can distinguish a transport hang from a Cloudflare-side failure;
-    // a SandboxSecurityError-shaped class would be better but we keep
-    // the error shape consistent with the rest of this module.
-    if (err instanceof Error && err.name === 'TimeoutError') {
-      throw new Error(
-        `Cloudflare API request to ${url} timed out after ${timeoutMs}ms`
-      );
-    }
-    throw err;
-  }
-  if (options.acceptStatuses?.includes(response.status)) {
-    return undefined;
-  }
-
-  let envelope: CloudflareResponse<T>;
-  try {
-    envelope = (await response.json()) as CloudflareResponse<T>;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Cloudflare API returned non-JSON response (status ${response.status}): ${message}`
-    );
-  }
-
-  if (!response.ok || envelope.success === false) {
-    const errs = envelope.errors ?? [];
-    const summary = errs.length
-      ? errs
-          .map((e) => `${e.code ?? '???'}: ${e.message ?? 'unknown'}`)
-          .join(', ')
-      : `HTTP ${response.status}`;
-    throw new Error(`Cloudflare API error: ${summary}`);
-  }
-
-  return envelope.result;
 }
 
 /**

@@ -477,7 +477,7 @@ describe('cloudflare-api > upsertCNAME', () => {
     const result = await upsertCNAME({ ...baseArgs, fetcher });
     expect(result.recordId).toBe('dns-id');
     expect(result.reused).toBe(true);
-    // Only the list call \u2014 no POST/PUT was made.
+    // Only the list call — no POST/PUT was made.
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

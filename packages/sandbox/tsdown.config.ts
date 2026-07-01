@@ -9,7 +9,8 @@ export default defineConfig({
     'src/interpreter/index.ts',
     'src/openai/index.ts',
     'src/opencode/index.ts',
-    'src/xterm/index.ts'
+    'src/xterm/index.ts',
+    'src/tunnels/index.ts'
   ],
   external: ['cloudflare:workers', 'hono'],
   loader: {
