@@ -1177,8 +1177,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // here would abort start early with a generic "Aborted waiting for
         // container to start" error that can't be classified. Instead we run
         // start under a short instance-get budget and always throw a typed
-        // SandboxError — see startContainerForRpc.
-        startContainer: () => this.startContainerForRpc(),
+        // SandboxError — see startContainerForRPC.
+        startContainer: () => this.startContainerForRPC(),
         // localMain exposes the DO-side control callback (tunnel-exit
         // notifications, etc.) to the container side of the session.
         localMain: this.controlCallback,
@@ -3284,7 +3284,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *     startup failure) → `INTERNAL_ERROR`-coded SandboxError carrying the
    *     original message.
    */
-  private async startContainerForRpc(): Promise<void> {
+  private async startContainerForRPC(): Promise<void> {
     try {
       await this.startAndWaitForPorts({
         ports: 3000,

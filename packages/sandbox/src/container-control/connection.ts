@@ -23,6 +23,7 @@ import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode, getHttpStatus, getSuggestion } from '@repo/shared/errors';
 import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
 import { createErrorFromResponse } from '../errors/adapter';
+import { SandboxError } from '../errors/classes';
 import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
@@ -211,6 +212,10 @@ function buildContainerUnavailableError(
  * for anything else so the caller preserves the original error.
  */
 function tryConvertPlatformUnavailable(error: unknown): Error | null {
+  // Already a typed SDK error (e.g. thrown by the DO's startContainer hook):
+  // preserve it rather than rebuilding an equivalent instance.
+  if (error instanceof SandboxError) return error;
+
   const match = matchPlatformUnavailable(error);
   if (!match) return null;
 
