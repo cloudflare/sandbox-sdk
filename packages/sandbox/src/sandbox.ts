@@ -1149,17 +1149,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // instances exceeded") throw inside the connection's own retry loop,
         // where it is classified and surfaced as a typed
         // ContainerUnavailableError instead of being round-tripped through a
-        // 503 upgrade-response body. Each attempt uses a fresh per-attempt
-        // abort signal from the connection; the container timeouts come from
-        // the DO's current configuration.
-        startContainer: (signal: AbortSignal) =>
+        // 503 upgrade-response body.
+        //
+        // No abort signal is passed: the base Container class only emits the
+        // classifiable NO_CONTAINER_INSTANCE_ERROR after its own instance-get
+        // budget is exhausted, and it checks the abort signal *before* that
+        // throw. Passing the connection's per-attempt connect-timeout signal
+        // here would abort start early with a generic "Aborted waiting for
+        // container to start" error that can't be classified — masking the
+        // real capacity cause as OPERATION_INTERRUPTED. Letting start run
+        // under its own timeouts lets the real error surface.
+        startContainer: () =>
           this.startAndWaitForPorts({
             ports: 3000,
             cancellationOptions: {
               instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
               portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-              waitInterval: this.containerTimeouts.waitIntervalMS,
-              abort: signal
+              waitInterval: this.containerTimeouts.waitIntervalMS
             }
           }),
         // localMain exposes the DO-side control callback (tunnel-exit

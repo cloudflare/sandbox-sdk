@@ -785,6 +785,74 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
   });
 
+  it('maps to OPERATION_INTERRUPTED only when the session was established', async () => {
+    const translateRPCError = await loadFn();
+    const { OperationInterruptedError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', sessionEstablished: true }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+  });
+
+  it('surfaces the transport error (not OPERATION_INTERRUPTED) when the session never established', async () => {
+    // The container never started, so the session never connected. A queued
+    // call rejecting with capnweb's disposal message must NOT be reported as
+    // an interruption — the operation was never admitted. Surface the raw
+    // transport error instead.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError, OperationInterruptedError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', sessionEstablished: false }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).not.toBeInstanceOf(OperationInterruptedError);
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'session_disposed'
+    );
+  });
+
+  it('still prefers a captured connection error even when the session never established', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no instance',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no instance'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        {
+          operation: 'utils.createSession',
+          connectionError,
+          sessionEstablished: false
+        }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+  });
+
   it('prefers a structured (non-instanceof) CONTAINER_UNAVAILABLE connection error over the disposal error', async () => {
     // Reproduces the masked failure: a queued createSession rejects with
     // capnweb's disposal message, and the connection captured a *structured*

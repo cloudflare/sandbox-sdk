@@ -347,7 +347,7 @@ describe('ContainerControlConnection', () => {
         const platformMessage =
           'there is no container instance that can be provided to this durable object';
         const startContainer = vi
-          .fn<(signal: AbortSignal) => Promise<void>>()
+          .fn<() => Promise<void>>()
           .mockRejectedValueOnce(new Error(platformMessage))
           .mockResolvedValueOnce(undefined);
         const fetchMock = vi

@@ -175,6 +175,17 @@ export interface RPCTranslationContext {
    * is preferred over the masking transport error.
    */
   connectionError?: unknown;
+  /**
+   * Whether the capnweb session ever established a live connection to a
+   * running container during the current connection's lifetime.
+   *
+   * `OPERATION_INTERRUPTED` means "the operation was admitted to a running
+   * runtime, then interrupted." If the session never established (the
+   * container never started — e.g. no instance available), that framing is
+   * wrong: the operation was never admitted. In that case we surface the
+   * thrown transport error directly instead of masking it as an interruption.
+   */
+  sessionEstablished?: boolean;
 }
 
 export function translateRPCError(
@@ -244,10 +255,17 @@ export function translateRPCError(
     // connection-failure message capnweb raises on the queued call.
     const captured = maybePreferConnectionError(transportResponse, context);
     if (captured) throw captured;
-    const interruptedResponse = buildInterruptedOperationResponse(
-      transportResponse,
-      context
-    );
+    // Only map to OPERATION_INTERRUPTED when the session actually established
+    // a live connection to a running container and was then interrupted. If
+    // it never connected (container never started), surface the thrown
+    // transport error directly — the operation was never admitted, so
+    // "interrupted" would be misleading. `sessionEstablished` defaults to
+    // undefined for callers that don't track it (e.g. direct unit tests),
+    // preserving the prior behavior in that case.
+    const interruptedResponse =
+      context.sessionEstablished === false
+        ? null
+        : buildInterruptedOperationResponse(transportResponse, context);
     throw createErrorFromResponse(
       (interruptedResponse ?? transportResponse) as unknown as ErrorResponse,
       { cause: error }
@@ -480,7 +498,8 @@ function wrapStub<T extends object>(
   domain: string,
   onCallStarted: () => void,
   onCallSettled: () => void,
-  getConnectionError: () => unknown
+  getConnectionError: () => unknown,
+  getSessionEstablished: () => boolean
 ): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
@@ -508,7 +527,8 @@ function wrapStub<T extends object>(
               .catch((err: unknown) =>
                 translateRPCError(err, {
                   operation,
-                  connectionError: getConnectionError()
+                  connectionError: getConnectionError(),
+                  sessionEstablished: getSessionEstablished()
                 })
               )
               .finally(onCallSettled);
@@ -519,7 +539,8 @@ function wrapStub<T extends object>(
           onCallSettled();
           translateRPCError(err, {
             operation,
-            connectionError: getConnectionError()
+            connectionError: getConnectionError(),
+            sessionEstablished: getSessionEstablished()
           });
         }
       };
@@ -589,6 +610,14 @@ export class ContainerControlClient {
    * fresh connection is created.
    */
   private lastConnectionError: unknown = null;
+  /**
+   * Whether the current connection ever established a live session to a
+   * running container. Set true by the connection's `onConnected` callback,
+   * reset when a fresh connection is created. Lets `translateRPCError`
+   * distinguish a true interruption (established, then dropped) from a
+   * never-connected failure (container never started).
+   */
+  private sessionEstablished = false;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Number of RPC method promises that have started but not settled. */
@@ -607,6 +636,12 @@ export class ContainerControlClient {
       // the container in its own retry loop before the WebSocket upgrade so
       // capacity failures throw where we can classify them directly.
       startContainer: options.startContainer,
+      // Record that the session actually connected to a running container, so
+      // a later teardown is classified as a true OPERATION_INTERRUPTED rather
+      // than surfacing as a never-connected failure.
+      onConnected: () => {
+        this.sessionEstablished = true;
+      },
       // Event-driven failure recovery: when the live WebSocket closes
       // or errors, tear the connection down inside the same turn of
       // the event loop so the next RPC call builds a fresh one. The
@@ -645,6 +680,7 @@ export class ContainerControlClient {
   private getConnection(): ContainerControlConnection {
     if (!this.conn) {
       this.lastConnectionError = null;
+      this.sessionEstablished = false;
       this.conn = new ContainerControlConnection(this.connOptions);
       this.startBusyPoll();
     }
@@ -709,6 +745,9 @@ export class ContainerControlClient {
 
   /** Return the last connection-startup error captured, if any. */
   private getLastConnectionError = (): unknown => this.lastConnectionError;
+
+  /** Whether the current connection ever established a live session. */
+  private getSessionEstablished = (): boolean => this.sessionEstablished;
 
   /**
    * Sample `getStats()` and update busy/idle state. While busy, renews the
@@ -822,7 +861,8 @@ export class ContainerControlClient {
       'commands',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get files(): SandboxFilesAPI {
@@ -831,7 +871,8 @@ export class ContainerControlClient {
       'files',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
@@ -840,7 +881,8 @@ export class ContainerControlClient {
       'processes',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get ports(): SandboxPortsAPI {
@@ -849,7 +891,8 @@ export class ContainerControlClient {
       'ports',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get git(): SandboxGitAPI {
@@ -858,7 +901,8 @@ export class ContainerControlClient {
       'git',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get utils(): SandboxUtilsAPI {
@@ -867,7 +911,8 @@ export class ContainerControlClient {
       'utils',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get backup(): SandboxBackupAPI {
@@ -876,7 +921,8 @@ export class ContainerControlClient {
       'backup',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get watch(): SandboxWatchAPI {
@@ -885,7 +931,8 @@ export class ContainerControlClient {
       'watch',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get tunnels(): SandboxTunnelsAPI {
@@ -894,7 +941,8 @@ export class ContainerControlClient {
       'tunnels',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
   get interpreter(): SandboxInterpreterAPI {
@@ -903,7 +951,8 @@ export class ContainerControlClient {
       'interpreter',
       this.recordCallStarted,
       this.recordCallSettled,
-      this.getLastConnectionError
+      this.getLastConnectionError,
+      this.getSessionEstablished
     );
   }
 

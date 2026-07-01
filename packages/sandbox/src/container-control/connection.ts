@@ -250,8 +250,13 @@ export interface ContainerControlConnectionOptions {
    * When omitted, the upgrade fetch itself triggers container start (the
    * legacy behavior, still exercised by unit tests that pass a bare `fetch`
    * stub).
+   *
+   * Runs under the container's own instance-get / port-ready budget — it is
+   * intentionally NOT passed the per-attempt connect-timeout signal, so the
+   * base class can run its budget to exhaustion and throw the classifiable
+   * no-instance error rather than a generic abort error.
    */
-  startContainer?: (signal: AbortSignal) => Promise<void>;
+  startContainer?: () => Promise<void>;
   /**
    * Total retry budget (ms) for retryable upgrade responses while the
    * container is unavailable. Defaults to 120 000 (2 minutes), matching the
@@ -285,6 +290,13 @@ export interface ContainerControlConnectionOptions {
    * Fired at most once per connection attempt. Not fired for `disconnect()`.
    */
   onConnectionError?: (error: unknown) => void;
+  /**
+   * Invoked once when the WebSocket upgrade succeeds and the capnweb session
+   * is live. Lets the owner record that the session actually established a
+   * connection to a running container, so a later teardown can be classified
+   * as a true interruption rather than a never-connected failure.
+   */
+  onConnected?: () => void;
 }
 
 /**
@@ -307,9 +319,8 @@ export class ContainerControlConnection {
   private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
   private readonly onConnectionError: ((error: unknown) => void) | undefined;
-  private readonly startContainer:
-    | ((signal: AbortSignal) => Promise<void>)
-    | undefined;
+  private readonly onConnected: (() => void) | undefined;
+  private readonly startContainer: (() => Promise<void>) | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -318,6 +329,7 @@ export class ContainerControlConnection {
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
     this.onClose = options.onClose;
     this.onConnectionError = options.onConnectionError;
+    this.onConnected = options.onConnected;
     this.startContainer = options.startContainer;
 
     this.transport = new DeferredTransport();
@@ -513,6 +525,19 @@ export class ContainerControlConnection {
       this.ws = ws;
       this.transport.activate(ws);
       this.connected = true;
+      // Record that a live session was established so a later teardown is
+      // classified as a true interruption rather than a never-connected
+      // failure. Swallow listener errors like the other fire* helpers.
+      try {
+        this.onConnected?.();
+      } catch (err) {
+        this.logger.warn(
+          'ContainerControlConnection onConnected handler threw',
+          {
+            error: err instanceof Error ? err.message : String(err)
+          }
+        );
+      }
 
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
@@ -564,11 +589,34 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Single WebSocket-upgrade fetch attempt. Owns its own AbortController so
-   * each retry gets a fresh per-attempt connect timeout independent of the
-   * total retry budget.
+   * Single WebSocket-upgrade fetch attempt.
+   *
+   * Container start and the upgrade fetch have deliberately separate timeout
+   * scopes:
+   *
+   *   - `startContainer()` runs under the base `Container` class's own
+   *     instance-get / port-ready budget. It must NOT be cut short by the
+   *     per-attempt connect timeout: the base class only emits the
+   *     classifiable `NO_CONTAINER_INSTANCE_ERROR` after its internal budget
+   *     is exhausted, and it checks its abort signal *before* that throw
+   *     (see @cloudflare/containers `doStartContainer`). Aborting it early
+   *     yields a generic "Aborted waiting for container to start" error that
+   *     we can't classify — which is what masked the real cause as
+   *     OPERATION_INTERRUPTED. Letting it run its own budget means the
+   *     platform capacity failure throws here, in our retry loop, where
+   *     `shouldRetryError` retries it and `doConnect`'s catch converts it to
+   *     a typed ContainerUnavailableError.
+   *
+   *   - The WebSocket upgrade fetch gets its own fresh AbortController so
+   *     each retry has an independent connect timeout for the *upgrade only*.
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
+    // Explicitly start the container first (when a hook is provided), under
+    // its own budget — no per-attempt abort signal.
+    if (this.startContainer) {
+      await this.startContainer();
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
@@ -576,15 +624,6 @@ export class ContainerControlConnection {
     );
 
     try {
-      // Explicitly start the container first (when a hook is provided). The
-      // platform's no-instance / capacity error is thrown here, in our own
-      // retry loop, rather than surfacing as a 503 upgrade-response body.
-      // `shouldRetryError` retries it within the budget; once exhausted the
-      // throw is classified by `doConnect`'s catch into a typed
-      // ContainerUnavailableError.
-      if (this.startContainer) {
-        await this.startContainer(controller.signal);
-      }
       const url = `http://localhost:${this.port}/rpc`;
       const request = new Request(url, {
         headers: {
