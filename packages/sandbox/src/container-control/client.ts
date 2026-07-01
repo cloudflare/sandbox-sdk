@@ -676,6 +676,15 @@ export class ContainerControlClient {
    */
   private lastConnectionError: unknown = null;
   /**
+   * Whether `lastConnectionError` was captured from an actual connection
+   * attempt failure (authoritative root cause) rather than a lifecycle
+   * teardown reason (weak). A weak teardown cause — e.g. `onStop` firing
+   * `runtime_replaced` — is usually a downstream *consequence* of the real
+   * failure, so it must not overwrite an authoritative cause already
+   * captured from the connect attempt.
+   */
+  private connectionErrorIsAuthoritative = false;
+  /**
    * Whether the current connection ever established a live session to a
    * running container. Set true by the connection's `onConnected` callback,
    * reset when a fresh connection is created. Lets `translateRPCError`
@@ -722,7 +731,9 @@ export class ContainerControlClient {
       // queued RPC rejections. `translateRPCError` prefers this over the
       // generic disposal / connection-failure transport error.
       onConnectionError: (error: unknown) => {
+        // Authoritative: captured from an actual connection-attempt failure.
         this.lastConnectionError = error;
+        this.connectionErrorIsAuthoritative = true;
       }
     };
     this.idleDisconnectMs =
@@ -746,11 +757,23 @@ export class ContainerControlClient {
   private getConnection(): ContainerControlConnection {
     if (!this.conn) {
       this.lastConnectionError = null;
+      this.connectionErrorIsAuthoritative = false;
       this.sessionEstablished = false;
       this.conn = new ContainerControlConnection(this.connOptions);
       this.startBusyPoll();
     }
     return this.conn;
+  }
+
+  /**
+   * Stamp a *weak* connection cause (a lifecycle teardown reason). Only takes
+   * effect if no authoritative connect-attempt failure has been captured, so
+   * a teardown consequence never masks the real root cause.
+   */
+  private stampWeakConnectionCause(cause: unknown): void {
+    if (cause === undefined) return;
+    if (this.connectionErrorIsAuthoritative) return;
+    this.lastConnectionError = cause;
   }
 
   // -------------------------------------------------------------------------
@@ -924,9 +947,12 @@ export class ContainerControlClient {
       this.onSessionIdle?.();
     }
     if (this.conn) {
-      // Pass the cause so queued RPC calls reject with the real reason
-      // (stamped into lastConnectionError via onConnectionError) instead of
-      // the generic capnweb disposal message.
+      // Weakly stamp the teardown cause so queued RPC calls reject with a
+      // real reason instead of the generic capnweb disposal message — but
+      // never overwrite an authoritative connect-attempt failure (the
+      // teardown is usually a downstream consequence of it). Stamp before
+      // disconnect() disposes the stub and rejects the queued calls.
+      this.stampWeakConnectionCause(cause);
       this.conn.disconnect(cause);
       this.conn = null;
     }
@@ -1091,8 +1117,9 @@ export class ContainerControlClient {
   disconnect(cause?: unknown): void {
     const conn = this.conn;
     if (conn?.isConnecting()) {
-      // Stamp the cause now so an in-flight-attempt failure surfaces it.
-      if (cause !== undefined) this.lastConnectionError = cause;
+      // Weakly stamp the cause so an in-flight-attempt failure (authoritative)
+      // still wins over this teardown reason.
+      this.stampWeakConnectionCause(cause);
       // Defer the actual teardown until the attempt settles. Guard with an
       // identity check so we don't destroy a newer connection.
       void conn.whenSettled().then(() => {

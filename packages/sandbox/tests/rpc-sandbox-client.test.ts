@@ -26,6 +26,8 @@ let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
  * runtime dispatching that event.
  */
 const onCloseHandlers: Array<() => void> = [];
+/** `onConnectionError` callbacks installed on each mock connection. */
+const onConnectionErrorHandlers: Array<(error: unknown) => void> = [];
 
 /**
  * Simulate the runtime firing a `close` / `error` event on the live
@@ -43,8 +45,15 @@ function triggerPeerClose(): boolean {
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
-    constructor(options: { onClose?: () => void } = {}) {
+    constructor(
+      options: {
+        onClose?: () => void;
+        onConnectionError?: (error: unknown) => void;
+      } = {}
+    ) {
       if (options.onClose) onCloseHandlers.push(options.onClose);
+      if (options.onConnectionError)
+        onConnectionErrorHandlers.push(options.onConnectionError);
     }
     isConnected() {
       return connected;
@@ -86,6 +95,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     connected = true;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
+    onConnectionErrorHandlers.length = 0;
     commandExecuteImpl = () => ({ exitCode: 0, stdout: '', stderr: '' });
   });
 
@@ -283,6 +293,59 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     vi.advanceTimersByTime(1_000);
     expect(disconnects).toHaveLength(1);
+  });
+
+  it('surfaces the authoritative connect-attempt cause on a queued call even after a weak teardown', async () => {
+    vi.useRealTimers();
+    const { ContainerUnavailableError } = await import('../src/errors');
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    // Materialize the connection (wires onConnectionError) and capture the
+    // wrapped stub that an in-flight call would hold.
+    const commands = client.commands;
+    const fireConnectionError = onConnectionErrorHandlers.at(-1);
+    expect(fireConnectionError).toBeDefined();
+
+    // 1) Connect attempt stamps the authoritative capacity cause.
+    const capacityCause = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no container instance',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no container instance'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    fireConnectionError?.(capacityCause);
+
+    // 2) A lifecycle teardown fires a weak cause. Use the mock's onClose so
+    //    the client tears down without recreating the connection under us.
+    connected = false;
+    // Simulate the weak teardown stamp path directly via the public API.
+    // (destroyConnection weak-stamps; authoritative must win.)
+    const onClose = onCloseHandlers.at(-1);
+    onClose?.();
+
+    // 3) The queued call rejects with the generic disposal error; it must
+    //    surface the authoritative capacity cause via the retained stub.
+    commandExecuteImpl = () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    let thrown: unknown;
+    try {
+      // The mock throws synchronously; the real capnweb stub rejects. Handle
+      // both so we assert on the surfaced cause either way.
+      thrown = await commands.execute('echo', 'default');
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    expect(
+      (thrown as InstanceType<typeof ContainerUnavailableError>).reason
+    ).toBe('no_container_instance_available');
   });
 });
 

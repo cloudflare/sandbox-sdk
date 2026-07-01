@@ -420,14 +420,15 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Tear down the connection. When `cause` is provided (e.g. a lifecycle
-   * teardown from the owning DO), it is handed to `onConnectionError` first
-   * so any RPC calls queued on the transport reject with that real cause
-   * rather than the generic capnweb "disposing the main stub" message.
+   * Tear down the connection. `cause` (a lifecycle teardown reason from the
+   * owning DO) is used only for the disconnect trace event here; the owner
+   * is responsible for stamping it as a *weak* connection cause (one that
+   * never overwrites an authoritative failure already captured from a
+   * connection attempt), since a teardown is usually a downstream
+   * consequence of that earlier failure rather than the root cause.
    */
   disconnect(cause?: unknown): void {
     if (cause !== undefined) {
-      this.fireConnectionError(cause);
       traceEvent('sandbox.rpc.disconnect', {
         ...this.spanAttrs(),
         reason: cause instanceof Error ? cause.message : String(cause)

@@ -46,24 +46,16 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(false);
     });
 
-    it('fires onConnectionError with the provided cause before disposing', () => {
+    it('does not fire onConnectionError on disconnect (owner stamps the cause weakly)', () => {
+      // The teardown cause is used only for the disconnect trace event; the
+      // owning client is responsible for stamping it as a weak cause so it
+      // never overwrites an authoritative connect-attempt failure.
       const onConnectionError = vi.fn();
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() },
         onConnectionError
       });
-      const cause = new Error('sandbox stopped');
-      conn.disconnect(cause);
-      expect(onConnectionError).toHaveBeenCalledWith(cause);
-    });
-
-    it('does not fire onConnectionError when disconnected without a cause', () => {
-      const onConnectionError = vi.fn();
-      const conn = new ContainerControlConnection({
-        stub: { fetch: vi.fn() },
-        onConnectionError
-      });
-      conn.disconnect();
+      conn.disconnect(new Error('sandbox stopped'));
       expect(onConnectionError).not.toHaveBeenCalled();
     });
   });
