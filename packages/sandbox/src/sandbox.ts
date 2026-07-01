@@ -92,6 +92,7 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
+import { createErrorFromResponse } from './errors/adapter';
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
@@ -391,6 +392,24 @@ const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
+
+/**
+ * Instance-get budget (ms) for the RPC transport's explicit container-start
+ * hook, independent of the user-facing `containerTimeouts.instanceGetTimeoutMS`
+ * (which still governs the HTTP path's `containerFetch`).
+ *
+ * Deliberately small: it bounds how long a single start attempt polls for a
+ * container instance before the base class throws the classifiable
+ * `NO_CONTAINER_INSTANCE_ERROR`. The RPC control connection's own retry loop
+ * (`fetchWithResponseRetry`, ~2 min budget with exponential backoff) owns the
+ * cross-attempt retries, so a short inner budget means each attempt fails fast
+ * under capacity pressure and hands back to the outer loop — rather than one
+ * attempt burning ~30s and letting the DO be evicted mid-wait. Once an
+ * instance exists, `portReadyTimeoutMS` still governs app boot on the next
+ * attempt (the base fast-path returns immediately when the container is
+ * already running).
+ */
+const RPC_START_INSTANCE_GET_TIMEOUT_MS = 3_000;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
 const BACKUP_STORAGE_PREFIX = 'backups';
@@ -1156,18 +1175,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // budget is exhausted, and it checks the abort signal *before* that
         // throw. Passing the connection's per-attempt connect-timeout signal
         // here would abort start early with a generic "Aborted waiting for
-        // container to start" error that can't be classified — masking the
-        // real capacity cause as OPERATION_INTERRUPTED. Letting start run
-        // under its own timeouts lets the real error surface.
-        startContainer: () =>
-          this.startAndWaitForPorts({
-            ports: 3000,
-            cancellationOptions: {
-              instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-              portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-              waitInterval: this.containerTimeouts.waitIntervalMS
-            }
-          }),
+        // container to start" error that can't be classified. Instead we run
+        // start under a short instance-get budget and always throw a typed
+        // SandboxError — see startContainerForRpc.
+        startContainer: () => this.startContainerForRpc(),
         // localMain exposes the DO-side control callback (tunnel-exit
         // notifications, etc.) to the container side of the session.
         localMain: this.controlCallback,
@@ -3251,6 +3262,86 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return 'max_container_instances_exceeded';
     }
     return null;
+  }
+
+  /**
+   * Explicit container-start hook for the RPC transport.
+   *
+   * Runs `startAndWaitForPorts` under a short instance-get budget
+   * ({@link RPC_START_INSTANCE_GET_TIMEOUT_MS}) so a single attempt fails fast
+   * under capacity pressure — the base class throws the classifiable
+   * `NO_CONTAINER_INSTANCE_ERROR` once that budget is exhausted, and the RPC
+   * control connection's own retry loop (with backoff) owns cross-attempt
+   * retries. Port readiness still uses the full `portReadyTimeoutMS` so a
+   * genuinely-booting app isn't cut short once an instance exists.
+   *
+   * Always throws a typed `SandboxError` on failure so the control connection
+   * never surfaces a raw capnweb/transport string to the caller:
+   *   - container-admission/capacity failures → retryable
+   *     `ContainerUnavailableError` (preserving the platform message so the
+   *     connection's `shouldRetryError` still recognizes and retries it);
+   *   - anything else (platform-transient DO reset, network loss, unexpected
+   *     startup failure) → `INTERNAL_ERROR`-coded SandboxError carrying the
+   *     original message.
+   */
+  private async startContainerForRpc(): Promise<void> {
+    try {
+      await this.startAndWaitForPorts({
+        ports: 3000,
+        cancellationOptions: {
+          instanceGetTimeoutMS: RPC_START_INSTANCE_GET_TIMEOUT_MS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS
+        }
+      });
+    } catch (error) {
+      throw this.toContainerStartError(error);
+    }
+  }
+
+  /**
+   * Convert a container-start failure into a typed SandboxError. Preserves an
+   * existing SandboxError as-is; maps platform admission/capacity failures to
+   * a retryable ContainerUnavailableError; and wraps everything else as an
+   * INTERNAL_ERROR carrying the original message (never a raw transport
+   * string).
+   */
+  private toContainerStartError(error: unknown): Error {
+    if (error instanceof SandboxError) return error;
+
+    const originalMessage =
+      error instanceof Error ? error.message : String(error);
+    const admissionReason = this.classifyContainerAdmissionError(error);
+    if (admissionReason) {
+      const context = {
+        reason: admissionReason,
+        retryable: true as const,
+        originalMessage
+      };
+      return createErrorFromResponse(
+        {
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          message: originalMessage,
+          context,
+          httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+          suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+          timestamp: new Date().toISOString()
+        },
+        { cause: error }
+      );
+    }
+
+    const context = { phase: 'startup' as const, error: originalMessage };
+    return createErrorFromResponse(
+      {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: `Container failed to start: ${originalMessage}`,
+        context,
+        httpStatus: getHttpStatus(ErrorCode.INTERNAL_ERROR),
+        timestamp: new Date().toISOString()
+      },
+      { cause: error }
+    );
   }
 
   /**

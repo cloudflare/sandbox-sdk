@@ -102,7 +102,7 @@ vi.mock('../src/interpreter', () => ({
   }
 }));
 
-import { ContainerUnavailableError } from '../src/errors';
+import { ContainerUnavailableError, SandboxError } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
 
 function makeCtx() {
@@ -211,5 +211,28 @@ describe('RPC transport: no container instance (issue #794)', () => {
     expect((thrown as ContainerUnavailableError).reason).toBe(
       'max_container_instances_exceeded'
     );
+  });
+
+  it('wraps a non-admission start failure as a typed SandboxError (no raw transport string)', async () => {
+    // A startup failure that is NOT a capacity/admission error (e.g. a
+    // platform DO reset) must still surface as a typed SandboxError carrying
+    // the real cause — never the raw capnweb "RPC session was shut down by
+    // disposing the main stub" string.
+    upgradeError = new Error(
+      'Durable Object reset because its code was updated.'
+    );
+    const sandbox = await makeRpcSandbox();
+
+    const thrown = await sandbox
+      .mkdir('/workspace', { recursive: true })
+      .catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(SandboxError);
+    expect(thrown).not.toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as SandboxError;
+    expect(err.code).toBe('INTERNAL_ERROR');
+    expect((err as Error).message).toContain('code was updated');
+    expect((err as Error).message).not.toContain('disposing the main stub');
+    expect((err as Error).message).not.toContain('was interrupted');
   });
 });
