@@ -586,7 +586,7 @@ function wrapStub<T extends object>(
             // Span the RPC call so each method invocation (and its failure,
             // with error/error.stack attributes) is visible in traces.
             return withSpan(
-              'sandbox.rpc.call',
+              `sandbox.rpc.call ${operation}`,
               { ...getSpanAttrs(), operation },
               () =>
                 (result as Promise<unknown>).catch((err: unknown) =>
