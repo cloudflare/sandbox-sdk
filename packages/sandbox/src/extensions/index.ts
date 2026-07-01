@@ -5,8 +5,9 @@
  * ships its own container sidecar \u2014 shares one shape: a class extending
  * {@link SandboxExtension}, captured lazily via a `withX(this)` factory.
  *
- * - No sidecar? Extend {@link SandboxExtension} and use `this.client.<subApi>`
- *   (`commands`, `files`, `git`, `interpreter`, \u2026). Don't pass a package.
+ * - No sidecar? Extend {@link SandboxExtension} and use `this.exec()` or
+ *   `this.client.<subApi>` (`commands`, `files`, `interpreter`, \u2026). Don't pass
+ *   a package.
  * - Need a container sidecar? Pass an {@link ExtensionPackage} to `super()`.
  *   Then call {@link SandboxExtension.sidecar} to obtain the sidecar's typed
  *   capnweb remote main. Calls on that stub stream through capnweb \u2014 callback
@@ -22,7 +23,9 @@ import { RpcTarget } from 'cloudflare:workers';
 import type {
   ExtensionHealth,
   ExtensionPackage,
-  SandboxAPI
+  SandboxAPI,
+  SandboxExecOptions,
+  SandboxProcessPromise
 } from '@repo/shared';
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { GitAuthInterceptorParams } from '../git/types.js';
@@ -32,9 +35,9 @@ import type { GitAuthInterceptorParams } from '../git/types.js';
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
 
 /**
- * The slice of the Sandbox an extension captures: its control `client` and the
- * sandbox-level environment variables. Narrow on purpose \u2014 an extension never
- * holds the whole instance.
+ * The slice of the Sandbox an extension captures: its control `client`, unified
+ * `exec()` surface, and sandbox-level environment variables. Narrow on purpose
+ * \u2014 an extension never holds the whole instance.
  *
  * `envVars` mirrors what the Sandbox applies to sessionless execution, so an
  * extension that drives commands through `client` directly can still honour
@@ -42,6 +45,10 @@ export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
  */
 export type SandboxLike = {
   readonly client: SandboxAPI;
+  readonly exec?: (
+    command: string | string[],
+    options?: SandboxExecOptions
+  ) => SandboxProcessPromise;
   readonly envVars?: Record<string, string>;
   registerGitAuthInterceptor?: (
     params: GitAuthInterceptorParams
@@ -62,7 +69,9 @@ export type SandboxLike = {
  * // SDK-only
  * class Git extends SandboxExtension {
  *   constructor(s: SandboxLike) { super(s); }
- *   status(sid: string) { return this.client.commands.execute('git status', sid); }
+ *   async status(sid: string) {
+ *     return this.exec('git status', { sessionId: sid }).output();
+ *   }
  * }
  *
  * // Sidecar
@@ -97,6 +106,20 @@ export abstract class SandboxExtension extends RpcTarget {
   /** The container control client. Use inside your own methods, lazily. */
   protected get client(): SandboxAPI {
     return this.#sandbox.client;
+  }
+
+  /** Unified process-handle exec surface from the owning Sandbox. */
+  protected exec(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): SandboxProcessPromise {
+    const exec = this.#sandbox.exec;
+    if (!exec) {
+      throw new Error(
+        'Sandbox extension requires the unified exec surface from the owning Sandbox'
+      );
+    }
+    return exec.call(this.#sandbox, command, options);
   }
 
   /**
