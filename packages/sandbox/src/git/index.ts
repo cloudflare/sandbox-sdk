@@ -2,9 +2,10 @@
  * Git extension for the Cloudflare Sandbox SDK.
  *
  * Git is just a sequence of shell commands, so this is an **SDK-only**
- * extension: it drives `this.client.commands.execute` over the existing
- * control channel and needs no sidecar. All the git business logic that used
- * to live in the container (argument building, branch parsing, error
+ * extension: it drives the owning sandbox's unified `exec()` process surface
+ * over the existing control channel and needs no sidecar. All the git
+ * business logic that used to live in the container (argument building,
+ * branch parsing, error
  * classification) is ported into `./manager` and runs in the Worker; only the
  * `git` process itself runs in the container.
  *
@@ -25,7 +26,7 @@
  * ```
  */
 
-import { filterEnvVars, redactCommand, shellEscape } from '@repo/shared';
+import { redactCommand } from '@repo/shared';
 import {
   ErrorCode,
   type ErrorResponse,
@@ -65,7 +66,9 @@ export type {
 } from './types.js';
 export { withGit as default };
 
-/** Shape returned by the commands control sub-API. */
+const CLONE_PROCESS_TIMEOUT_BUFFER_MS = 10_000;
+
+/** Shape returned by a completed git process. */
 interface ExecOutcome {
   stdout: string;
   stderr: string;
@@ -126,13 +129,15 @@ export class Git extends SandboxExtension {
     await this.#configureAuth(repoUrl, options.auth);
 
     const sessionId = this.#sessionId(options);
-    const cloneCommand = this.#command(
-      buildCloneArgs(repoUrl, targetDir, options)
+    const cloneResult = await this.#exec(
+      buildCloneArgs(repoUrl, targetDir, options),
+      sessionId,
+      undefined,
+      cloneTimeoutMs + CLONE_PROCESS_TIMEOUT_BUFFER_MS
     );
-    const cloneResult = await this.#exec(cloneCommand, sessionId);
 
     if (cloneResult.exitCode !== 0) {
-      if (cloneResult.exitCode === 124) {
+      if ([124, 143, -15].includes(cloneResult.exitCode)) {
         this.#throwError(
           ErrorCode.GIT_NETWORK_ERROR,
           `Git clone timed out after ${gitCloneTimeoutSeconds(
@@ -169,7 +174,7 @@ export class Git extends SandboxExtension {
 
     // Query the branch actually checked out rather than assuming.
     const branchResult = await this.#exec(
-      this.#command(buildGetCurrentBranchArgs()),
+      buildGetCurrentBranchArgs(),
       sessionId,
       targetDir
     );
@@ -216,7 +221,7 @@ export class Git extends SandboxExtension {
     }
 
     const result = await this.#exec(
-      this.#command(buildCheckoutArgs(branch)),
+      buildCheckoutArgs(branch),
       this.#sessionId(options),
       repoPath
     );
@@ -253,7 +258,7 @@ export class Git extends SandboxExtension {
     }
 
     const result = await this.#exec(
-      this.#command(buildGetCurrentBranchArgs()),
+      buildGetCurrentBranchArgs(),
       this.#sessionId(options),
       repoPath
     );
@@ -290,7 +295,7 @@ export class Git extends SandboxExtension {
     }
 
     const result = await this.#exec(
-      this.#command(buildListBranchesArgs()),
+      buildListBranchesArgs(),
       this.#sessionId(options),
       repoPath
     );
@@ -374,39 +379,19 @@ export class Git extends SandboxExtension {
     return options.sessionId;
   }
 
-  /**
-   * Env to attach to a git command. Sessionless git runs in a fresh shell, so
-   * merge in the sandbox-level env vars (tokens, proxy settings) the same way
-   * the Sandbox's own sessionless execution does. A real session already
-   * carries its own env, so nothing extra is injected there.
-   */
-  #execEnv(sessionId: string | undefined): Record<string, string> | undefined {
-    if (sessionId !== undefined) {
-      return undefined;
-    }
-    const env = filterEnvVars(this.envVars);
-    return Object.keys(env).length > 0 ? env : undefined;
-  }
-
-  #command(args: string[]): string {
-    return args.map((arg) => shellEscape(arg)).join(' ');
-  }
-
   async #exec(
-    command: string,
+    command: string[],
     sessionId: string | undefined,
-    cwd?: string
+    cwd?: string,
+    timeout?: number
   ): Promise<ExecOutcome> {
-    const env = this.#execEnv(sessionId);
-    const options = {
+    const result = await this.exec(command, {
       ...(sessionId !== undefined && { sessionId }),
       ...(cwd !== undefined && { cwd }),
-      ...(env !== undefined && { env })
-    };
-    const result = await this.client.commands.execute(
-      command,
-      Object.keys(options).length > 0 ? options : undefined
-    );
+      ...(timeout !== undefined && { timeout }),
+      stdout: 'pipe',
+      stderr: 'pipe'
+    }).output({ encoding: 'utf8' });
     return {
       stdout: result.stdout,
       stderr: result.stderr,
