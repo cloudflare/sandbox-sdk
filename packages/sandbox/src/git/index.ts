@@ -332,12 +332,12 @@ export class Git extends SandboxExtension {
       return;
     }
 
-    const hostname = new URL(repoUrl).hostname;
-    if (!hosts[hostname]) {
+    const hostname = this.#authHostname(repoUrl);
+    if (hostname === undefined || !hosts[hostname]) {
       return;
     }
 
-    if (!this.gitAuthInterceptor) {
+    if (!this.httpAuthInterceptor) {
       this.#throwError(
         ErrorCode.VALIDATION_FAILED,
         'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.',
@@ -348,7 +348,15 @@ export class Git extends SandboxExtension {
       );
     }
 
-    await this.gitAuthInterceptor({ hosts: { [hostname]: hosts[hostname] } });
+    await this.httpAuthInterceptor({ hosts: { [hostname]: hosts[hostname] } });
+  }
+
+  #authHostname(repoUrl: string): string | undefined {
+    try {
+      return new URL(repoUrl).hostname;
+    } catch {
+      return undefined;
+    }
   }
 
   #authHosts(

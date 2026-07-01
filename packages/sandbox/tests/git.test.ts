@@ -293,6 +293,22 @@ describe('Git extension', () => {
     });
   });
 
+  it('skips HTTP auth interception for SSH-style repository URLs', async () => {
+    const registerGitAuthInterceptor = vi.fn(async () => {});
+    const { git, exec } = createGit(
+      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
+      undefined,
+      registerGitAuthInterceptor
+    );
+
+    await git.checkout('git@github.com:owner/repo.git', {
+      auth: { github: { token: 'github-token' } }
+    });
+
+    expect(registerGitAuthInterceptor).not.toHaveBeenCalled();
+    expect(exec).toHaveBeenCalled();
+  });
+
   it('does not register git auth interception when auth is disabled per checkout', async () => {
     const registerGitAuthInterceptor = vi.fn(async () => {});
     const { git } = createGit(
