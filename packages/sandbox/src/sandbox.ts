@@ -2827,7 +2827,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.client.disconnect();
 
       outcome = 'success';
-      await super.destroy();
+      try {
+        await super.destroy();
+      } catch (error) {
+        // `super.destroy()` is `this.container.destroy()`, which throws the
+        // platform "no container instance" error when no instance was ever
+        // admitted (e.g. destroying a sandbox whose container never started
+        // under capacity pressure). There is nothing to tear down in that
+        // case, so treat it as an idempotent no-op success rather than
+        // surfacing a second error on the cleanup path.
+        if (!this.isNoInstanceError(error)) throw error;
+        this.logger.debug(
+          'super.destroy() reported no container instance; treating as no-op'
+        );
+      }
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;

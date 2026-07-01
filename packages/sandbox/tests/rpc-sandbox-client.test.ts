@@ -822,12 +822,15 @@ describe('translateRPCError', () => {
     expect(thrown).toBeInstanceOf(ContainerUnavailableError);
     const err = thrown as InstanceType<typeof ContainerUnavailableError>;
     expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('container_unreachable');
     expect(err.context.retryable).toBe(true);
     expect(err.context.originalMessage).toBe(
       'RPC session was shut down by disposing the main stub'
     );
-    // The raw capnweb string must not be the user-facing message.
+    // The message states unavailability plainly — no raw capnweb string, and
+    // no misleading "may be starting" hedge (the container was never reached).
     expect((err as Error).message).not.toContain('disposing the main stub');
+    expect((err as Error).message).not.toContain('starting');
   });
 
   it('does not synthesize CONTAINER_UNAVAILABLE for a never-established non-teardown transport error', async () => {

@@ -266,7 +266,15 @@ export type ContainerUnavailableReason =
    * ("Maximum number of running container instances exceeded. Try again
    * later, or try configuring a higher value for max_instances").
    */
-  | 'max_container_instances_exceeded';
+  | 'max_container_instances_exceeded'
+  /**
+   * The RPC connection was torn down before the container ever became
+   * reachable, and the underlying platform cause was not captured (e.g. the
+   * Durable Object was evicted mid-startup under capacity pressure). The
+   * container was never admitted — this is unavailability, not a cold start
+   * in progress.
+   */
+  | 'container_unreachable';
 
 /**
  * Container availability error context. Surfaced when the sandbox container

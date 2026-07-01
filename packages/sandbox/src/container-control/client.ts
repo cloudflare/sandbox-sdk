@@ -479,14 +479,14 @@ function buildNeverConnectedUnavailableResponse(
     return null;
   }
   const ctx: ContainerUnavailableContext = {
-    reason: 'container_replaced',
+    reason: 'container_unreachable',
     retryable: true,
     originalMessage: transportResponse.context.originalMessage
   };
   return {
     code: ErrorCode.CONTAINER_UNAVAILABLE,
     message:
-      'The sandbox container could not be reached before the connection was torn down; it may be starting or temporarily unavailable.',
+      'The sandbox container was unavailable: the connection was torn down before it became reachable. Retry the operation.',
     context: ctx,
     httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
     suggestion: getSuggestion(
