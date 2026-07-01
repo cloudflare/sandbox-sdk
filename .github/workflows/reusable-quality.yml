@@ -75,6 +75,7 @@ jobs:
         run: node scripts/validate-changesets.js .changeset/*.md
 
   sdk-tests:
+    name: sdk-tests (pull_request)
     permissions:
       contents: read
     if: ${{ inputs.run_sdk_tests }}
@@ -136,6 +137,7 @@ jobs:
           retention-days: 7
 
   container-tests:
+    name: container-tests (pull_request)
     permissions:
       contents: read
     if: ${{ inputs.run_container_tests }}
