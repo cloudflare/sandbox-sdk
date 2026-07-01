@@ -1015,7 +1015,9 @@ describe('Backup Workflow E2E', () => {
     test('should allow writes after restore without affecting backup', async () => {
       if (!backupBucketAvailable) return;
 
-      const TEST_DIR = `/workspace/cow-test-${crypto.randomUUID().slice(0, 8)}`;
+      const token = crypto.randomUUID().slice(0, 8);
+      const TEST_DIR = `/workspace/cow-test-${token}`;
+      const VERIFY_DIR = `/workspace/cow-verify-${token}`;
 
       // Create original content
       await fetch(`${workerUrl}/api/execute`, {
@@ -1070,23 +1072,25 @@ describe('Backup Workflow E2E', () => {
       expect(modifiedResult.stdout).toContain('modified');
       expect(modifiedResult.stdout).toContain('new file');
 
-      // Cleanup and restore again - should get ORIGINAL content (not modified)
-      await cleanupDir(workerUrl, headers, TEST_DIR);
-
+      // Restore the same backup to a fresh directory. A successful restore to
+      // the same backup ID + dir is intentionally idempotent and may return a
+      // stored result, so use a separate path to verify backup immutability.
       const restore2Response = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+        body: JSON.stringify({ id: backup.id, dir: VERIFY_DIR })
       });
       expect(restore2Response.ok).toBe(true);
 
-      // Verify original content is back
+      // Verify original content is restored from the backup, not the modified tree
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` })
+        body: JSON.stringify({ command: `cat ${VERIFY_DIR}/file.txt` })
       });
+      expect(originalCheck.ok).toBe(true);
       const originalResult = (await originalCheck.json()) as ExecuteResponse;
+      expect(originalResult.exitCode).toBe(0);
       expect(originalResult.stdout?.trim()).toBe('original');
 
       // Verify new.txt doesn't exist (wasn't in backup)
@@ -1094,7 +1098,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `test -f ${TEST_DIR}/new.txt && echo "exists" || echo "missing"`
+          command: `test -f ${VERIFY_DIR}/new.txt && echo "exists" || echo "missing"`
         })
       });
       const newFileResult = (await newFileCheck.json()) as ExecuteResponse;
@@ -1102,6 +1106,7 @@ describe('Backup Workflow E2E', () => {
 
       // Cleanup
       await cleanupDir(workerUrl, headers, TEST_DIR);
+      await cleanupDir(workerUrl, headers, VERIFY_DIR);
     }, 90000);
   });
 

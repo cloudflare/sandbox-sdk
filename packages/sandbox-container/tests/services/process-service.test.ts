@@ -53,6 +53,8 @@ const createMockProcess = (
   startTime: new Date(),
   stdout: '',
   stderr: '',
+  stdoutMode: 'pipe',
+  stderrMode: 'pipe',
   outputListeners: new Set(),
   statusListeners: new Set(),
   commandHandle: {
@@ -332,6 +334,98 @@ describe('ProcessService', () => {
       );
     });
 
+    it('applies stdout and stderr modes to stored logs', async () => {
+      let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
+      let createdProcess: ProcessRecord | undefined;
+
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdProcess = process;
+        }
+      );
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
+        async (_command, options) => {
+          onEvent = options.onEvent;
+          return {
+            success: true,
+            data: {
+              continueStreaming: Promise.resolve(),
+              commandHandle: {
+                target: { kind: 'sessionless' },
+                commandId: options.commandId
+              }
+            }
+          } as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: TestProcessCommandHandle;
+          }>;
+        }
+      );
+
+      await processService.startProcess('ignored', {
+        stdout: 'ignore',
+        stderr: 'ignore'
+      });
+      expect(onEvent).toBeDefined();
+      expect(createdProcess).toBeDefined();
+      const emitIgnored = onEvent!;
+      const ignoredProcess = createdProcess!;
+      await emitIgnored({
+        type: 'stdout',
+        data: 'out',
+        timestamp: new Date().toISOString()
+      });
+      await emitIgnored({
+        type: 'stderr',
+        data: 'err',
+        timestamp: new Date().toISOString()
+      });
+      expect(ignoredProcess.stdout).toBe('');
+      expect(ignoredProcess.stderr).toBe('');
+
+      vi.clearAllMocks();
+      onEvent = undefined;
+      createdProcess = undefined;
+      mocked(mockProcessStore.create).mockImplementationOnce(
+        async (process) => {
+          createdProcess = process;
+        }
+      );
+      mocked(mockExecutionService.startProcessStream).mockImplementation(
+        async (_command, options) => {
+          onEvent = options.onEvent;
+          return {
+            success: true,
+            data: {
+              continueStreaming: Promise.resolve(),
+              commandHandle: {
+                target: { kind: 'sessionless' },
+                commandId: options.commandId
+              }
+            }
+          } as ServiceResult<{
+            continueStreaming: Promise<void>;
+            commandHandle: TestProcessCommandHandle;
+          }>;
+        }
+      );
+
+      await processService.startProcess('combined', {
+        stderr: 'combined'
+      });
+      expect(onEvent).toBeDefined();
+      expect(createdProcess).toBeDefined();
+      const emitCombined = onEvent!;
+      const combinedProcess = createdProcess!;
+      await emitCombined({
+        type: 'stderr',
+        data: 'err',
+        timestamp: new Date().toISOString()
+      });
+      expect(combinedProcess.stdout).toBe('err');
+      expect(combinedProcess.stderr).toBe('');
+    });
+
     it('should reflect a later non-zero complete event on the returned process record', async () => {
       let onEvent: ((event: ExecEvent) => Promise<void>) | undefined;
 
@@ -485,7 +579,8 @@ describe('ProcessService', () => {
       expect(result.success).toBe(true);
 
       expect(mockExecutionService.kill).toHaveBeenCalledWith(
-        mockProcess.commandHandle
+        mockProcess.commandHandle,
+        undefined
       );
 
       // Verify store was updated
@@ -493,6 +588,27 @@ describe('ProcessService', () => {
         status: 'killed',
         endTime: expect.any(Date)
       });
+    });
+
+    it('forwards kill signals to execution service', async () => {
+      const mockProcess = createMockProcess({
+        commandHandle: {
+          target: { kind: 'sessionless' },
+          commandId: 'proc-123'
+        }
+      });
+
+      mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
+      mocked(mockExecutionService.kill).mockResolvedValue({
+        success: true
+      } as ServiceResult<void>);
+
+      await processService.killProcess('proc-123', 'SIGKILL');
+
+      expect(mockExecutionService.kill).toHaveBeenCalledWith(
+        mockProcess.commandHandle,
+        'SIGKILL'
+      );
     });
 
     it('should return error when process not found', async () => {

@@ -151,6 +151,8 @@ export class ProcessStore {
       exitCode: process.exitCode,
       stdout: process.stdout,
       stderr: process.stderr,
+      stdoutMode: process.stdoutMode,
+      stderrMode: process.stderrMode,
       commandHandle: process.commandHandle
       // Exclude: outputListeners, statusListeners (Set objects, not serializable)
     };
@@ -180,6 +182,8 @@ export class ProcessStore {
         ...data,
         startTime: new Date(data.startTime),
         endTime: data.endTime ? new Date(data.endTime) : undefined,
+        stdoutMode: data.stdoutMode ?? 'pipe',
+        stderrMode: data.stderrMode ?? 'pipe',
         commandHandle: this.normalizeCommandHandle(data.commandHandle),
         outputListeners: new Set(),
         statusListeners: new Set()

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockEnv, createMockSandbox, parseSSE, sandboxUrl } from './helpers';
+import {
+  asMockExecPromise,
+  createMockEnv,
+  createMockSandbox,
+  makeMockExecProcess,
+  parseSSE,
+  sandboxUrl
+} from './helpers';
 
 const mockSandbox = createMockSandbox();
 vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
@@ -29,13 +36,18 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
   });
 
   it('streams stdout chunks as base64 SSE events', async () => {
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const onOutput = opts?.onOutput as (stream: string, data: string) => void;
-      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
-      onOutput('stdout', 'hello world');
-      onComplete({ exitCode: 0 });
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+    // Same observable behaviour as the legacy
+    // `onOutput('stdout', 'hello world'); onComplete({ exitCode: 0 })`
+    // path, expressed via the new `SandboxProcess` byte streams.
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(
+        Promise.resolve(
+          makeMockExecProcess([{ stream: 'stdout', data: 'hello world' }], {
+            exitCode: 0
+          })
+        )
+      )
+    );
 
     const res = await execRequest({ argv: ['echo', 'hello world'] });
     expect(res.status).toBe(200);
@@ -52,13 +64,15 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
   });
 
   it('streams stderr chunks as base64 SSE events', async () => {
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const onOutput = opts?.onOutput as (stream: string, data: string) => void;
-      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
-      onOutput('stderr', 'oh no');
-      onComplete({ exitCode: 1 });
-      return { stdout: '', stderr: '', exitCode: 1 };
-    });
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(
+        Promise.resolve(
+          makeMockExecProcess([{ stream: 'stderr', data: 'oh no' }], {
+            exitCode: 1
+          })
+        )
+      )
+    );
 
     const res = await execRequest({ argv: ['fail'] });
     const text = await res.text();
@@ -72,11 +86,9 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
   });
 
   it('sends exit event with correct exit code', async () => {
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
-      onComplete({ exitCode: 42 });
-      return { stdout: '', stderr: '', exitCode: 42 };
-    });
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { exitCode: 42 })))
+    );
 
     const res = await execRequest({ argv: ['exit', '42'] });
     const text = await res.text();
@@ -87,12 +99,16 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
     expect(JSON.parse(events[0].data)).toEqual({ exit_code: 42 });
   });
 
-  it('sends error event when onError fires', async () => {
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const onError = opts?.onError as (err: Error) => void;
-      onError(new Error('command not found'));
-      return { stdout: '', stderr: '', exitCode: 1 };
-    });
+  it('sends error event when exec produces a stream-level error', async () => {
+    // Legacy `onError(err)` mapped to the bridge's `error` SSE frame with
+    // `code: 'exec_error'`. After unification, exec errors surface as
+    // `proc.exitCode` rejecting, which the bridge converts into an
+    // `exec_transport_error` SSE frame. The LOGIC under test ("stream
+    // error => error SSE event") is identical; only the error-code tag
+    // changes to reflect the unified transport.
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { error: new Error('command not found') })))
+    );
 
     const res = await execRequest({ argv: ['bad-cmd'] });
     const text = await res.text();
@@ -101,8 +117,8 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe('error');
     const data = JSON.parse(events[0].data);
-    expect(data.error).toBe('command not found');
-    expect(data.code).toBe('exec_error');
+    expect(data.error).toContain('command not found');
+    expect(data.code).toBe('exec_transport_error');
   });
 
   it('sends error event when exec promise rejects (belt-and-suspenders)', async () => {
@@ -121,25 +137,38 @@ describe('POST /sandbox/:id/exec — SSE streaming', () => {
   });
 
   it('streams multiple stdout and stderr chunks interleaved', async () => {
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const onOutput = opts?.onOutput as (stream: string, data: string) => void;
-      const onComplete = opts?.onComplete as (r: { exitCode: number }) => void;
-      onOutput('stdout', 'line1');
-      onOutput('stderr', 'warn1');
-      onOutput('stdout', 'line2');
-      onComplete({ exitCode: 0 });
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+    // Post-unification the bridge pumps `proc.stdout` and `proc.stderr` in
+    // parallel; stdout-vs-stderr ordering at the SSE boundary depends on
+    // which reader resolves first. Verify per-stream order and that exit
+    // arrives last — the original "interleaved chunks emit interleaved
+    // events" intent.
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(
+        Promise.resolve(
+          makeMockExecProcess(
+            [
+              { stream: 'stdout', data: 'line1' },
+              { stream: 'stderr', data: 'warn1' },
+              { stream: 'stdout', data: 'line2' }
+            ],
+            { exitCode: 0 }
+          )
+        )
+      )
+    );
 
     const res = await execRequest({ argv: ['mixed'] });
     const text = await res.text();
     const events = parseSSE(text);
 
-    expect(events).toHaveLength(4);
-    expect(events[0]).toEqual({ event: 'stdout', data: btoa('line1') });
-    expect(events[1]).toEqual({ event: 'stderr', data: btoa('warn1') });
-    expect(events[2]).toEqual({ event: 'stdout', data: btoa('line2') });
-    expect(events[3].event).toBe('exit');
+    const stdoutData = events.filter((e) => e.event === 'stdout').map((e) => atob(e.data));
+    const stderrData = events.filter((e) => e.event === 'stderr').map((e) => atob(e.data));
+    const exitEvents = events.filter((e) => e.event === 'exit');
+
+    expect(stdoutData).toEqual(['line1', 'line2']);
+    expect(stderrData).toEqual(['warn1']);
+    expect(exitEvents).toHaveLength(1);
+    expect(JSON.parse(exitEvents[0].data)).toEqual({ exit_code: 0 });
   });
 });
 
@@ -195,13 +224,9 @@ describe('POST /sandbox/:id/exec — pre-validation errors (JSON)', () => {
 describe('POST /sandbox/:id/exec — cwd validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.exec.mockImplementation(async (_cmd: string, opts?: Record<string, unknown>) => {
-      if (opts?.stream) {
-        const onComplete = opts.onComplete as (r: { exitCode: number }) => void;
-        onComplete({ exitCode: 0 });
-      }
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { exitCode: 0 })))
+    );
   });
 
   it('passes through when no cwd is provided', async () => {

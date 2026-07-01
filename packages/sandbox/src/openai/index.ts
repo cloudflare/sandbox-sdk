@@ -95,10 +95,12 @@ export class Shell implements OpenAIShell {
         exitCode: 0
       };
       try {
-        const result = await this.sandbox.exec(command, {
-          timeout: action.timeoutMs,
-          cwd: this.cwd
-        });
+        const result = await this.sandbox
+          .exec(command, {
+            timeout: action.timeoutMs,
+            cwd: this.cwd
+          })
+          .output({ encoding: 'utf8' });
         stdout = result.stdout;
         stderr = result.stderr;
         exitCode = result.exitCode;

@@ -134,7 +134,7 @@ describe('Process Readiness Feature', () => {
           timestamp: new Date().toISOString()
         } as any);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
         const result = await proc.waitForLog('Server listening on port 3000');
 
         expect(result.line).toContain('Server listening on port 3000');
@@ -186,7 +186,7 @@ describe('Process Readiness Feature', () => {
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
         const result = await proc.waitForLog('Server ready on port 3000');
 
         expect(result.line).toBe('Server ready on port 3000');
@@ -228,7 +228,7 @@ describe('Process Readiness Feature', () => {
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
         const result = await proc.waitForLog('Server listening on port 3000');
 
         // Should find the pattern even though it was split across chunks
@@ -266,7 +266,7 @@ describe('Process Readiness Feature', () => {
           timestamp: new Date().toISOString()
         } as any);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
         const result = await proc.waitForLog(/port (\d+)/);
 
         expect(result.match).toBeDefined();
@@ -319,7 +319,7 @@ describe('Process Readiness Feature', () => {
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
 
         await expect(proc.waitForLog('never-appears', 100)).rejects.toThrow(
           ProcessReadyTimeoutError
@@ -367,7 +367,7 @@ describe('Process Readiness Feature', () => {
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
 
         try {
           await proc.waitForLog('never-found', 100);
@@ -417,7 +417,7 @@ data: {"type":"exit","exitCode":1,"timestamp":"${new Date().toISOString()}"}
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
 
         await expect(proc.waitForLog('Server ready')).rejects.toThrow(
           ProcessExitedBeforeReadyError
@@ -459,7 +459,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
           'streamProcessLogs'
         ).mockResolvedValue(mockStream);
 
-        const proc = await sandbox.startProcess('npm start');
+        const proc = await sandbox.exec('npm start');
 
         try {
           await proc.waitForLog('Server ready');
@@ -523,7 +523,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       ]);
       vi.spyOn(sandbox.client.ports, 'watchPort').mockResolvedValue(mockStream);
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
       await proc.waitForPort(3000);
 
       expect(sandbox.client.ports.watchPort).toHaveBeenCalledWith({
@@ -564,7 +564,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       ]);
       vi.spyOn(sandbox.client.ports, 'watchPort').mockResolvedValue(mockStream);
 
-      const proc = await sandbox.startProcess('postgres');
+      const proc = await sandbox.exec('postgres');
       await proc.waitForPort(5432, { mode: 'tcp' });
 
       expect(sandbox.client.ports.watchPort).toHaveBeenCalledWith({
@@ -605,7 +605,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       ]);
       vi.spyOn(sandbox.client.ports, 'watchPort').mockResolvedValue(mockStream);
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
       await proc.waitForPort(3000, { path: '/health', status: 200 });
 
       expect(sandbox.client.ports.watchPort).toHaveBeenCalledWith({
@@ -647,7 +647,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       ]);
       vi.spyOn(sandbox.client.ports, 'watchPort').mockResolvedValue(mockStream);
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
 
       try {
         await proc.waitForPort(3000);
@@ -690,7 +690,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       });
       vi.spyOn(sandbox.client.ports, 'watchPort').mockResolvedValue(mockStream);
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
 
       try {
         await proc.waitForPort(3000, { timeout: 100, interval: 50 });
@@ -727,7 +727,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm run build');
+      const proc = await sandbox.exec('npm run build');
       const result = await proc.waitForExit();
 
       expect(result.exitCode).toBe(0);
@@ -755,7 +755,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm run build');
+      const proc = await sandbox.exec('npm run build');
       const result = await proc.waitForExit();
 
       expect(result.exitCode).toBe(1);
@@ -783,7 +783,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm run build');
+      const proc = await sandbox.exec('npm run build');
       const result = await proc.waitForExit();
 
       expect(result.exitCode).toBe(0);
@@ -809,7 +809,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('sleep 1000');
+      const proc = await sandbox.exec('sleep 1000');
 
       await expect(proc.waitForExit(100)).rejects.toThrow(
         ProcessReadyTimeoutError
@@ -836,7 +836,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm run build');
+      const proc = await sandbox.exec('npm run build');
 
       await expect(proc.waitForExit()).rejects.toThrow(
         'stream ended unexpectedly'
@@ -885,7 +885,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
 
       try {
         await proc.waitForLog('Server ready');
@@ -938,7 +938,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         mockStream
       );
 
-      const proc = await sandbox.startProcess('npm start');
+      const proc = await sandbox.exec('npm start');
 
       try {
         await proc.waitForLog(/port \d+/);

@@ -1,82 +1,163 @@
 import { vi } from 'vitest';
 
 /**
+ * Shape returned by `sandbox.exec()` / `session.exec()` after the unified
+ * exec refactor (`docs/spikes/EXEC_UNIFICATION.md`). The bridge worker
+ * consumes `stdout` / `stderr` byte streams and awaits `exitCode`, so the
+ * helper below builds a minimal `SandboxProcess`-shaped object that
+ * satisfies the bridge code while letting each test stage its own byte
+ * sequences and exit code.
+ */
+export interface MockExecProcess {
+  stdout: ReadableStream<Uint8Array> | null;
+  stderr: ReadableStream<Uint8Array> | null;
+  exitCode: Promise<number>;
+  kill: (signal?: number | string) => void;
+  output: (opts?: { encoding?: 'utf8' | 'buffer' }) => Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    success: boolean;
+    duration: number;
+    command: string;
+    timestamp: string;
+  }>;
+}
+
+/**
+ * Bun.spawn-style thenable returned by `sandbox.exec()` after the unified
+ * exec refactor: a `Promise<MockExecProcess>` plus `.output()` / `.text()`
+ * / `.json()` / `.kill()` methods attached directly to the promise so
+ * callers can write either `await sandbox.exec(cmd)` or
+ * `await sandbox.exec(cmd).output()`.
+ */
+export type MockExecProcessPromise = Promise<MockExecProcess> & {
+  output: MockExecProcess['output'];
+  text: () => Promise<string>;
+  json: <T = unknown>() => Promise<T>;
+  kill: (signal?: number | string) => Promise<void>;
+};
+
+/**
+ * Wrap a `MockExecProcess` promise as a `MockExecProcessPromise`, matching
+ * the production `createSandboxProcessPromise` shape so test code that
+ * does `sandbox.exec(cmd).output()` works against the mock.
+ */
+export function asMockExecPromise(spawn: Promise<MockExecProcess>): MockExecProcessPromise {
+  const promise = spawn as MockExecProcessPromise;
+  promise.output = async (opts) => (await spawn).output(opts);
+  promise.text = async () => (await promise.output()).stdout;
+  promise.json = async <T>() => JSON.parse(await promise.text()) as T;
+  promise.kill = async (signal) => {
+    (await spawn).kill(signal);
+  };
+  return promise;
+}
+
+/**
+ * Build a `MockExecProcess` whose `stdout` / `stderr` emit the given chunk
+ * sequence (interleaved in declaration order) and whose `exitCode` resolves
+ * to the given code after all chunks have been enqueued.
+ *
+ * Helpful for porting tests that previously used `onOutput` / `onComplete`
+ * callbacks: each `{ stream, data }` entry maps 1:1 to an old
+ * `onOutput(stream, data)` call.
+ */
+export function makeMockExecProcess(
+  chunks: Array<{ stream: 'stdout' | 'stderr'; data: string }> = [],
+  options: { exitCode?: number; error?: Error; command?: string } = {}
+): MockExecProcess {
+  const encoder = new TextEncoder();
+  const stdoutChunks: Uint8Array[] = [];
+  const stderrChunks: Uint8Array[] = [];
+  for (const c of chunks) {
+    const bytes = encoder.encode(c.data);
+    if (c.stream === 'stdout') stdoutChunks.push(bytes);
+    else stderrChunks.push(bytes);
+  }
+
+  const makeStream = (payload: Uint8Array[]): ReadableStream<Uint8Array> | null =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of payload) controller.enqueue(c);
+        controller.close();
+      }
+    });
+
+  const exitCode = options.error ? Promise.reject(options.error) : Promise.resolve(options.exitCode ?? 0);
+  // Mark observed so unhandled-rejection warnings don't flood tests that
+  // never await `exitCode` directly.
+  exitCode.catch(() => undefined);
+
+  const command = options.command ?? '';
+
+  return {
+    stdout: makeStream(stdoutChunks),
+    stderr: makeStream(stderrChunks),
+    exitCode,
+    kill: vi.fn(),
+    output: async () => {
+      const decoder = new TextDecoder();
+      const code = await exitCode.catch(() => 1);
+      return {
+        stdout: stdoutChunks.map((c) => decoder.decode(c)).join(''),
+        stderr: stderrChunks.map((c) => decoder.decode(c)).join(''),
+        exitCode: code,
+        success: code === 0,
+        duration: 0,
+        command,
+        timestamp: new Date().toISOString()
+      };
+    }
+  };
+}
+
+/**
  * Creates a mock session object matching the shape returned by sandbox.getSession().
  * Each method is a vi.fn() so tests can inspect calls and configure returns.
  *
- * The `exec` mock supports streaming: when called with `stream: true`, it
- * invokes `onOutput` / `onComplete` / `onError` callbacks.
+ * The default `exec` returns a `MockExecProcessPromise` (thenable
+ * `Promise<MockExecProcess>` with `.output()` / `.text()` / `.json()` /
+ * `.kill()` attached). Override per-test via `vi.fn(() => asMockExecPromise(...))`.
  */
 export function createMockSession(id = 'mock-session') {
-  const session = {
+  return {
     id,
-    exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const result = { stdout: '', stderr: '', exitCode: 0 };
-      if (opts?.stream) {
-        if (opts.onOutput && typeof opts.onOutput === 'function') {
-          if (result.stdout) (opts.onOutput as (s: string, d: string) => void)('stdout', result.stdout);
-          if (result.stderr) (opts.onOutput as (s: string, d: string) => void)('stderr', result.stderr);
-        }
-        if (opts.onComplete && typeof opts.onComplete === 'function') {
-          (opts.onComplete as (r: { exitCode: number }) => void)(result);
-        }
-      }
-      return result;
-    }),
-    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
-      await session.exec(cmd, {
-        ...opts,
-        stream: true,
-        onComplete(result: { exitCode: number }) {
-          if (typeof opts?.onExit === 'function') {
-            (opts.onExit as (code: number | null) => void)(result.exitCode);
-          }
-        }
-      });
-      return { id: 'mock-process' };
-    }),
+    exec: vi.fn(() => asMockExecPromise(Promise.resolve(makeMockExecProcess()))),
+    run: vi.fn(async () => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      success: true,
+      command: '',
+      duration: 0,
+      timestamp: new Date().toISOString()
+    })),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {})
   };
-  return session;
 }
 
 /**
  * Creates a mock sandbox object matching the shape returned by getSandbox().
  * Each method is a vi.fn() so tests can inspect calls and configure returns.
  *
- * The `exec` mock supports streaming: when called with `stream: true`, it
- * invokes `onOutput` / `onComplete` / `onError` callbacks and returns the
- * final result.
+ * The default `exec` returns a `MockExecProcessPromise` (thenable wrapping
+ * a `MockExecProcess`). Override per-test via
+ * `vi.fn(() => asMockExecPromise(...))` for streams/errors.
  */
 export function createMockSandbox() {
-  const sandbox = {
-    exec: vi.fn(async (_cmd: string, opts?: Record<string, unknown>) => {
-      const result = { stdout: '', stderr: '', exitCode: 0 };
-      if (opts?.stream) {
-        // Streaming mode — fire callbacks if provided
-        if (opts.onOutput && typeof opts.onOutput === 'function') {
-          if (result.stdout) (opts.onOutput as (s: string, d: string) => void)('stdout', result.stdout);
-          if (result.stderr) (opts.onOutput as (s: string, d: string) => void)('stderr', result.stderr);
-        }
-        if (opts.onComplete && typeof opts.onComplete === 'function') {
-          (opts.onComplete as (r: { exitCode: number }) => void)(result);
-        }
-      }
-      return result;
-    }),
-    startProcess: vi.fn(async (cmd: string, opts?: Record<string, unknown>) => {
-      await sandbox.exec(cmd, {
-        ...opts,
-        stream: true,
-        onComplete(result: { exitCode: number }) {
-          if (typeof opts?.onExit === 'function') {
-            (opts.onExit as (code: number | null) => void)(result.exitCode);
-          }
-        }
-      });
-      return { id: 'mock-process' };
-    }),
+  return {
+    exec: vi.fn(() => asMockExecPromise(Promise.resolve(makeMockExecProcess()))),
+    run: vi.fn(async () => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      success: true,
+      command: '',
+      duration: 0,
+      timestamp: new Date().toISOString()
+    })),
     readFile: vi.fn(async () => ({ content: 'file content' })),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {}),
@@ -104,7 +185,6 @@ export function createMockSandbox() {
     },
     destroy: vi.fn(async () => {})
   };
-  return sandbox;
 }
 
 /** Base URL used for all test requests against the Hono app. */

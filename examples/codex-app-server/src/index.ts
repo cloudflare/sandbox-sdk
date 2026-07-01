@@ -96,9 +96,9 @@ function sandboxSetup(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
     (async () => {
       try {
-        await sandbox.exec(
-          'find /workspace -mindepth 1 -delete 2>/dev/null; true'
-        );
+        await sandbox
+          .exec('find /workspace -mindepth 1 -delete 2>/dev/null; true')
+          .output();
         const result = await sandbox.gitCheckout(repoUrl, {
           branch: params.branch as string | undefined,
           targetDir: '/workspace',
@@ -139,6 +139,7 @@ function sandboxExec(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
     sandbox
       .exec(command)
+      .output()
       .then((result) => ctx.sendToClient({ id: msg.id, result }))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -164,11 +165,12 @@ async function ensureCodexRunning(
 ): Promise<string> {
   const procs = await sandbox.listProcesses();
   const existing = procs.find((p) => p.id === 'codex-app-server');
-  if (
-    existing &&
-    (existing.status === 'running' || existing.status === 'starting')
-  )
-    return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
+  if (existing) {
+    const status = await existing.status();
+    if (status === 'running' || status === 'starting') {
+      return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
+    }
+  }
 
   const codexWsToken = generateCapabilityToken();
 
@@ -178,7 +180,7 @@ async function ensureCodexRunning(
   });
   await sandbox.writeFile(CODEX_WS_TOKEN_FILE, codexWsToken);
 
-  const proc = await sandbox.startProcess(
+  const proc = await sandbox.exec(
     `bash -lc "codex app-server --listen ws://0.0.0.0:${CODEX_WS_PORT} --ws-auth capability-token --ws-token-file ${CODEX_WS_TOKEN_FILE}"`,
     { processId: 'codex-app-server' }
   );

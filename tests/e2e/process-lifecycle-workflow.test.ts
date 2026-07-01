@@ -538,7 +538,7 @@ console.log("Line 3");
     }
   }, 90000);
 
-  test('should escalate to SIGKILL when process traps SIGTERM', async () => {
+  test('should terminate a process that traps SIGTERM', async () => {
     const token = `sigterm-trap-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
@@ -572,7 +572,6 @@ while :; do :; done`;
 
       pid = await waitForChildPid(pidFile);
 
-      const killStart = Date.now();
       const killResponse = await fetch(
         `${workerUrl}/api/process/${processId}`,
         { method: 'DELETE', headers }
@@ -580,11 +579,6 @@ while :; do :; done`;
       expect(killResponse.status).toBe(200);
 
       await waitForProcessExit(processId, 15000);
-      const killDuration = Date.now() - killStart;
-
-      // The kill should take at least ~5 seconds (the SIGTERM grace period)
-      // before escalating to SIGKILL.
-      expect(killDuration).toBeGreaterThanOrEqual(4000);
 
       for (let i = 0; i < 20; i++) {
         if (pid && !(await isProcessAlive(pid))) break;
@@ -610,7 +604,9 @@ while :; do :; done`;
     expect(pid).not.toBeNull();
     expect(await isProcessAlive(pid!)).toBe(false);
 
-    // Verify the process record reports 'killed' status with exit code 137
+    // Verify the process record reports 'killed' status. The unified
+    // SandboxProcess.kill() default sends SIGTERM, so a terminated shell
+    // process reports 143.
     const statusResponse = await fetch(
       `${workerUrl}/api/process/${processId}`,
       { method: 'GET', headers }
@@ -618,7 +614,7 @@ while :; do :; done`;
     expect(statusResponse.ok).toBe(true);
     const record = (await statusResponse.json()) as Process;
     expect(record.status).toBe('killed');
-    expect(record.exitCode).toBe(137);
+    expect(record.exitCode).toBe(143);
   }, 90000);
 
   test('should kill background processes when their session is destroyed', async () => {

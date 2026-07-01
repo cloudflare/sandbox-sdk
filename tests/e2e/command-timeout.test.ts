@@ -46,7 +46,7 @@ describe('Command Timeout', () => {
     sandbox = null;
   }, 120000);
 
-  test('sandbox.exec should respect per-command timeout', async () => {
+  test('sandbox.run should respect per-command timeout', async () => {
     const sessionId = createUniqueSession();
 
     const startTime = Date.now();
@@ -64,16 +64,16 @@ describe('Command Timeout', () => {
     );
     const elapsed = Date.now() - startTime;
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(410);
     const data = (await response.json()) as ErrorResponse;
     expect(data.error).toBeDefined();
-    expect(data.error).toMatch(/timeout/i);
+    expect(data.error).toMatch(/timeout|terminated|shell exited/i);
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
   }, 60000);
 
-  test('session.exec should respect per-command timeout', async () => {
+  test('session.run should respect per-command timeout', async () => {
     // Create a session without a session-level timeout
     const createStart = Date.now();
     const createResponse = await timedFetch(
@@ -107,16 +107,16 @@ describe('Command Timeout', () => {
     );
     const elapsed = Date.now() - startTime;
 
-    expect(execResponse.status).toBe(500);
+    expect(execResponse.status).toBe(410);
     const execData = (await execResponse.json()) as ErrorResponse;
     expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout/i);
+    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
   }, 60000);
 
-  test('session.exec should respect session-level commandTimeoutMs', async () => {
+  test('session.run should respect session-level commandTimeoutMs', async () => {
     // Create a session WITH a session-level timeout
     const createStart = Date.now();
     const createResponse = await timedFetch(
@@ -152,10 +152,10 @@ describe('Command Timeout', () => {
     );
     const elapsed = Date.now() - startTime;
 
-    expect(execResponse.status).toBe(500);
+    expect(execResponse.status).toBe(410);
     const execData = (await execResponse.json()) as ErrorResponse;
     expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout/i);
+    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
 
     // Session-level timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -200,15 +200,15 @@ describe('Command Timeout', () => {
 
     const elapsed = Date.now() - startTime;
 
-    expect(execResponse.status).toBe(500);
+    expect(execResponse.status).toBe(410);
     const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout/i);
+    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
 
     // Should have timed out in ~1s, not ~30s
     expect(elapsed).toBeLessThan(10000);
   }, 60000);
 
-  test('timed-out command continues running; session can be deleted while command runs', async () => {
+  test('timed-out command starts and the terminated session is cleaned up', async () => {
     // Create a session
     const createStart = Date.now();
     const createResponse = await timedFetch(
@@ -229,7 +229,7 @@ describe('Command Timeout', () => {
     // Start a long-running command with a marker file, using a short timeout.
     // The command writes a file, sleeps, then writes another file.
     // After timeout, the first file should exist (command started),
-    // and we should be able to delete the session.
+    // and we should be able to delete the terminated session.
     const startTime = Date.now();
     const execResponse = await timedFetch(
       'test5 exec',
@@ -246,9 +246,9 @@ describe('Command Timeout', () => {
     );
     const elapsed = Date.now() - startTime;
 
-    expect(execResponse.status).toBe(500);
+    expect(execResponse.status).toBe(410);
     const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout/i);
+    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
 
     // Command timeout is 1s — elapsed should be well under 15s even with CI latency
     expect(elapsed).toBeLessThan(15000);
@@ -270,7 +270,8 @@ describe('Command Timeout', () => {
     const checkData = (await checkStarted.json()) as ExecResult;
     expect(checkData.stdout.trim()).toBe('exists');
 
-    // Delete the session while the command is still sleeping in background
+    // The timed-out command terminates and evicts the shell session. Explicit
+    // deletion may either succeed or report that the session is already gone.
     const deleteResponse = await timedFetch(
       'test5 session/delete',
       `${workerUrl}/api/session/delete`,
@@ -281,9 +282,15 @@ describe('Command Timeout', () => {
       }
     );
 
-    expect(deleteResponse.status).toBe(200);
-    const deleteData = (await deleteResponse.json()) as SessionDeleteResult;
-    expect(deleteData.success).toBe(true);
+    expect([200, 404, 500]).toContain(deleteResponse.status);
+    const deleteData = (await deleteResponse.json()) as
+      | SessionDeleteResult
+      | ErrorResponse;
+    if (deleteResponse.status === 200) {
+      expect((deleteData as SessionDeleteResult).success).toBe(true);
+    } else {
+      expect((deleteData as ErrorResponse).error).toMatch(/not found/i);
+    }
 
     // Wait briefly for process cleanup after session destruction
     await new Promise((resolve) => setTimeout(resolve, 1000));

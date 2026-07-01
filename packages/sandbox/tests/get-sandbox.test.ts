@@ -299,52 +299,47 @@ describe('getSandbox', () => {
 
     it('routes implicit exec through direct sandbox exec', async () => {
       mockStub.exec = vi.fn().mockResolvedValue({
-        success: true,
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        command: 'echo test',
-        timestamp: new Date().toISOString()
+        id: 'proc-sessionless',
+        pid: 1234,
+        command: 'sleep 10',
+        sessionId: undefined,
+        startTime: new Date(),
+        stdin: null,
+        stdout: null,
+        stderr: null,
+        exitCode: Promise.resolve(0),
+        output: async () => ({
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          success: true,
+          duration: 0,
+          command: 'sleep 10',
+          timestamp: new Date().toISOString()
+        }),
+        kill: () => undefined,
+        status: async () => 'running',
+        getLogs: async () => ({ stdout: '', stderr: '' }),
+        waitForLog: async () => ({ line: '' }),
+        waitForPort: async () => undefined,
+        waitForExit: async () => ({ exitCode: 0 })
       });
+
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
-      await sandbox.exec('echo test', {
+      await sandbox.exec('sleep 10', {
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
         timeout: 1000
       });
 
-      expect(mockStub.exec).toHaveBeenCalledWith('echo test', {
+      expect(mockStub.exec).toHaveBeenCalledWith('sleep 10', {
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
         timeout: 1000
       });
       expect('execWithSessionToken' in mockStub).toBe(false);
-    });
-
-    it('routes implicit startProcess without a session ID', async () => {
-      mockStub.startProcess = vi.fn().mockResolvedValue({
-        success: true,
-        processId: 'proc-sessionless',
-        command: 'sleep 10',
-        timestamp: new Date().toISOString()
-      });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.startProcess('sleep 10', {
-        env: { TEST_ENV: '1' },
-        cwd: '/workspace/app',
-        timeout: 1000
-      });
-
-      expect(mockStub.startProcess).toHaveBeenCalledWith('sleep 10', {
-        env: { TEST_ENV: '1' },
-        cwd: '/workspace/app',
-        timeout: 1000
-      });
     });
 
     it('keeps implicit process reads sandbox-scoped', async () => {

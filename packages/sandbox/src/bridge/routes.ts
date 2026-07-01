@@ -12,6 +12,7 @@ import type {
   MountBucketOptions,
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions,
+  SandboxTerminal,
   TerminalConnectOptions,
   TerminalOptions,
   TunnelInfo,
@@ -59,6 +60,7 @@ import type {
  */
 type BridgeSandbox = ISandbox & {
   getSession(sessionId: string): Promise<ExecutionSession>;
+  terminal(options?: TerminalOptions): SandboxTerminal;
   destroy(): Promise<void>;
   tunnels: {
     get(port: number, options?: TunnelOptions): Promise<TunnelInfo>;
@@ -509,25 +511,40 @@ export function createBridgeApp(
       lastWrite.then(() => writer.close()).catch(() => {});
     }
 
-    executor
-      .startProcess(command, {
-        ...opts,
-        onOutput(stream: 'stdout' | 'stderr', data: string) {
-          writeSSE(stream, toBase64(data));
-        },
-        onExit(code: number | null) {
-          writeSSE('exit', JSON.stringify({ exit_code: code ?? -1 }));
-          closeStream();
-        },
-        onError(err: Error) {
-          writeSSE(
-            'error',
-            JSON.stringify({ error: err.message, code: 'exec_error' })
-          );
-          closeStream();
-        }
-      })
-      .catch((err: unknown) => {
+    // Spawn the process and pump its stdout/stderr/exit through the SSE
+    // writer. Replaces the legacy callback shape with the unified
+    // `SandboxProcess` handle.
+    (async () => {
+      try {
+        const proc = await executor.exec(command, opts);
+
+        const decoder = new TextDecoder();
+        const pump = async (
+          stream: ReadableStream<Uint8Array> | null,
+          name: 'stdout' | 'stderr'
+        ) => {
+          if (!stream) return;
+          const reader = stream.getReader();
+          try {
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (value && value.byteLength > 0) {
+                writeSSE(name, toBase64(decoder.decode(value)));
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+        };
+
+        await Promise.all([
+          pump(proc.stdout, 'stdout'),
+          pump(proc.stderr, 'stderr')
+        ]);
+        const exitCode = await proc.exitCode;
+        writeSSE('exit', JSON.stringify({ exit_code: exitCode }));
+      } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         writeSSE(
           'error',
@@ -536,8 +553,10 @@ export function createBridgeApp(
             code: 'exec_transport_error'
           })
         );
+      } finally {
         closeStream();
-      });
+      }
+    })();
 
     return new Response(readable, {
       status: 200,
@@ -833,11 +852,11 @@ export function createBridgeApp(
       : `tar cf ${shellQuote(tmpPath)} -C ${shellQuote(root)} .`;
 
     try {
-      const result = await sandbox.exec(tarCmd);
+      const result = await sandbox.exec(tarCmd).output({ encoding: 'utf8' });
 
       if (result.exitCode !== 0) {
         return errorJson(
-          `tar failed (exit ${result.exitCode}): ${result.stderr}`,
+          `tar failed (exit ${result.exitCode}): ${result.stderr as string}`,
           'workspace_archive_read_error',
           502
         );
@@ -905,12 +924,14 @@ export function createBridgeApp(
       }
       await sandbox.writeFile(tmpPath, b64, { encoding: 'base64' });
 
-      const extractResult = await sandbox.exec(
-        `tar xf ${shellQuote(tmpPath)} -C ${shellQuote(root)} && rm -f ${shellQuote(tmpPath)}`
-      );
+      const extractResult = await sandbox
+        .exec(
+          `tar xf ${shellQuote(tmpPath)} -C ${shellQuote(root)} && rm -f ${shellQuote(tmpPath)}`
+        )
+        .output({ encoding: 'utf8' });
       if (extractResult.exitCode !== 0) {
         return errorJson(
-          `tar extract failed (exit ${extractResult.exitCode}): ${extractResult.stderr}`,
+          `tar extract failed (exit ${extractResult.exitCode}): ${extractResult.stderr as string}`,
           'workspace_archive_write_error',
           502
         );

@@ -149,6 +149,7 @@ export class ProcessService {
           timeoutMs: options.timeoutMs,
           env: options.env,
           origin: options.origin,
+          stdin: options.stdin,
           commandId: processRecordData.id,
           onEvent: async (event) => {
             // Route events to process record listeners.
@@ -166,15 +167,26 @@ export class ProcessService {
                 origin: options.origin
               });
             } else if (event.type === 'stdout' && event.data) {
-              storedRecord.stdout += event.data;
-              storedRecord.outputListeners.forEach((listener) => {
-                listener('stdout', event.data!);
-              });
+              if (storedRecord.stdoutMode === 'pipe') {
+                storedRecord.stdout += event.data;
+                storedRecord.outputListeners.forEach((listener) => {
+                  listener('stdout', event.data!);
+                });
+              }
             } else if (event.type === 'stderr' && event.data) {
-              storedRecord.stderr += event.data;
-              storedRecord.outputListeners.forEach((listener) => {
-                listener('stderr', event.data!);
-              });
+              if (storedRecord.stderrMode === 'combined') {
+                if (storedRecord.stdoutMode === 'pipe') {
+                  storedRecord.stdout += event.data;
+                  storedRecord.outputListeners.forEach((listener) => {
+                    listener('stdout', event.data!);
+                  });
+                }
+              } else if (storedRecord.stderrMode === 'pipe') {
+                storedRecord.stderr += event.data;
+                storedRecord.outputListeners.forEach((listener) => {
+                  listener('stderr', event.data!);
+                });
+              }
             } else if (event.type === 'complete') {
               const exitCode = event.exitCode ?? 0;
               const status = this.manager.interpretExitCode(exitCode);
@@ -404,7 +416,10 @@ export class ProcessService {
     }
   }
 
-  async killProcess(id: string): Promise<ServiceResult<void>> {
+  async killProcess(
+    id: string,
+    signal?: NodeJS.Signals
+  ): Promise<ServiceResult<void>> {
     try {
       const process = await this.store.get(id);
 
@@ -429,7 +444,10 @@ export class ProcessService {
         };
       }
 
-      const result = await this.executionService.kill(process.commandHandle);
+      const result = await this.executionService.kill(
+        process.commandHandle,
+        signal
+      );
 
       if (result.success) {
         await this.store.update(id, {

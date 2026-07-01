@@ -1,6 +1,6 @@
 import type { Config } from '@opencode-ai/sdk/v2';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
-import { createLogger, type Logger, type Process } from '@repo/shared';
+import { createLogger, type Logger, type SandboxProcess } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 import { OpencodeStartupError } from './types';
@@ -55,17 +55,18 @@ async function ensureSdkLoaded(): Promise<void> {
 async function findExistingOpencodeProcess(
   sandbox: Sandbox<unknown>,
   port: number
-): Promise<Process | null> {
+): Promise<SandboxProcess | null> {
   const processes = await sandbox.listProcesses();
   const serveCommand = OPENCODE_SERVE(port);
 
-  for (const proc of processes) {
-    // Match commands that contain the serve command (with or without cd prefix)
-    if (proc.command.includes(serveCommand)) {
-      if (proc.status === 'starting' || proc.status === 'running') {
-        return proc;
-      }
-    }
+  // Re-attach (via `getProcess`) so the returned handle has live
+  // replay-then-tail streams; the snapshot from `listProcesses` has
+  // `stdout`/`stderr` set to `null`.
+  for (const snapshot of processes) {
+    if (!snapshot.command.includes(serveCommand)) continue;
+    const status = await snapshot.status();
+    if (status !== 'starting' && status !== 'running') continue;
+    return (await sandbox.getProcess(snapshot.id)) ?? snapshot;
   }
 
   return null;
@@ -83,12 +84,12 @@ async function ensureOpencodeServer(
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
-): Promise<Process> {
+): Promise<SandboxProcess> {
   // Check if OpenCode is already running on this port
   const existingProcess = await findExistingOpencodeProcess(sandbox, port);
   if (existingProcess) {
     // Reuse existing process - wait for it to be ready if still starting
-    if (existingProcess.status === 'starting') {
+    if ((await existingProcess.status()) === 'starting') {
       getLogger().debug('Found starting OpenCode process, waiting for ready', {
         port,
         processId: existingProcess.id
@@ -138,7 +139,7 @@ async function ensureOpencodeServer(
         }
       );
       // Wait for the concurrent server to be ready
-      if (retryProcess.status === 'starting') {
+      if ((await retryProcess.status()) === 'starting') {
         try {
           await retryProcess.waitForPort(port, {
             mode: 'http',
@@ -172,7 +173,7 @@ async function startOpencodeServer(
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
-): Promise<Process> {
+): Promise<SandboxProcess> {
   getLogger().info('Starting OpenCode server', { port, directory });
 
   // Pass config via OPENCODE_CONFIG_CONTENT and also extract API keys to env vars
@@ -234,7 +235,7 @@ async function startOpencodeServer(
   }
 
   const command = buildOpencodeCommand(port, directory);
-  const process = await sandbox.startProcess(command, {
+  const process = await sandbox.exec(command, {
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
@@ -329,7 +330,12 @@ export async function createOpencodeServer(
   return {
     port,
     url: `http://localhost:${port}`,
-    close: () => process.kill()
+    close: async () => {
+      process.kill('SIGTERM');
+      await process.exitCode.catch(() => {
+        /* exit observed */
+      });
+    }
   };
 }
 

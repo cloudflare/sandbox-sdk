@@ -73,17 +73,19 @@ app.post('/sandboxes/:id/commit/:filename', async (c) => {
 
   const state = await ensureSandboxRepo(c.env, sandboxID);
 
-  const result = await state.sandbox.exec(COMMIT_SCRIPT, {
-    env: {
-      DEFAULT_BRANCH: state.defaultBranch,
-      FILE_NAME: filename,
-      FILE_CONTENT: content,
-      REPO_DIR: `/workspace/repos/${sandboxID}`
-    },
-    timeout: 30_000
-  });
-  const stdout = redactSecret(result.stdout, state.tokenSecret);
-  const stderr = redactSecret(result.stderr, state.tokenSecret);
+  const result = await state.sandbox
+    .exec(COMMIT_SCRIPT, {
+      env: {
+        DEFAULT_BRANCH: state.defaultBranch,
+        FILE_NAME: filename,
+        FILE_CONTENT: content,
+        REPO_DIR: `/workspace/repos/${sandboxID}`
+      },
+      timeout: 30_000
+    })
+    .output();
+  const stdout = redactSecret(result.stdout as string, state.tokenSecret);
+  const stderr = redactSecret(result.stderr as string, state.tokenSecret);
 
   if (!result.success) {
     return c.json(

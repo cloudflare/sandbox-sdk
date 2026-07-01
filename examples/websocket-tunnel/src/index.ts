@@ -95,7 +95,7 @@ export default {
 
     const proc = await sandbox.getProcess('ws-server');
     if (!proc) {
-      const proc = await sandbox.startProcess('bun /app/server.js', {
+      const proc = await sandbox.exec('bun /app/server.js', {
         processId: 'ws-server',
         env: { PORT: `${WS_PORT}` }
       });

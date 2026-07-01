@@ -35,7 +35,14 @@ interface QuickTunnelInfo {
   name?: never;
 }
 
-describe('Quick tunnel round-trip', () => {
+// Quick tunnels depend on cloudflared reaching Cloudflare's quick-tunnel
+// service from inside the container. In local Docker/wrangler-dev this is
+// environment-dependent and commonly fails with "cloudflared exited before
+// becoming ready". Run this suite against the deployed E2E worker in CI,
+// where network/egress is known-good.
+const skipQuickTunnelLocally = !process.env.TEST_WORKER_URL;
+
+describe.skipIf(skipQuickTunnelLocally)('Quick tunnel round-trip', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
   let sandbox: TestSandbox | null = null;

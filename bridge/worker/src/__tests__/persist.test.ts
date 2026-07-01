@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockEnv, createMockSandbox, createSSEFileStream, sandboxUrl } from './helpers';
+import {
+  asMockExecPromise,
+  createMockEnv,
+  createMockSandbox,
+  createSSEFileStream,
+  makeMockExecProcess,
+  sandboxUrl
+} from './helpers';
 
 const mockSandbox = createMockSandbox();
 vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
@@ -14,7 +21,12 @@ const env = createMockEnv();
 describe('POST /v1/sandbox/:id/persist — hardcoded root, exclude validation, quoting', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    // Post-unification: bridge calls `sandbox.exec(cmd).output()`. Mock
+    // returns a `MockExecProcessPromise` whose `.output()` resolves to a
+    // successful exit-0 result.
+    mockSandbox.exec.mockImplementation(() =>
+      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { exitCode: 0 })))
+    );
     mockSandbox.readFileStream.mockResolvedValue(createSSEFileStream('tar-data', { isBinary: true }));
   });
 

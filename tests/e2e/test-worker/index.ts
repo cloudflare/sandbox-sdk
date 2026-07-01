@@ -19,9 +19,146 @@ import {
   ContainerProxy,
   getSandbox,
   isPlatformTransientError,
-  proxyToSandbox
+  proxyToSandbox,
+  type SandboxProcess
 } from '@cloudflare/sandbox';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+
+// ---------------------------------------------------------------------------
+// Legacy SSE shims for the unified `SandboxProcess` handle.
+//
+// E2E tests pre-date the exec unification and consume the old `execStream` /
+// `streamProcessLogs` SSE frame shapes (`{ type: 'stdout' | 'stderr' | 'exit'
+// | 'complete' | 'error', data?, exitCode?, processId? }`). The shims below
+// re-encode the raw stdout/stderr byte streams + exitCode into those frames
+// so the E2E tests can stay unchanged. These should be deleted when the E2E
+// tests are migrated to consume `proc.stdout` / `proc.stderr` directly.
+// ---------------------------------------------------------------------------
+
+function legacyExecStreamShim(
+  proc: SandboxProcess
+): ReadableStream<Uint8Array> {
+  return legacyStreamFromProcess(proc, 'complete');
+}
+
+function legacyProcessLogShim(
+  proc: SandboxProcess
+): ReadableStream<Uint8Array> {
+  return legacyStreamFromProcess(proc, 'exit');
+}
+
+/**
+ * Marshal a `SandboxProcess` into the legacy `Process` JSON shape that
+ * pre-unification E2E tests expect: `{ id, pid, command, status,
+ * startTime, sessionId }`. `status()` is now an async method on the new
+ * handle, so we await it here before serialising.
+ */
+async function toLegacyProcessJson(proc: SandboxProcess): Promise<{
+  id: string;
+  pid: number | undefined;
+  command: string;
+  status: string;
+  startTime: Date;
+  sessionId: string | undefined;
+  exitCode?: number;
+}> {
+  const status = await proc.status();
+  let exitCode: number | undefined;
+  if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+    try {
+      exitCode = (await proc.waitForExit(1000)).exitCode;
+    } catch {
+      // Legacy JSON tolerated missing exitCode on malformed records; keep
+      // that behaviour if the exit code cannot be recovered quickly.
+    }
+  }
+  return {
+    id: proc.id,
+    pid: proc.pid >= 0 ? proc.pid : undefined,
+    command: proc.command,
+    status,
+    startTime: proc.startTime,
+    sessionId: proc.sessionId,
+    ...(exitCode !== undefined && { exitCode })
+  };
+}
+
+function legacyStreamFromProcess(
+  proc: SandboxProcess,
+  exitEventName: 'exit' | 'complete'
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const writeFrame = (frame: Record<string, unknown>) => {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`)
+        );
+      };
+
+      // Legacy execStream emitted a `start` frame first. Preserve that
+      // shape for E2E consumers while the Worker endpoint remains
+      // backwards-compatible.
+      writeFrame({
+        type: 'start',
+        pid: proc.pid,
+        command: proc.command,
+        processId: proc.id,
+        timestamp: new Date().toISOString()
+      });
+
+      const pump = async (
+        stream: ReadableStream<Uint8Array> | null,
+        name: 'stdout' | 'stderr'
+      ) => {
+        if (!stream) return;
+        const reader = stream.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) {
+              writeFrame({
+                type: name,
+                data: decoder.decode(value),
+                processId: proc.id,
+                timestamp: new Date().toISOString()
+              });
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      };
+
+      try {
+        await Promise.all([
+          pump(proc.stdout, 'stdout'),
+          pump(proc.stderr, 'stderr')
+        ]);
+        const exitCode = await proc.exitCode;
+        writeFrame({
+          type: exitEventName,
+          exitCode,
+          processId: proc.id,
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        writeFrame({
+          type: 'error',
+          data: err instanceof Error ? err.message : String(err),
+          processId: proc.id,
+          timestamp: new Date().toISOString()
+        });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+}
+
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -250,19 +387,24 @@ export default {
       // WebSocket init endpoint - starts all WebSocket servers
       if (url.pathname === '/api/init' && request.method === 'POST') {
         const processes = await sandbox.listProcesses();
-        const isServerRunning = (commandFragment: string): boolean =>
-          processes.some(
-            (p) => p.status === 'running' && p.command.includes(commandFragment)
-          );
+        const isServerRunning = async (
+          commandFragment: string
+        ): Promise<boolean> => {
+          for (const p of processes) {
+            if (!p.command.includes(commandFragment)) continue;
+            if ((await p.status()) === 'running') return true;
+          }
+          return false;
+        };
 
         const serversToStart: Array<{
           name: string;
           port: number;
-          start: Promise<Process>;
+          start: Promise<SandboxProcess>;
         }> = [];
 
         // Echo server
-        if (!isServerRunning('/tmp/ws-echo.ts')) {
+        if (!(await isServerRunning('/tmp/ws-echo.ts'))) {
           const echoScript = `
 const port = 8080;
 Bun.serve({
@@ -283,7 +425,9 @@ console.log('Echo server on port ' + port);
           serversToStart.push({
             name: 'echo',
             port: 8080,
-            start: sandbox.startProcess('bun run /tmp/ws-echo.ts')
+            // Materialize to a Promise<SandboxProcess> so the call site can
+            // await it inside `Promise.allSettled` below.
+            start: Promise.resolve(sandbox.exec('bun run /tmp/ws-echo.ts'))
           });
         }
 
@@ -424,15 +568,61 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      // Command execution
+      // Buffered command execution. Without stdin this intentionally uses
+      // `run()` (the foreground session-shell path) so legacy E2E coverage
+      // still validates persistent session behaviour like `cd`, aliases,
+      // functions, session-level timeouts, and shell termination recovery.
+      // When a `stdin` string or `mode: 'exec'` is supplied, use the unified
+      // `exec()` path so tests can exercise `SandboxExecOptions` end-to-end.
       if (url.pathname === '/api/execute' && request.method === 'POST') {
-        const result = await executor.exec(body.command, {
+        const result =
+          typeof body.stdin === 'string' || body.mode === 'exec'
+            ? await (
+                await executor.exec(body.command, {
+                  env: body.env,
+                  cwd: body.cwd,
+                  timeout: body.timeout,
+                  ...(typeof body.stdin === 'string' && { stdin: body.stdin })
+                })
+              ).output({ encoding: 'utf8' })
+            : await executor.run(body.command, {
+                env: body.env,
+                cwd: body.cwd,
+                timeout: body.timeout
+              });
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Command execution with streaming. Replaces the legacy `execStream`
+      // SSE endpoint with a stdout/stderr multiplex over SSE, sourced from
+      // the unified `SandboxProcess.stdout` / `.stderr` byte streams.
+      if (url.pathname === '/api/execStream' && request.method === 'POST') {
+        console.log(
+          '[TestWorker] execStream called for command:',
+          body.command
+        );
+        const startTime = Date.now();
+        const proc = await executor.exec(body.command, {
           env: body.env,
           cwd: body.cwd,
           timeout: body.timeout
         });
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
+        const stream = legacyExecStreamShim(proc);
+        console.log(
+          '[TestWorker] Stream received in',
+          Date.now() - startTime,
+          'ms'
+        );
+
+        // Return SSE stream directly
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive'
+          }
         });
       }
 
@@ -629,16 +819,17 @@ console.log('Echo server on port ' + port);
 
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
-        const process = await executor.startProcess(body.command, {
+        const process = await executor.exec(body.command, {
           processId: body.processId,
           env: body.env,
           cwd: body.cwd,
           timeout: body.timeout,
           autoCleanup: body.autoCleanup
         });
-        return new Response(JSON.stringify(process), {
-          headers: { 'Content-Type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify(await toLegacyProcessJson(process)),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
       }
 
       // Process waitForLog - waits for a log pattern
@@ -729,7 +920,10 @@ console.log('Echo server on port ' + port);
       // Process list
       if (url.pathname === '/api/process/list' && request.method === 'GET') {
         const processes = await executor.listProcesses();
-        return new Response(JSON.stringify(processes), {
+        const serialised = await Promise.all(
+          processes.map((p) => toLegacyProcessJson(p))
+        );
+        return new Response(JSON.stringify(serialised), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -744,17 +938,31 @@ console.log('Echo server on port ' + port);
 
         // Handle /api/process/:id/logs
         if (pathParts[4] === 'logs') {
-          const logs = await executor.getProcessLogs(processId);
-          return new Response(JSON.stringify(logs), {
+          const proc = await executor.getProcess(processId);
+          if (!proc) {
+            return new Response(
+              JSON.stringify({ error: 'Process not found' }),
+              { status: 404, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          const logs = await proc.getLogs();
+          return new Response(JSON.stringify({ ...logs, processId }), {
             headers: { 'Content-Type': 'application/json' }
           });
         }
 
-        // Handle /api/process/:id/stream (SSE)
+        // Handle /api/process/:id/stream (SSE) — emits the legacy SSE log
+        // event shape `{ type, data | exitCode, processId }` for the
+        // benefit of existing E2E test consumers.
         if (pathParts[4] === 'stream') {
-          const stream = await executor.streamProcessLogs(processId);
-
-          return new Response(stream, {
+          const proc = await executor.getProcess(processId);
+          if (!proc) {
+            return new Response(
+              JSON.stringify({ error: 'Process not found' }),
+              { status: 404, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          return new Response(legacyProcessLogShim(proc), {
             headers: {
               'Content-Type': 'text/event-stream',
               'Cache-Control': 'no-cache',
@@ -766,19 +974,35 @@ console.log('Echo server on port ' + port);
         // Handle /api/process/:id (get single process)
         if (!pathParts[4]) {
           const process = await executor.getProcess(processId);
-          return new Response(JSON.stringify(process), {
-            headers: { 'Content-Type': 'application/json' }
-          });
+          if (!process) {
+            return new Response(
+              JSON.stringify({ error: 'Process not found' }),
+              { status: 404, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          return new Response(
+            JSON.stringify(await toLegacyProcessJson(process)),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
         }
       }
 
-      // Process kill by ID
+      // Process kill by ID. Returns 404 when the process record doesn't
+      // exist (was the legacy behaviour) so error-handling tests can
+      // distinguish missing-process from successful kill.
       if (
         url.pathname.startsWith('/api/process/') &&
         request.method === 'DELETE'
       ) {
         const processId = url.pathname.split('/')[3];
-        await executor.killProcess(processId);
+        const proc = await executor.getProcess(processId);
+        if (!proc) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        proc.kill();
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });

@@ -94,7 +94,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'echo "$CMD_VAR"',
-        env: { CMD_VAR: 'command-specific-value' }
+        env: { CMD_VAR: 'command-specific-value' },
+        mode: 'exec'
       })
     });
 
@@ -147,7 +148,8 @@ describe('Environment Variables', () => {
       headers,
       body: JSON.stringify({
         command: 'echo "$OVERRIDE_TEST"',
-        env: { OVERRIDE_TEST: 'command-level' }
+        env: { OVERRIDE_TEST: 'command-level' },
+        mode: 'exec'
       })
     });
     const overrideData = (await overrideResponse.json()) as ExecResult;

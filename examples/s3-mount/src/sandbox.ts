@@ -40,18 +40,18 @@ export async function mountBucket(
   env: Env
 ): Promise<MountResult> {
   // Idempotent: skip if already mounted
-  const mountCheck = await sandbox.exec(
-    '(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)'
-  );
-  if (mountCheck.stdout.trim() === 'mounted') {
+  const mountCheck = await sandbox
+    .exec('(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)')
+    .text();
+  if (mountCheck.trim() === 'mounted') {
     return { ok: true, status: 'already-mounted' };
   }
 
   // Verify /dev/fuse is available before attempting the mount
-  const fuseCheck = await sandbox.exec(
-    '(test -c /dev/fuse && echo ok || echo missing)'
-  );
-  if (fuseCheck.stdout.trim() !== 'ok') {
+  const fuseCheck = await sandbox
+    .exec('(test -c /dev/fuse && echo ok || echo missing)')
+    .text();
+  if (fuseCheck.trim() !== 'ok') {
     return { ok: false, error: '/dev/fuse is not available in this container' };
   }
 
@@ -72,7 +72,7 @@ export async function mountBucket(
     '--foreground'
   ].join(' ');
 
-  await sandbox.startProcess(mountCmd, {
+  await sandbox.exec(mountCmd, {
     env: {
       AWS_CONTAINER_CREDENTIALS_FULL_URI: CREDENTIALS_URI,
       AWS_REGION: env.AWS_REGION
@@ -84,20 +84,20 @@ export async function mountBucket(
   // Poll until the mount is live (up to 10 seconds)
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const poll = await sandbox.exec(
-      '(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)'
-    );
-    if (poll.stdout.trim() === 'mounted') {
+    const poll = await sandbox
+      .exec('(mountpoint -q /mnt/s3 && echo mounted || echo not-mounted)')
+      .text();
+    if (poll.trim() === 'mounted') {
       await installShellAutoCd(sandbox);
       return { ok: true, status: 'mounted' };
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 500));
   }
 
-  const diag = await sandbox.exec(
-    '(ls -la /dev/fuse; dmesg 2>/dev/null | tail -5 || true)'
-  );
-  return { ok: false, error: 'mount timed out', diagnostics: diag.stdout };
+  const diag = await sandbox
+    .exec('(ls -la /dev/fuse; dmesg 2>/dev/null | tail -5 || true)')
+    .text();
+  return { ok: false, error: 'mount timed out', diagnostics: diag };
 }
 
 /**
@@ -116,9 +116,11 @@ async function installShellAutoCd(
     BASHRC_MARKER,
     'if [ -d /mnt/s3 ] && [ "$PWD" = "$HOME" ]; then cd /mnt/s3 2>/dev/null; fi'
   ].join('\n');
-  await sandbox.exec(
-    `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`
-  );
+  await sandbox
+    .exec(
+      `grep -qF ${shellQuote(BASHRC_MARKER)} ~/.bashrc 2>/dev/null || printf '%s\n' ${shellQuote(snippet)} >> ~/.bashrc`
+    )
+    .output();
 }
 
 function shellQuote(s: string): string {
@@ -134,5 +136,6 @@ function shellQuote(s: string): string {
 export async function unmountBucket(
   sandbox: ReturnType<typeof getSandbox>
 ): Promise<void> {
-  await sandbox.exec('(fusermount -u /mnt/s3 2>&1 || true)');
+  // Subshell so a non-zero exit doesn't poison the default session.
+  await sandbox.exec('(fusermount -u /mnt/s3 2>&1 || true)').output();
 }

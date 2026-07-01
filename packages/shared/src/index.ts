@@ -187,8 +187,18 @@ export type {
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
+  // Unified exec surface (mirrors ctx.container.exec contract)
+  SandboxExecBufferOutput,
+  SandboxExecOptions,
+  SandboxExecOutput,
+  SandboxExecStringOutput,
   // Sandbox configuration options
   SandboxOptions,
+  SandboxOutputEncoding,
+  SandboxOutputMode,
+  SandboxProcess,
+  SandboxProcessPromise,
+  SandboxStderrMode,
   // Session management result types
   SessionCreateResult,
   SessionDeleteResult,

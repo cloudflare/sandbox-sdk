@@ -50,7 +50,7 @@ async function handleExec(request: Request, env: Env): Promise<Response> {
 
   try {
     const sandbox = getSandbox(env.Sandbox, 'time-machine');
-    const result = await sandbox.exec(command);
+    const result = await sandbox.exec(command).output();
 
     return Response.json({
       stdout: result.stdout,

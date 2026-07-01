@@ -82,7 +82,7 @@ export default {
 
     // Execute Python code
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('python3 -c "print(2 + 2)"');
+      const result = await sandbox.exec('python3 -c "print(2 + 2)"').output();
       return Response.json({ output: result.stdout, success: result.success });
     }
 
@@ -154,7 +154,7 @@ Notes:
 - **Edge-Native** - Runs on Cloudflare's global network
 - **Code Interpreter** - Execute Python and JavaScript with rich outputs
 - **File System Access** - Read, write, and manage files
-- **Command Execution** - Run any command with streaming support
+- **Command Execution** - Run commands with a Containers-style process handle, streaming output, stdin, and background process control
 - **Preview URLs** - Expose services with public URLs
 - **Quick tunnels** - Zero-config `*.trycloudflare.com` URLs via `sandbox.tunnels.get(port)`
 - **Git Integration** - Clone repositories directly
