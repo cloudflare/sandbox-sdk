@@ -373,20 +373,22 @@ function buildInterruptedOperationResponse(
  * from the JSON wire format into typed SandboxError instances and signals
  * activity at call start.
  *
- * `onCallStarted` fires synchronously when an RPC method is invoked. The
- * ContainerControlClient uses this to renew the DO's activity timeout
- * immediately, so even a call that completes entirely between two
- * busy-poll ticks still pushes the sleepAfter deadline forward.
+ * `onCallStarted` fires synchronously when an RPC method is invoked, and
+ * `onCallSettled` fires when the returned promise settles. The
+ * ContainerControlClient uses these hooks to keep the session marked busy
+ * even if capnweb stats briefly report the bootstrap baseline while a call is
+ * still pending.
  *
- * Note: there is no `onCallSettled` hook. A method whose returned promise
- * resolves with a `ReadableStream` is *not* finished when the promise
- * settles — capnweb keeps the export alive until the stream ends. The
- * busy/idle poll on `getStats()` is the source of truth for that.
+ * A method whose returned promise resolves with a `ReadableStream` is *not*
+ * finished when the promise settles — capnweb keeps the export alive until
+ * the stream ends. The busy/idle poll on `getStats()` remains the source of
+ * truth for stream lifetimes after the initial RPC promise settles.
  */
 function wrapStub<T extends object>(
   stub: T,
   domain: string,
-  onCallStarted: () => void
+  onCallStarted: () => void,
+  onCallSettled: () => void
 ): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
@@ -410,12 +412,14 @@ function wrapStub<T extends object>(
             result != null &&
             typeof (result as { then?: unknown }).then === 'function'
           ) {
-            return (result as Promise<unknown>).catch((err: unknown) =>
-              translateRPCError(err, { operation })
-            );
+            return (result as Promise<unknown>)
+              .catch((err: unknown) => translateRPCError(err, { operation }))
+              .finally(onCallSettled);
           }
+          onCallSettled();
           return result;
         } catch (err) {
+          onCallSettled();
           translateRPCError(err, { operation });
         }
       };
@@ -480,6 +484,8 @@ export class ContainerControlClient {
   private conn: ContainerControlConnection | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Number of RPC method promises that have started but not settled. */
+  private activeCalls = 0;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
 
@@ -531,13 +537,56 @@ export class ContainerControlClient {
   // Activity & busy/idle tracking
   // -------------------------------------------------------------------------
 
+  private markBusy(): void {
+    if (!this.busy) {
+      this.busy = true;
+      this.onSessionBusy?.();
+    }
+    this.clearIdleTimer();
+  }
+
+  private isSessionBusy(conn: ContainerControlConnection): boolean {
+    const { imports, exports } = conn.getStats();
+    return (
+      this.activeCalls > 0 ||
+      imports > IDLE_IMPORT_THRESHOLD ||
+      exports > IDLE_EXPORT_THRESHOLD
+    );
+  }
+
+  private maybeTransitionIdle(): void {
+    const conn = this.conn;
+    if (!conn || !conn.isConnected()) return;
+
+    if (this.isSessionBusy(conn)) {
+      this.markBusy();
+      return;
+    }
+
+    if (this.busy) {
+      this.busy = false;
+      this.onSessionIdle?.();
+      this.scheduleIdleDisconnect();
+    } else if (!this.idleTimer) {
+      this.scheduleIdleDisconnect();
+    }
+  }
+
   /**
    * Called synchronously at the start of each RPC method invocation.
    * Renews the DO activity timeout so the sleepAfter alarm is pushed
-   * forward before the container processes the call.
+   * forward before the container processes the call, and pins the RPC
+   * WebSocket as busy until the method's promise settles.
    */
-  private renewActivity = (): void => {
+  private recordCallStarted = (): void => {
+    this.activeCalls++;
+    this.markBusy();
     this.onActivity?.();
+  };
+
+  private recordCallSettled = (): void => {
+    this.activeCalls = Math.max(0, this.activeCalls - 1);
+    this.maybeTransitionIdle();
   };
 
   /**
@@ -567,19 +616,11 @@ export class ContainerControlClient {
       return;
     }
 
-    const { imports, exports } = conn.getStats();
-    const isBusy =
-      imports > IDLE_IMPORT_THRESHOLD || exports > IDLE_EXPORT_THRESHOLD;
-
-    if (isBusy) {
-      if (!this.busy) {
-        this.busy = true;
-        this.onSessionBusy?.();
-      }
+    if (this.isSessionBusy(conn)) {
+      this.markBusy();
       // Renew on every busy tick — this is what keeps a long-lived stream
       // alive past sleepAfter.
       this.onActivity?.();
-      this.clearIdleTimer();
     } else if (this.busy) {
       this.busy = false;
       this.onSessionIdle?.();
@@ -615,11 +656,7 @@ export class ContainerControlClient {
       if (!conn || !conn.isConnected()) return;
 
       // Re-check before disconnecting — a new call may have started.
-      const { imports, exports } = conn.getStats();
-      if (
-        imports <= IDLE_IMPORT_THRESHOLD &&
-        exports <= IDLE_EXPORT_THRESHOLD
-      ) {
+      if (!this.isSessionBusy(conn)) {
         this.logger.debug('Disconnecting idle RPC connection');
         this.destroyConnection();
       }
@@ -636,6 +673,7 @@ export class ContainerControlClient {
   private destroyConnection(): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
+    this.activeCalls = 0;
     // If we tear down while still believing the session is busy, fire the
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
@@ -661,66 +699,80 @@ export class ContainerControlClient {
     return wrapStub(
       this.getConnection().rpc().commands,
       'commands',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get files(): SandboxFilesAPI {
     return wrapStub(
       this.getConnection().rpc().files,
       'files',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
     return wrapStub(
       this.getConnection().rpc().processes,
       'processes',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get ports(): SandboxPortsAPI {
     return wrapStub(
       this.getConnection().rpc().ports,
       'ports',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get git(): SandboxGitAPI {
-    return wrapStub(this.getConnection().rpc().git, 'git', this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().git,
+      'git',
+      this.recordCallStarted,
+      this.recordCallSettled
+    );
   }
   get utils(): SandboxUtilsAPI {
     return wrapStub(
       this.getConnection().rpc().utils,
       'utils',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get backup(): SandboxBackupAPI {
     return wrapStub(
       this.getConnection().rpc().backup,
       'backup',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(
       this.getConnection().rpc().watch,
       'watch',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get tunnels(): SandboxTunnelsAPI {
     return wrapStub(
       this.getConnection().rpc().tunnels,
       'tunnels',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(
       this.getConnection().rpc().interpreter,
       'interpreter',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled
     );
   }
 
