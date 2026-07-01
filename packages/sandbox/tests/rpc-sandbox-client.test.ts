@@ -13,6 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let stats = { imports: 1, exports: 1 };
 let connected = true;
 const disconnects: number[] = [];
+let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
+  exitCode: 0,
+  stdout: '',
+  stderr: ''
+});
 /**
  * onClose callbacks installed by `ContainerControlClient` on the active
  * mock connection. The client's `getConnection()` wires this so the WS
@@ -52,9 +57,14 @@ vi.mock('../src/container-control/connection', () => ({
       disconnects.push(Date.now());
     }
     rpc() {
-      // Stub sub-clients so wrapStub() has something to Proxy. Tests in
-      // this file don't actually invoke any RPC method.
-      return new Proxy({}, { get: () => ({}) });
+      return new Proxy(
+        {
+          commands: {
+            execute: (...args: unknown[]) => commandExecuteImpl(...args)
+          }
+        },
+        { get: (target, prop) => Reflect.get(target, prop) ?? {} }
+      );
     }
     async connect() {}
   }
@@ -72,6 +82,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     connected = true;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
+    commandExecuteImpl = () => ({ exitCode: 0, stdout: '', stderr: '' });
   });
 
   afterEach(() => {
@@ -223,6 +234,51 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(fired).toBe(true);
     expect(disconnects).toHaveLength(1);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not idle-disconnect while an RPC method promise is pending even when stats look idle', async () => {
+    let resolveExecute!: (value: unknown) => void;
+    commandExecuteImpl = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveExecute = resolve;
+        })
+    );
+
+    const onActivity = vi.fn();
+    const onSessionBusy = vi.fn();
+    const onSessionIdle = vi.fn();
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onActivity,
+      onSessionBusy,
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 1_000
+    });
+
+    const pending = client.commands.execute('sleep 10', 'default');
+
+    // Reproduce the race from sandbox-sdk#794: capnweb stats can report the
+    // bootstrap baseline while the method promise is still pending. The old
+    // implementation treated that as idle, armed the 1s disconnect timer, and
+    // disposed the main stub while the operation was still in flight.
+    stats = { imports: 1, exports: 1 };
+
+    vi.advanceTimersByTime(5_000);
+    expect(disconnects).toHaveLength(0);
+    expect(onSessionBusy).toHaveBeenCalledTimes(1);
+    expect(onSessionIdle).not.toHaveBeenCalled();
+
+    resolveExecute({ exitCode: 0, stdout: '', stderr: '' });
+    await pending;
+    await Promise.resolve();
+
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1_000);
+    expect(disconnects).toHaveLength(1);
   });
 });
 
