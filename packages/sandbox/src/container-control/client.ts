@@ -603,6 +603,10 @@ export class ContainerControlClient {
       localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
+      // Explicit container-start hook: when provided, the connection starts
+      // the container in its own retry loop before the WebSocket upgrade so
+      // capacity failures throw where we can classify them directly.
+      startContainer: options.startContainer,
       // Event-driven failure recovery: when the live WebSocket closes
       // or errors, tear the connection down inside the same turn of
       // the event loop so the next RPC call builds a fresh one. The

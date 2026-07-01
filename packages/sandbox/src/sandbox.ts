@@ -1142,6 +1142,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         port: 3000,
         logger: this.logger,
         retryTimeoutMs: this.computeRetryTimeoutMs(),
+        // Explicitly start the container before the RPC WebSocket upgrade.
+        // Running start() here — rather than as a side effect of the upgrade
+        // fetch through containerFetch() — makes the platform's
+        // container-admission failure ("no container instance" / "max
+        // instances exceeded") throw inside the connection's own retry loop,
+        // where it is classified and surfaced as a typed
+        // ContainerUnavailableError instead of being round-tripped through a
+        // 503 upgrade-response body. Each attempt uses a fresh per-attempt
+        // abort signal from the connection; the container timeouts come from
+        // the DO's current configuration.
+        startContainer: (signal: AbortSignal) =>
+          this.startAndWaitForPorts({
+            ports: 3000,
+            cancellationOptions: {
+              instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+              portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+              waitInterval: this.containerTimeouts.waitIntervalMS,
+              abort: signal
+            }
+          }),
         // localMain exposes the DO-side control callback (tunnel-exit
         // notifications, etc.) to the container side of the session.
         localMain: this.controlCallback,

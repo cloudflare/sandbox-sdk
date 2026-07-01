@@ -318,6 +318,64 @@ describe('ContainerControlConnection', () => {
       });
     }
 
+    it('surfaces ContainerUnavailableError when explicit startContainer throws a platform error', async () => {
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const fetchMock = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        startContainer: () => Promise.reject(new Error(platformMessage)),
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+      // The upgrade fetch is never attempted when start fails.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('retries a thrown startContainer platform error, then upgrades on success', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'there is no container instance that can be provided to this durable object';
+        const startContainer = vi
+          .fn<(signal: AbortSignal) => Promise<void>>()
+          .mockRejectedValueOnce(new Error(platformMessage))
+          .mockResolvedValueOnce(undefined);
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValue(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          startContainer,
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startContainer).toHaveBeenCalledTimes(1);
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(startContainer).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('retries retryable upgrade responses until success', async () => {
       vi.useFakeTimers();
       try {

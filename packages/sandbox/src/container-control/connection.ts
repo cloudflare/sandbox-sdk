@@ -237,6 +237,22 @@ export interface ContainerControlConnectionOptions {
   port?: number;
   logger?: Logger;
   /**
+   * Optional hook to explicitly start the container (and wait for its ports)
+   * before issuing the WebSocket upgrade.
+   *
+   * When provided, the platform's container-admission failure ("no container
+   * instance" / "max instances exceeded") is thrown here — synchronously in
+   * the connection's own retry loop — so it is retried within the upgrade
+   * budget and, when exhausted, classified and surfaced directly as a typed
+   * `ContainerUnavailableError` via `onConnectionError`. This avoids relying
+   * on the failure being round-tripped through a 503 upgrade-response body.
+   *
+   * When omitted, the upgrade fetch itself triggers container start (the
+   * legacy behavior, still exercised by unit tests that pass a bare `fetch`
+   * stub).
+   */
+  startContainer?: (signal: AbortSignal) => Promise<void>;
+  /**
    * Total retry budget (ms) for retryable upgrade responses while the
    * container is unavailable. Defaults to 120 000 (2 minutes), matching the
    * route-based `WebSocketTransport`. Set to 0 to disable retries.
@@ -291,6 +307,9 @@ export class ContainerControlConnection {
   private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
   private readonly onConnectionError: ((error: unknown) => void) | undefined;
+  private readonly startContainer:
+    | ((signal: AbortSignal) => Promise<void>)
+    | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -299,6 +318,7 @@ export class ContainerControlConnection {
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
     this.onClose = options.onClose;
     this.onConnectionError = options.onConnectionError;
+    this.startContainer = options.startContainer;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -556,6 +576,15 @@ export class ContainerControlConnection {
     );
 
     try {
+      // Explicitly start the container first (when a hook is provided). The
+      // platform's no-instance / capacity error is thrown here, in our own
+      // retry loop, rather than surfacing as a 503 upgrade-response body.
+      // `shouldRetryError` retries it within the budget; once exhausted the
+      // throw is classified by `doConnect`'s catch into a typed
+      // ContainerUnavailableError.
+      if (this.startContainer) {
+        await this.startContainer(controller.signal);
+      }
       const url = `http://localhost:${this.port}/rpc`;
       const request = new Request(url, {
         headers: {
