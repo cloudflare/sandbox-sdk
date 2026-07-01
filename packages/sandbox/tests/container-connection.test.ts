@@ -96,6 +96,40 @@ describe('ContainerControlConnection', () => {
     });
   });
 
+  describe('sandbox trace identifiers', () => {
+    it('resolves getSandboxInfo lazily at span time, not at construction', () => {
+      const getSandboxInfo = vi.fn(() => ({ id: 'do-1', name: 'ws-1' }));
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        getSandboxInfo
+      });
+      // Not queried on construction.
+      expect(getSandboxInfo).not.toHaveBeenCalled();
+
+      // A span-emitting path (disconnect) queries it.
+      conn.disconnect();
+      expect(getSandboxInfo).toHaveBeenCalled();
+    });
+
+    it('reflects a name that changes after the connection is built', () => {
+      let name: string | undefined;
+      const getSandboxInfo = vi.fn(() => ({ id: 'do-2', name }));
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        getSandboxInfo
+      });
+
+      // Name assigned after construction.
+      name = 'late-name';
+      conn.disconnect();
+
+      // The lazy callback saw the updated name (proves it isn't captured at
+      // construction time).
+      const last = getSandboxInfo.mock.results.at(-1)?.value;
+      expect(last).toEqual({ id: 'do-2', name: 'late-name' });
+    });
+  });
+
   describe('connect', () => {
     it('should fail when WebSocket upgrade is rejected', async () => {
       const conn = new ContainerControlConnection({

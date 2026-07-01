@@ -242,10 +242,13 @@ export interface ContainerControlConnectionOptions {
   stub: ContainerFetchStub;
   port?: number;
   logger?: Logger;
-  /** Durable Object id (`ctx.id`), stamped on spans as `sandbox.id`. */
-  sandboxId?: string;
-  /** User-provided sandbox name, stamped on spans as `sandbox.name`. */
-  sandboxName?: string;
+  /**
+   * Lazily resolve sandbox identifiers for trace spans. Queried at span time
+   * (not construction) so a name that is set after the client is built — or
+   * changes across the connection's lifetime — is reflected. Stamped on spans
+   * as `sandbox.id` and `sandbox.name`.
+   */
+  getSandboxInfo?: () => { id?: string; name?: string };
   /**
    * Optional hook to explicitly start the container (and wait for its ports)
    * before issuing the WebSocket upgrade.
@@ -331,8 +334,9 @@ export class ContainerControlConnection {
   private readonly onConnectionError: ((error: unknown) => void) | undefined;
   private readonly onConnected: (() => void) | undefined;
   private readonly startContainer: (() => Promise<void>) | undefined;
-  private readonly sandboxId: string | undefined;
-  private readonly sandboxName: string | undefined;
+  private readonly getSandboxInfo:
+    | (() => { id?: string; name?: string })
+    | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -343,8 +347,7 @@ export class ContainerControlConnection {
     this.onConnectionError = options.onConnectionError;
     this.onConnected = options.onConnected;
     this.startContainer = options.startContainer;
-    this.sandboxId = options.sandboxId;
-    this.sandboxName = options.sandboxName;
+    this.getSandboxInfo = options.getSandboxInfo;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -475,10 +478,11 @@ export class ContainerControlConnection {
    * when available.
    */
   private spanAttrs(): Record<string, string | number | undefined> {
+    const info = this.getSandboxInfo?.();
     return {
       'sandbox.rpc.port': this.port,
-      'sandbox.id': this.sandboxId,
-      'sandbox.name': this.sandboxName
+      'sandbox.id': info?.id,
+      'sandbox.name': info?.name
     };
   }
 

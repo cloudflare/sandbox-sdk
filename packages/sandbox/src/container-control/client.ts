@@ -697,8 +697,7 @@ export class ContainerControlClient {
       localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
-      sandboxId: options.sandboxId,
-      sandboxName: options.sandboxName,
+      getSandboxInfo: options.getSandboxInfo,
       // Explicit container-start hook: when provided, the connection starts
       // the container in its own retry loop before the WebSocket upgrade so
       // capacity failures throw where we can classify them directly.
@@ -821,14 +820,17 @@ export class ContainerControlClient {
    * container port. Mirrors the connection's `spanAttrs()` so all
    * `sandbox.rpc.*` spans share a consistent shape.
    */
-  private getSpanAttrs = (): Record<string, string | undefined> => ({
-    'sandbox.id': this.connOptions.sandboxId,
-    'sandbox.name': this.connOptions.sandboxName,
-    'sandbox.rpc.port':
-      this.connOptions.port !== undefined
-        ? String(this.connOptions.port)
-        : undefined
-  });
+  private getSpanAttrs = (): Record<string, string | undefined> => {
+    const info = this.connOptions.getSandboxInfo?.();
+    return {
+      'sandbox.id': info?.id,
+      'sandbox.name': info?.name,
+      'sandbox.rpc.port':
+        this.connOptions.port !== undefined
+          ? String(this.connOptions.port)
+          : undefined
+    };
+  };
 
   /**
    * Sample `getStats()` and update busy/idle state. While busy, renews the

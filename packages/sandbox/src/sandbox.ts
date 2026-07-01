@@ -1162,9 +1162,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         logger: this.logger,
         retryTimeoutMs: this.computeRetryTimeoutMs(),
         // Sandbox identifiers stamped on RPC trace spans (sandbox.id = DO id,
-        // sandbox.name = user-provided name).
-        sandboxId: this.ctx.id.toString(),
-        sandboxName: this.sandboxName ?? undefined,
+        // sandbox.name = user-provided name). Resolved lazily so a name set
+        // after the client is built is still reflected.
+        getSandboxInfo: () => ({
+          id: this.ctx.id.toString(),
+          name: this.sandboxName ?? undefined
+        }),
         // Explicitly start the container before the RPC WebSocket upgrade.
         // Running start() here — rather than as a side effect of the upgrade
         // fetch through containerFetch() — makes the platform's
