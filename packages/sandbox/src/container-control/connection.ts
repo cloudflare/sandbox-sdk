@@ -545,6 +545,19 @@ export class ContainerControlConnection {
   };
 
   private async doConnect(): Promise<void> {
+    // Wrap the entire connect + retry loop in a single span so its duration
+    // spans every attempt (and matches the RPC call that is waiting on it).
+    // Per-attempt spans (sandbox.rpc.connect.attempt) nest inside this one.
+    // Without this, only the first attempt's span attaches to the trace: the
+    // retry loop's setTimeout backoff resumes in a detached async context
+    // that no longer carries the request's trace context, so later attempts
+    // would be invisible.
+    return withSpan('sandbox.rpc.connect', this.spanAttrs(), () =>
+      this.doConnectInner()
+    );
+  }
+
+  private async doConnectInner(): Promise<void> {
     try {
       const response = await this.fetchUpgradeWithRetry();
 
@@ -606,10 +619,6 @@ export class ContainerControlConnection {
         );
       }
 
-      traceEvent('sandbox.rpc.connect', {
-        ...this.spanAttrs(),
-        outcome: 'established'
-      });
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
