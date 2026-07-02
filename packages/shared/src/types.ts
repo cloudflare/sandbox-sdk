@@ -578,6 +578,23 @@ export interface SandboxOptions {
    * @default "http"
    */
   transport?: SandboxTransport;
+
+  /**
+   * Key-value metadata labels attached to the underlying Cloudflare Container
+   * for analytics and observability.
+   *
+   * Labels are applied when the container starts. Updating labels while a
+   * container is already running only affects the next start/restart.
+   *
+   * @example
+   * getSandbox(ns, id, {
+   *   labels: {
+   *     tenantId: 'tenant_123',
+   *     workload: 'code-workspace'
+   *   }
+   * })
+   */
+  labels?: Record<string, string>;
 }
 
 /**

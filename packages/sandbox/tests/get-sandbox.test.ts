@@ -53,7 +53,8 @@ describe('getSandbox', () => {
       setSleepAfter: vi.fn((value: string | number) => {
         mockStub.sleepAfter = value;
       }),
-      setKeepAlive: vi.fn()
+      setKeepAlive: vi.fn(),
+      setLabels: vi.fn()
     };
 
     // Mock getContainer to return our stub
@@ -331,6 +332,112 @@ describe('getSandbox', () => {
     expect(mockStub.configure).toHaveBeenNthCalledWith(2, {
       transport: 'websocket'
     });
+  });
+
+  it('should apply labels option', () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: {
+        tenantId: 'tenant_123',
+        workload: 'code-workspace'
+      }
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      labels: {
+        tenantId: 'tenant_123',
+        workload: 'code-workspace'
+      }
+    });
+  });
+
+  it('should apply labels alongside other options', () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      sleepAfter: '5m',
+      keepAlive: true,
+      transport: 'websocket',
+      labels: { workload: 'code-workspace' }
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      sleepAfter: '5m',
+      keepAlive: true,
+      transport: 'websocket',
+      labels: { workload: 'code-workspace' }
+    });
+  });
+
+  it('should skip repeated labels configuration for the same sandbox', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_123' }
+    });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_123' }
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('should treat labels with the same key-values as identical regardless of insertion order', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_123', workload: 'code-workspace' }
+    });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { workload: 'code-workspace', tenantId: 'tenant_123' }
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reconfigure when labels change', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_123' }
+    });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_456' }
+    });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(2);
+    expect(mockStub.configure).toHaveBeenNthCalledWith(2, {
+      labels: { tenantId: 'tenant_456' }
+    });
+  });
+
+  it('should allow empty labels to clear configured labels for future starts', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', {
+      labels: { tenantId: 'tenant_123' }
+    });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { labels: {} });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(2);
+    expect(mockStub.configure).toHaveBeenNthCalledWith(2, { labels: {} });
   });
 
   describe('proxy method routing', () => {

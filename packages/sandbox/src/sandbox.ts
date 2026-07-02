@@ -217,6 +217,7 @@ type SandboxConfiguration = {
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
+  labels?: NonNullable<SandboxOptions['labels']>;
 };
 
 type CachedSandboxConfiguration = {
@@ -226,6 +227,7 @@ type CachedSandboxConfiguration = {
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
   transport?: SandboxTransport;
+  labels?: NonNullable<SandboxOptions['labels']>;
 };
 
 type EgressContainerState = DurableObjectState<{}> & {
@@ -347,6 +349,7 @@ type ConfigurableSandboxStub = {
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
   setTransport?: (transport: SandboxTransport) => Promise<void>;
+  setLabels?: (labels: Record<string, string>) => Promise<void>;
 };
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
@@ -504,6 +507,28 @@ function sameContainerTimeouts(
   );
 }
 
+function sameLabels(
+  left?: Record<string, string>,
+  right?: Record<string, string>
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) return false;
+
+  for (const [key, value] of leftEntries) {
+    if (right[key] !== value) return false;
+  }
+
+  return true;
+}
+
+function cloneLabels(labels: Record<string, string>): Record<string, string> {
+  return { ...labels };
+}
+
 function buildSandboxConfiguration(
   effectiveId: string,
   options: SandboxOptions | undefined,
@@ -549,6 +574,13 @@ function buildSandboxConfiguration(
     configuration.transport = options.transport;
   }
 
+  if (
+    options?.labels !== undefined &&
+    !sameLabels(cached?.labels, options.labels)
+  ) {
+    configuration.labels = cloneLabels(options.labels);
+  }
+
   return configuration;
 }
 
@@ -558,7 +590,8 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
     configuration.containerTimeouts !== undefined ||
-    configuration.transport !== undefined
+    configuration.transport !== undefined ||
+    configuration.labels !== undefined
   );
 }
 
@@ -583,6 +616,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.transport !== undefined && {
       transport: configuration.transport
+    }),
+    ...(configuration.labels !== undefined && {
+      labels: cloneLabels(configuration.labels)
     })
   };
 }
@@ -628,6 +664,12 @@ function applySandboxConfiguration(
   if (configuration.transport !== undefined) {
     operations.push(
       stub.setTransport?.(configuration.transport) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.labels !== undefined) {
+    operations.push(
+      stub.setLabels?.(configuration.labels) ?? Promise.resolve()
     );
   }
 
@@ -1368,6 +1410,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.hasStoredTransport = true;
       }
 
+      const storedLabels =
+        await this.ctx.storage.get<Record<string, string>>('labels');
+      if (storedLabels !== undefined && storedLabels !== null) {
+        this.labels = cloneLabels(storedLabels);
+      }
+
       if (this.interceptHttps) {
         this.envVars = { ...this.envVars, SANDBOX_INTERCEPT_HTTPS: '1' };
       }
@@ -1417,6 +1465,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (configuration.transport !== undefined) {
       await this.setTransport(configuration.transport);
+    }
+
+    if (configuration.labels !== undefined) {
+      await this.setLabels(configuration.labels);
     }
   }
 
@@ -1570,6 +1622,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     previousClient.disconnect();
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
+  }
+
+  async setLabels(labels: Record<string, string>): Promise<void> {
+    const nextLabels = cloneLabels(labels);
+
+    if (sameLabels(this.labels, nextLabels)) return;
+
+    await this.ctx.storage.put('labels', nextLabels);
+    this.labels = nextLabels;
+
+    if (this.ctx.container?.running === true) {
+      this.logger.warn(
+        'Container labels updated while container is running; new labels apply on the next container start'
+      );
+    }
   }
 
   private validateTimeout(
