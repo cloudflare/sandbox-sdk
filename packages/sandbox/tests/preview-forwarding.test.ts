@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   forwardPreviewRequest,
   type PreviewForwardingLifecycle
-} from '../src/preview-forwarding';
+} from '../src/preview/forwarding';
 
 function createLifecycle() {
   const settle = vi.fn();
