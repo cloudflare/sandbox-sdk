@@ -3,7 +3,7 @@ import {
   DUMMY_AUTH_HEADERS,
   evictDirectoryMarkerCacheForMount,
   s3CredentialProxyHandler
-} from '../src/storage-mount/s3-credential-proxy-handler';
+} from '../src/storage-mount/outbound/s3-credential-proxy-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
 
 const MOUNT_ID = 'aaaabbbb-cccc-dddd-eeee-ffffffffffff';

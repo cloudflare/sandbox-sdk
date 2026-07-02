@@ -1,5 +1,5 @@
 import type { BucketCredentials, RemoteMountBucketOptions } from '@repo/shared';
-import { MissingCredentialsError } from './errors';
+import { MissingCredentialsError } from '../errors';
 
 /**
  * Detect credentials for bucket mounting from environment variables

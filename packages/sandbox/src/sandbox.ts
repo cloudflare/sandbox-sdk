@@ -1,14 +1,6 @@
-import {
-  ContainerProxy as BaseContainerProxy,
-  Container,
-  getContainer,
-  type OutboundHandlerContext,
-  switchPort
-} from '@cloudflare/containers';
+import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
   BackupOptions,
-  BucketCredentials,
-  BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
   CommandExecuteOptions,
@@ -19,7 +11,6 @@ import type {
   FileEncoding,
   ISandbox,
   ListFilesOptions,
-  LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
   PortWatchEvent,
@@ -27,10 +18,8 @@ import type {
   ProcessOptions,
   ProcessQueryOptions,
   ProcessStatus,
-  R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
-  RemoteMountBucketOptions,
   RestoreBackupResult,
   SandboxExecOptions,
   SandboxOptions,
@@ -81,7 +70,6 @@ import {
 } from './errors';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
-import { LocalMountSyncManager } from './local-mount-sync';
 import { isPlatformTransientError } from './platform-errors';
 import { isPreviewProxyRequest } from './preview/protocol';
 import {
@@ -104,39 +92,11 @@ import {
 } from './security';
 import { parseSSEStream } from './sse-parser';
 import {
-  buildS3fsSource,
-  detectCredentials,
-  detectProviderFromUrl,
-  isR2Bucket,
-  MissingCredentialsError,
-  resolveS3fsOptions,
-  validateBucketBindingName,
-  validateBucketName,
-  validatePrefix
+  BucketMountService,
+  ContainerProxy,
+  type EgressContainerState,
+  type MountOutboundHost
 } from './storage-mount';
-import {
-  BucketUnmountError,
-  InvalidMountConfigError,
-  S3FSMountError
-} from './storage-mount/errors';
-import {
-  type R2EgressParams,
-  r2EgressHandler
-} from './storage-mount/r2-egress-handler';
-import {
-  evictDirectoryMarkerCacheForMount,
-  evictSigV4ClientCacheEntry,
-  SELF_TEST_PATH as S3_CREDENTIAL_PROXY_SELF_TEST_PATH,
-  s3CredentialProxyHandler
-} from './storage-mount/s3-credential-proxy-handler';
-import type {
-  CredentialProxyAuthStrategy,
-  FuseMountInfo,
-  LocalSyncMountInfo,
-  MountInfo,
-  R2BindingMountInfo,
-  S3CredentialProxyParams
-} from './storage-mount/types';
 import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
 import {
   createTunnelsHandle,
@@ -146,6 +106,8 @@ import {
 } from './tunnels/rpc-target';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
 import { SDK_VERSION } from './version';
+
+export { ContainerProxy };
 
 type ExecuteResponse = Awaited<
   ReturnType<ContainerControlClient['commands']['execute']>
@@ -169,28 +131,6 @@ type CachedSandboxConfiguration = {
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
 };
 
-type EgressContainerState = DurableObjectState<{}> & {
-  exports?: {
-    ContainerProxy?: (options: {
-      props: {
-        enableInternet?: boolean;
-        containerId: string;
-        className: string;
-        outboundByHostOverrides: Record<
-          string,
-          {
-            method: string;
-            params: R2EgressParams | S3CredentialProxyParams;
-          }
-        >;
-      };
-    }) => Fetcher;
-  };
-  container?: {
-    interceptOutboundHttp(host: string, fetcher: Fetcher): Promise<void>;
-  };
-};
-
 type PreviewForwardingContainerState = DurableObjectState<{}> & {
   container?: PreviewForwardingContainer;
 };
@@ -198,83 +138,6 @@ type PreviewForwardingContainerState = DurableObjectState<{}> & {
 type PreviewForwardingLifecycleState = {
   inflightRequests?: number;
 };
-
-type OutboundHandlerRegistry = {
-  outboundHandlers?: Record<string, unknown>;
-};
-
-const CONTAINER_PROXY_CLASS_NAME = 'ContainerProxy';
-const S3_CREDENTIAL_PROXY_HOST = 's3-credential-proxy.internal';
-const S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST = 's3-credential-proxy.sandbox.test';
-
-class ContainerProxyOutboundTarget extends Container {}
-
-Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
-  value: CONTAINER_PROXY_CLASS_NAME
-});
-
-(
-  ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
-).outboundHandlers = {
-  r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
-};
-
-/**
- * SDK-level ContainerProxy that directly dispatches SDK-internal mount hosts
- * (r2.internal, s3-credential-proxy.internal) without relying on
- * outboundHandlersRegistry lookups, which are NOT shared between the Durable
- * Object's execution context and the ContainerProxy WorkerEntrypoint context.
- *
- * Users must export this class from their Worker entrypoint so the Sandbox DO
- * can create outbound-interception fetchers that reference it.
- */
-export class ContainerProxy extends BaseContainerProxy {
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const hostname = url.hostname;
-    const props = this.ctx.props as {
-      outboundByHostOverrides?: Record<
-        string,
-        { method: string; params?: unknown }
-      >;
-      containerId?: string;
-      className?: string;
-    };
-    const override = props.outboundByHostOverrides?.[hostname];
-    if (override) {
-      const handlerCtx = {
-        containerId: props.containerId ?? '',
-        className: props.className ?? '',
-        params: override.params
-      };
-      if (override.method === 'r2EgressMount') {
-        return r2EgressHandler(
-          request,
-          this.env as Cloudflare.Env,
-          handlerCtx as OutboundHandlerContext<R2EgressParams>
-        );
-      }
-      if (override.method === 's3CredentialProxyMount') {
-        return s3CredentialProxyHandler(
-          request,
-          this.env as Cloudflare.Env,
-          handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
-        );
-      }
-    }
-    return super.fetch(request);
-  }
-}
-
-function isFetcher(value: unknown): value is Fetcher {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'fetch' in value &&
-    typeof value.fetch === 'function'
-  );
-}
 
 type ConfigurableSandboxStub = {
   configure?: (configuration: SandboxConfiguration) => Promise<void>;
@@ -327,22 +190,6 @@ const sandboxConfigurationCache = new WeakMap<
   Map<string, CachedSandboxConfiguration>
 >();
 
-const R2_DEFAULT_S3FS_OPTIONS: Readonly<Record<string, string | boolean>> = {
-  stat_cache_expire: '60',
-  enable_noobj_cache: true,
-  multipart_size: '5'
-};
-
-const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
-  R2_DEFAULT_S3FS_OPTIONS
-).map(([key, value]) => (value === true ? key : `${key}=${value}`));
-// s3fs ahbe_conf (Additional Header By Extension) format:
-// Each line is: [extension-pattern] [Header-Name]:[value]
-// A leading space as the pattern acts as a wildcard, matching all requests.
-// Setting Expect to an empty value causes s3fs to omit the Expect: 100-continue
-// header, preventing the outbound proxy from stalling waiting for a 100 response.
-const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
-
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
@@ -358,59 +205,6 @@ const BACKUP_MULTIPART_MAX_PARTS = 64;
 const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
-
-/**
- * Tagged template literal that shell-escapes every interpolated value.
- * Use for composing in-container scripts where the template body is
- * trusted shell and the interpolations are untrusted strings.
- */
-function sh(strings: TemplateStringsArray, ...values: unknown[]): string {
-  let out = strings[0];
-  for (let i = 0; i < values.length; i++) {
-    out += shellEscape(String(values[i])) + strings[i + 1];
-  }
-  return out;
-}
-
-/**
- * Hex string of `bytes` random bytes (length = bytes * 2). Used for short
- * non-cryptographic identifiers — e.g. tempfile suffixes.
- */
-function randomHex(bytes: number): string {
-  const buf = new Uint8Array(bytes);
-  crypto.getRandomValues(buf);
-  return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Parse an array of `key=value` / bare-flag s3fs options into a Record.
- * Bare flags become `{ flag: true }`. Later entries overwrite earlier ones.
- */
-function parseS3fsOptions(entries: string[]): Record<string, string | boolean> {
-  const result: Record<string, string | boolean> = {};
-  for (const entry of entries) {
-    const eq = entry.indexOf('=');
-    if (eq === -1) {
-      result[entry] = true;
-    } else {
-      result[entry.slice(0, eq)] = entry.slice(eq + 1);
-    }
-  }
-  return result;
-}
-
-/**
- * Serialise an s3fs options Record into the comma-separated `-o` argument.
- * Boolean true emits the bare flag; false drops it.
- */
-function serializeS3fsOptions(
-  options: Record<string, string | boolean>
-): string {
-  return Object.entries(options)
-    .filter(([, v]) => v !== false)
-    .map(([k, v]) => (v === true ? k : `${k}=${v}`))
-    .join(',');
-}
 
 function getNamespaceConfigurationCache(
   namespace: object
@@ -906,8 +700,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
-  private activeMounts: Map<string, MountInfo> = new Map();
-  private mountOperationQueue: Promise<void> = Promise.resolve();
+  private bucketMounts: BucketMountService;
   private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
@@ -1108,6 +901,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     this.client = this.createClient();
+    this.bucketMounts = new BucketMountService({
+      getEnv: () => this.env,
+      getEnvVars: () => this.envVars,
+      getClient: () => this.client,
+      logger: this.logger,
+      currentRuntime: this.currentRuntime,
+      currentLifetime: this.currentLifetime,
+      getR2AccessKeyID: () => this.r2AccessKeyId,
+      getR2SecretAccessKey: () => this.r2SecretAccessKey,
+      execInternal: (command) => this.execInternal(command),
+      getOutboundHost: () => this.getMountOutboundHost()
+    });
     this.previewService = new PreviewService({
       storage: this.ctx.storage,
       logger: this.logger,
@@ -1365,1000 +1170,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Mount an S3-compatible bucket as a local directory.
-   *
-   * Requires explicit endpoint URL for production. Credentials are auto-detected from environment
-   * variables or can be provided explicitly.
-   *
-   * @param bucket - Bucket name (or R2 binding name when localBucket is true)
-   * @param mountPath - Absolute path in container to mount at
-   * @param options - Mount configuration
-   * @throws MissingCredentialsError if no credentials found in environment
-   * @throws S3FSMountError if S3FS mount command fails
-   * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
    */
   async mountBucket(
     bucket: string,
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    return this.runMountOperation(async () => {
-      await this.mountBucketUnlocked(bucket, mountPath, options);
-    });
-  }
-
-  private async runMountOperation(
-    operation: () => Promise<void>
-  ): Promise<void> {
-    const previous = this.mountOperationQueue;
-    let release!: () => void;
-    this.mountOperationQueue = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous.catch(() => {});
-    try {
-      await operation();
-    } finally {
-      release();
-    }
-  }
-
-  private async mountBucketUnlocked(
-    bucket: string,
-    mountPath: string,
-    options: MountBucketOptions
-  ): Promise<void> {
-    if (options.prefix !== undefined) {
-      validatePrefix(options.prefix);
-    }
-
-    if ('localBucket' in options && options.localBucket) {
-      await this.mountBucketLocal(bucket, mountPath, options);
-      return;
-    }
-
-    const remoteOptions = options as RemoteMountBucketOptions;
-    if (remoteOptions.endpoint === undefined) {
-      const envObj = this.env as Record<string, unknown>;
-      const binding = envObj[bucket];
-      if (isR2Bucket(binding)) {
-        await this.mountBucketR2Egress(
-          bucket,
-          mountPath,
-          options as R2BindingMountBucketOptions
-        );
-        return;
-      }
-      throw new InvalidMountConfigError(
-        `R2 binding "${bucket}" not found in Worker env. ` +
-          'Ensure the binding name matches the bucket binding configured in wrangler.jsonc.'
-      );
-    }
-
-    await this.mountBucketFuse(bucket, mountPath, remoteOptions);
+    return this.bucketMounts.mountBucket(bucket, mountPath, options);
   }
 
   /**
-   * Local dev mount: bidirectional sync via R2 binding + file/watch APIs
-   */
-  private async mountBucketLocal(
-    bucket: string,
-    mountPath: string,
-    options: LocalMountBucketOptions
-  ): Promise<void> {
-    const mountStartTime = Date.now();
-    let mountOutcome: 'success' | 'error' = 'error';
-    let mountError: Error | undefined;
-    const dirExisted = true; // assume pre-existing so we don't accidentally delete
-    try {
-      const envObj = this.env as Record<string, unknown>;
-      const r2Binding = envObj[bucket];
-      if (!r2Binding || !isR2Bucket(r2Binding)) {
-        throw new InvalidMountConfigError(
-          `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
-            'Make sure the binding name matches your wrangler.jsonc R2 binding.'
-        );
-      }
-
-      if (!mountPath || !mountPath.startsWith('/')) {
-        throw new InvalidMountConfigError(
-          `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
-        );
-      }
-
-      if (this.activeMounts.has(mountPath)) {
-        throw new InvalidMountConfigError(
-          `Mount path already in use: ${mountPath}`
-        );
-      }
-
-      const syncManager = new LocalMountSyncManager({
-        bucket: r2Binding,
-        mountPath,
-        prefix: options.prefix,
-        readOnly: options.readOnly ?? false,
-        client: this.client,
-        logger: this.logger
-      });
-
-      const mountInfo: LocalSyncMountInfo = {
-        mountId: crypto.randomUUID(),
-        mountType: 'local-sync',
-        bucket,
-        mountPath,
-        syncManager,
-        mounted: false
-      };
-      this.activeMounts.set(mountPath, mountInfo);
-
-      try {
-        await syncManager.start();
-        mountInfo.mounted = true;
-      } catch (error) {
-        await syncManager.stop();
-        this.activeMounts.delete(mountPath);
-        throw error;
-      }
-
-      mountOutcome = 'success';
-    } catch (error) {
-      mountError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
-      logCanonicalEvent(this.logger, {
-        event: 'bucket.mount',
-        outcome: mountOutcome,
-        durationMs: Date.now() - mountStartTime,
-        bucket,
-        mountPath,
-        provider: 'local-sync',
-        prefix: options.prefix,
-        error: mountError
-      });
-    }
-  }
-
-  private getR2EgressParams(): R2EgressParams {
-    const buckets: R2EgressParams['buckets'] = {};
-    for (const [, m] of this.activeMounts) {
-      if (m.mountType === 'r2-egress') {
-        buckets[m.bucket] = {
-          prefix: m.prefix,
-          readOnly: m.readOnly
-        };
-      }
-    }
-    return { buckets };
-  }
-
-  private validateProtectedS3fsOptions(
-    options: string[] | undefined,
-    mountLabel: string,
-    extraProtected: string[] = []
-  ): void {
-    if (!options) return;
-    const protectedOptions = new Set(['passwd_file', 'url', ...extraProtected]);
-    for (const option of options) {
-      const [key] = option.split('=');
-      if (protectedOptions.has(key)) {
-        throw new InvalidMountConfigError(
-          `s3fs option "${key}" cannot be overridden for ${mountLabel} mounts`
-        );
-      }
-    }
-  }
-
-  private getS3CredentialProxyParams(options?: {
-    excludeMountId?: string;
-  }): S3CredentialProxyParams {
-    const mounts: S3CredentialProxyParams['mounts'] = {};
-    for (const [, m] of this.activeMounts) {
-      if (m.mountType === 'fuse' && m.credentialProxy) {
-        if (m.mountId === options?.excludeMountId) {
-          continue;
-        }
-        mounts[m.mountId] = {
-          endpoint: m.credentialProxy.endpoint,
-          bucket: m.credentialProxy.bucket,
-          ...(m.credentialProxy.prefix !== undefined
-            ? { prefix: m.credentialProxy.prefix }
-            : {}),
-          credentials: m.credentialProxy.credentials,
-          readOnly: m.credentialProxy.readOnly,
-          provider: m.credentialProxy.provider,
-          authStrategy: m.credentialProxy.authStrategy
-        };
-      }
-    }
-    return { mounts };
-  }
-
-  private resolveCredentialProxyAuthStrategy(
-    provider: BucketProvider | null
-  ): CredentialProxyAuthStrategy {
-    return provider === 'gcs' ? 'gcs' : 's3-sigv4';
-  }
-
-  /**
-   * Credential-less R2 mount: egress interception routes s3fs requests to the
-   * R2 binding. No S3 credentials are needed in the container or Worker env.
-   */
-  private async mountBucketR2Egress(
-    bucket: string,
-    mountPath: string,
-    options: R2BindingMountBucketOptions
-  ): Promise<void> {
-    const mountStartTime = Date.now();
-    const prefix = options.prefix;
-    let mountOutcome: 'success' | 'error' = 'error';
-    let mountError: Error | undefined;
-    let passwordFilePath: string | undefined;
-    let additionalHeaderFilePath: string | undefined;
-
-    try {
-      validateBucketBindingName(bucket, mountPath);
-      this.validateMountPath(mountPath);
-      this.validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
-
-      for (const [existingMountPath, mountInfo] of this.activeMounts) {
-        if (
-          mountInfo.mountType === 'r2-egress' &&
-          mountInfo.bucket === bucket &&
-          mountInfo.prefix !== prefix
-        ) {
-          throw new InvalidMountConfigError(
-            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different prefix. ` +
-              'Mount the same binding only once, or use the same prefix for additional mounts.'
-          );
-        }
-        if (
-          mountInfo.mountType === 'r2-egress' &&
-          mountInfo.bucket === bucket &&
-          mountInfo.readOnly !== (options.readOnly ?? false)
-        ) {
-          throw new InvalidMountConfigError(
-            `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different readOnly setting. ` +
-              'Mount the same binding only once, or use the same readOnly value for additional mounts.'
-          );
-        }
-      }
-
-      passwordFilePath = this.generatePasswordFilePath();
-      additionalHeaderFilePath = this.generateS3FSAdditionalHeaderFilePath();
-      // s3fs requires a passwd file before it will issue requests; the R2
-      // egress handler resolves the Worker binding and ignores S3 signatures.
-      await this.createPasswordFile(passwordFilePath, bucket, {
-        accessKeyId: 'x',
-        secretAccessKey: 'x'
-      });
-      await this.createDisableExpectHeaderFile(additionalHeaderFilePath);
-
-      const mountInfo: R2BindingMountInfo = {
-        mountId: crypto.randomUUID(),
-        mountType: 'r2-egress',
-        bucket,
-        mountPath,
-        passwordFilePath,
-        additionalHeaderFilePath,
-        mounted: false,
-        prefix,
-        readOnly: options.readOnly ?? false
-      };
-      this.activeMounts.set(mountPath, mountInfo);
-
-      await this.configureR2EgressOutbound(this.getR2EgressParams());
-
-      await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
-
-      const s3fsSource = bucket;
-      const s3fsOptions: Record<string, string | boolean> = {
-        passwd_file: passwordFilePath,
-        ...R2_DEFAULT_S3FS_OPTIONS,
-        ...parseS3fsOptions(resolveS3fsOptions('r2', options.s3fsOptions)),
-        use_path_request_style: true,
-        url: 'http://r2.internal',
-        ahbe_conf: additionalHeaderFilePath,
-        ...(options.readOnly ? { ro: true } : {})
-      };
-
-      const optionsStr = shellEscape(serializeS3fsOptions(s3fsOptions));
-      const mountCmd = `s3fs ${shellEscape(s3fsSource)} ${shellEscape(mountPath)} -o ${optionsStr}`;
-      this.logger.debug('r2-egress: running s3fs', { mountCmd });
-      const result = await this.execInternal(mountCmd);
-      this.logger.debug('r2-egress: s3fs exited', {
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr
-      });
-      if (result.exitCode !== 0) {
-        throw new S3FSMountError(
-          `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
-        );
-      }
-
-      const mountpointCheck = await this.execInternal(
-        `mountpoint -q ${shellEscape(mountPath)} && echo 'FUSE_MOUNTED' || echo 'NOT_FUSE_MOUNTED'`
-      );
-      this.logger.debug('r2-egress: mountpoint check', {
-        stdout: mountpointCheck.stdout.trim(),
-        exitCode: mountpointCheck.exitCode
-      });
-
-      if (mountpointCheck.stdout.trim() !== 'FUSE_MOUNTED') {
-        throw new S3FSMountError(
-          `s3fs exited 0 but mount was not established at ${mountPath}`
-        );
-      }
-
-      mountInfo.mounted = true;
-      mountOutcome = 'success';
-    } catch (error) {
-      mountError = error instanceof Error ? error : new Error(String(error));
-      const failedMount = this.activeMounts.get(mountPath);
-      this.activeMounts.delete(mountPath);
-      if (failedMount?.mountType === 'r2-egress') {
-        await this.deletePasswordFile(failedMount.passwordFilePath).catch(
-          () => {}
-        );
-        if (failedMount.additionalHeaderFilePath) {
-          await this.deleteAdditionalHeaderFile(
-            failedMount.additionalHeaderFilePath
-          ).catch(() => {});
-        }
-      } else {
-        // Mount was not yet registered in activeMounts (error occurred before
-        // activeMounts.set()); clean up using the local file path variables.
-        if (passwordFilePath) {
-          await this.deletePasswordFile(passwordFilePath).catch(() => {});
-        }
-        if (additionalHeaderFilePath) {
-          await this.deleteAdditionalHeaderFile(additionalHeaderFilePath).catch(
-            () => {}
-          );
-        }
-      }
-      const remainingParams = this.getR2EgressParams();
-      await this.configureR2EgressOutbound(remainingParams).catch(() => {});
-      throw error;
-    } finally {
-      logCanonicalEvent(this.logger, {
-        event: 'bucket.mount',
-        outcome: mountOutcome,
-        durationMs: Date.now() - mountStartTime,
-        bucket,
-        mountPath,
-        provider: 'r2',
-        prefix,
-        error: mountError
-      });
-    }
-  }
-
-  /**
-   * Production mount: S3FS-FUSE inside the container
-   */
-  private async mountBucketFuse(
-    bucket: string,
-    mountPath: string,
-    options: RemoteMountBucketOptions
-  ): Promise<void> {
-    const mountStartTime = Date.now();
-    const prefix = options.prefix;
-    let mountOutcome: 'success' | 'error' = 'error';
-    let mountError: Error | undefined;
-    let passwordFilePath: string | undefined;
-    let additionalHeaderFilePath: string | undefined;
-    let provider: BucketProvider | null = null;
-    let dirExisted = true;
-    try {
-      this.validateMountOptions(bucket, mountPath, { ...options, prefix });
-
-      // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
-      const s3fsSource = buildS3fsSource(bucket, prefix);
-      provider = options.provider || detectProviderFromUrl(options.endpoint);
-
-      this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-        explicitProvider: options.provider,
-        prefix
-      });
-
-      // Attempt to load credentials from the DO env
-      const envObj = this.env as Record<string, unknown>;
-      const envCredentials = {
-        AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-        AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
-        R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
-        R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
-      };
-
-      // Detect credentials
-      const credentials = detectCredentials(options, {
-        ...envCredentials,
-        ...this.envVars
-      });
-
-      const credentialProxyEnabled = options.credentialProxy === true;
-      if (credentialProxyEnabled) {
-        this.validateProtectedS3fsOptions(
-          options.s3fsOptions,
-          'credential proxy',
-          ['ahbe_conf', 'use_path_request_style']
-        );
-      }
-
-      // Generate unique password file path
-      passwordFilePath = this.generatePasswordFilePath();
-      if (credentialProxyEnabled) {
-        additionalHeaderFilePath = this.generateS3FSAdditionalHeaderFilePath();
-      }
-
-      // Reserve mount path before async operations so concurrent mounts see it
-      const mountId = crypto.randomUUID();
-      const mountInfo: FuseMountInfo = {
-        mountId,
-        mountType: 'fuse',
-        bucket: s3fsSource,
-        mountPath,
-        endpoint: options.endpoint,
-        provider,
-        passwordFilePath,
-        ...(additionalHeaderFilePath ? { additionalHeaderFilePath } : {}),
-        mounted: false,
-        ...(credentialProxyEnabled
-          ? {
-              credentialProxy: {
-                endpoint: options.endpoint,
-                bucket,
-                ...(prefix !== undefined ? { prefix } : {}),
-                credentials,
-                readOnly: options.readOnly ?? false,
-                provider,
-                authStrategy: this.resolveCredentialProxyAuthStrategy(provider)
-              }
-            }
-          : {})
-      };
-      this.activeMounts.set(mountPath, mountInfo);
-
-      // Write dummy credentials for credential proxy, real credentials otherwise
-      await this.createPasswordFile(
-        passwordFilePath,
-        bucket,
-        credentialProxyEnabled
-          ? { accessKeyId: 'x', secretAccessKey: 'x' }
-          : credentials
-      );
-      if (credentialProxyEnabled) {
-        if (additionalHeaderFilePath) {
-          await this.createDisableExpectHeaderFile(additionalHeaderFilePath);
-        }
-        await this.configureS3CredentialProxyOutbound(
-          this.getS3CredentialProxyParams()
-        );
-      }
-
-      // Check if mount directory already exists before creating it, so we
-      // only remove it on failure if the SDK created it
-      dirExisted =
-        (await this.execInternal(`test -d ${shellEscape(mountPath)}`))
-          .exitCode === 0;
-      await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
-
-      // Execute S3FS mount with password file (uses full s3fs source with prefix)
-      const effectiveOptions: RemoteMountBucketOptions = credentialProxyEnabled
-        ? {
-            ...options,
-            endpoint: `http://${S3_CREDENTIAL_PROXY_HOST}/${mountId}`,
-            s3fsOptions: [
-              ...(provider === 'r2' ? R2_DEFAULT_S3FS_OPTION_ENTRIES : []),
-              ...(options.s3fsOptions ?? []),
-              ...(additionalHeaderFilePath
-                ? [`ahbe_conf=${additionalHeaderFilePath}`]
-                : []),
-              'use_path_request_style'
-            ]
-          }
-        : options;
-      await this.executeS3FSMount(
-        s3fsSource,
-        mountPath,
-        effectiveOptions,
-        provider,
-        passwordFilePath
-      );
-
-      mountInfo.mounted = true;
-      mountOutcome = 'success';
-    } catch (error) {
-      mountError = error instanceof Error ? error : new Error(String(error));
-      // Tear down any mount that may have established between the script's
-      // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
-      // runs as a daemon, so the FUSE mount can flip live in that window;
-      // without this, the throw would leave an orphaned mount with no
-      // `activeMounts` entry to clean up later.
-      try {
-        await this.execInternal(
-          `mountpoint -q ${shellEscape(mountPath)} && fusermount -u ${shellEscape(mountPath)}`
-        );
-      } catch {
-        // best-effort cleanup
-      }
-
-      // Clean up support files after best-effort unmount so we do not remove
-      // files while a late-established FUSE daemon may still be active.
-      if (passwordFilePath) {
-        await this.deletePasswordFile(passwordFilePath);
-      }
-      if (additionalHeaderFilePath) {
-        await this.deleteAdditionalHeaderFile(additionalHeaderFilePath);
-      }
-
-      // Remove the mount directory only if the SDK created it. Runs after
-      // the unmount above so a late-arriving mount doesn't keep the dir busy.
-      if (!dirExisted) {
-        try {
-          await this.execInternal(
-            `rmdir ${shellEscape(mountPath)} 2>/dev/null`
-          );
-        } catch {
-          // best-effort cleanup
-        }
-      }
-
-      // Clean up reservation on failure; reconfigure proxy without this mount
-      const failedMount = this.activeMounts.get(mountPath);
-      if (failedMount?.mountType === 'fuse' && failedMount.credentialProxy) {
-        try {
-          await this.configureS3CredentialProxyOutbound(
-            this.getS3CredentialProxyParams({
-              excludeMountId: failedMount.mountId
-            })
-          );
-          this.activeMounts.delete(mountPath);
-          evictSigV4ClientCacheEntry(failedMount.mountId);
-          evictDirectoryMarkerCacheForMount(failedMount.mountId);
-        } catch (cleanupError) {
-          this.logger.warn('credential proxy cleanup failed', {
-            mountPath,
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : String(cleanupError)
-          });
-          this.activeMounts.delete(mountPath);
-          evictSigV4ClientCacheEntry(failedMount.mountId);
-          evictDirectoryMarkerCacheForMount(failedMount.mountId);
-        }
-      } else {
-        this.activeMounts.delete(mountPath);
-      }
-      throw error;
-    } finally {
-      logCanonicalEvent(this.logger, {
-        event: 'bucket.mount',
-        outcome: mountOutcome,
-        durationMs: Date.now() - mountStartTime,
-        bucket,
-        mountPath,
-        provider: provider || 'unknown',
-        prefix,
-        error: mountError
-      });
-    }
-  }
-
-  /**
-   * Manually unmount a bucket filesystem
-   *
-   * @param mountPath - Absolute path where the bucket is mounted
-   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
+   * Manually unmount a bucket filesystem.
    */
   async unmountBucket(mountPath: string): Promise<void> {
-    return this.runMountOperation(async () => {
-      await this.unmountBucketUnlocked(mountPath);
-    });
-  }
-
-  private async unmountBucketUnlocked(mountPath: string): Promise<void> {
-    const unmountStartTime = Date.now();
-    let unmountOutcome: 'success' | 'error' = 'error';
-    let unmountError: Error | undefined;
-
-    // Look up mount by path
-    const mountInfo = this.activeMounts.get(mountPath);
-
-    try {
-      // Throw error if mount doesn't exist
-      if (!mountInfo) {
-        throw new InvalidMountConfigError(
-          `No active mount found at path: ${mountPath}`
-        );
-      }
-      // Unmount the filesystem
-      if (mountInfo.mountType === 'local-sync') {
-        await mountInfo.syncManager.stop();
-        mountInfo.mounted = false;
-        this.activeMounts.delete(mountPath);
-      } else if (
-        mountInfo.mountType === 'fuse' &&
-        mountInfo.credentialProxy &&
-        !mountInfo.mounted
-      ) {
-        try {
-          await this.configureS3CredentialProxyOutbound(
-            this.getS3CredentialProxyParams({
-              excludeMountId: mountInfo.mountId
-            })
-          );
-        } catch (cleanupError) {
-          this.logger.warn(
-            'credential proxy outbound reconfiguration failed on unmount',
-            {
-              mountPath,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError)
-            }
-          );
-        }
-        this.activeMounts.delete(mountPath);
-        evictSigV4ClientCacheEntry(mountInfo.mountId);
-        evictDirectoryMarkerCacheForMount(mountInfo.mountId);
-      } else {
-        // FUSE unmount
-        let unmounted = false;
-        try {
-          const result = await this.execInternal(
-            `fusermount -u ${shellEscape(mountPath)}`
-          );
-          if (result.exitCode !== 0) {
-            const stderr = result.stderr || 'unknown error';
-            throw new BucketUnmountError(
-              `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
-            );
-          }
-          unmounted = true;
-          mountInfo.mounted = false;
-
-          if (mountInfo.mountType === 'r2-egress') {
-            const remainingBuckets: R2EgressParams['buckets'] = {};
-            for (const [, activeMount] of this.activeMounts) {
-              if (
-                activeMount.mountType === 'r2-egress' &&
-                activeMount.mountId !== mountInfo.mountId
-              ) {
-                remainingBuckets[activeMount.bucket] = {
-                  prefix: activeMount.prefix,
-                  readOnly: activeMount.readOnly
-                };
-              }
-            }
-            try {
-              await this.configureR2EgressOutbound({
-                buckets: remainingBuckets
-              });
-            } catch (cleanupError) {
-              this.logger.warn(
-                'r2 egress outbound reconfiguration failed on unmount',
-                {
-                  mountPath,
-                  error:
-                    cleanupError instanceof Error
-                      ? cleanupError.message
-                      : String(cleanupError)
-                }
-              );
-            }
-            this.activeMounts.delete(mountPath);
-          } else if (
-            mountInfo.mountType === 'fuse' &&
-            mountInfo.credentialProxy
-          ) {
-            try {
-              await this.configureS3CredentialProxyOutbound(
-                this.getS3CredentialProxyParams({
-                  excludeMountId: mountInfo.mountId
-                })
-              );
-            } catch (cleanupError) {
-              this.logger.warn(
-                'credential proxy outbound reconfiguration failed on unmount',
-                {
-                  mountPath,
-                  error:
-                    cleanupError instanceof Error
-                      ? cleanupError.message
-                      : String(cleanupError)
-                }
-              );
-            }
-            this.activeMounts.delete(mountPath);
-            evictSigV4ClientCacheEntry(mountInfo.mountId);
-            evictDirectoryMarkerCacheForMount(mountInfo.mountId);
-          } else {
-            this.activeMounts.delete(mountPath);
-          }
-
-          // Remove the now-empty mount directory
-          try {
-            const cleanup = await this.execInternal(
-              `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)}`
-            );
-            if (cleanup.exitCode !== 0) {
-              this.logger.warn('mount directory removal failed', {
-                mountPath,
-                exitCode: cleanup.exitCode,
-                stderr: cleanup.stderr
-              });
-            }
-          } catch (err) {
-            this.logger.warn('mount directory removal failed', {
-              mountPath,
-              error: err instanceof Error ? err.message : String(err)
-            });
-          }
-        } finally {
-          // Only delete support files after a confirmed unmount. If
-          // fusermount -u failed the s3fs daemon may still be running and
-          // actively reading both the passwd and ahbe_conf files; deleting
-          // them underneath a live daemon would cause EIO on subsequent
-          // requests. Files left in /tmp are cleaned up when the container
-          // terminates.
-          if (unmounted) {
-            await this.deletePasswordFile(mountInfo.passwordFilePath);
-            if (mountInfo.additionalHeaderFilePath) {
-              await this.deleteAdditionalHeaderFile(
-                mountInfo.additionalHeaderFilePath
-              );
-            }
-          }
-        }
-      }
-
-      unmountOutcome = 'success';
-    } catch (error) {
-      unmountError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
-      logCanonicalEvent(this.logger, {
-        event: 'bucket.unmount',
-        outcome: unmountOutcome,
-        durationMs: Date.now() - unmountStartTime,
-        mountPath,
-        bucket: mountInfo?.bucket,
-        error: unmountError
-      });
-    }
-  }
-
-  /**
-   * Shared validation for mount path (absolute, not already in use).
-   */
-  private validateMountPath(mountPath: string): void {
-    if (!mountPath.startsWith('/')) {
-      throw new InvalidMountConfigError(
-        `Mount path must be absolute (start with /): "${mountPath}"`
-      );
-    }
-
-    if (this.activeMounts.has(mountPath)) {
-      const existingMount = this.activeMounts.get(mountPath);
-      throw new InvalidMountConfigError(
-        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
-          `Unmount the existing bucket first or use a different mount path.`
-      );
-    }
-  }
-
-  /**
-   * Validate mount options for remote (FUSE) mounts
-   */
-  private validateMountOptions(
-    bucket: string,
-    mountPath: string,
-    options: RemoteMountBucketOptions
-  ): void {
-    // Basic URL validation
-    try {
-      new URL(options.endpoint);
-    } catch (error) {
-      throw new InvalidMountConfigError(
-        `Invalid endpoint URL: "${options.endpoint}". Must be a valid HTTP(S) URL.`
-      );
-    }
-
-    validateBucketName(bucket, mountPath);
-    this.validateMountPath(mountPath);
-
-    // Prefix validation is handled centrally in mountBucket()
-  }
-
-  /**
-   * Generate unique password file path for s3fs credentials
-   */
-  private generatePasswordFilePath(): string {
-    const uuid = crypto.randomUUID();
-    return `/tmp/.passwd-s3fs-${uuid}`;
-  }
-
-  /**
-   * Generate unique ahbe_conf file path for s3fs additional header config
-   */
-  private generateS3FSAdditionalHeaderFilePath(): string {
-    const uuid = crypto.randomUUID();
-    return `/tmp/.s3fs-ahbe-${uuid}.conf`;
-  }
-
-  /**
-   * Create s3fs ahbe_conf file that suppresses the Expect: 100-continue header.
-   * Restricted to 0600 so s3fs will accept it (same requirement as passwd files).
-   */
-  private async createDisableExpectHeaderFile(
-    headerFilePath: string
-  ): Promise<void> {
-    await this.client.files.writeFile(
-      headerFilePath,
-      S3FS_DISABLE_EXPECT_HEADER_CONFIG
-    );
-    await this.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
-  }
-
-  /**
-   * Create password file with s3fs credentials
-   * Format: bucket:accessKeyId:secretAccessKey
-   */
-  private async createPasswordFile(
-    passwordFilePath: string,
-    bucket: string,
-    credentials: BucketCredentials
-  ): Promise<void> {
-    const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
-
-    await this.client.files.writeFile(passwordFilePath, content);
-
-    await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
-  }
-
-  /**
-   * Delete password file
-   */
-  private async deletePasswordFile(passwordFilePath: string): Promise<void> {
-    try {
-      await this.execInternal(`rm -f ${shellEscape(passwordFilePath)}`);
-    } catch (error) {
-      this.logger.warn('password file cleanup failed', {
-        passwordFilePath,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  private async deleteAdditionalHeaderFile(
-    headerFilePath: string
-  ): Promise<void> {
-    try {
-      await this.execInternal(`rm -f ${shellEscape(headerFilePath)}`);
-    } catch (error) {
-      this.logger.warn('s3fs additional header file cleanup failed', {
-        headerFilePath,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
-   * Execute S3FS mount command
-   */
-  private async executeS3FSMount(
-    bucket: string,
-    mountPath: string,
-    options: RemoteMountBucketOptions,
-    provider: BucketProvider | null,
-    passwordFilePath: string,
-    sessionId?: string
-  ): Promise<void> {
-    // Compose s3fs options as a Record so duplicates collapse cleanly:
-    // SDK defaults + provider defaults first, user overrides next, SDK-required
-    // entries last. Boolean true serialises to a bare flag (e.g. `ro`).
-    //
-    // The logfile path is left in place after the mount completes so
-    // operators can inspect s3fs daemon output for debugging. The user can
-    // override it via `s3fsOptions: ['logfile=/path']`.
-    const logSuffix = randomHex(4);
-    const sdkDefaults: Record<string, string | boolean> = {
-      logfile: `/tmp/.s3fs-log-${logSuffix}`
-    };
-    const s3fsOptions: Record<string, string | boolean> = {
-      ...sdkDefaults,
-      ...parseS3fsOptions(resolveS3fsOptions(provider)),
-      ...parseS3fsOptions(options.s3fsOptions ?? []),
-      passwd_file: passwordFilePath,
-      url: options.endpoint,
-      ...(options.readOnly ? { ro: true } : {})
-    };
-    const logFile = s3fsOptions.logfile as string;
-    const optionsStr = serializeS3fsOptions(s3fsOptions);
-
-    // s3fs daemonises: the parent forks a FUSE child, then exits 0 once the
-    // child reports its bucket check passed. Run mount + verification as a
-    // single in-container script so the whole flow is one round-trip with
-    // one observable outcome.
-    //
-    // s3fs output is redirected to the logfile (not captured via $()):
-    // the daemon child inherits the redirected stdout/stderr fds, and
-    // command substitution would block on those fds until the daemon
-    // exited (i.e. until unmount), hanging the script for the lifetime
-    // of the mount.
-    //
-    // The whole script runs inside a `( ... )` subshell. When a caller supplies
-    // an explicit sessionId, executeCommand dispatches into that session's
-    // long-lived bash shell; a bare top-level `exit N` would terminate the
-    // session. The subshell scopes exits so only the subshell exits, and its
-    // status becomes the command's exit code as the caller expects.
-    //
-    // Exit codes consumed by the caller:
-    //   0 — mount established
-    //   2 — s3fs parent failed; stdout carries the s3fs log tail
-    //   3 — mount never appeared; stdout carries the s3fs log tail
-    //
-    // 60 iterations x 100ms = 6s budget for the SigV4 bucket check, which
-    // is comfortable under CI load while still cheap on success (the loop
-    // exits on the first iteration once the FUSE filesystem is live).
-    const script = sh`(
-      s3fs ${bucket} ${mountPath} -o ${optionsStr} >${logFile} 2>&1
-      rc=$?
-      if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
-      for _ in $(seq 1 60); do
-        if mountpoint -q ${mountPath}; then exit 0; fi
-        sleep 0.1
-      done
-      tail -n 20 ${logFile} 2>/dev/null || true
-      exit 3
-    )`;
-
-    const exec = sessionId
-      ? (cmd: string) =>
-          this.executeCommand(cmd, sessionId, { origin: 'internal' })
-      : (cmd: string) => this.execInternal(cmd);
-
-    const result = await exec(script);
-    if (result.exitCode === 0) return;
-
-    const detail = result.stdout?.trim() || result.stderr?.trim() || '';
-
-    if (result.exitCode === 2) {
-      throw new S3FSMountError(
-        `S3FS mount failed: ${detail || 'Unknown error'}`
-      );
-    }
-
-    // exit 3 (or anything else): the FUSE filesystem never appeared
-    const diagMessage = detail
-      ? `s3fs log: ${detail}`
-      : 'No s3fs log output captured. The s3fs daemon may have exited before writing logs.';
-    throw new S3FSMountError(
-      `S3FS mount failed: FUSE filesystem never appeared at ${mountPath}. ${diagMessage}`
-    );
-  }
-
-  private async unmountTrackedFuseMount(
-    mountPath: string,
-    mountInfo: FuseMountInfo | R2BindingMountInfo
-  ): Promise<void> {
-    if (!mountInfo.mounted) return;
-
-    this.logger.debug(
-      `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-    );
-    const result = await this.execInternal(
-      `fusermount -u ${shellEscape(mountPath)}`
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`
-      );
-    }
-    mountInfo.mounted = false;
+    return this.bucketMounts.unmountBucket(mountPath);
   }
 
   /**
@@ -2427,40 +1252,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Unmount all mounted buckets and cleanup. This runs before disconnecting
       // the control client because FUSE teardown uses execInternal.
-      for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
-        mountsProcessed++;
-        if (mountInfo.mountType === 'local-sync') {
-          try {
-            await mountInfo.syncManager.stop();
-            mountInfo.mounted = false;
-          } catch (error) {
-            mountFailures++;
-            const errorMsg =
-              error instanceof Error ? error.message : String(error);
-            this.logger.warn(
-              `Failed to stop local sync for ${mountPath}: ${errorMsg}`
-            );
-          }
-        } else {
-          try {
-            await this.unmountTrackedFuseMount(mountPath, mountInfo);
-          } catch (error) {
-            mountFailures++;
-            const errorMsg =
-              error instanceof Error ? error.message : String(error);
-            this.logger.warn(
-              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
-            );
-          }
-
-          // Always cleanup support files for FUSE mounts
-          await this.deletePasswordFile(mountInfo.passwordFilePath);
-          if (mountInfo.additionalHeaderFilePath) {
-            await this.deleteAdditionalHeaderFile(
-              mountInfo.additionalHeaderFilePath
-            );
-          }
-        }
+      ({ mountsProcessed, mountFailures } =
+        await this.bucketMounts.cleanupForDestroy());
+      if (mountFailures > 0) {
+        throw new Error(
+          `Failed to clean up ${mountFailures} bucket mount${mountFailures === 1 ? '' : 's'} during destroy()`
+        );
       }
 
       // Tear down every tunnel this sandbox created — stops the
@@ -2598,33 +1395,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Stop local sync managers and clear runtime-scoped mount state before
+    // closing the control client; FUSE cleanup may need container RPC.
+    await this.bucketMounts.cleanupForStop();
+
     // Disconnect the active client so open sockets do not hold the DO alive.
     this.client.disconnect();
-
-    // Stop local sync managers before clearing the map.
-    let hadR2EgressMount = false;
-    let hadCredentialProxyMount = false;
-    for (const [, m] of this.activeMounts) {
-      if (m.mountType === 'local-sync') {
-        await m.syncManager.stop().catch(() => {});
-      } else if (m.mountType === 'r2-egress') {
-        hadR2EgressMount = true;
-      } else if (m.mountType === 'fuse' && m.credentialProxy) {
-        hadCredentialProxyMount = true;
-        evictSigV4ClientCacheEntry(m.mountId);
-        evictDirectoryMarkerCacheForMount(m.mountId);
-      }
-    }
-    if (hadR2EgressMount) {
-      await this.configureR2EgressOutbound({ buckets: {} }).catch(() => {});
-    }
-    if (hadCredentialProxyMount) {
-      await this.configureS3CredentialProxyOutbound({ mounts: {} }).catch(
-        () => {}
-      );
-    }
-
-    this.activeMounts.clear();
 
     // Port tokens are durable authorization and survive container restarts;
     // runtime-scoped preview activation is cleared separately above.
@@ -4445,151 +3221,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.backupService.setRestoreFaultForTesting(fault);
   }
 
-  private async configureR2EgressOutbound(
-    params: R2EgressParams
-  ): Promise<void> {
-    const ctx = this.ctx as EgressContainerState;
-    if (!ctx.container?.interceptOutboundHttp) {
-      throw new InvalidMountConfigError(
-        'R2 binding mounts require container outbound interception support'
-      );
-    }
-    if (!ctx.exports?.ContainerProxy) {
-      throw new InvalidMountConfigError(
-        'R2 binding mounts require exporting ContainerProxy from the Worker entrypoint'
-      );
-    }
-
-    // Register r2EgressMount on the concrete subclass's local registry so
-    // setOutboundByHost's validateOutboundHandlerMethodName check passes. The
-    // actual dispatch is handled by the SDK ContainerProxy.fetch() override,
-    // which directly calls r2EgressHandler by hostname without going through
-    // the registry (which is NOT shared across execution contexts).
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { r2EgressMount: r2EgressHandler };
-    if (Object.keys(params.buckets).length > 0) {
-      await this.setOutboundByHost<R2EgressParams>(
-        'r2.internal',
-        'r2EgressMount',
-        params
-      );
-    } else {
-      await this.removeOutboundByHost('r2.internal');
-    }
-
-    this.logger.debug('r2 egress: registering host interception', {
-      host: 'r2.internal',
-      method: 'r2EgressMount',
-      targetClassName: CONTAINER_PROXY_CLASS_NAME
-    });
-
-    const fetcher = ctx.exports.ContainerProxy({
-      props: {
-        enableInternet: this.enableInternet,
-        containerId: this.ctx.id.toString(),
-        className: CONTAINER_PROXY_CLASS_NAME,
-        outboundByHostOverrides: {
-          'r2.internal': {
-            method: 'r2EgressMount',
-            params
-          }
-        }
-      }
-    });
-    if (!isFetcher(fetcher)) {
-      throw new InvalidMountConfigError(
-        'R2 binding mounts require ContainerProxy to return a valid Fetcher'
-      );
-    }
-
-    await ctx.container.interceptOutboundHttp('r2.internal', fetcher);
-  }
-
-  private async configureS3CredentialProxyOutbound(
-    params: S3CredentialProxyParams
-  ): Promise<void> {
-    const ctx = this.ctx as EgressContainerState;
-    if (!ctx.container?.interceptOutboundHttp) {
-      throw new InvalidMountConfigError(
-        'Credential proxy bucket mounts require container outbound interception support'
-      );
-    }
-    if (!ctx.exports?.ContainerProxy) {
-      throw new InvalidMountConfigError(
-        'Credential proxy bucket mounts require exporting ContainerProxy from the Worker entrypoint'
-      );
-    }
-
-    const hosts = [
-      S3_CREDENTIAL_PROXY_HOST,
-      S3_CREDENTIAL_PROXY_DIAGNOSTIC_HOST
-    ];
-
-    // Register s3CredentialProxyMount on the concrete subclass's local registry
-    // so setOutboundByHost's validateOutboundHandlerMethodName check passes.
-    // Actual dispatch is handled by the SDK ContainerProxy.fetch() override.
-    (this.constructor as unknown as OutboundHandlerRegistry).outboundHandlers =
-      { s3CredentialProxyMount: s3CredentialProxyHandler };
-    if (Object.keys(params.mounts).length > 0) {
-      for (const host of hosts) {
-        await this.setOutboundByHost<S3CredentialProxyParams>(
-          host,
-          's3CredentialProxyMount',
-          params
-        );
-      }
-    } else {
-      for (const host of hosts) {
-        await this.removeOutboundByHost(host);
-      }
-    }
-
-    const hostOverrides: Record<
-      string,
-      { method: string; params: S3CredentialProxyParams }
-    > = {};
-    for (const host of hosts) {
-      hostOverrides[host] = { method: 's3CredentialProxyMount', params };
-    }
-
-    this.logger.debug('s3 credential proxy: registering host interception', {
-      hosts,
-      method: 's3CredentialProxyMount',
-      targetClassName: CONTAINER_PROXY_CLASS_NAME
-    });
-
-    const fetcher = ctx.exports.ContainerProxy({
-      props: {
-        enableInternet: this.enableInternet,
-        containerId: this.ctx.id.toString(),
-        className: CONTAINER_PROXY_CLASS_NAME,
-        outboundByHostOverrides: hostOverrides
-      }
-    });
-    if (!isFetcher(fetcher)) {
-      throw new InvalidMountConfigError(
-        'Credential proxy bucket mounts require ContainerProxy to return a valid Fetcher'
-      );
-    }
-
-    try {
-      const selfTest = await fetcher.fetch(
-        new Request(
-          `http://${S3_CREDENTIAL_PROXY_HOST}${S3_CREDENTIAL_PROXY_SELF_TEST_PATH}`
-        )
-      );
-      await selfTest.text();
-      this.logger.debug('s3 credential proxy: fetcher self-test complete', {
-        status: selfTest.status
-      });
-    } catch (error) {
-      this.logger.warn('s3 credential proxy: fetcher self-test failed', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    for (const host of hosts) {
-      await ctx.container.interceptOutboundHttp(host, fetcher);
-    }
+  private getMountOutboundHost(): MountOutboundHost {
+    return {
+      ctx: this.ctx as EgressContainerState,
+      constructorRef: this.constructor,
+      enableInternet: this.enableInternet,
+      logger: this.logger,
+      setOutboundByHost: (host, method, params) =>
+        this.setOutboundByHost<unknown>(host, method, params),
+      removeOutboundByHost: (host) => this.removeOutboundByHost(host)
+    };
   }
 }

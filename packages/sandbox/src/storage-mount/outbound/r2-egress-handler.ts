@@ -14,7 +14,7 @@ import type {
   OutboundHandler,
   OutboundHandlerContext
 } from '@cloudflare/containers';
-import { isR2Bucket } from './validation';
+import { isR2Bucket } from '../validation';
 
 // ---------------------------------------------------------------------------
 // Per-mount bucket params

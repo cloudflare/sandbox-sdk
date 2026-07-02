@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectCredentials } from '../../src/storage-mount/credential-detection';
+import { detectCredentials } from '../../src/storage-mount/validation/credentials';
 
 describe('Credential Detection', () => {
   it('should use explicit credentials from options', () => {
