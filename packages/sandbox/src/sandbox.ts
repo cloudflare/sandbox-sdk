@@ -81,6 +81,8 @@ import {
 } from './errors';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
+import { gitCredentialProxyHandler } from './git/credential-proxy-handler';
+import type { GitAuthInterceptorParams } from './git/types';
 import { LocalMountSyncManager } from './local-mount-sync';
 import { isPlatformTransientError } from './platform-errors';
 import { isPreviewProxyRequest } from './preview/protocol';
@@ -180,7 +182,10 @@ type EgressContainerState = DurableObjectState<{}> & {
           string,
           {
             method: string;
-            params: R2EgressParams | S3CredentialProxyParams;
+            params:
+              | R2EgressParams
+              | S3CredentialProxyParams
+              | GitAuthInterceptorParams;
           }
         >;
       };
@@ -217,7 +222,8 @@ Object.defineProperty(ContainerProxyOutboundTarget, 'name', {
   ContainerProxyOutboundTarget as unknown as OutboundHandlerRegistry
 ).outboundHandlers = {
   r2EgressMount: r2EgressHandler,
-  s3CredentialProxyMount: s3CredentialProxyHandler
+  s3CredentialProxyMount: s3CredentialProxyHandler,
+  gitCredentialProxy: gitCredentialProxyHandler
 };
 
 /**
@@ -260,6 +266,13 @@ export class ContainerProxy extends BaseContainerProxy {
           request,
           this.env as Cloudflare.Env,
           handlerCtx as OutboundHandlerContext<S3CredentialProxyParams>
+        );
+      }
+      if (override.method === 'gitCredentialProxy') {
+        return gitCredentialProxyHandler(
+          request,
+          this.env as Cloudflare.Env,
+          handlerCtx as OutboundHandlerContext<GitAuthInterceptorParams>
         );
       }
     }
@@ -752,20 +765,6 @@ export function getSandbox<T extends Sandbox<any>>(
       options.sessionId === undefined
         ? stub.exists(path)
         : stub.exists(path, { sessionId: options.sessionId }),
-    gitCheckout: (
-      repoUrl: string,
-      gitOptions?: {
-        branch?: string;
-        targetDir?: string;
-        sessionId?: string;
-        depth?: number;
-        cloneTimeoutMs?: number;
-      }
-    ) =>
-      stub.gitCheckout(repoUrl, {
-        ...gitOptions,
-        sessionId: gitOptions?.sessionId
-      }),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return rpcSession as ExecutionSession;
@@ -1090,7 +1089,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger,
       getClient: () => this.client,
       execWithSession: (command, sessionId, options) =>
-        this.executeCommand(command, sessionId, options),
+        this.execWithSession(command, sessionId, options),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime
     });
@@ -3340,6 +3339,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  private async execWithSession(
+    command: string,
+    sessionId: string,
+    options?: ExecOptions
+  ): Promise<ExecResult> {
+    return this.executeCommand(command, sessionId, options);
+  }
+
   /**
    * Internal command execution implementation used by public exec() and
    * explicit session wrappers.
@@ -3879,26 +3886,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 0;
   }
 
-  async gitCheckout(
-    repoUrl: string,
-    options?: {
-      branch?: string;
-      targetDir?: string;
-      sessionId?: string;
-      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
-      depth?: number;
-      /** Maximum wall-clock time for the git clone subprocess in milliseconds */
-      cloneTimeoutMs?: number;
+  async getProcessLogs(
+    id: string
+  ): Promise<{ stdout: string; stderr: string; processId: string }> {
+    const response = await this.client.processes.getProcessLogs(id);
+    return {
+      stdout: response.stdout,
+      stderr: response.stderr,
+      processId: response.processId
+    };
+  }
+
+  /**
+   * Stream logs from a background process as a ReadableStream.
+   */
+  async streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>> {
+    // Check for cancellation
+    if (options?.signal?.aborted) {
+      throw new Error('Operation was aborted');
     }
-  ) {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    return this.client.git.checkout(repoUrl, {
-      ...(session !== undefined && { sessionId: session }),
-      branch: options?.branch,
-      targetDir: options?.targetDir,
-      depth: options?.depth,
-      timeoutMs: options?.cloneTimeoutMs
-    });
+
+    return this.client.processes.streamProcessLogs(processId);
   }
 
   async mkdir(
@@ -4353,10 +4364,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.listFiles(path, { ...options, sessionId }),
       exists: (path) => this.exists(path, { sessionId }),
 
-      // Git operations
-      gitCheckout: (repoUrl, options) =>
-        this.gitCheckout(repoUrl, { ...options, sessionId }),
-
       setEnvVars: async (envVars: Record<string, string | undefined>) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -4443,6 +4450,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     fault: BackupRestoreTestFault | null
   ): Promise<void> {
     await this.backupService.setRestoreFaultForTesting(fault);
+  }
+
+  async registerGitAuthInterceptor(
+    params: GitAuthInterceptorParams
+  ): Promise<void> {
+    const ctx = this.ctx as EgressContainerState;
+    if (!ctx.container?.interceptOutboundHttp) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires container outbound interception support'
+      );
+    }
+    if (!ctx.exports?.ContainerProxy) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires exporting ContainerProxy from the Worker entrypoint. Import ContainerProxy from @cloudflare/sandbox and export it from your Worker to use git auth interception.'
+      );
+    }
+
+    const registry = this.constructor as unknown as OutboundHandlerRegistry;
+    registry.outboundHandlers = {
+      ...registry.outboundHandlers,
+      gitCredentialProxy: gitCredentialProxyHandler
+    };
+
+    const hostOverrides: Record<
+      string,
+      { method: string; params: GitAuthInterceptorParams }
+    > = {};
+    for (const host of Object.keys(params.hosts)) {
+      hostOverrides[host] = { method: 'gitCredentialProxy', params };
+      await this.setOutboundByHost<GitAuthInterceptorParams>(
+        host,
+        'gitCredentialProxy',
+        params
+      );
+    }
+
+    const fetcher = ctx.exports.ContainerProxy({
+      props: {
+        enableInternet: this.enableInternet,
+        containerId: this.ctx.id.toString(),
+        className: CONTAINER_PROXY_CLASS_NAME,
+        outboundByHostOverrides: hostOverrides
+      }
+    });
+    if (!isFetcher(fetcher)) {
+      throw new InvalidMountConfigError(
+        'Git extension authentication requires ContainerProxy to return a valid Fetcher'
+      );
+    }
+
+    for (const host of Object.keys(params.hosts)) {
+      await ctx.container.interceptOutboundHttp(host, fetcher);
+    }
   }
 
   private async configureR2EgressOutbound(

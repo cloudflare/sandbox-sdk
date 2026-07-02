@@ -18,7 +18,6 @@ export type {
   FileStreamEvent,
   // File watch types
   FileWatchSSEEvent,
-  GitCheckoutResult,
   ISandbox,
   ListFilesOptions,
   LocalMountBucketOptions,

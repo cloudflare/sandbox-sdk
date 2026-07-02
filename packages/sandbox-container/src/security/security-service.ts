@@ -8,7 +8,7 @@
 // - Only protect port 3000 (SDK control plane) from interference
 // - Format validation only (null bytes, length limits)
 // - No content restrictions (no path blocking, no command blocking, no URL allowlists)
-import { type Logger, redactCommand } from '@repo/shared';
+import type { Logger } from '@repo/shared';
 import type { ValidationResult } from '../core/types';
 
 export class SecurityService {
@@ -185,70 +185,6 @@ export class SecurityService {
         isValid: true,
         errors: validationErrors,
         data: trimmedCommand
-      };
-    } else {
-      return {
-        isValid: false,
-        errors: validationErrors
-      };
-    }
-  }
-
-  /**
-   * Validate Git URL format (not content)
-   * - No URL allowlist (users can use private repos, self-hosted Git)
-   * - Only format validation (null bytes, length limits)
-   * - Trust users to provide valid Git URLs
-   */
-  validateGitUrl(url: string): ValidationResult<string> {
-    const errors: string[] = [];
-
-    // Basic validation
-    if (!url || typeof url !== 'string') {
-      errors.push('Git URL must be a non-empty string');
-      return {
-        isValid: false,
-        errors: errors.map((e) => ({
-          field: 'gitUrl',
-          message: e,
-          code: 'INVALID_GIT_URL'
-        }))
-      };
-    }
-
-    const trimmedUrl = url.trim();
-
-    if (trimmedUrl.length === 0) {
-      errors.push('Git URL cannot be empty');
-    }
-
-    if (trimmedUrl.length > 2048) {
-      errors.push('Git URL too long (max 2048 characters)');
-    }
-
-    if (trimmedUrl.includes('\0')) {
-      errors.push('Git URL contains null bytes');
-    }
-
-    const isValid = errors.length === 0;
-    const validationErrors = errors.map((e) => ({
-      field: 'gitUrl',
-      message: e,
-      code: 'INVALID_GIT_URL'
-    }));
-
-    if (!isValid) {
-      this.logger.warn('Git URL validation failed', {
-        gitUrl: redactCommand(trimmedUrl),
-        errors
-      });
-    }
-
-    if (isValid) {
-      return {
-        isValid: true,
-        errors: validationErrors,
-        data: trimmedUrl
       };
     } else {
       return {

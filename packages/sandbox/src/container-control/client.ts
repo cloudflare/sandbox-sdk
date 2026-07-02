@@ -75,7 +75,6 @@ import type {
   SandboxCommandsAPI,
   SandboxExtensionsAPI,
   SandboxFilesAPI,
-  SandboxGitAPI,
   SandboxPortsAPI,
   SandboxProcessesAPI,
   SandboxTerminalsAPI,
@@ -699,9 +698,6 @@ export class ContainerControlClient {
       'ports',
       this.renewActivity
     );
-  }
-  get git(): SandboxGitAPI {
-    return wrapStub(this.getConnection().rpc().git, 'git', this.renewActivity);
   }
   get utils(): SandboxUtilsAPI {
     return wrapStub(
