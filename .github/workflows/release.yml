@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
       - uses: actions/setup-node@v6
         with:
@@ -201,16 +201,53 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
+      - name: Detect pending changesets
+        id: pending-changesets
+        run: |
+          shopt -s nullglob
+          files=()
+          for file in .changeset/*.md; do
+            if [[ "$file" == ".changeset/README.md" ]]; then
+              continue
+            fi
+            files+=("$file")
+          done
+          if [[ ${#files[@]} -gt 0 ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: changesets
+        if: steps.pending-changesets.outputs.present == 'true'
         uses: changesets/action@v1
         with:
           version: npx tsx .github/changeset-version.ts
-          publish: npx tsx .github/changeset-publish.ts
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Detect stable release target
+        id: stable-release
+        if: steps.pending-changesets.outputs.present == 'false'
+        run: |
+          bash .github/detect-stable-release-needed.sh \
+            "${{ needs.build.outputs.version }}" \
+            "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish stable release
+        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+        run: |
+          npx tsx .github/release-orchestrator.ts stable \
+            --version "${{ needs.build.outputs.version }}" \
+            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
+            --commit-sha "${{ github.sha }}"
 
       - name: Update Docker Hub description
+        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
         uses: peter-evans/dockerhub-description@v4
         continue-on-error: true
         with:
@@ -219,73 +256,3 @@ jobs:
           repository: cloudflare/sandbox
           readme-filepath: ./DOCKER_README.md
           short-description: ${{ github.event.repository.description }}
-
-      - name: Publish Docker images to Docker Hub
-        if: steps.changesets.outputs.published == 'true'
-        run: |
-          .github/publish-sandbox-images.sh \
-            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
-            --version "${{ needs.build.outputs.version }}" \
-            --docker-hub
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Publish Docker images to CF Registry Library
-        if: steps.changesets.outputs.published == 'true'
-        continue-on-error: true
-        id: library-publish
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          if ! .github/publish-sandbox-images.sh \
-            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
-            --version "$VERSION" \
-            --cf-library; then
-            echo "::warning::Some images failed to publish to CF Registry Library"
-            {
-              echo "## ⚠️ CF Registry Library publish partially failed"
-              echo "Some sandbox images could not be copied to \`registry.cloudflare.com/library/\`."
-              echo "Docker Hub publish was not affected."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          {
-            echo "## ✅ CF Registry Library publish succeeded"
-            printf "Published \`registry.cloudflare.com/library/sandbox:%s\` (+ variants)\n" "$VERSION"
-          } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Warn if library publish failed
-        if: steps.library-publish.outcome == 'failure'
-        run: |
-          echo "::warning::CF Registry Library publish failed — Docker Hub and npm releases are unaffected"
-
-      - name: Extract standalone binaries
-        if: steps.changesets.outputs.published == 'true'
-        run: |
-          REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-          HASH="${{ needs.hashes.outputs.docker }}"
-          SRC_TAG="ci-${HASH}"
-          # Default variant
-          docker pull "${REGISTRY}/sandbox:${SRC_TAG}"
-          CID=$(docker create "${REGISTRY}/sandbox:${SRC_TAG}")
-          docker cp "$CID":/container-server/sandbox ./sandbox-linux-x64
-          docker rm "$CID"
-          # Musl variant
-          docker pull "${REGISTRY}/sandbox-musl:${SRC_TAG}"
-          CID=$(docker create "${REGISTRY}/sandbox-musl:${SRC_TAG}")
-          docker cp "$CID":/container-server/sandbox ./sandbox-linux-x64-musl
-          docker rm "$CID"
-
-      - name: Upload binaries to GitHub Release
-        if: steps.changesets.outputs.published == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
-          sha256sum sandbox-linux-x64-musl > sandbox-linux-x64-musl.sha256
-          gh release upload "@cloudflare/sandbox@${VERSION}" \
-            ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 \
-            ./sandbox-linux-x64-musl ./sandbox-linux-x64-musl.sha256 \
-            --clobber
