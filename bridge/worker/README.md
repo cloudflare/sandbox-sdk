@@ -151,7 +151,6 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
 
 Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` as an absolute path without the leading slash (e.g. `workspace/main.py` for `/workspace/main.py`). Must resolve within `/workspace`. Returns raw bytes (`application/octet-stream`).
 
-
 ```sh
 curl -X GET http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
@@ -428,10 +427,12 @@ The pool is primed (its alarm loop started) in two ways:
 
 Set these variables in `wrangler.jsonc` (under `vars`) or via `wrangler secret put`:
 
-| Variable                     | Default   | Description                                                                          |
-| ---------------------------- | --------- | ------------------------------------------------------------------------------------ |
-| `WARM_POOL_TARGET`           | `"0"`     | Number of idle containers to keep warm. **0 disables the pool** (no surprise bills). |
-| `WARM_POOL_REFRESH_INTERVAL` | `"10000"` | Milliseconds between pool health-check / replenishment cycles.                       |
+| Variable                     | Default   | Description                                                                                                                                         |
+| ---------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WARM_POOL_TARGET`           | `"0"`     | Number of idle containers to keep warm. **0 disables the pool** (no surprise bills).                                                                |
+| `WARM_POOL_REFRESH_INTERVAL` | `"10000"` | Milliseconds between pool health-check / replenishment cycles.                                                                                      |
+| `WARM_POOL_MAX_INSTANCES`    | `"0"`     | Capacity ceiling the pool plans against. Set it to match `containers[].max_instances`. **0 leaves the ceiling to be learned from capacity errors.** |
+| `WARM_POOL_SCALE_BATCH_SIZE` | `"5"`     | Number of containers started in parallel per scale-up batch. Clamped to `[1, 20]`.                                                                  |
 
 The cron trigger frequency can be adjusted in `wrangler.jsonc` under `triggers.crons`. Remove the cron entirely if you only want manual priming via `POST /v1/pool/prime`.
 
