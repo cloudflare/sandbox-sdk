@@ -226,8 +226,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-      - name: Publish stable release
+      - name: Detect stable release target
+        id: stable-release
         if: steps.pending-changesets.outputs.present == 'false'
+        run: |
+          bash .github/detect-stable-release-needed.sh \
+            "${{ needs.build.outputs.version }}" \
+            "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish stable release
+        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -239,7 +247,7 @@ jobs:
             --commit-sha "${{ github.sha }}"
 
       - name: Update Docker Hub description
-        if: steps.pending-changesets.outputs.present == 'false'
+        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
         uses: peter-evans/dockerhub-description@v4
         continue-on-error: true
         with:
