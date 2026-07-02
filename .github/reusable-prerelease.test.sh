@@ -39,6 +39,8 @@ assert_workflow_contains() {
 }
 
 assert_workflow_contains ".github/workflows/release.yml" "npx tsx .github/release-orchestrator.ts stable"
+assert_workflow_contains ".github/workflows/release.yml" "bash .github/detect-stable-release-needed.sh"
+assert_workflow_contains ".github/workflows/release.yml" "steps.stable-release.outputs.publish == 'true'"
 assert_workflow_contains ".github/workflows/release.yml" 'GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'
 assert_workflow_contains ".github/workflows/release.yml" "for file in .changeset/*.md; do"
 assert_workflow_contains ".github/workflows/release.yml" '[[ "$file" == ".changeset/README.md" ]]'
