@@ -13,6 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let stats = { imports: 1, exports: 1 };
 let connected = true;
 const disconnects: number[] = [];
+let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
+  exitCode: 0,
+  stdout: '',
+  stderr: ''
+});
 /**
  * onClose callbacks installed by `ContainerControlClient` on the active
  * mock connection. The client's `getConnection()` wires this so the WS
@@ -21,6 +26,10 @@ const disconnects: number[] = [];
  * runtime dispatching that event.
  */
 const onCloseHandlers: Array<() => void> = [];
+/** `onConnectionError` callbacks installed on each mock connection. */
+const onConnectionErrorHandlers: Array<(error: unknown) => void> = [];
+/** `onConnected` callbacks installed on each mock connection. */
+const onConnectedHandlers: Array<() => void> = [];
 
 /**
  * Simulate the runtime firing a `close` / `error` event on the live
@@ -38,12 +47,25 @@ function triggerPeerClose(): boolean {
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
-    constructor(options: { onClose?: () => void } = {}) {
+    constructor(
+      options: {
+        onClose?: () => void;
+        onConnectionError?: (error: unknown) => void;
+        onConnected?: () => void;
+      } = {}
+    ) {
       if (options.onClose) onCloseHandlers.push(options.onClose);
+      if (options.onConnectionError)
+        onConnectionErrorHandlers.push(options.onConnectionError);
+      if (options.onConnected) onConnectedHandlers.push(options.onConnected);
     }
     isConnected() {
       return connected;
     }
+    isConnecting() {
+      return false;
+    }
+    async whenSettled() {}
     getStats() {
       return stats;
     }
@@ -52,9 +74,14 @@ vi.mock('../src/container-control/connection', () => ({
       disconnects.push(Date.now());
     }
     rpc() {
-      // Stub sub-clients so wrapStub() has something to Proxy. Tests in
-      // this file don't actually invoke any RPC method.
-      return new Proxy({}, { get: () => ({}) });
+      return new Proxy(
+        {
+          commands: {
+            execute: (...args: unknown[]) => commandExecuteImpl(...args)
+          }
+        },
+        { get: (target, prop) => Reflect.get(target, prop) ?? {} }
+      );
     }
     async connect() {}
   }
@@ -72,6 +99,9 @@ describe('ContainerControlClient busy/idle tracking', () => {
     connected = true;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
+    onConnectionErrorHandlers.length = 0;
+    onConnectedHandlers.length = 0;
+    commandExecuteImpl = () => ({ exitCode: 0, stdout: '', stderr: '' });
   });
 
   afterEach(() => {
@@ -223,6 +253,176 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(fired).toBe(true);
     expect(disconnects).toHaveLength(1);
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not idle-disconnect while an RPC method promise is pending even when stats look idle', async () => {
+    let resolveExecute!: (value: unknown) => void;
+    commandExecuteImpl = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveExecute = resolve;
+        })
+    );
+
+    const onActivity = vi.fn();
+    const onSessionBusy = vi.fn();
+    const onSessionIdle = vi.fn();
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onActivity,
+      onSessionBusy,
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 1_000
+    });
+
+    const pending = client.commands.execute('sleep 10', 'default');
+
+    // capnweb stats can report the bootstrap baseline while the method promise
+    // is still pending. A pending in-flight call must keep the session busy so
+    // the idle-disconnect timer stays disarmed and the main stub is not
+    // disposed mid-operation.
+    stats = { imports: 1, exports: 1 };
+
+    vi.advanceTimersByTime(5_000);
+    expect(disconnects).toHaveLength(0);
+    expect(onSessionBusy).toHaveBeenCalledTimes(1);
+    expect(onSessionIdle).not.toHaveBeenCalled();
+
+    resolveExecute({ exitCode: 0, stdout: '', stderr: '' });
+    await pending;
+    await Promise.resolve();
+
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1_000);
+    expect(disconnects).toHaveLength(1);
+  });
+
+  it('surfaces the authoritative connect-attempt cause on a queued call even after a weak teardown', async () => {
+    vi.useRealTimers();
+    const { ContainerUnavailableError } = await import('../src/errors');
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    // Materialize the connection (wires onConnectionError) and capture the
+    // wrapped stub that an in-flight call would hold.
+    const commands = client.commands;
+    const fireConnectionError = onConnectionErrorHandlers.at(-1);
+    expect(fireConnectionError).toBeDefined();
+
+    // 1) Connect attempt stamps the authoritative capacity cause.
+    const capacityCause = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no container instance',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no container instance'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    fireConnectionError?.(capacityCause);
+
+    // 2) A lifecycle teardown fires a weak cause. Use the mock's onClose so
+    //    the client tears down without recreating the connection under us.
+    connected = false;
+    // Simulate the weak teardown stamp path directly via the public API.
+    // (destroyConnection weak-stamps; authoritative must win.)
+    const onClose = onCloseHandlers.at(-1);
+    onClose?.();
+
+    // 3) The queued call rejects with the generic disposal error; it must
+    //    surface the authoritative capacity cause via the retained stub.
+    commandExecuteImpl = () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    let thrown: unknown;
+    try {
+      // The mock throws synchronously; the real capnweb stub rejects. Handle
+      // both so we assert on the surfaced cause either way.
+      thrown = await commands.execute('echo', 'default');
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    expect(
+      (thrown as InstanceType<typeof ContainerUnavailableError>).reason
+    ).toBe('no_container_instance_available');
+  });
+
+  it('clears a retried connect-attempt cause once the session establishes, so a later teardown surfaces its own cause', async () => {
+    vi.useRealTimers();
+    const { ContainerUnavailableError, OperationInterruptedError } =
+      await import('../src/errors');
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    // Materialize the connection (wires onConnectionError / onConnected).
+    const commands = client.commands;
+    const fireConnectionError = onConnectionErrorHandlers.at(-1);
+    const fireConnected = onConnectedHandlers.at(-1);
+    expect(fireConnectionError).toBeDefined();
+    expect(fireConnected).toBeDefined();
+
+    // 1) An early connect attempt fails with a capacity cause (authoritative).
+    fireConnectionError?.(
+      new ContainerUnavailableError({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: 'no container instance',
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: 'no container instance'
+        },
+        httpStatus: 503,
+        timestamp: new Date().toISOString()
+      })
+    );
+
+    // 2) A subsequent retry succeeds: the session establishes. This must clear
+    //    the now-stale capacity cause so it can't leak into a later teardown.
+    fireConnected?.();
+
+    // 3) A lifecycle teardown later stamps a non-retryable interruption cause
+    //    (as the DO does when the sandbox lifetime changes). With the stale
+    //    capacity cause cleared, this is no longer blocked by an authoritative
+    //    error, so it becomes the weak cause on the queued calls.
+    const lifetimeCause = new OperationInterruptedError({
+      code: 'OPERATION_INTERRUPTED',
+      message: 'sandbox lifetime changed',
+      context: {
+        reason: 'sandbox_lifetime_changed',
+        operation: 'rpc.connect',
+        phase: 'connection',
+        admitted: 'unknown',
+        retryable: false
+      },
+      httpStatus: 500,
+      timestamp: new Date().toISOString()
+    });
+    client.disconnect(lifetimeCause);
+
+    // 4) The queued call rejects with the generic disposal error. Because the
+    //    stale capacity cause was cleared on connect, the non-retryable
+    //    lifetime cause surfaces — not a misleading retryable
+    //    "no container instance".
+    commandExecuteImpl = () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    let thrown: unknown;
+    try {
+      thrown = await commands.execute('echo', 'default');
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).not.toBeInstanceOf(ContainerUnavailableError);
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    expect(
+      (thrown as InstanceType<typeof OperationInterruptedError>).reason
+    ).toBe('sandbox_lifetime_changed');
   });
 });
 
@@ -641,6 +841,253 @@ describe('translateRPCError', () => {
     expect('cause' in json).toBe(false);
     // But the live instance still carries it for in-memory inspection.
     expect((thrown as Error).cause).toBe(original);
+  });
+
+  // -------------------------------------------------------------------------
+  // Captured connection error preference
+  // -------------------------------------------------------------------------
+
+  it('prefers a captured connection error over a masking session_disposed transport error', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    // The typed error the connection layer captures for the platform
+    // "no container instance" failure.
+    const platformMessage =
+      'There is no container instance that can be provided to this Durable Object, try again later';
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: platformMessage,
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: platformMessage
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', connectionError }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('no_container_instance_available');
+    expect(err.context.retryable).toBe(true);
+    expect(err.context.originalMessage).toBe(platformMessage);
+  });
+
+  it('ignores a captured connection error for container-side structured errors', async () => {
+    const translateRPCError = await loadFn();
+    const { FileNotFoundError, ContainerUnavailableError } = await loadErr();
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no container',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no container'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    const payload = JSON.stringify({
+      code: 'FILE_NOT_FOUND',
+      message: 'no such file',
+      context: { path: '/missing' }
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error(payload), {
+        operation: 'files.readFile',
+        connectionError
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(FileNotFoundError);
+  });
+
+  it('falls back to the transport error when no connection error was captured', async () => {
+    const translateRPCError = await loadFn();
+    const { OperationInterruptedError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession' }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+  });
+
+  it('maps to OPERATION_INTERRUPTED only when the session was established', async () => {
+    const translateRPCError = await loadFn();
+    const { OperationInterruptedError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', sessionEstablished: true }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+  });
+
+  it('surfaces a retryable ContainerUnavailableError (not a raw transport string) when the session never established', async () => {
+    // The container never started, so the session never connected. A queued
+    // call rejecting with capnweb's disposal message must NOT be reported as
+    // an interruption (nothing was admitted) and must NOT leak the raw
+    // capnweb string. Surface a clean, retryable CONTAINER_UNAVAILABLE that
+    // preserves the transport message for diagnostics.
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError, OperationInterruptedError } =
+      await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', sessionEstablished: false }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).not.toBeInstanceOf(OperationInterruptedError);
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('container_unreachable');
+    expect(err.context.retryable).toBe(true);
+    expect(err.context.originalMessage).toBe(
+      'RPC session was shut down by disposing the main stub'
+    );
+    // The message states unavailability plainly — no raw capnweb string, and
+    // no misleading "may be starting" hedge (the container was never reached).
+    expect((err as Error).message).not.toContain('disposing the main stub');
+    expect((err as Error).message).not.toContain('starting');
+  });
+
+  it('does not synthesize CONTAINER_UNAVAILABLE for a never-established non-teardown transport error', async () => {
+    // An invalid-frame / protocol error is not a teardown-family kind, so it
+    // should still surface as the transport error rather than being
+    // reclassified as container-unavailable.
+    const translateRPCError = await loadFn();
+    const { RPCTransportError } = await loadErr();
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new TypeError('Received non-string message from WebSocket.'),
+        { operation: 'utils.createSession', sessionEstablished: false }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RPCTransportError);
+    expect((thrown as InstanceType<typeof RPCTransportError>).kind).toBe(
+      'invalid_frame'
+    );
+  });
+
+  it('still prefers a captured connection error even when the session never established', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = new ContainerUnavailableError({
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no instance',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage: 'no instance'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        {
+          operation: 'utils.createSession',
+          connectionError,
+          sessionEstablished: false
+        }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+  });
+
+  it('prefers a structured (non-instanceof) CONTAINER_UNAVAILABLE connection error over the disposal error', async () => {
+    // Reproduces the masked failure: a queued createSession rejects with
+    // capnweb's disposal message, and the connection captured a *structured*
+    // but cross-realm error-like object (not an instanceof SandboxError). It
+    // must still surface as ContainerUnavailableError, not
+    // OperationInterruptedError.
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = {
+      name: 'Error',
+      code: 'CONTAINER_UNAVAILABLE',
+      message:
+        'There is no container instance that can be provided to this Durable Object, try again later',
+      context: {
+        reason: 'no_container_instance_available',
+        retryable: true,
+        originalMessage:
+          'There is no container instance that can be provided to this Durable Object, try again later'
+      }
+    };
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        { operation: 'utils.createSession', connectionError }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    const err = thrown as InstanceType<typeof ContainerUnavailableError>;
+    expect(err.code).toBe('CONTAINER_UNAVAILABLE');
+    expect(err.reason).toBe('no_container_instance_available');
+    expect(err.context.retryable).toBe(true);
+  });
+
+  it('rehydrates a structured connection error carried in `details`', async () => {
+    const translateRPCError = await loadFn();
+    const { ContainerUnavailableError } = await loadErr();
+    const connectionError = {
+      code: 'CONTAINER_UNAVAILABLE',
+      message: 'no instance',
+      details: {
+        reason: 'max_container_instances_exceeded',
+        retryable: true
+      }
+    };
+    let thrown: unknown;
+    try {
+      translateRPCError(new Error('WebSocket connection failed.'), {
+        operation: 'utils.createSession',
+        connectionError
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContainerUnavailableError);
+    expect(
+      (thrown as InstanceType<typeof ContainerUnavailableError>).reason
+    ).toBe('max_container_instances_exceeded');
   });
 
   it('does not set `cause` on errors translated from JSON-encoded structured payloads', async () => {

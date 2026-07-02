@@ -85,6 +85,7 @@ import type {
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
+  type ContainerUnavailableContext,
   ErrorCode,
   type ErrorResponse,
   getHttpStatus,
@@ -100,6 +101,7 @@ import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
 } from './connection';
+import { withSpan } from './tracing';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -167,6 +169,25 @@ interface RPCErrorPayload {
 export interface RPCTranslationContext {
   /** Public operation name, e.g. `commands.execute` or `files.writeFile`. */
   operation?: string;
+  /**
+   * Error captured by `ContainerControlConnection` during connection startup
+   * (e.g. a platform container-allocation failure). When the RPC call rejects
+   * with a generic capnweb disposal / connection-failure error caused by that
+   * same startup abort, this captured error is the real, actionable cause and
+   * is preferred over the masking transport error.
+   */
+  connectionError?: unknown;
+  /**
+   * Whether the capnweb session ever established a live connection to a
+   * running container during the current connection's lifetime.
+   *
+   * `OPERATION_INTERRUPTED` means "the operation was admitted to a running
+   * runtime, then interrupted." If the session never established (the
+   * container never started — e.g. no instance available), that framing is
+   * wrong: the operation was never admitted. In that case we surface the
+   * thrown transport error directly instead of masking it as an interruption.
+   */
+  sessionEstablished?: boolean;
 }
 
 export function translateRPCError(
@@ -230,6 +251,29 @@ export function translateRPCError(
     // errors so consumers can branch on public SDK contracts instead of
     // substring-matching transport internals.
     const transportResponse = buildTransportErrorResponse(error);
+    // If this call rejected because a connection-startup failure aborted the
+    // transport, prefer that captured error — it carries the real, actionable
+    // cause (e.g. CONTAINER_UNAVAILABLE) instead of the generic disposal /
+    // connection-failure message capnweb raises on the queued call.
+    const captured = maybePreferConnectionError(transportResponse, context);
+    if (captured) throw captured;
+    // If the session never established a live connection, don't map to
+    // OPERATION_INTERRUPTED (nothing was admitted, so "interrupted" is
+    // misleading) and don't leak the raw capnweb disposal string. A
+    // teardown-family error here means the container was never reachable —
+    // surface a clean, retryable CONTAINER_UNAVAILABLE. `sessionEstablished`
+    // defaults to undefined for callers that don't track it (e.g. direct unit
+    // tests), preserving the prior behavior in that case.
+    if (context.sessionEstablished === false) {
+      const neverConnected = buildNeverConnectedUnavailableResponse(
+        transportResponse,
+        context
+      );
+      throw createErrorFromResponse(
+        (neverConnected ?? transportResponse) as unknown as ErrorResponse,
+        { cause: error }
+      );
+    }
     const interruptedResponse = buildInterruptedOperationResponse(
       transportResponse,
       context
@@ -330,6 +374,130 @@ function buildTransportErrorResponse(
   };
 }
 
+/**
+ * When a queued RPC call rejects with a transport error that a connection
+ * abort could have caused (session disposed, connection failed, upgrade
+ * failed, or peer closed), and the connection captured a real startup error,
+ * return that captured error in preference to the masking transport error.
+ *
+ * The captured error is accepted whether it is:
+ *   - a same-realm `SandboxError` (surfaced as-is), or
+ *   - any structured, error-like value carrying a recognized `code` — e.g. a
+ *     raw or cross-realm error decorated with `code: 'CONTAINER_UNAVAILABLE'`
+ *     and optional `context`/`details`/`message`. Such values are rehydrated
+ *     via `createErrorFromResponse` so the caller still receives a proper
+ *     typed SandboxError instead of a masked OperationInterruptedError.
+ *
+ * Anything without a recognized code is ignored so the caller falls back to
+ * normal transport classification.
+ */
+function maybePreferConnectionError(
+  transportResponse: ErrorResponse<RPCTransportContext>,
+  context: RPCTranslationContext
+): SandboxError | null {
+  const captured = context.connectionError;
+  if (!captured) return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'connection_failed' &&
+    kind !== 'upgrade_failed' &&
+    kind !== 'peer_closed'
+  ) {
+    return null;
+  }
+
+  // Same-realm typed error: surface as-is.
+  if (captured instanceof SandboxError) {
+    return captured;
+  }
+
+  // Structured, error-like value (raw/cross-realm) carrying a recognized
+  // code. Rehydrate into a typed SandboxError. Reads `context` or `details`
+  // for the structured payload, matching the two wire formats handled by
+  // `translateRPCError`.
+  const shape = captured as {
+    code?: unknown;
+    message?: unknown;
+    context?: unknown;
+    details?: unknown;
+  } | null;
+  if (
+    shape &&
+    typeof shape.code === 'string' &&
+    Object.hasOwn(ErrorCode, shape.code)
+  ) {
+    const code = shape.code as ErrorCode;
+    const structured =
+      shape.context && typeof shape.context === 'object'
+        ? (shape.context as Record<string, unknown>)
+        : shape.details && typeof shape.details === 'object'
+          ? (shape.details as Record<string, unknown>)
+          : {};
+    const message = typeof shape.message === 'string' ? shape.message : code;
+    return createErrorFromResponse(
+      {
+        code,
+        message,
+        context: structured,
+        httpStatus: getHttpStatus(code),
+        suggestion: getSuggestion(code, structured as Record<string, unknown>),
+        timestamp: new Date().toISOString()
+      },
+      { cause: captured }
+    ) as SandboxError;
+  }
+
+  return null;
+}
+
+/**
+ * When the session never established a live connection and a queued RPC call
+ * rejects with a teardown-family transport error (disposed / connection
+ * failed / peer closed), surface a clean, retryable `ContainerUnavailableError`
+ * instead of the raw capnweb string (e.g. "RPC session was shut down by
+ * disposing the main stub").
+ *
+ * Reaching this point means: the container never became reachable (so no
+ * OPERATION_INTERRUPTED — nothing was admitted) AND no structured connection
+ * error was captured (so `maybePreferConnectionError` didn't fire). That's the
+ * Durable Object being torn down/evicted mid-startup under capacity pressure
+ * before `doConnect` recorded a cause — which is, from the caller's view, the
+ * container being unavailable. Retryable, with the raw transport message
+ * preserved as `originalMessage` for diagnostics.
+ */
+function buildNeverConnectedUnavailableResponse(
+  transportResponse: ErrorResponse<RPCTransportContext>,
+  context: RPCTranslationContext
+): ErrorResponse<ContainerUnavailableContext> | null {
+  if (context.sessionEstablished !== false) return null;
+  const { kind } = transportResponse.context;
+  if (
+    kind !== 'session_disposed' &&
+    kind !== 'connection_failed' &&
+    kind !== 'peer_closed'
+  ) {
+    return null;
+  }
+  const ctx: ContainerUnavailableContext = {
+    reason: 'container_unreachable',
+    retryable: true,
+    originalMessage: transportResponse.context.originalMessage
+  };
+  return {
+    code: ErrorCode.CONTAINER_UNAVAILABLE,
+    message:
+      'The sandbox container was unavailable: the connection was torn down before it became reachable. Retry the operation.',
+    context: ctx,
+    httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+    suggestion: getSuggestion(
+      ErrorCode.CONTAINER_UNAVAILABLE,
+      ctx as unknown as Record<string, unknown>
+    ),
+    timestamp: new Date().toISOString()
+  };
+}
+
 function buildInterruptedOperationResponse(
   transportResponse: ErrorResponse<RPCTransportContext>,
   context: RPCTranslationContext
@@ -373,20 +541,25 @@ function buildInterruptedOperationResponse(
  * from the JSON wire format into typed SandboxError instances and signals
  * activity at call start.
  *
- * `onCallStarted` fires synchronously when an RPC method is invoked. The
- * ContainerControlClient uses this to renew the DO's activity timeout
- * immediately, so even a call that completes entirely between two
- * busy-poll ticks still pushes the sleepAfter deadline forward.
+ * `onCallStarted` fires synchronously when an RPC method is invoked, and
+ * `onCallSettled` fires when the returned promise settles. The
+ * ContainerControlClient uses these hooks to keep the session marked busy
+ * even if capnweb stats briefly report the bootstrap baseline while a call is
+ * still pending.
  *
- * Note: there is no `onCallSettled` hook. A method whose returned promise
- * resolves with a `ReadableStream` is *not* finished when the promise
- * settles — capnweb keeps the export alive until the stream ends. The
- * busy/idle poll on `getStats()` is the source of truth for that.
+ * A method whose returned promise resolves with a `ReadableStream` is *not*
+ * finished when the promise settles — capnweb keeps the export alive until
+ * the stream ends. The busy/idle poll on `getStats()` remains the source of
+ * truth for stream lifetimes after the initial RPC promise settles.
  */
 function wrapStub<T extends object>(
   stub: T,
   domain: string,
-  onCallStarted: () => void
+  onCallStarted: () => void,
+  onCallSettled: () => void,
+  getConnectionError: () => unknown,
+  getSessionEstablished: () => boolean,
+  getSpanAttrs: () => Record<string, string | undefined>
 ): T {
   return new Proxy(stub, {
     get(target, prop, receiver) {
@@ -410,13 +583,30 @@ function wrapStub<T extends object>(
             result != null &&
             typeof (result as { then?: unknown }).then === 'function'
           ) {
-            return (result as Promise<unknown>).catch((err: unknown) =>
-              translateRPCError(err, { operation })
-            );
+            // Span the RPC call so each method invocation (and its failure,
+            // with error/error.stack attributes) is visible in traces.
+            return withSpan(
+              `sandbox.rpc.call ${operation}`,
+              { ...getSpanAttrs(), operation },
+              () =>
+                (result as Promise<unknown>).catch((err: unknown) =>
+                  translateRPCError(err, {
+                    operation,
+                    connectionError: getConnectionError(),
+                    sessionEstablished: getSessionEstablished()
+                  })
+                )
+            ).finally(onCallSettled);
           }
+          onCallSettled();
           return result;
         } catch (err) {
-          translateRPCError(err, { operation });
+          onCallSettled();
+          translateRPCError(err, {
+            operation,
+            connectionError: getConnectionError(),
+            sessionEstablished: getSessionEstablished()
+          });
         }
       };
     }
@@ -478,8 +668,34 @@ export class ContainerControlClient {
   private readonly onSessionIdle: (() => void) | undefined;
 
   private conn: ContainerControlConnection | null = null;
+  /**
+   * Real cause captured by the connection during startup failure (e.g. a
+   * platform container-allocation error). Preferred over the generic capnweb
+   * disposal error when translating queued RPC rejections. Cleared each time a
+   * fresh connection is created.
+   */
+  private lastConnectionError: unknown = null;
+  /**
+   * Whether `lastConnectionError` was captured from an actual connection
+   * attempt failure (authoritative root cause) rather than a lifecycle
+   * teardown reason (weak). A weak teardown cause — e.g. `onStop` firing
+   * `runtime_replaced` — is usually a downstream *consequence* of the real
+   * failure, so it must not overwrite an authoritative cause already
+   * captured from the connect attempt.
+   */
+  private connectionErrorIsAuthoritative = false;
+  /**
+   * Whether the current connection ever established a live session to a
+   * running container. Set true by the connection's `onConnected` callback,
+   * reset when a fresh connection is created. Lets `translateRPCError`
+   * distinguish a true interruption (established, then dropped) from a
+   * never-connected failure (container never started).
+   */
+  private sessionEstablished = false;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Number of RPC method promises that have started but not settled. */
+  private activeCalls = 0;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
 
@@ -490,6 +706,23 @@ export class ContainerControlClient {
       localMain: options.localMain,
       logger: options.logger,
       retryTimeoutMs: options.retryTimeoutMs,
+      getSandboxInfo: options.getSandboxInfo,
+      // Explicit container-start hook: when provided, the connection starts
+      // the container in its own retry loop before the WebSocket upgrade so
+      // capacity failures throw where we can classify them directly.
+      startContainer: options.startContainer,
+      // Record that the session actually connected to a running container, so
+      // a later teardown is classified as a true OPERATION_INTERRUPTED rather
+      // than surfacing as a never-connected failure.
+      onConnected: () => {
+        this.sessionEstablished = true;
+        // A prior attempt may have stamped an authoritative connect-attempt
+        // failure (e.g. a capacity error) before a retry succeeded. That cause
+        // is now stale: the session is live. Clear it so a later lifecycle
+        // teardown surfaces its own reason instead of this masked stale error.
+        this.lastConnectionError = null;
+        this.connectionErrorIsAuthoritative = false;
+      },
       // Event-driven failure recovery: when the live WebSocket closes
       // or errors, tear the connection down inside the same turn of
       // the event loop so the next RPC call builds a fresh one. The
@@ -499,6 +732,14 @@ export class ContainerControlClient {
       // every in-flight RPC rejects with a peer-closed error.
       onClose: () => {
         if (this.conn) this.destroyConnection();
+      },
+      // Capture the real startup failure before capnweb masks it on the
+      // queued RPC rejections. `translateRPCError` prefers this over the
+      // generic disposal / connection-failure transport error.
+      onConnectionError: (error: unknown) => {
+        // Authoritative: captured from an actual connection-attempt failure.
+        this.lastConnectionError = error;
+        this.connectionErrorIsAuthoritative = true;
       }
     };
     this.idleDisconnectMs =
@@ -521,23 +762,103 @@ export class ContainerControlClient {
    */
   private getConnection(): ContainerControlConnection {
     if (!this.conn) {
+      this.lastConnectionError = null;
+      this.connectionErrorIsAuthoritative = false;
+      this.sessionEstablished = false;
       this.conn = new ContainerControlConnection(this.connOptions);
       this.startBusyPoll();
     }
     return this.conn;
   }
 
+  /**
+   * Stamp a *weak* connection cause (a lifecycle teardown reason). Only takes
+   * effect if no authoritative connect-attempt failure has been captured, so
+   * a teardown consequence never masks the real root cause.
+   */
+  private stampWeakConnectionCause(cause: unknown): void {
+    if (cause === undefined) return;
+    if (this.connectionErrorIsAuthoritative) return;
+    this.lastConnectionError = cause;
+  }
+
   // -------------------------------------------------------------------------
   // Activity & busy/idle tracking
   // -------------------------------------------------------------------------
 
+  private markBusy(): void {
+    if (!this.busy) {
+      this.busy = true;
+      this.onSessionBusy?.();
+    }
+    this.clearIdleTimer();
+  }
+
+  private isSessionBusy(conn: ContainerControlConnection): boolean {
+    const { imports, exports } = conn.getStats();
+    return (
+      this.activeCalls > 0 ||
+      imports > IDLE_IMPORT_THRESHOLD ||
+      exports > IDLE_EXPORT_THRESHOLD
+    );
+  }
+
+  private maybeTransitionIdle(): void {
+    const conn = this.conn;
+    if (!conn || !conn.isConnected()) return;
+
+    if (this.isSessionBusy(conn)) {
+      this.markBusy();
+      return;
+    }
+
+    if (this.busy) {
+      this.busy = false;
+      this.onSessionIdle?.();
+      this.scheduleIdleDisconnect();
+    } else if (!this.idleTimer) {
+      this.scheduleIdleDisconnect();
+    }
+  }
+
   /**
    * Called synchronously at the start of each RPC method invocation.
    * Renews the DO activity timeout so the sleepAfter alarm is pushed
-   * forward before the container processes the call.
+   * forward before the container processes the call, and pins the RPC
+   * WebSocket as busy until the method's promise settles.
    */
-  private renewActivity = (): void => {
+  private recordCallStarted = (): void => {
+    this.activeCalls++;
+    this.markBusy();
     this.onActivity?.();
+  };
+
+  private recordCallSettled = (): void => {
+    this.activeCalls = Math.max(0, this.activeCalls - 1);
+    this.maybeTransitionIdle();
+  };
+
+  /** Return the last connection-startup error captured, if any. */
+  private getLastConnectionError = (): unknown => this.lastConnectionError;
+
+  /** Whether the current connection ever established a live session. */
+  private getSessionEstablished = (): boolean => this.sessionEstablished;
+
+  /**
+   * Base span attributes for RPC-call spans: sandbox identifiers plus the
+   * container port. Mirrors the connection's `spanAttrs()` so all
+   * `sandbox.rpc.*` spans share a consistent shape.
+   */
+  private getSpanAttrs = (): Record<string, string | undefined> => {
+    const info = this.connOptions.getSandboxInfo?.();
+    return {
+      'sandbox.id': info?.id,
+      'sandbox.name': info?.name,
+      'sandbox.rpc.port':
+        this.connOptions.port !== undefined
+          ? String(this.connOptions.port)
+          : undefined
+    };
   };
 
   /**
@@ -567,19 +888,11 @@ export class ContainerControlClient {
       return;
     }
 
-    const { imports, exports } = conn.getStats();
-    const isBusy =
-      imports > IDLE_IMPORT_THRESHOLD || exports > IDLE_EXPORT_THRESHOLD;
-
-    if (isBusy) {
-      if (!this.busy) {
-        this.busy = true;
-        this.onSessionBusy?.();
-      }
+    if (this.isSessionBusy(conn)) {
+      this.markBusy();
       // Renew on every busy tick — this is what keeps a long-lived stream
       // alive past sleepAfter.
       this.onActivity?.();
-      this.clearIdleTimer();
     } else if (this.busy) {
       this.busy = false;
       this.onSessionIdle?.();
@@ -615,11 +928,7 @@ export class ContainerControlClient {
       if (!conn || !conn.isConnected()) return;
 
       // Re-check before disconnecting — a new call may have started.
-      const { imports, exports } = conn.getStats();
-      if (
-        imports <= IDLE_IMPORT_THRESHOLD &&
-        exports <= IDLE_EXPORT_THRESHOLD
-      ) {
+      if (!this.isSessionBusy(conn)) {
         this.logger.debug('Disconnecting idle RPC connection');
         this.destroyConnection();
       }
@@ -633,9 +942,10 @@ export class ContainerControlClient {
     }
   }
 
-  private destroyConnection(): void {
+  private destroyConnection(cause?: unknown): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
+    this.activeCalls = 0;
     // If we tear down while still believing the session is busy, fire the
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
@@ -643,7 +953,13 @@ export class ContainerControlClient {
       this.onSessionIdle?.();
     }
     if (this.conn) {
-      this.conn.disconnect();
+      // Weakly stamp the teardown cause so queued RPC calls reject with a
+      // real reason instead of the generic capnweb disposal message — but
+      // never overwrite an authoritative connect-attempt failure (the
+      // teardown is usually a downstream consequence of it). Stamp before
+      // disconnect() disposes the stub and rejects the queued calls.
+      this.stampWeakConnectionCause(cause);
+      this.conn.disconnect(cause);
       this.conn = null;
     }
   }
@@ -661,66 +977,110 @@ export class ContainerControlClient {
     return wrapStub(
       this.getConnection().rpc().commands,
       'commands',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get files(): SandboxFilesAPI {
     return wrapStub(
       this.getConnection().rpc().files,
       'files',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     ) as unknown as SandboxFilesAPI;
   }
   get processes(): SandboxProcessesAPI {
     return wrapStub(
       this.getConnection().rpc().processes,
       'processes',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get ports(): SandboxPortsAPI {
     return wrapStub(
       this.getConnection().rpc().ports,
       'ports',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get git(): SandboxGitAPI {
-    return wrapStub(this.getConnection().rpc().git, 'git', this.renewActivity);
+    return wrapStub(
+      this.getConnection().rpc().git,
+      'git',
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
+    );
   }
   get utils(): SandboxUtilsAPI {
     return wrapStub(
       this.getConnection().rpc().utils,
       'utils',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get backup(): SandboxBackupAPI {
     return wrapStub(
       this.getConnection().rpc().backup,
       'backup',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get watch(): SandboxWatchAPI {
     return wrapStub(
       this.getConnection().rpc().watch,
       'watch',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get tunnels(): SandboxTunnelsAPI {
     return wrapStub(
       this.getConnection().rpc().tunnels,
       'tunnels',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
   get interpreter(): SandboxInterpreterAPI {
     return wrapStub(
       this.getConnection().rpc().interpreter,
       'interpreter',
-      this.renewActivity
+      this.recordCallStarted,
+      this.recordCallSettled,
+      this.getLastConnectionError,
+      this.getSessionEstablished,
+      this.getSpanAttrs
     );
   }
 
@@ -746,8 +1106,34 @@ export class ContainerControlClient {
     await this.getConnection().connect();
   }
 
-  disconnect(): void {
-    this.destroyConnection();
+  /**
+   * Tear down the active connection.
+   *
+   * When a connection attempt is still in progress, the teardown is deferred
+   * until that attempt settles — so a lifecycle disconnect (e.g. the DO's
+   * alarm firing `onStop`) cannot rip the transport out from under an
+   * in-flight connect and reject queued calls with a generic disposal error.
+   * The provided `cause` is stamped immediately so that if the attempt fails,
+   * queued calls surface it; if the attempt succeeds, the (now-established)
+   * connection is then torn down cleanly with the cause.
+   *
+   * `cause` should be a typed `SandboxError` describing why the connection is
+   * being torn down (sandbox stopping, lifetime change, transport switch).
+   */
+  disconnect(cause?: unknown): void {
+    const conn = this.conn;
+    if (conn?.isConnecting()) {
+      // Weakly stamp the cause so an in-flight-attempt failure (authoritative)
+      // still wins over this teardown reason.
+      this.stampWeakConnectionCause(cause);
+      // Defer the actual teardown until the attempt settles. Guard with an
+      // identity check so we don't destroy a newer connection.
+      void conn.whenSettled().then(() => {
+        if (this.conn === conn) this.destroyConnection(cause);
+      });
+      return;
+    }
+    this.destroyConnection(cause);
   }
 }
 

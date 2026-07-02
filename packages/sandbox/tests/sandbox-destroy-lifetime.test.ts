@@ -161,4 +161,28 @@ describe('Sandbox destroy() sandbox lifetime', () => {
     const lifetimePut = putCalls.find((c) => c.key === 'sandbox:lifetime');
     expect(lifetimePut).toBeUndefined();
   });
+
+  it('resolves (idempotent no-op) when the container was never admitted', async () => {
+    // Destroying a sandbox whose container never started (e.g. no instance
+    // available under capacity pressure) must not throw: there is nothing to
+    // tear down. The base container.destroy() throws the platform no-instance
+    // error; Sandbox.destroy() should treat it as success.
+    vi.spyOn(Container.prototype, 'destroy').mockRejectedValue(
+      new Error(
+        'There is no container instance that can be provided to this Durable Object, try again later'
+      )
+    );
+
+    await expect(sandbox.destroy()).resolves.toBeUndefined();
+  });
+
+  it('still rejects when the container destroy fails for a non-no-instance reason', async () => {
+    vi.spyOn(Container.prototype, 'destroy').mockRejectedValue(
+      new Error('some other teardown failure')
+    );
+
+    await expect(sandbox.destroy()).rejects.toThrow(
+      'some other teardown failure'
+    );
+  });
 });

@@ -92,10 +92,14 @@ import {
   SandboxError,
   SessionAlreadyExistsError
 } from './errors';
+import { createErrorFromResponse } from './errors/adapter';
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
-import { isPlatformTransientError } from './platform-errors';
+import {
+  isPlatformTransientError,
+  matchContainerUnavailable
+} from './platform-errors';
 import {
   forwardPreviewRequest,
   type PreviewTCPPort
@@ -391,6 +395,24 @@ const R2_DEFAULT_S3FS_OPTION_ENTRIES = Object.entries(
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
+
+/**
+ * Instance-get budget (ms) for the RPC transport's explicit container-start
+ * hook, independent of the user-facing `containerTimeouts.instanceGetTimeoutMS`
+ * (which still governs the HTTP path's `containerFetch`).
+ *
+ * Deliberately small: it bounds how long a single start attempt polls for a
+ * container instance before the base class throws the classifiable
+ * `NO_CONTAINER_INSTANCE_ERROR`. The RPC control connection's own retry loop
+ * (`fetchWithResponseRetry`, ~2 min budget with exponential backoff) owns the
+ * cross-attempt retries, so a short inner budget means each attempt fails fast
+ * under capacity pressure and hands back to the outer loop — rather than one
+ * attempt burning ~30s and letting the DO be evicted mid-wait. Once an
+ * instance exists, `portReadyTimeoutMS` still governs app boot on the next
+ * attempt (the base fast-path returns immediately when the container is
+ * already running).
+ */
+const RPC_START_INSTANCE_GET_TIMEOUT_MS = 3_000;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
 const BACKUP_STORAGE_PREFIX = 'backups';
@@ -1142,6 +1164,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         port: 3000,
         logger: this.logger,
         retryTimeoutMs: this.computeRetryTimeoutMs(),
+        // Sandbox identifiers stamped on RPC trace spans (sandbox.id = DO id,
+        // sandbox.name = user-provided name). Resolved lazily so a name set
+        // after the client is built is still reflected.
+        getSandboxInfo: () => ({
+          id: this.ctx.id.toString(),
+          name: this.sandboxName ?? undefined
+        }),
+        // Explicitly start the container before the RPC WebSocket upgrade.
+        // Running start() here — rather than as a side effect of the upgrade
+        // fetch through containerFetch() — makes the platform's
+        // container-admission failure ("no container instance" / "max
+        // instances exceeded") throw inside the connection's own retry loop,
+        // where it is classified and surfaced as a typed
+        // ContainerUnavailableError instead of being round-tripped through a
+        // 503 upgrade-response body.
+        //
+        // No abort signal is passed: the base Container class only emits the
+        // classifiable NO_CONTAINER_INSTANCE_ERROR after its own instance-get
+        // budget is exhausted, and it checks the abort signal *before* that
+        // throw. Passing the connection's per-attempt connect-timeout signal
+        // here would abort start early with a generic "Aborted waiting for
+        // container to start" error that can't be classified. Instead we run
+        // start under a short instance-get budget and always throw a typed
+        // SandboxError — see startContainerForRPC.
+        startContainer: () => this.startContainerForRPC(),
         // localMain exposes the DO-side control callback (tunnel-exit
         // notifications, etc.) to the container side of the session.
         localMain: this.controlCallback,
@@ -1362,7 +1409,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.tunnelsHandler = null;
         this.tunnelExitHandler = null;
         this.destroyAllTunnels = null;
-        previousClient.disconnect();
+        previousClient.disconnect(
+          this.buildDisconnectCause(
+            'runtime_replaced',
+            'The sandbox transport was switched while the operation was pending.'
+          )
+        );
       }
       if (storedTransport) {
         this.hasStoredTransport = true;
@@ -1567,7 +1619,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.tunnelsHandler = null;
     this.tunnelExitHandler = null;
     this.destroyAllTunnels = null;
-    previousClient.disconnect();
+    previousClient.disconnect(
+      this.buildDisconnectCause(
+        'runtime_replaced',
+        'The sandbox transport was switched while the operation was pending.'
+      )
+    );
     this.renewActivityTimeout();
     this.logger.debug('Transport updated', { transport });
   }
@@ -2786,11 +2843,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.delete('tunnels');
       await this.ctx.storage.delete('tunnels:meta');
 
-      // Disconnect transport after all cleanup commands have completed
-      this.client.disconnect();
+      // Disconnect transport after all cleanup commands have completed.
+      // Stamp a lifetime-changed cause so any RPC still queued on the
+      // transport rejects with an actionable (non-retryable) error rather
+      // than a generic capnweb disposal string.
+      this.client.disconnect(
+        this.buildDisconnectCause(
+          'sandbox_lifetime_changed',
+          'The sandbox was destroyed while the operation was pending.'
+        )
+      );
 
       outcome = 'success';
-      await super.destroy();
+      try {
+        await super.destroy();
+      } catch (error) {
+        // `super.destroy()` is `this.container.destroy()`, which throws the
+        // platform "no container instance" error when no instance was ever
+        // admitted (e.g. destroying a sandbox whose container never started
+        // under capacity pressure). There is nothing to tear down in that
+        // case, so treat it as an idempotent no-op success rather than
+        // surfacing a second error on the cleanup path.
+        if (!this.isNoInstanceError(error)) throw error;
+        this.logger.debug(
+          'super.destroy() reported no container instance; treating as no-op'
+        );
+      }
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
@@ -2976,7 +3054,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Disconnect the active client so open sockets do not hold the DO alive.
-    this.client.disconnect();
+    // Stamp a runtime-replaced cause so a pending RPC surfaces a retryable
+    // interruption instead of a generic disposal string.
+    this.client.disconnect(
+      this.buildDisconnectCause(
+        'runtime_replaced',
+        'The sandbox container stopped while the operation was pending.'
+      )
+    );
 
     // Stop local sync managers before clearing the map.
     let hadR2EgressMount = false;
@@ -3052,17 +3137,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         });
       } catch (e) {
-        // 1. Provisioning: Container VM not yet available
-        if (this.isNoInstanceError(e)) {
+        // 1. Provisioning: the Containers platform cannot admit an instance
+        // yet ("There is no container instance that can be provided...").
+        // Emit a structured CONTAINER_UNAVAILABLE body and preserve the
+        // original platform message so the caller — including the RPC
+        // control connection's upgrade-response classifier — surfaces a
+        // typed ContainerUnavailableError with an actionable reason rather
+        // than a generic INTERNAL_ERROR / rpc_upgrade_failed.
+        const admissionReason = matchContainerUnavailable(e);
+        if (admissionReason) {
+          const originalMessage = e instanceof Error ? e.message : String(e);
+          const context = {
+            reason: admissionReason,
+            retryable: true as const,
+            originalMessage
+          };
           const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message:
-              'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { phase: 'provisioning' },
+            code: ErrorCode.CONTAINER_UNAVAILABLE,
+            message: originalMessage,
+            context,
             httpStatus: 503,
             timestamp: new Date().toISOString(),
-            suggestion:
-              'This is expected during first deployment. The SDK will retry automatically.'
+            suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context)
           };
           return new Response(JSON.stringify(errorBody), {
             status: 503,
@@ -3182,10 +3278,119 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * This indicates the container VM is still being provisioned.
    */
   private isNoInstanceError(error: unknown): boolean {
-    return (
-      error instanceof Error &&
-      error.message.toLowerCase().includes('no container instance')
+    return matchContainerUnavailable(error) !== null;
+  }
+
+  /**
+   * Explicit container-start hook for the RPC transport.
+   *
+   * Runs `startAndWaitForPorts` under a short instance-get budget
+   * ({@link RPC_START_INSTANCE_GET_TIMEOUT_MS}) so a single attempt fails fast
+   * under capacity pressure — the base class throws the classifiable
+   * `NO_CONTAINER_INSTANCE_ERROR` once that budget is exhausted, and the RPC
+   * control connection's own retry loop (with backoff) owns cross-attempt
+   * retries. Port readiness still uses the full `portReadyTimeoutMS` so a
+   * genuinely-booting app isn't cut short once an instance exists.
+   *
+   * Always throws a typed `SandboxError` on failure so the control connection
+   * never surfaces a raw capnweb/transport string to the caller:
+   *   - container-admission/capacity failures → retryable
+   *     `ContainerUnavailableError` (preserving the platform message so the
+   *     connection's `shouldRetryError` still recognizes and retries it);
+   *   - anything else (platform-transient DO reset, network loss, unexpected
+   *     startup failure) → `INTERNAL_ERROR`-coded SandboxError carrying the
+   *     original message.
+   */
+  private async startContainerForRPC(): Promise<void> {
+    try {
+      await this.startAndWaitForPorts({
+        ports: 3000,
+        cancellationOptions: {
+          instanceGetTimeoutMS: RPC_START_INSTANCE_GET_TIMEOUT_MS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS
+        }
+      });
+    } catch (error) {
+      throw this.toContainerStartError(error);
+    }
+  }
+
+  /**
+   * Convert a container-start failure into a typed SandboxError. Preserves an
+   * existing SandboxError as-is; maps platform admission/capacity failures to
+   * a retryable ContainerUnavailableError; and wraps everything else as an
+   * INTERNAL_ERROR carrying the original message (never a raw transport
+   * string).
+   */
+  private toContainerStartError(error: unknown): Error {
+    if (error instanceof SandboxError) return error;
+
+    const originalMessage =
+      error instanceof Error ? error.message : String(error);
+    const admissionReason = matchContainerUnavailable(error);
+    if (admissionReason) {
+      const context = {
+        reason: admissionReason,
+        retryable: true as const,
+        originalMessage
+      };
+      return createErrorFromResponse(
+        {
+          code: ErrorCode.CONTAINER_UNAVAILABLE,
+          message: originalMessage,
+          context,
+          httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+          suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+          timestamp: new Date().toISOString()
+        },
+        { cause: error }
+      );
+    }
+
+    const context = { phase: 'startup' as const, error: originalMessage };
+    return createErrorFromResponse(
+      {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: `Container failed to start: ${originalMessage}`,
+        context,
+        httpStatus: getHttpStatus(ErrorCode.INTERNAL_ERROR),
+        timestamp: new Date().toISOString()
+      },
+      { cause: error }
     );
+  }
+
+  /**
+   * Build a typed lifecycle cause to stamp on the RPC transport when the DO
+   * tears the connection down for its own reasons (container stopped, sandbox
+   * destroyed, transport switched). Handed to `client.disconnect(cause)` so
+   * any RPC calls queued on the transport reject with this actionable reason
+   * instead of the generic capnweb "disposing the main stub" message.
+   */
+  private buildDisconnectCause(
+    reason: 'runtime_replaced' | 'sandbox_lifetime_changed',
+    detail: string
+  ): OperationInterruptedError {
+    const retryable = reason === 'runtime_replaced';
+    const context = {
+      reason,
+      operation: 'rpc.connect',
+      phase: 'connection',
+      admitted: 'unknown' as const,
+      retryable
+    };
+    return new OperationInterruptedError({
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: detail,
+      context,
+      httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+      suggestion: getSuggestion(
+        ErrorCode.OPERATION_INTERRUPTED,
+        context as unknown as Record<string, unknown>
+      ),
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**
