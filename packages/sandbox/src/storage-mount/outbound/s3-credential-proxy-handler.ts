@@ -20,7 +20,7 @@ import type {
 } from '@cloudflare/containers';
 import type { BucketProvider } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import type { S3CredentialProxyParams } from './types';
+import type { S3CredentialProxyParams } from '../types';
 
 const PER_MOUNT_SUFFIX = '.s3-credential-proxy.internal';
 export const SELF_TEST_PATH = '/__sandbox_credential_proxy_self_test__';

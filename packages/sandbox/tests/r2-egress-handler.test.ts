@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   type R2EgressParams,
   r2EgressHandler
-} from '../src/storage-mount/r2-egress-handler';
+} from '../src/storage-mount/outbound/r2-egress-handler';
 
 // ---------------------------------------------------------------------------
 // Mock R2 binding factory

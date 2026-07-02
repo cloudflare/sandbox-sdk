@@ -5,7 +5,7 @@ import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
   r2EgressHandler
-} from '../src/storage-mount/r2-egress-handler';
+} from '../src/storage-mount/outbound/r2-egress-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
 import { createMockControlClient } from './helpers/mock-control-client';
 
@@ -162,12 +162,37 @@ function createMockCtx(options?: {
     latestProxyOptions = proxyOptions;
     return options?.containerProxyResult ?? containerProxyFetcher;
   });
+  const storage = new Map<string, unknown>();
   return {
     storage: {
-      get: vi.fn().mockResolvedValue(null),
-      put: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
-      list: vi.fn().mockResolvedValue(new Map())
+      get: vi.fn(async (key: string) => storage.get(key) ?? null),
+      put: vi.fn(async (key: string, value: unknown) => {
+        storage.set(key, value);
+      }),
+      delete: vi.fn(async (key: string) => {
+        storage.delete(key);
+      }),
+      list: vi.fn().mockResolvedValue(new Map()),
+      transaction: vi.fn().mockImplementation(
+        async <T>(
+          callback: (txn: {
+            get: (key: string) => Promise<unknown>;
+            put: (key: string, value: unknown) => Promise<void>;
+            delete: (key: string) => Promise<void>;
+            list: () => Promise<Map<string, unknown>>;
+          }) => Promise<T>
+        ): Promise<T> =>
+          callback({
+            get: async (key: string) => storage.get(key) ?? null,
+            put: async (key: string, value: unknown) => {
+              storage.set(key, value);
+            },
+            delete: async (key: string) => {
+              storage.delete(key);
+            },
+            list: async () => new Map()
+          })
+      )
     },
     blockConcurrencyWhile: vi
       .fn()
@@ -255,6 +280,7 @@ describe('Sandbox credential proxy mounts', () => {
     return vi.fn(async (command: string) => {
       if (command.startsWith('test -d ')) return createExecResult(command);
       if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.startsWith('chmod ')) return createExecResult(command);
       if (command.includes('s3fs ')) return createExecResult(command);
       if (command.startsWith('mountpoint -q') && command.includes('echo')) {
         return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
@@ -275,6 +301,8 @@ describe('Sandbox credential proxy mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
@@ -303,6 +331,8 @@ describe('Sandbox credential proxy mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
@@ -338,11 +368,10 @@ describe('Sandbox credential proxy mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
-    const createPasswordFile = vi.fn().mockResolvedValue(undefined);
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
-      createPasswordFile,
       deletePasswordFile: vi.fn().mockResolvedValue(undefined),
       createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
       deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
@@ -355,10 +384,9 @@ describe('Sandbox credential proxy mounts', () => {
       credentialProxy: true
     });
 
-    expect(createPasswordFile).toHaveBeenCalledWith(
-      '/tmp/.s3fs-dummy',
-      'my-bucket',
-      { accessKeyId: 'x', secretAccessKey: 'x' }
+    expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
+      expect.stringContaining('/tmp/.passwd-s3fs-'),
+      'my-bucket:x:x'
     );
   });
 
@@ -369,6 +397,8 @@ describe('Sandbox credential proxy mounts', () => {
       {}
     );
     const execInternal = createCredentialProxyExecMock();
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal,
@@ -395,8 +425,8 @@ describe('Sandbox credential proxy mounts', () => {
     );
     expect(s3fsCall).toBeDefined();
     expect(String(s3fsCall![0])).toContain('use_path_request_style');
-    expect(String(s3fsCall![0])).toContain(
-      'ahbe_conf=/tmp/.s3fs-ahbe-path-style.conf'
+    expect(String(s3fsCall![0])).toMatch(
+      /ahbe_conf=\/tmp\/.s3fs-ahbe-[^,']+\.conf/
     );
     expect(String(s3fsCall![0])).toContain('s3-credential-proxy.internal');
   });
@@ -408,6 +438,8 @@ describe('Sandbox credential proxy mounts', () => {
       {}
     );
     const execInternal = createCredentialProxyExecMock();
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal,
@@ -438,6 +470,8 @@ describe('Sandbox credential proxy mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
@@ -488,6 +522,8 @@ describe('Sandbox credential proxy mounts', () => {
       }
       return createExecResult(command);
     });
+    sandbox.client = createMockControlClient();
+
     Object.assign(sandbox as object, {
       execInternal,
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
@@ -577,7 +613,7 @@ describe('Sandbox credential proxy mounts', () => {
     );
   });
 
-  it('clears mount state when both mount and credential proxy cleanup reconfiguration fail', async () => {
+  it('keeps failed credential proxy mounts retryable when cleanup reconfiguration fails', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
@@ -595,6 +631,8 @@ describe('Sandbox credential proxy mounts', () => {
       }
       return createExecResult(command);
     });
+    sandbox.client = createMockControlClient();
+
     Object.assign(sandbox as object, {
       execInternal,
       createPasswordFile: vi.fn().mockResolvedValue(undefined),
@@ -618,22 +656,22 @@ describe('Sandbox credential proxy mounts', () => {
         credentials: { accessKeyId: 'AKID', secretAccessKey: 'SECRET' },
         credentialProxy: true
       })
-    ).rejects.toThrow();
+    ).rejects.toThrow('outbound cleanup failed');
 
-    const activeMounts = (
-      sandbox as unknown as {
-        activeMounts: Map<string, unknown>;
-      }
-    ).activeMounts;
-    expect(activeMounts.has('/mnt/proxy')).toBe(false);
+    await expect(sandbox.unmountBucket('/mnt/proxy')).resolves.toBeUndefined();
+    await expect(sandbox.unmountBucket('/mnt/proxy')).rejects.toThrow(
+      'No active mount found at path: /mnt/proxy'
+    );
   });
 
-  it('clears mount state when credential proxy unmount reconfiguration fails', async () => {
+  it('keeps credential proxy mounts retryable when unmount reconfiguration fails', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
@@ -656,14 +694,14 @@ describe('Sandbox credential proxy mounts', () => {
       new Error('intercept failed on unmount')
     );
 
-    await expect(sandbox.unmountBucket('/mnt/proxy')).resolves.toBeUndefined();
+    await expect(sandbox.unmountBucket('/mnt/proxy')).rejects.toThrow(
+      'intercept failed on unmount'
+    );
 
-    const activeMounts = (
-      sandbox as unknown as {
-        activeMounts: Map<string, unknown>;
-      }
-    ).activeMounts;
-    expect(activeMounts.has('/mnt/proxy')).toBe(false);
+    await expect(sandbox.unmountBucket('/mnt/proxy')).resolves.toBeUndefined();
+    await expect(sandbox.unmountBucket('/mnt/proxy')).rejects.toThrow(
+      'No active mount found at path: /mnt/proxy'
+    );
   });
 
   it('attempts best-effort unmount before deleting credential proxy support files on mount failure', async () => {
@@ -673,8 +711,10 @@ describe('Sandbox credential proxy mounts', () => {
       {}
     );
 
+    sandbox.client = createMockControlClient();
     const operationOrder: string[] = [];
     const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('chmod 0600 ')) return createExecResult(command);
       if (command.startsWith('test -d ')) return createExecResult(command);
       if (command.startsWith('mkdir -p ')) return createExecResult(command);
       if (command.includes('s3fs ')) {
@@ -684,27 +724,23 @@ describe('Sandbox credential proxy mounts', () => {
         });
       }
       if (
-        command.startsWith('mountpoint -q') &&
+        command.startsWith('if mountpoint -q') &&
         command.includes('fusermount')
       ) {
         operationOrder.push('unmount');
         return createExecResult(command);
       }
+      if (command.startsWith('rm -f ')) {
+        operationOrder.push('delete-support-file');
+        return createExecResult(command);
+      }
       if (command.startsWith('rmdir ')) return createExecResult(command);
       return createExecResult(command);
     });
-    const deletePasswordFile = vi.fn().mockImplementation(async () => {
-      operationOrder.push('delete-password');
-    });
+    sandbox.client = createMockControlClient();
+
     Object.assign(sandbox as object, {
-      execInternal,
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile,
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi
-        .fn()
-        .mockReturnValue('/tmp/.s3fs-fail-cleanup-order')
+      execInternal
     });
 
     await expect(
@@ -715,7 +751,11 @@ describe('Sandbox credential proxy mounts', () => {
       })
     ).rejects.toThrow();
 
-    expect(operationOrder).toEqual(['unmount', 'delete-password']);
+    expect(operationOrder[0]).toBe('unmount');
+    expect(operationOrder.slice(1)).toEqual([
+      'delete-support-file',
+      'delete-support-file'
+    ]);
   });
 
   it('clears credential proxy interception on onStop', async () => {
@@ -724,6 +764,8 @@ describe('Sandbox credential proxy mounts', () => {
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       {}
     );
+
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
       execInternal: createCredentialProxyExecMock(),
@@ -1018,7 +1060,11 @@ describe('Sandbox R2 egress mounts', () => {
     );
 
     const execInternal = vi.fn().mockImplementation(async (command: string) => {
-      if (command.startsWith('mkdir -p ') || command.startsWith('mountpoint')) {
+      if (
+        command.startsWith('chmod ') ||
+        command.startsWith('mkdir -p ') ||
+        command.startsWith('mountpoint')
+      ) {
         return {
           success: true,
           stdout: 'FUSE_MOUNTED',
@@ -1044,8 +1090,8 @@ describe('Sandbox R2 egress mounts', () => {
         expect(command).toContain("'MY_BUCKET'");
         expect(command).not.toContain(':/uploads');
         expect(command).toContain('url=http://r2.internal');
-        expect(command).toContain(`passwd_file=${FAKE_PASSWD}`);
-        expect(command).toContain(`ahbe_conf=${FAKE_AHBE_CONF}`);
+        expect(command).toContain('passwd_file=/tmp/.passwd-s3fs-');
+        expect(command).toContain('ahbe_conf=/tmp/.s3fs-ahbe-');
         expect(command).toContain('use_path_request_style');
         expect(command).toContain('nomixupload');
         expect(command).toContain('stat_cache_expire=1');
@@ -1064,23 +1110,10 @@ describe('Sandbox R2 egress mounts', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    const FAKE_PASSWD = '/tmp/.s3fs-test-passwd';
-    const createPasswordFile = vi.fn().mockResolvedValue(undefined);
-    const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
-    const generatePasswordFilePath = vi.fn().mockReturnValue(FAKE_PASSWD);
-    const FAKE_AHBE_CONF = '/tmp/.s3fs-ahbe-test.conf';
-    const generateS3FSAdditionalHeaderFilePath = vi
-      .fn()
-      .mockReturnValue(FAKE_AHBE_CONF);
+    sandbox.client = createMockControlClient();
 
     Object.assign(sandbox as object, {
-      execInternal,
-      createPasswordFile,
-      deletePasswordFile,
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath,
-      generateS3FSAdditionalHeaderFilePath
+      execInternal
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {
@@ -1112,11 +1145,14 @@ describe('Sandbox R2 egress mounts', () => {
       new Request('http://r2.internal/MY_BUCKET?location', { method: 'GET' })
     );
     expect(proxyResponse.status).toBe(200);
+    const s3fsCall = execInternal.mock.calls.findIndex(([command]) =>
+      command.includes('s3fs ')
+    );
+    expect(s3fsCall).toBeGreaterThanOrEqual(0);
     expect(
       mockCtx.container.interceptOutboundHttp.mock.invocationCallOrder[0]
-    ).toBeLessThan(execInternal.mock.invocationCallOrder[0]);
-    expect(execInternal).toHaveBeenNthCalledWith(1, "mkdir -p '/mnt/data'");
-    expect(execInternal).toHaveBeenCalledTimes(3);
+    ).toBeLessThan(execInternal.mock.invocationCallOrder[s3fsCall]);
+    expect(execInternal).toHaveBeenCalledWith("mkdir -p '/mnt/data'");
   });
 
   it('throws a clear error when ContainerProxy is not exported for R2 binding mounts', async () => {
@@ -1126,13 +1162,13 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     Object.assign(sandbox as object, {
-      execInternal: vi.fn(),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-no-proxy')
+      execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
+        throw new Error(`Unexpected command: ${command}`);
+      })
     });
 
     await expect(
@@ -1149,13 +1185,13 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     Object.assign(sandbox as object, {
-      execInternal: vi.fn(),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-bad-proxy')
+      execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
+        throw new Error(`Unexpected command: ${command}`);
+      })
     });
 
     await expect(
@@ -1180,20 +1216,18 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     Object.assign(sandbox as object, {
       execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
         if (command.startsWith('mkdir -p ')) return createExecResult(command);
         if (command.includes('s3fs ')) return createExecResult(command);
         if (command.startsWith('mountpoint')) {
           return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
         }
         throw new Error(`Unexpected command: ${command}`);
-      }),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-isolated')
+      })
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/isolated', {} as any);
@@ -1208,6 +1242,13 @@ describe('Sandbox R2 egress mounts', () => {
             })
           }
         })
+      })
+    );
+    expect(UserSandbox.outboundHandlers).toEqual(
+      expect.objectContaining({
+        userHandler: expect.any(Function),
+        r2EgressMount: expect.any(Function),
+        s3CredentialProxyMount: expect.any(Function)
       })
     );
   });
@@ -1231,7 +1272,10 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('chmod ')) return createExecResult(command);
+      if (command.startsWith('rm -f ')) return createExecResult(command);
       if (command.startsWith('mkdir -p ')) return createExecResult(command);
       if (command.includes('s3fs ')) return createExecResult(command);
       if (command.startsWith('mountpoint')) {
@@ -1240,15 +1284,7 @@ describe('Sandbox R2 egress mounts', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     Object.assign(sandbox as object, {
-      execInternal,
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi
-        .fn()
-        .mockReturnValueOnce('/tmp/.s3fs-one')
-        .mockReturnValueOnce('/tmp/.s3fs-two')
+      execInternal
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/one', {
@@ -1268,7 +1304,10 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('chmod ')) return createExecResult(command);
+      if (command.startsWith('rm -f ')) return createExecResult(command);
       if (command.startsWith('mkdir -p ')) return createExecResult(command);
       if (command.includes('s3fs ')) return createExecResult(command);
       if (command.startsWith('mountpoint')) {
@@ -1277,15 +1316,7 @@ describe('Sandbox R2 egress mounts', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     Object.assign(sandbox as object, {
-      execInternal,
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi
-        .fn()
-        .mockReturnValueOnce('/tmp/.s3fs-one')
-        .mockReturnValueOnce('/tmp/.s3fs-two')
+      execInternal
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/one', {
@@ -1308,30 +1339,25 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: createMockR2Bucket() }
     );
 
-    const deleteAdditionalHeaderFile = vi.fn().mockResolvedValue(undefined);
+    sandbox.client = createMockControlClient();
+    const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('chmod ')) return createExecResult(command);
+      if (command.startsWith('rm -f ')) return createExecResult(command);
+      if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('s3fs ')) return createExecResult(command);
+      if (command.startsWith('mountpoint -q') && command.includes('echo')) {
+        return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+      }
+      if (command.startsWith('fusermount -u ')) {
+        return createExecResult(command);
+      }
+      if (command.startsWith('mountpoint -q') && command.includes('rmdir')) {
+        return createExecResult(command);
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
     Object.assign(sandbox as object, {
-      execInternal: vi.fn(async (command: string) => {
-        if (command.startsWith('mkdir -p ')) return createExecResult(command);
-        if (command.includes('s3fs ')) return createExecResult(command);
-        if (command.startsWith('mountpoint -q') && command.includes('echo')) {
-          return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
-        }
-        if (command.startsWith('fusermount -u ')) {
-          return createExecResult(command);
-        }
-        if (command.startsWith('mountpoint -q') && command.includes('rmdir')) {
-          return createExecResult(command);
-        }
-        throw new Error(`Unexpected command: ${command}`);
-      }),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile,
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-unmount'),
-      generateS3FSAdditionalHeaderFilePath: vi
-        .fn()
-        .mockReturnValue('/tmp/.s3fs-ahbe-unmount.conf')
+      execInternal
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {} as any);
@@ -1354,20 +1380,26 @@ describe('Sandbox R2 egress mounts', () => {
       'r2.internal',
       mockCtx.containerProxyFetcher
     );
-    expect(deleteAdditionalHeaderFile).toHaveBeenCalledWith(
-      '/tmp/.s3fs-ahbe-unmount.conf'
-    );
+    expect(
+      execInternal.mock.calls.some(
+        ([command]) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(true);
   });
 
-  it('clears mount state when R2 egress unmount reconfiguration fails', async () => {
+  it('keeps R2 egress mounts retryable when unmount reconfiguration fails', async () => {
     const mockCtx = createMockCtx();
     const sandbox = new Sandbox(
       mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
       { MY_BUCKET: createMockR2Bucket() }
     );
 
+    sandbox.client = createMockControlClient();
     Object.assign(sandbox as object, {
       execInternal: vi.fn(async (command: string) => {
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
         if (command.startsWith('mkdir -p ')) return createExecResult(command);
         if (command.includes('s3fs ')) return createExecResult(command);
         if (command.startsWith('mountpoint -q') && command.includes('echo')) {
@@ -1380,17 +1412,7 @@ describe('Sandbox R2 egress mounts', () => {
           return createExecResult(command);
         }
         throw new Error(`Unexpected command: ${command}`);
-      }),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile: vi.fn().mockResolvedValue(undefined),
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi
-        .fn()
-        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail'),
-      generateS3FSAdditionalHeaderFilePath: vi
-        .fn()
-        .mockReturnValue('/tmp/.s3fs-r2-unmount-reconfigure-fail.conf')
+      })
     });
 
     await sandbox.mountBucket('MY_BUCKET', '/mnt/data', {} as any);
@@ -1399,14 +1421,14 @@ describe('Sandbox R2 egress mounts', () => {
       new Error('r2 configure failed on unmount')
     );
 
-    await expect(sandbox.unmountBucket('/mnt/data')).resolves.toBeUndefined();
+    await expect(sandbox.unmountBucket('/mnt/data')).rejects.toThrow(
+      'r2 configure failed on unmount'
+    );
 
-    const activeMounts = (
-      sandbox as unknown as {
-        activeMounts: Map<string, unknown>;
-      }
-    ).activeMounts;
-    expect(activeMounts.has('/mnt/data')).toBe(false);
+    await expect(sandbox.unmountBucket('/mnt/data')).resolves.toBeUndefined();
+    await expect(sandbox.unmountBucket('/mnt/data')).rejects.toThrow(
+      'No active mount found at path: /mnt/data'
+    );
   });
 
   it('deletes the password file when R2 egress mount fails', async () => {
@@ -1417,7 +1439,10 @@ describe('Sandbox R2 egress mounts', () => {
     );
 
     const execInternal = vi.fn(async (command: string) => {
+      if (command.startsWith('chmod ')) return createExecResult(command);
+      if (command.startsWith('rm -f ')) return createExecResult(command);
       if (command.startsWith('mkdir -p ')) return createExecResult(command);
+      if (command.includes('fusermount -u')) return createExecResult(command);
       if (command.includes('s3fs ')) {
         return createExecResult(command, {
           exitCode: 1,
@@ -1426,28 +1451,27 @@ describe('Sandbox R2 egress mounts', () => {
       }
       throw new Error(`Unexpected command: ${command}`);
     });
-    const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
-    const deleteAdditionalHeaderFile = vi.fn().mockResolvedValue(undefined);
+    sandbox.client = createMockControlClient();
     Object.assign(sandbox as object, {
-      execInternal,
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile,
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile,
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-failed'),
-      generateS3FSAdditionalHeaderFilePath: vi
-        .fn()
-        .mockReturnValue('/tmp/.s3fs-ahbe-failed.conf')
+      execInternal
     });
 
     await expect(
       sandbox.mountBucket('MY_BUCKET', '/mnt/fail', {} as any)
     ).rejects.toThrow('S3FS mount failed');
 
-    expect(deletePasswordFile).toHaveBeenCalledWith('/tmp/.s3fs-failed');
-    expect(deleteAdditionalHeaderFile).toHaveBeenCalledWith(
-      '/tmp/.s3fs-ahbe-failed.conf'
-    );
+    expect(
+      execInternal.mock.calls.some(
+        ([command]) =>
+          command.startsWith('rm -f ') && command.includes('.passwd-s3fs-')
+      )
+    ).toBe(true);
+    expect(
+      execInternal.mock.calls.some(
+        ([command]) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(true);
     expect(mockCtx.exports.ContainerProxy).toHaveBeenLastCalledWith({
       props: {
         enableInternet: undefined,
@@ -1463,34 +1487,190 @@ describe('Sandbox R2 egress mounts', () => {
     });
   });
 
-  it('throws when s3fs exits 0 but mountpoint check does not confirm mount', async () => {
+  it('deletes R2 egress support files without unmounting before s3fs starts', async () => {
+    const mockCtx = createMockCtx({ includeContainerProxy: false });
+    const sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+    sandbox.client = createMockControlClient();
+
+    const issuedCommands: string[] = [];
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        issuedCommands.push(command);
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
+        throw new Error(`Unexpected command: ${command}`);
+      })
+    });
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/pre-s3fs-fail', {})
+    ).rejects.toThrow('exporting ContainerProxy');
+
+    expect(issuedCommands.some((command) => command.includes('s3fs '))).toBe(
+      false
+    );
+    expect(
+      issuedCommands.some((command) => command.includes('fusermount -u'))
+    ).toBe(false);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.passwd-s3fs-')
+      )
+    ).toBe(true);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(true);
+  });
+
+  it('deletes R2 egress support files only after safe failure cleanup', async () => {
     const sandbox = new Sandbox(
       createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
       { MY_BUCKET: createMockR2Bucket() }
     );
+    sandbox.client = createMockControlClient();
 
-    const deletePasswordFile = vi.fn().mockResolvedValue(undefined);
+    const issuedCommands: string[] = [];
     Object.assign(sandbox as object, {
       execInternal: vi.fn(async (command: string) => {
+        issuedCommands.push(command);
+        if (command.startsWith('chmod ')) return createExecResult(command);
         if (command.startsWith('mkdir -p ')) return createExecResult(command);
-        if (command.includes('s3fs ')) return createExecResult(command);
-        if (command.startsWith('mountpoint')) {
-          return createExecResult(command, { stdout: 'NOT_FUSE_MOUNTED' });
+        if (command.includes('s3fs ')) {
+          return createExecResult(command, {
+            exitCode: 3,
+            stdout: 'mount did not appear'
+          });
         }
+        if (command.includes('fusermount -u')) return createExecResult(command);
+        if (command.startsWith('rm -f ')) return createExecResult(command);
         throw new Error(`Unexpected command: ${command}`);
-      }),
-      createPasswordFile: vi.fn().mockResolvedValue(undefined),
-      deletePasswordFile,
-      createDisableExpectHeaderFile: vi.fn().mockResolvedValue(undefined),
-      deleteAdditionalHeaderFile: vi.fn().mockResolvedValue(undefined),
-      generatePasswordFilePath: vi.fn().mockReturnValue('/tmp/.s3fs-check-fail')
+      })
     });
 
     await expect(
-      sandbox.mountBucket('MY_BUCKET', '/mnt/check-fail', {} as any)
-    ).rejects.toThrow('mount was not established');
+      sandbox.mountBucket('MY_BUCKET', '/mnt/check-fail', {})
+    ).rejects.toThrow('FUSE filesystem never appeared');
 
-    expect(deletePasswordFile).toHaveBeenCalledWith('/tmp/.s3fs-check-fail');
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.includes('mountpoint -q') &&
+          command.includes('fusermount -u') &&
+          command.includes('/mnt/check-fail')
+      )
+    ).toBe(true);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.passwd-s3fs-')
+      )
+    ).toBe(true);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(true);
+  });
+
+  it('keeps R2 egress support files when failure cleanup cannot unmount FUSE', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+    sandbox.client = createMockControlClient();
+
+    const issuedCommands: string[] = [];
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        issuedCommands.push(command);
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('mkdir -p ')) return createExecResult(command);
+        if (command.includes('s3fs ')) {
+          return createExecResult(command, {
+            exitCode: 3,
+            stdout: 'mount did not appear'
+          });
+        }
+        if (command.includes('fusermount -u')) {
+          return createExecResult(command, {
+            exitCode: 1,
+            stderr: 'device is busy'
+          });
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      })
+    });
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/check-fail', {})
+    ).rejects.toThrow('FUSE filesystem never appeared');
+
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.passwd-s3fs-')
+      )
+    ).toBe(false);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(false);
+  });
+
+  it('fails destroy without deleting support files when FUSE cleanup fails', async () => {
+    const sandbox = new Sandbox(
+      createMockCtx() as unknown as ConstructorParameters<typeof Sandbox>[0],
+      { MY_BUCKET: createMockR2Bucket() }
+    );
+    sandbox.client = createMockControlClient();
+
+    const issuedCommands: string[] = [];
+    Object.assign(sandbox as object, {
+      execInternal: vi.fn(async (command: string) => {
+        issuedCommands.push(command);
+        if (command.startsWith('chmod ')) return createExecResult(command);
+        if (command.startsWith('mkdir -p ')) return createExecResult(command);
+        if (command.includes('s3fs ')) return createExecResult(command);
+        if (command.startsWith('mountpoint -q') && command.includes('echo')) {
+          return createExecResult(command, { stdout: 'FUSE_MOUNTED' });
+        }
+        if (command.startsWith('fusermount -u ')) {
+          return createExecResult(command, {
+            exitCode: 1,
+            stderr: 'device is busy'
+          });
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      })
+    });
+
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/destroy-fail', {});
+    await expect(sandbox.destroy()).rejects.toThrow(
+      'Failed to clean up 1 bucket mount during destroy()'
+    );
+
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.passwd-s3fs-')
+      )
+    ).toBe(false);
+    expect(
+      issuedCommands.some(
+        (command) =>
+          command.startsWith('rm -f ') && command.includes('.s3fs-ahbe-')
+      )
+    ).toBe(false);
   });
 
   it.each(['passwd_file=/tmp/creds', 'url=https://example.com'])(

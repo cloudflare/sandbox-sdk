@@ -3,7 +3,7 @@ import {
   detectProviderFromUrl,
   getProviderFlags,
   resolveS3fsOptions
-} from '../../src/storage-mount/provider-detection';
+} from '../../src/storage-mount/validation/provider';
 
 describe('Provider Detection', () => {
   describe('detectProviderFromUrl', () => {

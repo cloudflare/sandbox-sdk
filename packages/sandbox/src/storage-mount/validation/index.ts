@@ -1,4 +1,6 @@
-import { InvalidMountConfigError } from './errors';
+import type { RemoteMountBucketOptions } from '@repo/shared';
+import { InvalidMountConfigError } from '../errors';
+import type { MountInfo } from '../types';
 
 /**
  * Type guard for R2Bucket binding.
@@ -45,6 +47,43 @@ export function validateBucketName(bucket: string, mountPath: string): void {
         `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
     );
   }
+}
+
+export function validateMountPath(
+  activeMounts: Map<string, MountInfo>,
+  mountPath: string
+): void {
+  if (!mountPath.startsWith('/')) {
+    throw new InvalidMountConfigError(
+      `Mount path must be absolute (start with /): "${mountPath}"`
+    );
+  }
+
+  if (activeMounts.has(mountPath)) {
+    const existingMount = activeMounts.get(mountPath);
+    throw new InvalidMountConfigError(
+      `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
+        'Unmount the existing bucket first or use a different mount path.'
+    );
+  }
+}
+
+export function validateRemoteMountOptions(
+  activeMounts: Map<string, MountInfo>,
+  bucket: string,
+  mountPath: string,
+  options: RemoteMountBucketOptions
+): void {
+  try {
+    new URL(options.endpoint);
+  } catch (error) {
+    throw new InvalidMountConfigError(
+      `Invalid endpoint URL: "${options.endpoint}". Must be a valid HTTP(S) URL.`
+    );
+  }
+
+  validateBucketName(bucket, mountPath);
+  validateMountPath(activeMounts, mountPath);
 }
 
 export function validateBucketBindingName(
