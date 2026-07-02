@@ -96,7 +96,10 @@ import { createErrorFromResponse } from './errors/adapter';
 import { collectFile, streamFile } from './file-stream';
 import { CodeInterpreter } from './interpreter';
 import { LocalMountSyncManager } from './local-mount-sync';
-import { isPlatformTransientError } from './platform-errors';
+import {
+  isPlatformTransientError,
+  matchContainerUnavailable
+} from './platform-errors';
 import {
   forwardPreviewRequest,
   type PreviewTCPPort
@@ -3141,7 +3144,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // control connection's upgrade-response classifier — surfaces a
         // typed ContainerUnavailableError with an actionable reason rather
         // than a generic INTERNAL_ERROR / rpc_upgrade_failed.
-        const admissionReason = this.classifyContainerAdmissionError(e);
+        const admissionReason = matchContainerUnavailable(e);
         if (admissionReason) {
           const originalMessage = e instanceof Error ? e.message : String(e);
           const context = {
@@ -3275,38 +3278,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * This indicates the container VM is still being provisioned.
    */
   private isNoInstanceError(error: unknown): boolean {
-    return this.classifyContainerAdmissionError(error) !== null;
-  }
-
-  /**
-   * Classify a container-startup error as a platform admission/capacity
-   * failure, returning the categorical `ContainerUnavailableContext.reason`
-   * or null if it is not a recognized admission failure.
-   *
-   * Realm-safe and case-insensitive: the platform raises these from the
-   * container binding, which may live in a different realm, so we coerce to
-   * a string rather than gating on `instanceof Error`.
-   */
-  private classifyContainerAdmissionError(
-    error: unknown
-  ):
-    | 'no_container_instance_available'
-    | 'max_container_instances_exceeded'
-    | null {
-    const message =
-      (error as { message?: unknown } | null | undefined)?.message ?? error;
-    const text = (
-      typeof message === 'string' ? message : String(message)
-    ).toLowerCase();
-    if (text.includes('no container instance')) {
-      return 'no_container_instance_available';
-    }
-    if (
-      text.includes('maximum number of running container instances exceeded')
-    ) {
-      return 'max_container_instances_exceeded';
-    }
-    return null;
+    return matchContainerUnavailable(error) !== null;
   }
 
   /**
@@ -3356,7 +3328,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const originalMessage =
       error instanceof Error ? error.message : String(error);
-    const admissionReason = this.classifyContainerAdmissionError(error);
+    const admissionReason = matchContainerUnavailable(error);
     if (admissionReason) {
       const context = {
         reason: admissionReason,

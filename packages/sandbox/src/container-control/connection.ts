@@ -25,6 +25,10 @@ import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
 import { createErrorFromResponse } from '../errors/adapter';
 import { SandboxError } from '../errors/classes';
 import {
+  matchContainerUnavailable,
+  type PlatformUnavailableReason
+} from '../platform-errors';
+import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
 } from '../response-retry';
@@ -102,82 +106,22 @@ async function tryParseContainerUnavailable(
   // generic rpc_upgrade_failed.
   try {
     const text = await response.clone().text();
-    const match = matchPlatformUnavailable(text);
-    if (!match) return null;
-    return buildContainerUnavailableError(match.reason, text);
+    const reason = matchContainerUnavailable(text);
+    if (!reason) return null;
+    return buildContainerUnavailableError(reason, text);
   } catch {
     return null;
   }
 }
 
 /**
- * Platform messages emitted by the Containers runtime when it cannot admit a
- * container for a Durable Object during startup. They surface as plain Errors
- * thrown from the container-binding fetch, before the capnweb session is
- * established. Each maps to a categorical `ContainerUnavailableContext.reason`.
- */
-const PLATFORM_UNAVAILABLE_SIGNATURES: ReadonlyArray<{
-  /** Lowercase substring matched case-insensitively against the error text. */
-  substring: string;
-  reason:
-    | 'no_container_instance_available'
-    | 'max_container_instances_exceeded';
-}> = [
-  {
-    // Platform error thrown from the container binding during startup.
-    substring:
-      'there is no container instance that can be provided to this durable object',
-    reason: 'no_container_instance_available'
-  },
-  {
-    // Plain-text 503 body returned by @cloudflare/containers' containerFetch
-    // when no instance can be admitted (see container.ts).
-    substring: 'there is no container instance available at this time',
-    reason: 'no_container_instance_available'
-  },
-  {
-    substring: 'maximum number of running container instances exceeded',
-    reason: 'max_container_instances_exceeded'
-  }
-];
-
-/**
- * Extract a matchable message string from any thrown value.
- *
- * Deliberately avoids `instanceof Error`: the platform's container-admission
- * errors are raised by the workerd container binding, which may live in a
- * different realm than this SDK bundle, so `instanceof Error` can be false
- * even for a genuine Error (the same cross-realm trap documented in
- * container-control/client.ts). Mirrors the base `@cloudflare/containers`
- * `isErrorOfType` helper: coerce to string, then match case-insensitively.
- */
-function errorText(error: unknown): string {
-  const message = (error as { message?: unknown } | null | undefined)?.message;
-  return (typeof message === 'string' ? message : String(error)).toLowerCase();
-}
-
-/**
- * Find the platform container-admission signature matching a thrown value,
- * or null. Case-insensitive and realm-safe (does not use `instanceof`).
- */
-function matchPlatformUnavailable(
-  error: unknown
-): (typeof PLATFORM_UNAVAILABLE_SIGNATURES)[number] | null {
-  const text = errorText(error);
-  return (
-    PLATFORM_UNAVAILABLE_SIGNATURES.find((sig) =>
-      text.includes(sig.substring)
-    ) ?? null
-  );
-}
-
-/**
  * True when a thrown connection-startup error matches a known platform
  * container-admission failure. These are transient: the platform asks the
  * caller to try again later, so they are safe to retry within the budget.
+ * Delegates to the shared matcher in platform-errors.ts.
  */
 function isPlatformUnavailableError(error: unknown): boolean {
-  return matchPlatformUnavailable(error) !== null;
+  return matchContainerUnavailable(error) !== null;
 }
 
 /**
@@ -185,7 +129,7 @@ function isPlatformUnavailableError(error: unknown): boolean {
  * container-admission failure, preserving the original message verbatim.
  */
 function buildContainerUnavailableError(
-  reason: (typeof PLATFORM_UNAVAILABLE_SIGNATURES)[number]['reason'],
+  reason: PlatformUnavailableReason,
   originalMessage: string,
   cause?: unknown
 ): Error {
@@ -217,12 +161,12 @@ function tryConvertPlatformUnavailable(error: unknown): Error | null {
   // preserve it rather than rebuilding an equivalent instance.
   if (error instanceof SandboxError) return error;
 
-  const match = matchPlatformUnavailable(error);
-  if (!match) return null;
+  const reason = matchContainerUnavailable(error);
+  if (!reason) return null;
 
   const originalMessage =
     error instanceof Error ? error.message : String(error);
-  return buildContainerUnavailableError(match.reason, originalMessage, error);
+  return buildContainerUnavailableError(reason, originalMessage, error);
 }
 
 // ---------------------------------------------------------------------------

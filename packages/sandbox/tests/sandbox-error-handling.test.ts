@@ -424,7 +424,7 @@ describe('Sandbox.containerFetch() error classification', () => {
 
     it('503 responses include Retry-After: 10 for provisioning errors', async () => {
       const response = await triggerContainerFetchWithError(
-        'no container instance available'
+        'There is no Container instance available at this time. Try again later.'
       );
 
       expect(response.status).toBe(503);
