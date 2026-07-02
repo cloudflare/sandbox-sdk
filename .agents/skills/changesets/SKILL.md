@@ -5,7 +5,7 @@ description: Use when creating a changeset, preparing a release, or bumping vers
 
 # Changesets & Releases
 
-This repository uses [changesets](https://github.com/changesets/changesets) to drive a fully automated release pipeline. Create a changeset whenever your change affects published packages.
+This repository uses [changesets](https://github.com/changesets/changesets) to create Version Packages PRs and maintain changelog/version files. Stable and prerelease artifact publishing are handled by the release orchestrator. Create a changeset whenever your change affects published packages.
 
 ## Creating a Changeset
 
@@ -63,11 +63,10 @@ Releases run via `.github/workflows/release.yml`. There is no manual publishing 
 
 1. Merge a PR that contains a changeset.
 2. The Changesets action opens (or updates) a **"Version Packages"** PR.
-3. Merging the Version Packages PR triggers:
-   1. Version bump in `package.json`
-   2. Docker images crane-copied from the CF registry to Docker Hub and the CF Registry public library (the exact images that passed E2E)
-   3. npm package publish with the bumped version
-   4. Standalone binaries extracted and uploaded to the GitHub Release
+3. Merging the Version Packages PR triggers the stable release workflow.
+4. The release orchestrator publishes and verifies the npm package, Docker Hub images, CF Registry public library images, GitHub Release, and standalone binary assets.
+5. Prerelease workflows also publish through the release orchestrator, which verifies the npm dist-tag, Docker Hub images, CF Registry public library images, and optional moving Docker aliases before succeeding.
+6. Release workflow reruns converge missing artifacts, so Docker images, GitHub releases, binaries, and prerelease aliases are not gated on npm being newly published in the current attempt.
 
 ## Version Synchronization
 
