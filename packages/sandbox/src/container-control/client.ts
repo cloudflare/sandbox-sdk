@@ -716,6 +716,12 @@ export class ContainerControlClient {
       // than surfacing as a never-connected failure.
       onConnected: () => {
         this.sessionEstablished = true;
+        // A prior attempt may have stamped an authoritative connect-attempt
+        // failure (e.g. a capacity error) before a retry succeeded. That cause
+        // is now stale: the session is live. Clear it so a later lifecycle
+        // teardown surfaces its own reason instead of this masked stale error.
+        this.lastConnectionError = null;
+        this.connectionErrorIsAuthoritative = false;
       },
       // Event-driven failure recovery: when the live WebSocket closes
       // or errors, tear the connection down inside the same turn of

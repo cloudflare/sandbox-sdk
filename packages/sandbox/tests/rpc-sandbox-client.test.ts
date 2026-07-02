@@ -28,6 +28,8 @@ let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
 const onCloseHandlers: Array<() => void> = [];
 /** `onConnectionError` callbacks installed on each mock connection. */
 const onConnectionErrorHandlers: Array<(error: unknown) => void> = [];
+/** `onConnected` callbacks installed on each mock connection. */
+const onConnectedHandlers: Array<() => void> = [];
 
 /**
  * Simulate the runtime firing a `close` / `error` event on the live
@@ -49,11 +51,13 @@ vi.mock('../src/container-control/connection', () => ({
       options: {
         onClose?: () => void;
         onConnectionError?: (error: unknown) => void;
+        onConnected?: () => void;
       } = {}
     ) {
       if (options.onClose) onCloseHandlers.push(options.onClose);
       if (options.onConnectionError)
         onConnectionErrorHandlers.push(options.onConnectionError);
+      if (options.onConnected) onConnectedHandlers.push(options.onConnected);
     }
     isConnected() {
       return connected;
@@ -96,6 +100,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     disconnects.length = 0;
     onCloseHandlers.length = 0;
     onConnectionErrorHandlers.length = 0;
+    onConnectedHandlers.length = 0;
     commandExecuteImpl = () => ({ exitCode: 0, stdout: '', stderr: '' });
   });
 
@@ -274,10 +279,10 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     const pending = client.commands.execute('sleep 10', 'default');
 
-    // Reproduce the race from sandbox-sdk#794: capnweb stats can report the
-    // bootstrap baseline while the method promise is still pending. The old
-    // implementation treated that as idle, armed the 1s disconnect timer, and
-    // disposed the main stub while the operation was still in flight.
+    // capnweb stats can report the bootstrap baseline while the method promise
+    // is still pending. A pending in-flight call must keep the session busy so
+    // the idle-disconnect timer stays disarmed and the main stub is not
+    // disposed mid-operation.
     stats = { imports: 1, exports: 1 };
 
     vi.advanceTimersByTime(5_000);
@@ -346,6 +351,78 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(
       (thrown as InstanceType<typeof ContainerUnavailableError>).reason
     ).toBe('no_container_instance_available');
+  });
+
+  it('clears a retried connect-attempt cause once the session establishes, so a later teardown surfaces its own cause', async () => {
+    vi.useRealTimers();
+    const { ContainerUnavailableError, OperationInterruptedError } =
+      await import('../src/errors');
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    // Materialize the connection (wires onConnectionError / onConnected).
+    const commands = client.commands;
+    const fireConnectionError = onConnectionErrorHandlers.at(-1);
+    const fireConnected = onConnectedHandlers.at(-1);
+    expect(fireConnectionError).toBeDefined();
+    expect(fireConnected).toBeDefined();
+
+    // 1) An early connect attempt fails with a capacity cause (authoritative).
+    fireConnectionError?.(
+      new ContainerUnavailableError({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: 'no container instance',
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: 'no container instance'
+        },
+        httpStatus: 503,
+        timestamp: new Date().toISOString()
+      })
+    );
+
+    // 2) A subsequent retry succeeds: the session establishes. This must clear
+    //    the now-stale capacity cause so it can't leak into a later teardown.
+    fireConnected?.();
+
+    // 3) A lifecycle teardown later stamps a non-retryable interruption cause
+    //    (as the DO does when the sandbox lifetime changes). With the stale
+    //    capacity cause cleared, this is no longer blocked by an authoritative
+    //    error, so it becomes the weak cause on the queued calls.
+    const lifetimeCause = new OperationInterruptedError({
+      code: 'OPERATION_INTERRUPTED',
+      message: 'sandbox lifetime changed',
+      context: {
+        reason: 'sandbox_lifetime_changed',
+        operation: 'rpc.connect',
+        phase: 'connection',
+        admitted: 'unknown',
+        retryable: false
+      },
+      httpStatus: 500,
+      timestamp: new Date().toISOString()
+    });
+    client.disconnect(lifetimeCause);
+
+    // 4) The queued call rejects with the generic disposal error. Because the
+    //    stale capacity cause was cleared on connect, the non-retryable
+    //    lifetime cause surfaces — not a misleading retryable
+    //    "no container instance".
+    commandExecuteImpl = () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+    let thrown: unknown;
+    try {
+      thrown = await commands.execute('echo', 'default');
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).not.toBeInstanceOf(ContainerUnavailableError);
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    expect(
+      (thrown as InstanceType<typeof OperationInterruptedError>).reason
+    ).toBe('sandbox_lifetime_changed');
   });
 });
 
