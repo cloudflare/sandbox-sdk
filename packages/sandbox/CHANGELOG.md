@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.4
+
+### Patch Changes
+
+- [#798](https://github.com/cloudflare/sandbox-sdk/pull/798) [`33ac27b`](https://github.com/cloudflare/sandbox-sdk/commit/33ac27bbe6698f706bc2aee0435280c869d1465f) Thanks [@aron-cf](https://github.com/aron-cf)! - Add `labels` to `SandboxOptions` so `getSandbox()` can attach Cloudflare Container labels for analytics and observability. Labels are applied on container start; updates while running apply on the next start.
+
 ## 0.12.3
 
 ### Patch Changes
