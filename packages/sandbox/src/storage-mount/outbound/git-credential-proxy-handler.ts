@@ -2,7 +2,17 @@ import type {
   OutboundHandler,
   OutboundHandlerContext
 } from '@cloudflare/containers';
-import type { GitAuthInterceptorParams, GitHostAuth } from './types.js';
+import type {
+  HTTPAuthHostConfig,
+  HTTPAuthInterceptorParams
+} from '../../extensions/index.js';
+
+// Types re-declared here so the core outbound-handler stack stays independent
+// of any specific extension. The git extension package uses matching aliases
+// (`GitHostAuth`, `GitAuthInterceptorParams`) but structurally these are just
+// the generic HTTP-auth-interceptor params from the extension framework.
+type GitHostAuth = HTTPAuthHostConfig;
+type GitAuthInterceptorParams = HTTPAuthInterceptorParams;
 
 function encodeBasicAuth(username: string, token: string): string {
   return btoa(`${username}:${token}`);

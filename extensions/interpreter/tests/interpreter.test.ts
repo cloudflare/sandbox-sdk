@@ -5,9 +5,9 @@ import type {
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SandboxLike } from '../src/extensions';
-import { Interpreter, withInterpreter } from '../src/interpreter';
-import type { InterpreterSidecarAPI } from '../src/interpreter/sidecar-api';
+import type { SandboxLike } from '../../../packages/sandbox/src/extensions';
+import { Interpreter, withInterpreter } from '../src/index';
+import type { InterpreterSidecarAPI } from '../src/sidecar-api';
 
 type ExtensionsApiMock = {
   connect: Mock<SandboxExtensionsAPI['connect']>;

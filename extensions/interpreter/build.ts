@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { pack as createTarPack } from 'tar-stream';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const sidecarDir = join(here, 'sidecar');
-const outFile = join(here, 'sidecar-package.tgz');
+const srcDir = join(here, 'src');
+const sidecarDir = join(srcDir, 'sidecar');
+const outFile = join(srcDir, 'sidecar-package.tgz');
 
 const packageName = '@cloudflare/sandbox-interpreter-sidecar';
 const binName = 'sandbox-interpreter-sidecar';

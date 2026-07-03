@@ -6,14 +6,26 @@
     "lib": ["ES2024"],
     "resolveJsonModule": true,
     "paths": {
-      "@repo/shared/backup": ["../shared/src/backup.ts"]
+      "@repo/shared/backup": ["../shared/src/backup.ts"],
+      // Alias the public authoring subpaths back to source so extensions
+      // living outside `packages/sandbox/src/` can import
+      // `@cloudflare/sandbox/extensions` / `/sidecar` / `/errors` and still
+      // typecheck against the current tree (dist may not exist yet).
+      "@cloudflare/sandbox/extensions": ["src/extensions/index.ts"],
+      "@cloudflare/sandbox/sidecar": ["src/sidecar/index.ts"],
+      "@cloudflare/sandbox/errors": ["src/errors/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "../../extensions/*/src/**/*.ts",
+    "../../extensions/*/tests/**/*.ts"
+  ],
   "exclude": [
     "node_modules",
     "dist",
-    "src/interpreter/sidecar/**/*.ts",
-    "src/interpreter/build.ts"
+    "../../extensions/interpreter/src/sidecar/**/*.ts",
+    "../../extensions/interpreter/build.ts"
   ]
 }

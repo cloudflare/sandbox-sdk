@@ -68,9 +68,9 @@ import {
   ProcessReadyTimeoutError,
   SandboxError
 } from './errors';
+import type { HTTPAuthInterceptorParams as GitAuthInterceptorParams } from './extensions';
 import { SandboxExtension } from './extensions';
 import { collectFile, streamFile } from './file-stream';
-import type { GitAuthInterceptorParams } from './git/types';
 import { isPlatformTransientError } from './platform-errors';
 import { isPreviewProxyRequest } from './preview/protocol';
 import {

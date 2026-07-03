@@ -1,5 +1,8 @@
 import type { Logger } from '@repo/shared';
-import type { GitAuthInterceptorParams } from '../../git/types';
+import type { HTTPAuthInterceptorParams } from '../../extensions/index.js';
+
+type GitAuthInterceptorParams = HTTPAuthInterceptorParams;
+
 import { InvalidMountConfigError } from '../errors';
 import type { S3CredentialProxyParams } from '../types';
 import {

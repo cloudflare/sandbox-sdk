@@ -22,7 +22,10 @@
  * ```
  */
 
-import { SandboxExtension, type SandboxLike } from '../extensions/index.js';
+import {
+  SandboxExtension,
+  type SandboxLike
+} from '@cloudflare/sandbox/extensions';
 import type {
   InterpreterContextWire,
   InterpreterSidecarAPI,

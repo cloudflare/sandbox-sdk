@@ -8,9 +8,9 @@ import {
   GitCloneError,
   GitNetworkError,
   InvalidGitUrlError
-} from '../src/errors';
-import type { SandboxLike } from '../src/extensions';
-import { Git, withGit } from '../src/git';
+} from '../../../packages/sandbox/src/errors';
+import type { SandboxLike } from '../../../packages/sandbox/src/extensions';
+import { Git, withGit } from '../src/index';
 import {
   buildCloneArgs,
   determineErrorCode,
@@ -19,7 +19,7 @@ import {
   parseBranchList,
   validateGitUrl,
   validatePath
-} from '../src/git/manager';
+} from '../src/manager';
 
 type ExecResult = { stdout: string; stderr: string; exitCode: number };
 

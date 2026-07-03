@@ -51,13 +51,13 @@
   ],
   "scripts": {
     "build": "rm -rf dist && npm run build:sidecar && tsdown --config tsdown.config.ts",
-    "build:sidecar": "bun run src/interpreter/build.ts",
+    "build:sidecar": "bun run ../../extensions/interpreter/build.ts",
     "check": "biome check && npm run typecheck",
     "fix": "biome check --fix && npm run typecheck",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sidecar.json",
     "docker:local": "scripts/docker-local.sh",
     "test": "vitest run --config vitest.config.ts \"$@\"",
-    "test:sidecar": "bun test src/interpreter/sidecar",
+    "test:sidecar": "bun test ../../extensions/interpreter/src/sidecar",
     "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
     "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
     "test:e2e:browser": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && npx playwright install chromium && playwright test --config tests/e2e/browser/playwright.config.ts",
@@ -73,6 +73,11 @@
       "types": "./dist/extensions/index.d.ts",
       "import": "./dist/extensions/index.js",
       "require": "./dist/extensions/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "import": "./dist/errors/index.js",
+      "require": "./dist/errors/index.js"
     },
     "./sidecar": {
       "types": "./dist/sidecar/index.d.ts",
