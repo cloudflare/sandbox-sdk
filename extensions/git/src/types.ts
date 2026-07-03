@@ -5,7 +5,7 @@
 import type {
   HTTPAuthHostConfig,
   HTTPAuthInterceptorParams
-} from '../extensions/index.js';
+} from '@cloudflare/sandbox/extensions';
 
 /** Result of a git clone (`checkout`) operation. */
 export interface GitCheckoutResult {

@@ -2,8 +2,11 @@ import {
   ContainerProxy as BaseContainerProxy,
   type OutboundHandlerContext
 } from '@cloudflare/containers';
-import { gitCredentialProxyHandler } from '../../git/credential-proxy-handler';
-import type { GitAuthInterceptorParams } from '../../git/types';
+import type { HTTPAuthInterceptorParams } from '../../extensions/index.js';
+import { gitCredentialProxyHandler } from './git-credential-proxy-handler';
+
+type GitAuthInterceptorParams = HTTPAuthInterceptorParams;
+
 import type { S3CredentialProxyParams } from '../types';
 import { type R2EgressParams, r2EgressHandler } from './r2-egress-handler';
 import { s3CredentialProxyHandler } from './s3-credential-proxy-handler';

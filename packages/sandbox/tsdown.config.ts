@@ -1,17 +1,22 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: [
-    'src/index.ts',
-    'src/bridge/index.ts',
-    'src/extensions/index.ts',
-    'src/sidecar/index.ts',
-    'src/interpreter/index.ts',
-    'src/git/index.ts',
-    'src/openai/index.ts',
-    'src/opencode/index.ts',
-    'src/xterm/index.ts'
-  ],
+  entry: {
+    index: 'src/index.ts',
+    'bridge/index': 'src/bridge/index.ts',
+    'extensions/index': 'src/extensions/index.ts',
+    'errors/index': 'src/errors/index.ts',
+    'sidecar/index': 'src/sidecar/index.ts',
+    // Extensions live at repo-root `extensions/` but ship as subpath exports
+    // of `@cloudflare/sandbox` (e.g. `@cloudflare/sandbox/interpreter`).
+    // Keeping them out of `packages/sandbox/src/` makes the SDK's core source
+    // easier to scope; each entry key here decides the emitted subpath.
+    'interpreter/index': '../../extensions/interpreter/src/index.ts',
+    'git/index': '../../extensions/git/src/index.ts',
+    'openai/index': 'src/openai/index.ts',
+    'opencode/index': 'src/opencode/index.ts',
+    'xterm/index': 'src/xterm/index.ts'
+  },
   external: ['cloudflare:workers', 'hono'],
   loader: {
     '.tgz': 'binary'

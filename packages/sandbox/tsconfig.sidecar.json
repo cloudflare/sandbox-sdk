@@ -6,5 +6,8 @@
     "declarationMap": false,
     "types": ["bun", "node"]
   },
-  "include": ["src/interpreter/sidecar/**/*.ts", "src/interpreter/build.ts"]
+  "include": [
+    "../../extensions/interpreter/src/sidecar/**/*.ts",
+    "../../extensions/interpreter/build.ts"
+  ]
 }

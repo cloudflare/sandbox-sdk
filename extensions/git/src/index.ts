@@ -32,8 +32,11 @@ import {
   type ErrorResponse,
   getHttpStatus
 } from '@repo/shared/errors';
-import { createErrorFromResponse } from '../errors/index.js';
-import { SandboxExtension, type SandboxLike } from '../extensions/index.js';
+import { createErrorFromResponse } from '@cloudflare/sandbox/errors';
+import {
+  SandboxExtension,
+  type SandboxLike
+} from '@cloudflare/sandbox/extensions';
 import {
   buildCheckoutArgs,
   buildCloneArgs,

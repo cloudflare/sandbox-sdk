@@ -292,40 +292,130 @@ restarted transparently on the next `sidecar()` call.
 - The field name (`claudeCode`, `interpreter`) must not collide with a
   base `Sandbox` member.
 
+## Where extensions live
+
+Concrete extensions (classes extending `SandboxExtension`, plus their
+tests and any sidecar program sources) live at the **repo root** under
+`extensions/<name>/`, not inside `packages/sandbox/src/`. This keeps the
+core SDK source scoped to framework/runtime code and makes the set of
+extensions easy to see at a glance.
+
+Current layout:
+
+```
+extensions/
+  interpreter/
+    build.ts               # bundles the sidecar tarball
+    src/
+      index.ts             # Interpreter / withInterpreter
+      types.ts
+      sidecar-api.ts
+      sidecar-package.tgz  # produced by build.ts
+      sidecar/             # sidecar program sources (run under Bun)
+    tests/
+      interpreter.test.ts
+  git/
+    src/
+      index.ts             # Git / withGit
+      manager.ts
+      types.ts
+    tests/
+      git.test.ts
+```
+
+They are **not** separate npm packages. They ship as subpath exports of
+`@cloudflare/sandbox` (`@cloudflare/sandbox/interpreter`,
+`@cloudflare/sandbox/git`, …) — user-facing imports are unchanged — but
+their source lives outside `packages/sandbox/src/`. The wiring:
+
+- `packages/sandbox/tsdown.config.ts` — each extension has an entry
+  keyed by its subpath (e.g. `'interpreter/index':
+'../../extensions/interpreter/src/index.ts'`). tsdown emits
+  `dist/<name>/index.js` exactly as before.
+- `packages/sandbox/package.json` — `exports` still lists each
+  `./<name>` subpath; nothing there needs to change per-extension.
+- `packages/sandbox/tsconfig.json` — `include` covers
+  `../../extensions/*/src/**/*.ts` and `../../extensions/*/tests/**/*.ts`.
+  Path aliases resolve `@cloudflare/sandbox/extensions`, `/sidecar`, and
+  `/errors` back to source so extension files can use those public
+  authoring subpaths without waiting on `dist/`.
+- `packages/sandbox/vitest.config.ts` — mirrors the same aliases (Vitest
+  doesn't honour tsconfig `paths` on its own) and adds
+  `../../extensions/*/tests/**/*.test.ts` to `include`, so
+  `npm test -w @cloudflare/sandbox` runs every extension's unit tests.
+- `packages/sandbox/tsconfig.sidecar.json` — includes
+  `../../extensions/interpreter/src/sidecar/**` and
+  `../../extensions/interpreter/build.ts`.
+- `build:sidecar` and `test:sidecar` scripts in
+  `packages/sandbox/package.json` point at
+  `../../extensions/interpreter/…`.
+
+Inside extension source files, import framework pieces from the public
+subpaths — `@cloudflare/sandbox/extensions`, `@cloudflare/sandbox/sidecar`,
+`@cloudflare/sandbox/errors`. Never reach back into `packages/sandbox/src`
+with a relative path, with **one** deliberate exception: sidecar programs
+(e.g. `extensions/interpreter/src/sidecar/server.ts`) that are
+pre-bundled by `Bun.build` before `dist/` exists must use a relative
+import such as `'../../../../packages/sandbox/src/sidecar/index.js'` for
+`SandboxSidecar` / `serveSandboxSidecar`. Anything the SDK-side extension
+class imports goes through the aliased public subpaths.
+
+Helpers that are **not** `SandboxExtension`s — currently `openai/`,
+`opencode/`, `xterm/` — still live under `packages/sandbox/src/`. Move
+them to `extensions/` when (and only when) they're ported to real
+extensions.
+
 ## Authoring checklist ("extract X into `withX()`")
 
-1. **Module** `packages/sandbox/src/<name>/index.ts`: a class extending
+1. **Module** `extensions/<name>/src/index.ts`: a class extending
    `SandboxExtension`, the `withX(sandbox)` factory, and (for sidecars)
-   the sidecar program source and a build step that emits its tarball.
-2. **Subpath export**: add `./<name>` to `packages/sandbox/package.json`
-   `exports` and an entry to `packages/sandbox/tsdown.config.ts`.
-3. **Shared types**: any new wire types go in `@repo/shared`
+   the sidecar program source under `extensions/<name>/src/sidecar/`
+   plus an `extensions/<name>/build.ts` that emits the tarball into
+   `extensions/<name>/src/`.
+2. **tsdown entry**: add `'<name>/index':
+'../../extensions/<name>/src/index.ts'` to
+   `packages/sandbox/tsdown.config.ts`.
+3. **Subpath export**: add `./<name>` to `packages/sandbox/package.json`
+   `exports`.
+4. **Sidecar build wiring (if applicable)**: extend `build:sidecar` in
+   `packages/sandbox/package.json` to run
+   `../../extensions/<name>/build.ts`, and add
+   `../../extensions/<name>/src/sidecar/**` +
+   `../../extensions/<name>/build.ts` to `tsconfig.sidecar.json`
+   `include`.
+5. **Shared types**: any new wire types go in `@repo/shared`
    (`rpc-types.ts`) or in the extension's own typed-interface module
    compiled into both ends. Rebuild with `npm run build -w @repo/shared`
    before typechecking dependents.
-4. **Worker exposure**: direct nested calls (`sandbox.<field>.<method>`)
+6. **Worker exposure**: direct nested calls (`sandbox.<field>.<method>`)
    work via `callExtension` dispatch; ensure methods return RPC-safe data,
    not class instances. Delegate methods on the subclass are optional.
-5. **Unit test** `packages/sandbox/tests/<name>.test.ts`: mock
+7. **Unit test** `extensions/<name>/tests/<name>.test.ts`: mock
    `sandbox.client.<subApi>` (or `client.extensions` for sidecars);
    assert lazy construction (no RPC in constructor), input validation,
    happy path, and (for sidecars) the hash-first connect retry. Mirror
-   `packages/sandbox/tests/extensions.test.ts`.
-6. **Sidecar host test** (if applicable): exercise the real spawned
+   `packages/sandbox/tests/extensions.test.ts`. Tests are picked up
+   automatically by `packages/sandbox/vitest.config.ts`. Inside tests,
+   import framework types from
+   `'../../../packages/sandbox/src/extensions'` (relative) — vitest
+   resolves `@cloudflare/sandbox/*` via the aliases too, so either form
+   works; keeping tests on relative paths avoids relying on `dist/`
+   during development.
+8. **Sidecar host test** (if applicable): exercise the real spawned
    sidecar against a fixture tarball in
    `packages/sandbox-container/tests/extensions/`. Mirror
    `extension-host.test.ts`. Run via an explicit file path — `bun test
 tests/extensions` resolves the `@cloudflare/sandbox` workspace
    symlink and tries to run SDK vitest files under Bun (which lacks
    `cloudflare:workers`).
-7. **Changeset**: `patch` unless the public surface changes;
+9. **Changeset**: `patch` unless the public surface changes;
    `@cloudflare/sandbox` only; user-facing description (see the
    changesets skill).
-8. `npm run check` + `npm test -w @cloudflare/sandbox`.
+10. `npm run check` + `npm test -w @cloudflare/sandbox`.
 
 ## Architecture (for reviewers)
 
-SDK side — `packages/sandbox/src/extensions/index.ts`:
+SDK-side framework (still in core) — `packages/sandbox/src/extensions/index.ts`:
 
 - `SandboxExtension` — the single base class. Handles hash-first connect
   with one bytes-attached retry and reconnects through the host on each
@@ -364,6 +454,8 @@ Design rationale: `docs/EXTENSION_ARCHITECTURE_V2.md` (context only).
 
 ## Key files
 
+Framework (core SDK):
+
 - `packages/sandbox/src/extensions/index.ts` — `SandboxExtension`.
 - `packages/sandbox/src/sidecar/index.ts` — sidecar author helper.
 - `packages/sandbox/tests/extensions.test.ts` — reference SDK unit tests.
@@ -372,8 +464,18 @@ Design rationale: `docs/EXTENSION_ARCHITECTURE_V2.md` (context only).
 - `packages/sandbox/src/tunnels/tunnels-handler.ts` — `RpcTarget` +
   `callTunnels` dispatch precedent.
 - `packages/sandbox/package.json` (`exports`) + `tsdown.config.ts` —
-  subpath wiring (`./extensions`, `./sidecar`).
+  subpath wiring (`./extensions`, `./sidecar`, and every concrete
+  extension subpath).
+- `packages/sandbox/tsconfig.json` / `vitest.config.ts` — path aliases
+  and include patterns that pull in `extensions/*/`.
 - `packages/sandbox-container/src/extensions/` — `ExtensionHost`,
   capnweb bridge, provisioning.
 - `packages/sandbox-container/tests/extensions/extension-host.test.ts` —
   end-to-end fixture-tarball validation.
+
+Concrete extensions (repo root):
+
+- `extensions/interpreter/` — sidecar extension (SDK class + sidecar
+  program + `build.ts` that emits `sidecar-package.tgz`).
+- `extensions/git/` — SDK-only extension driving `git` through
+  `client.commands`.

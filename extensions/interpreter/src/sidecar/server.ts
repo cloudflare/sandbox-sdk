@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { SandboxSidecar, serveSandboxSidecar } from '../../sidecar/index.js';
+// The sidecar server is pre-bundled by `../../build.ts` (Bun.build) into a
+// standalone tarball, so this import needs to resolve to a real source file
+// on disk without relying on `@cloudflare/sandbox`'s dist being available.
+import {
+  SandboxSidecar,
+  serveSandboxSidecar
+} from '../../../../packages/sandbox/src/sidecar/index.js';
 import type {
   InterpreterContextWire,
   InterpreterSidecarAPI,
