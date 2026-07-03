@@ -1,4 +1,5 @@
 import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
+import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 
 export { ContainerProxy } from '@cloudflare/sandbox';
 
@@ -9,6 +10,12 @@ export class Sandbox extends BaseSandbox<Env> {
   // `chatgpt.com` for the ChatGPT subscription backend used by `codex exec`.
   enableInternet = false;
   allowedHosts = ['github.com', 'api.openai.com', 'chatgpt.com'];
+
+  git = withGit(this);
+
+  gitCheckout(repoUrl: string, options?: GitCheckoutOptions) {
+    return this.git.checkout(repoUrl, options);
+  }
 }
 
 // Build the auth headers codex expects for each upstream, swapping the

@@ -19,7 +19,6 @@ import type {
   DeleteFileResult,
   FileEncoding,
   FileExistsResult,
-  GitCheckoutResult,
   ListFilesOptions,
   ListFilesResult,
   MkdirResult,
@@ -43,7 +42,6 @@ export interface SandboxAPI {
   files: SandboxFilesAPI;
   processes: SandboxProcessesAPI;
   ports: SandboxPortsAPI;
-  git: SandboxGitAPI;
   utils: SandboxUtilsAPI;
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
@@ -170,21 +168,6 @@ export interface SandboxProcessesAPI {
 
 export interface SandboxPortsAPI {
   watchPort(request: PortWatchRequest): Promise<ReadableStream<Uint8Array>>;
-}
-
-export interface GitCheckoutOptions {
-  sessionId?: string;
-  branch?: string;
-  targetDir?: string;
-  depth?: number;
-  timeoutMs?: number;
-}
-
-export interface SandboxGitAPI {
-  checkout(
-    repoUrl: string,
-    options?: GitCheckoutOptions
-  ): Promise<GitCheckoutResult>;
 }
 
 export interface SessionCreateOptions {

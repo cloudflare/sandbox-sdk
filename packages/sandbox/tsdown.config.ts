@@ -7,6 +7,7 @@ export default defineConfig({
     'src/extensions/index.ts',
     'src/sidecar/index.ts',
     'src/interpreter/index.ts',
+    'src/git/index.ts',
     'src/openai/index.ts',
     'src/opencode/index.ts',
     'src/xterm/index.ts'

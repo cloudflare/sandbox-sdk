@@ -1,5 +1,5 @@
 import type { Logger, SandboxControlCallback } from '@repo/shared';
-import { createLogger, GitLogger } from '@repo/shared';
+import { createLogger } from '@repo/shared';
 import { ExtensionHost } from '../extensions/extension-host';
 import { TerminalWebSocketHandler } from '../handlers/terminal-ws-handler';
 import { SecurityServiceAdapter } from '../security/security-adapter';
@@ -7,7 +7,6 @@ import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
 import { ExecutionService } from '../services/execution-service';
 import { FileService } from '../services/file-service';
-import { GitService } from '../services/git-service';
 import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
@@ -21,7 +20,6 @@ export interface Dependencies {
   processService: ProcessService;
   fileService: FileService;
   portService: PortService;
-  gitService: GitService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
@@ -102,9 +100,6 @@ export class Container {
     const terminalManager = new TerminalManager(logger);
     const executionService = new ExecutionService(sessionManager, logger);
 
-    // Create git-specific logger that automatically sanitizes credentials
-    const gitLogger = new GitLogger(logger);
-
     // Initialize services
     const processService = new ProcessService(
       processStore,
@@ -117,11 +112,6 @@ export class Container {
       executionService
     );
     const portService = new PortService();
-    const gitService = new GitService(
-      securityAdapter,
-      executionService,
-      gitLogger
-    );
     const backupService = new BackupService(logger, executionService);
     const watchService = new WatchService(logger);
     const tunnelService = new TunnelService(logger, () =>
@@ -141,7 +131,6 @@ export class Container {
       processService,
       fileService,
       portService,
-      gitService,
       backupService,
       watchService,
       tunnelService,

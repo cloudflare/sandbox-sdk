@@ -5,6 +5,7 @@ import {
   getSandbox,
   proxyToSandbox
 } from '@cloudflare/sandbox';
+import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 import {
   autoApprove,
   compose,
@@ -23,6 +24,12 @@ export { ContainerProxy };
 export class Sandbox extends BaseSandbox<Env> {
   enableInternet = false;
   interceptHttps = true;
+
+  git = withGit(this);
+
+  gitCheckout(repoUrl: string, options?: GitCheckoutOptions) {
+    return this.git.checkout(repoUrl, options);
+  }
 }
 
 declare global {
@@ -74,7 +81,7 @@ Sandbox.outbound = async (request: Request) => {
 // --- Custom command: sandbox/setup ---
 // Wipes /workspace and clones a fresh copy of the repo.
 
-function sandboxSetup(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
+function sandboxSetup(sandbox: Sandbox): MessageHandler {
   return (msg, ctx) => {
     if (
       ctx.direction !== 'client-to-server' ||
@@ -117,7 +124,7 @@ function sandboxSetup(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
 
 // --- Custom command: sandbox/exec ---
 
-function sandboxExec(sandbox: ReturnType<typeof getSandbox>): MessageHandler {
+function sandboxExec(sandbox: Sandbox): MessageHandler {
   return (msg, ctx) => {
     if (
       ctx.direction !== 'client-to-server' ||
@@ -160,9 +167,7 @@ function generateCapabilityToken(): string {
   );
 }
 
-async function ensureCodexRunning(
-  sandbox: ReturnType<typeof getSandbox>
-): Promise<string> {
+async function ensureCodexRunning(sandbox: Sandbox): Promise<string> {
   const procs = await sandbox.listProcesses();
   const existing = procs.find((p) => p.id === 'codex-app-server');
   if (existing) {
@@ -208,7 +213,12 @@ const SANDBOX_ID_RE = /^\/ws\/([a-zA-Z0-9_-]{1,64})$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const proxied = await proxyToSandbox(request, env);
+    // Cast: the Sandbox subclass widens the namespace type beyond the base
+    // `proxyToSandbox` signature (DurableObjectNamespace is invariant).
+    const proxied = await proxyToSandbox(
+      request,
+      env as unknown as Parameters<typeof proxyToSandbox>[1]
+    );
     if (proxied) return proxied;
 
     const url = new URL(request.url);
@@ -231,7 +241,7 @@ export default {
 // --- WebSocket bridge ---
 
 async function connectToContainer(
-  sandbox: ReturnType<typeof getSandbox>,
+  sandbox: Sandbox,
   codexWsToken: string
 ): Promise<WebSocket> {
   const wsRequest = switchPort(
