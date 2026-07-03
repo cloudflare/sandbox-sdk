@@ -94,8 +94,8 @@ import {
 import { parseSSEStream } from './sse-parser';
 import {
   BucketMountService,
-  configureGitAuthInterceptor,
   ContainerProxy,
+  configureGitAuthInterceptor,
   type EgressContainerState,
   type MountOutboundHost
 } from './storage-mount';
