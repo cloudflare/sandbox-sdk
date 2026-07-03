@@ -13,6 +13,7 @@
     "includes": [
       "bridge/**",
       "packages/**",
+      "extensions/**",
       "examples/**",
       "sites/**",
       "tests/**",
