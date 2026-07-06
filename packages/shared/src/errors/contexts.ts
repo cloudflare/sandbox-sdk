@@ -386,4 +386,19 @@ export interface OperationInterruptedContext {
   recoveryAttempts?: number;
   /** Maximum number of internal recovery attempts allowed. */
   maxRecoveryAttempts?: number;
+  /**
+   * Container process exit code reported by the platform when the runtime
+   * stopped mid-operation (`reason === 'runtime_replaced'`). Preserved from
+   * the base container `onStop` params so a trace distinguishes an OOM kill
+   * (137) or signal (143) from a clean exit (0). Absent when the interruption
+   * was not driven by a container stop.
+   */
+  containerExitCode?: number;
+  /**
+   * Container stop reason reported by the platform (`'exit'` for a process
+   * exit, `'runtime_signal'` for a signalled shutdown/eviction). Preserved
+   * from the base container `onStop` params. Absent when not driven by a
+   * container stop.
+   */
+  stopReason?: string;
 }

@@ -3,6 +3,7 @@ import {
   Container,
   getContainer,
   type OutboundHandlerContext,
+  type StopParams,
   switchPort
 } from '@cloudflare/containers';
 import type {
@@ -3028,8 +3029,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  override async onStop() {
-    this.logger.debug('Sandbox stopped');
+  override async onStop(params?: StopParams) {
+    this.logger.debug('Sandbox stopped', {
+      exitCode: params?.exitCode,
+      reason: params?.reason
+    });
 
     // Invalidate default-session state before the first await. Bumping
     // containerGeneration signals any in-flight initializeDefaultSession
@@ -3055,11 +3059,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Disconnect the active client so open sockets do not hold the DO alive.
     // Stamp a runtime-replaced cause so a pending RPC surfaces a retryable
-    // interruption instead of a generic disposal string.
+    // interruption instead of a generic disposal string. Thread the platform's
+    // exit code / stop reason through so a trace can distinguish an OOM kill
+    // (137) or signalled eviction (143 / 'runtime_signal') from a clean exit.
     this.client.disconnect(
       this.buildDisconnectCause(
         'runtime_replaced',
-        'The sandbox container stopped while the operation was pending.'
+        'The sandbox container stopped while the operation was pending.',
+        params
       )
     );
 
@@ -3370,7 +3377,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private buildDisconnectCause(
     reason: 'runtime_replaced' | 'sandbox_lifetime_changed',
-    detail: string
+    detail: string,
+    stopParams?: StopParams
   ): OperationInterruptedError {
     const retryable = reason === 'runtime_replaced';
     const context = {
@@ -3378,7 +3386,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       operation: 'rpc.connect',
       phase: 'connection',
       admitted: 'unknown' as const,
-      retryable
+      retryable,
+      // Preserve the platform's container-stop details when present so a trace
+      // names the actual cause of a mid-operation stop (OOM / signal / exit).
+      ...(stopParams?.exitCode !== undefined && {
+        containerExitCode: stopParams.exitCode
+      }),
+      ...(stopParams?.reason !== undefined && {
+        stopReason: stopParams.reason
+      })
     };
     return new OperationInterruptedError({
       code: ErrorCode.OPERATION_INTERRUPTED,

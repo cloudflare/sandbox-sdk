@@ -162,6 +162,63 @@ describe('Sandbox destroy() sandbox lifetime', () => {
     expect(lifetimePut).toBeUndefined();
   });
 
+  it('stamps the container exit code and stop reason on the disconnect cause', async () => {
+    const { OperationInterruptedError } = await import('../src/errors');
+    const disconnectSpy = vi
+      .spyOn(
+        (
+          sandbox as unknown as {
+            client: { disconnect: (c?: unknown) => void };
+          }
+        ).client,
+        'disconnect'
+      )
+      .mockImplementation(() => {});
+
+    // The base container class calls onStop({ exitCode, reason }). A non-zero
+    // exit code (e.g. 137 = OOM kill) with reason 'runtime_signal' is exactly
+    // what we need visible to diagnose why a container died mid-operation.
+    await (
+      sandbox as unknown as {
+        onStop: (p: { exitCode: number; reason: string }) => Promise<void>;
+      }
+    ).onStop({ exitCode: 137, reason: 'runtime_signal' });
+
+    expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    const cause = disconnectSpy.mock.calls[0][0];
+    expect(cause).toBeInstanceOf(OperationInterruptedError);
+    const context = (cause as InstanceType<typeof OperationInterruptedError>)
+      .context;
+    expect(context.reason).toBe('runtime_replaced');
+    expect(context.containerExitCode).toBe(137);
+    expect(context.stopReason).toBe('runtime_signal');
+  });
+
+  it('tolerates onStop() invoked with no params (exit code/reason omitted)', async () => {
+    const { OperationInterruptedError } = await import('../src/errors');
+    const disconnectSpy = vi
+      .spyOn(
+        (
+          sandbox as unknown as {
+            client: { disconnect: (c?: unknown) => void };
+          }
+        ).client,
+        'disconnect'
+      )
+      .mockImplementation(() => {});
+
+    await (sandbox as unknown as { onStop: () => Promise<void> }).onStop();
+
+    expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    const cause = disconnectSpy.mock.calls[0][0];
+    expect(cause).toBeInstanceOf(OperationInterruptedError);
+    const context = (cause as InstanceType<typeof OperationInterruptedError>)
+      .context;
+    expect(context.reason).toBe('runtime_replaced');
+    expect(context.containerExitCode).toBeUndefined();
+    expect(context.stopReason).toBeUndefined();
+  });
+
   it('resolves (idempotent no-op) when the container was never admitted', async () => {
     // Destroying a sandbox whose container never started (e.g. no instance
     // available under capacity pressure) must not throw: there is nothing to
