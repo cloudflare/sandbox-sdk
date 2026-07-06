@@ -781,17 +781,6 @@ export interface SandboxOptions {
   keepAlive?: boolean;
 
   /**
-   * When true (the default), implicit operations automatically create and reuse
-   * a persistent default shell session. Set to false to run implicit top-level
-   * operations sessionlessly, where each command spawns a fresh process with no
-   * shared shell state. Explicit per-call session IDs continue to work normally
-   * when this is false.
-   *
-   * Default: true
-   */
-  enableDefaultSession?: boolean;
-
-  /**
    * Normalize sandbox ID to lowercase for preview URL compatibility
    *
    * Required for preview URLs because hostnames are case-insensitive (RFC 3986), which
@@ -812,6 +801,13 @@ export interface SandboxOptions {
    * @default false
    */
   normalizeId?: boolean;
+
+  /**
+   * Key-value metadata labels attached to the underlying Cloudflare Container.
+   * Labels are visible in container metrics and observability surfaces. Updated
+   * labels apply the next time the container starts.
+   */
+  labels?: Record<string, string>;
 
   /**
    * Container startup timeout configuration

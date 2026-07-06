@@ -1,0 +1,81 @@
+name: Backfill Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to backfill, for example 0.12.2'
+        required: true
+        type: string
+      source_tag:
+        description: 'Internal registry source tag, for example ci-<docker hash>'
+        required: true
+        type: string
+      release_commit_sha:
+        description: 'Release commit SHA, required only if the release tag is missing'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install crane
+        run: .github/install-crane.sh
+
+      - name: Login to registries
+        run: .github/login-release-registries.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Backfill stable release artifacts
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: |
+          git_tag="@cloudflare/sandbox@${{ inputs.version }}"
+          release_commit_sha="${{ inputs.release_commit_sha }}"
+
+          if git rev-parse --verify --quiet "refs/tags/${git_tag}" >/dev/null; then
+            release_commit_sha="$(git rev-list -n 1 "$git_tag")"
+          elif [[ -z "$release_commit_sha" ]]; then
+            echo "Release tag $git_tag is missing; provide release_commit_sha to create or converge the tag." >&2
+            exit 1
+          fi
+
+          npx tsx .github/release-orchestrator.ts stable \
+            --version "${{ inputs.version }}" \
+            --source-tag "${{ inputs.source_tag }}" \
+            --commit-sha "$release_commit_sha" \
+            --skip-npm true
+
+      - name: Summarize backfill
+        run: |
+          {
+            echo "## Release artifact backfill"
+            echo "Version: \`${{ inputs.version }}\`"
+            echo "Source tag: \`${{ inputs.source_tag }}\`"
+            echo "Convergence: full stable release state, except npm publish is skipped"
+          } >> "$GITHUB_STEP_SUMMARY"

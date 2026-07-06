@@ -98,6 +98,26 @@ export default {
 };
 ```
 
+## Sandbox options
+
+Pass options as the third argument to `getSandbox()` to configure sandbox
+lifetime and container startup metadata:
+
+```ts
+const sandbox = getSandbox(env.Sandbox, 'tenant-workspace', {
+  sleepAfter: '30m',
+  labels: {
+    tenantId: 'tenant_123',
+    workload: 'code-workspace'
+  }
+});
+```
+
+Container labels are attached to the underlying Cloudflare Container for
+analytics and observability. Labels are applied when the container starts; if
+labels are changed while a container is already running, the new labels apply
+the next time the container starts.
+
 ## Quick tunnels
 
 `sandbox.tunnels.get(port)` exposes a service running inside the

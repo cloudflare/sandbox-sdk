@@ -5,7 +5,17 @@
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    // Enable distributed tracing so the bridge's custom spans
+    // (bridge.<operation>) are recorded alongside automatic instrumentation.
+    // Each span is annotated with the sandbox ID, container UUID, and
+    // operation-specific metadata (command, file path, port, session, etc.).
+    "traces": {
+      "enabled": true,
+      // Fraction of requests to trace (0.0–1.0). 1.0 traces everything; lower
+      // it to reduce overhead and cost under high traffic.
+      "head_sampling_rate": 1
+    }
   },
   // The Sandbox Durable Object + its container image.
   // Bump the migration tag whenever new_sqlite_classes changes.
@@ -15,9 +25,9 @@
       // Replace with a custom Dockerfile path if you need extra tooling
       // (e.g. git, Python, Node.js) in the sandbox container.
       "image": "./Dockerfile",
-      // "lite" is a good default for getting started; upgrade to "standard-1"
-      // (4 vCPU / 8 GiB RAM) for production workloads.
-      "instance_type": "lite",
+      // "standard-1" (4 vCPU / 8 GiB RAM) suits production workloads; drop to
+      // "lite" to minimise cost when getting started.
+      "instance_type": "standard-1",
       "max_instances": 3
     }
   ],
@@ -61,7 +71,18 @@
     // Target number of pre-warmed containers (0 = disabled, no surprise bills).
     "WARM_POOL_TARGET": "0",
     // How often the pool alarm checks health and replenishes containers (ms).
-    "WARM_POOL_REFRESH_INTERVAL": "10000"
+    "WARM_POOL_REFRESH_INTERVAL": "10000",
+    // Operator-declared instance ceiling. Set this to match
+    // containers[].max_instances above so the pool knows its capacity without
+    // crashing into the limit first. 0 = unknown (auto-learn from platform
+    // errors). Note the effective warm ceiling is max_instances minus any
+    // assigned containers, so warmTarget cannot equal max_instances while
+    // sandboxes are in use.
+    "WARM_POOL_MAX_INSTANCES": "0",
+    // Number of containers the pool starts in parallel per scale-up batch.
+    // Higher fills the pool faster; too high risks the platform throttling a
+    // cold-start stampede. Clamped to [1, 20]. Default 5.
+    "WARM_POOL_SCALE_BATCH_SIZE": "5"
   },
   "preview_urls": false
 }

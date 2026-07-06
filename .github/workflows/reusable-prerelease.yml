@@ -209,45 +209,20 @@ jobs:
           DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
 
-      - name: Publish npm prerelease
-        run: npm publish ./packages/sandbox --tag "${{ needs.version.outputs.channel }}" --access public
+      - name: Publish prerelease
         env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           NPM_CONFIG_PROVENANCE: true
-
-      - name: Publish Docker images to Docker Hub
         run: |
           alias_args=()
           if [[ "${{ inputs.publish_docker_alias }}" == "true" ]]; then
-            alias_args=(--alias "${{ needs.version.outputs.channel }}")
+            alias_args=(--docker-alias "${{ needs.version.outputs.channel }}")
           fi
-          .github/publish-sandbox-images.sh \
-            --source-tag "${{ needs.version.outputs.image_tag }}" \
+          npx tsx .github/release-orchestrator.ts prerelease \
             --version "${{ needs.version.outputs.version }}" \
-            "${alias_args[@]}" \
-            --docker-hub
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Publish Docker images to CF Registry Library
-        continue-on-error: true
-        id: library-publish
-        run: |
-          alias_args=()
-          if [[ "${{ inputs.publish_docker_alias }}" == "true" ]]; then
-            alias_args=(--alias "${{ needs.version.outputs.channel }}")
-          fi
-          .github/publish-sandbox-images.sh \
             --source-tag "${{ needs.version.outputs.image_tag }}" \
-            --version "${{ needs.version.outputs.version }}" \
-            "${alias_args[@]}" \
-            --cf-library
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Warn if library publish failed
-        if: steps.library-publish.outcome == 'failure'
-        run: |
-          echo "::warning::CF Registry Library publish failed — Docker Hub and npm prereleases are unaffected"
+            --npm-tag "${{ needs.version.outputs.channel }}" \
+            "${alias_args[@]}"
 
       - name: Summarize prerelease
         run: |
