@@ -402,18 +402,17 @@ const BACKUP_DEFAULT_TTL_SECONDS = 259200;
  * hook, independent of the user-facing `containerTimeouts.instanceGetTimeoutMS`
  * (which still governs the HTTP path's `containerFetch`).
  *
- * Deliberately small: it bounds how long a single start attempt polls for a
- * container instance before the base class throws the classifiable
- * `NO_CONTAINER_INSTANCE_ERROR`. The RPC control connection's own retry loop
- * (`fetchWithResponseRetry`, ~2 min budget with exponential backoff) owns the
- * cross-attempt retries, so a short inner budget means each attempt fails fast
- * under capacity pressure and hands back to the outer loop — rather than one
- * attempt burning ~30s and letting the DO be evicted mid-wait. Once an
- * instance exists, `portReadyTimeoutMS` still governs app boot on the next
- * attempt (the base fast-path returns immediately when the container is
- * already running).
+ * Shorter than the SDK's user-facing 30s default, but long enough to match
+ * the Containers platform's own 8s instance-get default. This keeps one RPC
+ * start attempt from burning the full 30s under capacity pressure while still
+ * letting ordinary 4-8s cold provisions succeed on the first attempt instead
+ * of always paying the first backoff delay. The RPC control connection's own
+ * retry loop (`fetchWithResponseRetry`, ~2 min budget with exponential
+ * backoff) still owns cross-attempt retries. Once an instance exists,
+ * `portReadyTimeoutMS` still governs app boot on the next attempt (the base
+ * fast-path returns immediately when the container is already running).
  */
-const RPC_START_INSTANCE_GET_TIMEOUT_MS = 3_000;
+const RPC_START_INSTANCE_GET_TIMEOUT_MS = 8_000;
 const BACKUP_MAX_NAME_LENGTH = 256;
 const BACKUP_CONTAINER_DIR = '/var/backups';
 const BACKUP_STORAGE_PREFIX = 'backups';
