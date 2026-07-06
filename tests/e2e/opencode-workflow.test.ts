@@ -43,7 +43,7 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
   });
 
   describe('OpenCode proxy helpers', () => {
-    test('should proxy OpenCode global health through proxyToOpencodeServer', async () => {
+    test('should proxy OpenCode global health through the lifecycle handle', async () => {
       const healthUrl = `${workerUrl}/api/opencode/proxy-server/global-health`;
 
       let res: Response | null = null;

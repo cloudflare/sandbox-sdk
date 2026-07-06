@@ -11,9 +11,9 @@ import {
   getSandbox
 } from '@cloudflare/sandbox';
 import {
-  createOpencode,
-  createOpencodeServer,
-  proxyToOpencode
+  createOpenCodeClient,
+  createOpenCodeProxy,
+  withOpenCode
 } from '@cloudflare/sandbox/opencode';
 import type { Config, Part } from '@opencode-ai/sdk/v2';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
@@ -22,6 +22,13 @@ export { ContainerProxy };
 
 export class Sandbox extends BaseSandbox<Env> {
   interceptHttps = true;
+  // Pass storage so the OpenCode server config is recovered after a DO
+  // eviction (cold start), not just a container restart.
+  opencode = withOpenCode(this, {
+    directory: '/home/user/agents',
+    config: getConfig(),
+    storage: this.ctx.storage
+  });
 }
 
 const PROXY_INJECTED_API_KEY = 'proxy-injected';
@@ -86,39 +93,32 @@ const getConfig = (): Config => ({
   }
 });
 
-export default {
+// The wrapped handler runs first; any 404 falls through to createOpenCodeProxy,
+// which serves the OpenCode web UI (handshake redirect + ensure-and-forward).
+export default createOpenCodeProxy(
+  (env: Env) => getSandbox(env.Sandbox, 'opencode').opencode
+)({
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const sandbox = getSandbox(env.Sandbox, 'opencode');
 
     // Programmatic SDK test endpoint
     if (request.method === 'POST' && url.pathname === '/api/test') {
-      return handleSdkTest(sandbox);
+      return handleSDKTest(sandbox);
     }
 
-    // Everything else: Web UI proxy
-    const server = await createOpencodeServer(sandbox, {
-      directory: '/home/user/agents',
-      config: getConfig()
-      // Optional: Pass custom environment variables (e.g., for tracing/telemetry)
-      // env: { TRACEPARENT: '00-abc123-def456-01' },
-    });
-    return proxyToOpencode(request, sandbox, server);
+    // The OpenCode web UI is handled by createOpenCodeProxy above.
+    return new Response('Not found', { status: 404 });
   }
-};
+});
 
 /**
  * Test the programmatic SDK access
  */
-async function handleSdkTest(
-  sandbox: ReturnType<typeof getSandbox>
-): Promise<Response> {
+async function handleSDKTest(sandbox: Sandbox): Promise<Response> {
   try {
-    // Get typed SDK client
-    const { client } = await createOpencode<OpencodeClient>(sandbox, {
-      directory: '/home/user/agents',
-      config: getConfig()
-    });
+    // Get typed SDK client from the lifecycle handle (ensures the server).
+    const client = await createOpenCodeClient<OpencodeClient>(sandbox.opencode);
 
     // Create a session
     const session = await client.session.create({

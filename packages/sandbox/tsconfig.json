@@ -2,7 +2,11 @@
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
     "baseUrl": ".",
-    "types": ["node", "@cloudflare/workers-types"],
+    "types": [
+      "node",
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-pool-workers/types"
+    ],
     "lib": ["ES2024"],
     "resolveJsonModule": true,
     "paths": {

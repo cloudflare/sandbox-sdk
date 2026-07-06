@@ -24,16 +24,29 @@ import {
 } from '@cloudflare/sandbox';
 import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+import { withOpenCode } from '@cloudflare/sandbox/opencode';
+import type {
+  BucketDeleteResponse,
+  BucketGetResponse,
+  BucketPutResponse,
+  BucketUnmountResponse,
+  CodeContextDeleteResponse,
+  ErrorResponse,
+  HealthResponse,
+  PortUnexposeResponse,
+  SessionCreateResponse,
+  SuccessResponse,
+  SuccessWithMessageResponse,
+  WebSocketInitResponse
+} from './types';
 
 // ---------------------------------------------------------------------------
-// Legacy SSE shims for the unified `SandboxProcess` handle.
+// SSE adapters for endpoints that expose process output as framed events.
 //
-// E2E tests pre-date the exec unification and consume the old `execStream` /
-// `streamProcessLogs` SSE frame shapes (`{ type: 'stdout' | 'stderr' | 'exit'
-// | 'complete' | 'error', data?, exitCode?, processId? }`). The shims below
-// re-encode the raw stdout/stderr byte streams + exitCode into those frames
-// so the E2E tests can stay unchanged. These should be deleted when the E2E
-// tests are migrated to consume `proc.stdout` / `proc.stderr` directly.
+// The HTTP test worker's streaming endpoints return frames shaped like
+// `{ type: 'stdout' | 'stderr' | 'exit' | 'complete' | 'error', data?,
+// exitCode?, processId? }`. These adapters encode a `SandboxProcess` handle's
+// stdout/stderr byte streams and exit status into that endpoint contract.
 // ---------------------------------------------------------------------------
 
 function legacyExecStreamShim(
@@ -49,10 +62,9 @@ function legacyProcessLogShim(
 }
 
 /**
- * Marshal a `SandboxProcess` into the legacy `Process` JSON shape that
- * pre-unification E2E tests expect: `{ id, pid, command, status,
- * startTime, sessionId }`. `status()` is now an async method on the new
- * handle, so we await it here before serialising.
+ * Marshal a `SandboxProcess` into the JSON shape returned by the worker's
+ * process endpoints: `{ id, pid, command, status, startTime, sessionId }`.
+ * `status()` is async, so resolve it before serialising.
  */
 async function toLegacyProcessJson(proc: SandboxProcess): Promise<{
   id: string;
@@ -69,15 +81,17 @@ async function toLegacyProcessJson(proc: SandboxProcess): Promise<{
     try {
       exitCode = (await proc.waitForExit(1000)).exitCode;
     } catch {
-      // Legacy JSON tolerated missing exitCode on malformed records; keep
-      // that behaviour if the exit code cannot be recovered quickly.
+      // Exit code recovery is best-effort for process records whose terminal
+      // state cannot be observed quickly.
     }
   }
+  const serializedStatus =
+    exitCode === 137 || exitCode === 143 ? 'killed' : status;
   return {
     id: proc.id,
     pid: proc.pid >= 0 ? proc.pid : undefined,
     command: proc.command,
-    status,
+    status: serializedStatus,
     startTime: proc.startTime,
     sessionId: proc.sessionId,
     ...(exitCode !== undefined && { exitCode })
@@ -99,9 +113,7 @@ function legacyStreamFromProcess(
         );
       };
 
-      // Legacy execStream emitted a `start` frame first. Preserve that
-      // shape for E2E consumers while the Worker endpoint remains
-      // backwards-compatible.
+      // The streaming endpoint emits a start frame before stdout/stderr data.
       writeFrame({
         type: 'start',
         pid: proc.pid,
@@ -160,27 +172,7 @@ function legacyStreamFromProcess(
   });
 }
 
-import {
-  createOpencodeServer,
-  proxyToOpencodeServer
-} from '@cloudflare/sandbox/opencode';
-
-import type {
-  BucketDeleteResponse,
-  BucketGetResponse,
-  BucketPutResponse,
-  BucketUnmountResponse,
-  CodeContextDeleteResponse,
-  ErrorResponse,
-  HealthResponse,
-  PortUnexposeResponse,
-  SessionCreateResponse,
-  SuccessResponse,
-  SuccessWithMessageResponse,
-  WebSocketInitResponse
-} from './types';
-
-// Sandbox subclass wiring the code interpreter extension.
+// Sandbox subclass wiring the code interpreter and OpenCode extensions.
 export class Sandbox extends BaseSandbox<Env> {
   git = withGit(this);
 
@@ -188,6 +180,7 @@ export class Sandbox extends BaseSandbox<Env> {
     return this.git.checkout(repoUrl, options);
   }
   interpreter = withInterpreter(this);
+  opencode = withOpenCode(this, { port: 4096, storage: this.ctx.storage });
 }
 
 // Export Sandbox class with different names for each container type
@@ -508,36 +501,17 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/opencode/proxy-server/global-health' &&
         request.method === 'GET'
       ) {
-        let server:
-          | Awaited<ReturnType<typeof createOpencodeServer>>
-          | undefined;
+        const opencodeRequest = new Request(
+          `${url.origin}/global/health${url.search}`,
+          request
+        );
 
-        try {
-          server = await createOpencodeServer(sandbox, {
-            port: 4096
-          });
+        const response = await sandbox.opencode.fetch(opencodeRequest);
 
-          const opencodeRequest = new Request(
-            `${url.origin}/global/health${url.search}`,
-            request
-          );
-
-          const response = await proxyToOpencodeServer(
-            opencodeRequest,
-            sandbox,
-            server
-          );
-          const body = await response.arrayBuffer();
-
-          return new Response(body, {
-            status: response.status,
-            headers: response.headers
-          });
-        } finally {
-          if (server) {
-            await server.close();
-          }
-        }
+        return new Response(response.body, {
+          status: response.status,
+          headers: response.headers
+        });
       }
 
       // Session management
