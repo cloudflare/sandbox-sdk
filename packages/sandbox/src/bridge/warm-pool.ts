@@ -23,6 +23,20 @@ export interface WarmPoolConfig {
   warmTarget?: number;
   /** How often to check and replenish warm containers (ms). @default 10000 */
   refreshInterval?: number;
+  /**
+   * Operator-declared max_instances ceiling, mirroring
+   * `containers[].max_instances` in wrangler.jsonc. Seeds the pool's capacity
+   * math so it never blindly attempts doomed starts. 0/undefined = auto-learn
+   * the ceiling reactively from platform errors (legacy behaviour).
+   * @default 0
+   */
+  maxInstances?: number;
+  /**
+   * Number of containers to start in parallel per scale-up batch. Higher
+   * values fill the pool faster but risk the platform throttling a cold-start
+   * stampede. Clamped to [1, MAX_BATCH_SIZE]. @default 5
+   */
+  scaleBatchSize?: number;
 }
 
 export interface PoolStats {
@@ -62,9 +76,16 @@ interface ContainerWithState {
 // Defaults
 // ---------------------------------------------------------------------------
 
+const DEFAULT_BATCH_SIZE = 5;
+
+/** Upper bound on parallel starts per batch to avoid a cold-start stampede. */
+const MAX_BATCH_SIZE = 20;
+
 const DEFAULT_CONFIG: Required<WarmPoolConfig> = {
   warmTarget: 0,
-  refreshInterval: 10_000
+  refreshInterval: 10_000,
+  maxInstances: 0,
+  scaleBatchSize: DEFAULT_BATCH_SIZE
 };
 
 // ---------------------------------------------------------------------------
@@ -99,6 +120,15 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
   private capacityExhausted = false;
   private initialized = false;
 
+  /** Guards against overlapping eager refills triggered by concurrent pops. */
+  private refillInFlight = false;
+
+  /**
+   * The currently in-flight eager refill, or null. Exposed for tests to await
+   * the otherwise fire-and-forget refill deterministically.
+   */
+  private refillPromise: Promise<void> | null = null;
+
   // =======================================================================
   // Public RPC methods
   // =======================================================================
@@ -125,6 +155,8 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
       this.warmContainers.delete(containerUUID);
       this.assignments.set(sandboxId, containerUUID);
       await this.persist();
+      // Refill the slot we just consumed without waiting for the alarm tick.
+      this.requestRefill();
       return containerUUID;
     }
 
@@ -138,6 +170,8 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     if (containerUUID) {
       this.assignments.set(sandboxId, containerUUID);
       await this.persist();
+      // Pool was empty — start replenishing toward warmTarget eagerly.
+      this.requestRefill();
       return containerUUID;
     }
 
@@ -192,6 +226,27 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
   async configure(config: WarmPoolConfig): Promise<void> {
     await this.init();
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Clamp the batch size to a sane range so a misconfigured var can't
+    // re-introduce the cold-start stampede (or stall scale-up entirely).
+    this.config.scaleBatchSize = Math.min(
+      MAX_BATCH_SIZE,
+      Math.max(1, this.config.scaleBatchSize || DEFAULT_BATCH_SIZE)
+    );
+
+    // Seed the ceiling if the operator declared one. The configured value is an
+    // upper bound the operator promises; the platform may still impose a lower
+    // one, so never clobber a *lower* limit learned from a real capacity error.
+    // Re-seeding here (configure runs on every request) makes a probe-cleared
+    // ceiling self-healing.
+    if (this.config.maxInstances > 0) {
+      this.knownMaxInstances =
+        this.knownMaxInstances === null
+          ? this.config.maxInstances
+          : Math.min(this.knownMaxInstances, this.config.maxInstances);
+      await this.ctx.storage.put('knownMaxInstances', this.knownMaxInstances);
+    }
+
     await this.ctx.storage.put('config', this.config);
   }
 
@@ -218,6 +273,38 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     }
 
     await this.persist();
+  }
+
+  // =======================================================================
+  // Eager refill
+  // =======================================================================
+
+  /**
+   * Kick a non-blocking refill toward warmTarget. Debounced via refillInFlight
+   * so a burst of concurrent pops triggers at most one adjustPool sweep at a
+   * time; capacity is respected because adjustPool clamps to remainingCapacity.
+   * Errors are swallowed so a failed refill never rejects the triggering call.
+   */
+  private requestRefill(): void {
+    if (this.refillInFlight) return;
+    if (this.warmContainers.size >= this.config.warmTarget) return;
+    if (this.remainingCapacity() <= 0) return;
+
+    this.refillInFlight = true;
+    this.refillPromise = (async () => {
+      try {
+        await this.adjustPool();
+      } catch (error) {
+        console.error({
+          message: 'Eager refill failed',
+          component: 'warm-pool',
+          error
+        });
+      } finally {
+        this.refillInFlight = false;
+      }
+    })();
+    this.ctx.waitUntil(this.refillPromise);
   }
 
   // =======================================================================
@@ -422,25 +509,35 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
         return;
       }
 
+      const batchSize = this.config.scaleBatchSize;
       console.info({
         message: 'Scaling up pool',
         component: 'warm-pool',
         starting: toStart,
         needed: diff,
-        capacity: this.remainingCapacity()
+        capacity: this.remainingCapacity(),
+        batchSize
       });
-      for (let i = 0; i < toStart; i++) {
-        if (this.capacityExhausted) {
-          console.log({
-            message: 'Capacity exhausted mid-loop, stopping further starts',
-            component: 'warm-pool'
-          });
-          break;
+      // Start in bounded-parallel batches: faster fill than one-at-a-time while
+      // re-checking capacity between batches so a straddling batch overshoots
+      // the ceiling by at most batchSize - 1 doomed starts.
+      for (let i = 0; i < toStart && !this.capacityExhausted; i += batchSize) {
+        const n = Math.min(batchSize, toStart - i);
+        const results = await Promise.all(
+          Array.from({ length: n }, () => this.startContainer())
+        );
+        for (const uuid of results) {
+          if (uuid) this.warmContainers.add(uuid);
         }
-        const uuid = await this.startContainer();
-        if (uuid) this.warmContainers.add(uuid);
+        // A start hitting the cap calls recordCapacityLimit() mid-batch, before
+        // this batch's successes were tracked, so it infers a ceiling that is
+        // too low. Re-derive it from the now-accurate total.
+        if (this.capacityExhausted) {
+          this.knownMaxInstances =
+            this.warmContainers.size + this.assignments.size;
+        }
+        await this.persist();
       }
-      await this.persist();
     } else if (diff < 0) {
       const excess = -diff;
       console.info({
