@@ -1,6 +1,8 @@
-import { SandboxExtension, type SandboxLike } from '../extensions';
-import type { Sandbox } from '../sandbox';
-import { createOpenCodeServer } from './opencode';
+import {
+  SandboxExtension,
+  type SandboxLike
+} from '@cloudflare/sandbox/extensions';
+import { createOpenCodeServer, type OpenCodeSandboxLike } from './opencode';
 import type { OpenCodeOptions, OpenCodeServer } from './types';
 
 const DEFAULT_PORT = 4096;
@@ -65,7 +67,7 @@ function defaultProcessId(port: number): string {
  * your Sandbox subclass's `onStart`.
  */
 export class OpenCodeHandle extends SandboxExtension {
-  readonly #sandbox: Sandbox<unknown>;
+  readonly #sandbox: OpenCodeSandboxLike;
   readonly #defaults: OpenCodeOptions;
   readonly #storage: OpenCodeStateStorage | undefined;
   readonly #stateKey: string;
@@ -73,7 +75,7 @@ export class OpenCodeHandle extends SandboxExtension {
   #lastOptions: OpenCodeOptions | undefined;
 
   constructor(
-    sandbox: Sandbox<unknown>,
+    sandbox: OpenCodeSandboxLike,
     defaults: OpenCodeOptions = {},
     storage?: OpenCodeStateStorage,
     stateIndex = 0
@@ -173,7 +175,7 @@ export class OpenCodeHandle extends SandboxExtension {
  * deterministic across DO reconstruction (field initializers run in the same
  * order each time). Keyed weakly so it is collected with the sandbox.
  */
-const stateIndexCounter = new WeakMap<Sandbox<unknown>, number>();
+const stateIndexCounter = new WeakMap<OpenCodeSandboxLike, number>();
 
 /**
  * Factory — attach as a field on a Sandbox subclass:
@@ -183,7 +185,7 @@ const stateIndexCounter = new WeakMap<Sandbox<unknown>, number>();
  * eviction (cold start). The server starts lazily on first use.
  */
 export function withOpenCode(
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   options: WithOpenCodeOptions = {}
 ): OpenCodeHandle {
   const { storage, ...defaults } = options;

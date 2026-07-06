@@ -1,12 +1,12 @@
 import type { ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
 import {
   createOpenCodeServer,
   proxyToOpenCode,
   proxyToOpenCodeServer
-} from '../../src/opencode/opencode';
-import type { OpenCodeServer } from '../../src/opencode/types';
-import type { Sandbox } from '../../src/sandbox';
+} from '../src/opencode';
+import type { OpenCodeServer } from '../src/types';
 
 /** Minimal mock for SandboxProcess methods used by OpenCode integration */
 interface MockProcess {

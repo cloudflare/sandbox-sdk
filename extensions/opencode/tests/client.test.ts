@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createOpenCodeClient } from '../../src/opencode/client';
-import type { OpenCodeHandle } from '../../src/opencode/lifecycle';
+import { createOpenCodeClient } from '../src/client';
+import type { OpenCodeHandle } from '../src/lifecycle';
 
 const createOpencodeClientMock = vi.fn();
 

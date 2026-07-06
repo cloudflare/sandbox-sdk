@@ -1,8 +1,11 @@
 import type { ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ContainerUnavailableError, ErrorCode } from '../../src/errors';
-import { withOpenCode } from '../../src/opencode/lifecycle';
-import type { Sandbox } from '../../src/sandbox';
+import {
+  ContainerUnavailableError,
+  ErrorCode
+} from '../../../packages/sandbox/src/errors';
+import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
+import { withOpenCode } from '../src/lifecycle';
 
 interface MockProcess {
   id: string;

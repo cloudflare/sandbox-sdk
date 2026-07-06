@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { OpenCodeHandle } from '../../src/opencode/lifecycle';
-import { createOpenCodeProxy } from '../../src/opencode/proxy';
+import type { OpenCodeHandle } from '../src/lifecycle';
+import { createOpenCodeProxy } from '../src/proxy';
 
 interface MockHandle {
   fetch: ReturnType<typeof vi.fn>;

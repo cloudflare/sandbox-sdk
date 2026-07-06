@@ -1,17 +1,29 @@
+import type { SandboxLike } from '@cloudflare/sandbox/extensions';
 import type { Config } from '@opencode-ai/sdk/v2';
 import {
   createLogger,
   type Logger,
+  type SandboxExecOptions,
   type SandboxProcess,
+  type SandboxProcessPromise,
   shellEscape
 } from '@repo/shared';
-import type { Sandbox } from '../sandbox';
 import type { OpenCodeOptions, OpenCodeServer } from './types';
 import { OpenCodeStartupError } from './types';
 
 // Lazy logger creation to avoid global scope restrictions in Workers
 function getLogger(): Logger {
   return createLogger({ component: 'sandbox-do', operation: 'opencode' });
+}
+
+export interface OpenCodeSandboxLike extends SandboxLike {
+  exec(
+    command: string | string[],
+    options?: SandboxExecOptions
+  ): SandboxProcessPromise;
+  getProcess(id: string): Promise<SandboxProcess | null>;
+  listProcesses(): Promise<SandboxProcess[]>;
+  containerFetch(request: Request, port: number): Promise<Response>;
 }
 
 const DEFAULT_PORT = 4096;
@@ -39,7 +51,7 @@ function defaultProcessId(port: number): string {
  * process in the container.
  */
 async function findExistingOpenCodeProcess(
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   processId: string
 ): Promise<SandboxProcess | null> {
   const process = await sandbox.getProcess(processId);
@@ -60,7 +72,7 @@ async function findExistingOpenCodeProcess(
  * Returns the process handle.
  */
 async function ensureOpenCodeServer(
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   port: number,
   processId: string,
   directory?: string,
@@ -150,7 +162,7 @@ async function ensureOpenCodeServer(
  * Internal function to start a new OpenCode server process.
  */
 async function startOpenCodeServer(
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   port: number,
   processId: string,
   directory?: string,
@@ -299,7 +311,7 @@ async function startOpenCodeServer(
  * ```
  */
 export async function createOpenCodeServer(
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   options?: OpenCodeOptions
 ): Promise<OpenCodeServer> {
   const port = options?.port ?? DEFAULT_PORT;
@@ -334,7 +346,7 @@ export async function createOpenCodeServer(
  */
 export function proxyToOpenCodeServer(
   request: Request,
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   server: OpenCodeServer
 ): Promise<Response> {
   return sandbox.containerFetch(request, server.port);
@@ -389,7 +401,7 @@ export function proxyToOpenCodeServer(
  */
 export function proxyToOpenCode(
   request: Request,
-  sandbox: Sandbox<unknown>,
+  sandbox: OpenCodeSandboxLike,
   server: OpenCodeServer
 ): Response | Promise<Response> {
   const url = new URL(request.url);

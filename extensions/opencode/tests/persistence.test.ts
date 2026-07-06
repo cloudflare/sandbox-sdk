@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  type OpenCodeStateStorage,
-  withOpenCode
-} from '../../src/opencode/lifecycle';
-import type { Sandbox } from '../../src/sandbox';
+import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
+import { type OpenCodeStateStorage, withOpenCode } from '../src/lifecycle';
 
 // SandboxExtension stores the sandbox via a private field reached through a
 // prototype getter, so the cast to Sandbox is sufficient for these unit tests.

@@ -3,7 +3,7 @@
   // Entry is the eviction-test worker: it re-exports the SDK worker surface
   // (so the Sandbox container binding resolves) plus the OpenCodeFixture DO that
   // the DO-eviction test drives via its namespace binding.
-  "main": "opencode/eviction-worker.ts",
+  "main": "../../../extensions/opencode/tests/eviction-worker.ts",
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
 

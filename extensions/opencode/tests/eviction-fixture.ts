@@ -11,11 +11,8 @@
 // exercises.
 
 import { DurableObject } from 'cloudflare:workers';
-import {
-  type OpenCodeHandle,
-  withOpenCode
-} from '../../src/opencode/lifecycle';
-import type { Sandbox } from '../../src/sandbox';
+import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
+import { type OpenCodeHandle, withOpenCode } from '../src/lifecycle';
 
 interface StartedProcess {
   command: string;

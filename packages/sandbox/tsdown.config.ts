@@ -13,8 +13,8 @@ export default defineConfig({
     // easier to scope; each entry key here decides the emitted subpath.
     'interpreter/index': '../../extensions/interpreter/src/index.ts',
     'git/index': '../../extensions/git/src/index.ts',
+    'opencode/index': '../../extensions/opencode/src/index.ts',
     'openai/index': 'src/openai/index.ts',
-    'opencode/index': 'src/opencode/index.ts',
     'xterm/index': 'src/xterm/index.ts'
   },
   external: ['cloudflare:workers', 'hono'],

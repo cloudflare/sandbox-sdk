@@ -3,7 +3,7 @@
 // Re-exports the full SDK worker surface (so the container binding's `Sandbox`
 // class resolves) and the OpenCode fixture DO the eviction test drives.
 
-export * from '../../src/index';
+export * from '../../../packages/sandbox/src/index';
 export { OpenCodeFixture } from './eviction-fixture';
 
 export default {
