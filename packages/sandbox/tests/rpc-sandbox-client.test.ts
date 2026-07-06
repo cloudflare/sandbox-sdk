@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let stats = { imports: 1, exports: 1 };
 let connected = true;
+let connecting = false;
+let settleConnectionAttempt: (() => void) | undefined;
 const disconnects: number[] = [];
 let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
   exitCode: 0,
@@ -63,9 +65,17 @@ vi.mock('../src/container-control/connection', () => ({
       return connected;
     }
     isConnecting() {
-      return false;
+      return connecting;
     }
-    async whenSettled() {}
+    async whenSettled() {
+      if (!connecting) return;
+      await new Promise<void>((resolve) => {
+        settleConnectionAttempt = () => {
+          connecting = false;
+          resolve();
+        };
+      });
+    }
     getStats() {
       return stats;
     }
@@ -97,6 +107,8 @@ describe('ContainerControlClient busy/idle tracking', () => {
     vi.useFakeTimers();
     stats = { imports: 1, exports: 1 };
     connected = true;
+    connecting = false;
+    settleConnectionAttempt = undefined;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
     onConnectionErrorHandlers.length = 0;
@@ -179,6 +191,60 @@ describe('ContainerControlClient busy/idle tracking', () => {
     // the DO's counter stays elevated forever.
     client.disconnect();
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases inflight and stops timers when disconnect is deferred mid-connect', async () => {
+    connecting = true;
+    connected = false;
+    commandExecuteImpl = vi.fn(
+      () =>
+        new Promise(() => {
+          // Keep the RPC promise pending behind the deferred transport.
+        })
+    );
+    const onSessionBusy = vi.fn();
+    const onSessionIdle = vi.fn();
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onSessionBusy,
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+
+    void client.commands.execute('sleep 10', 'default');
+    expect(onSessionBusy).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    client.disconnect(new Error('sandbox stopping'));
+
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(disconnects).toHaveLength(0);
+
+    settleConnectionAttempt?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(disconnects).toHaveLength(1);
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let user idle callback errors replace RPC results', async () => {
+    commandExecuteImpl = vi.fn(() => Promise.resolve({ ok: true }));
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onSessionIdle: () => {
+        throw new Error('idle callback failed');
+      },
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+
+    await expect(
+      client.commands.execute('echo ok', 'default')
+    ).resolves.toEqual({ ok: true });
   });
 
   it('releases inflight when the WebSocket drops while busy', () => {

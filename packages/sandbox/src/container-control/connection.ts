@@ -244,7 +244,10 @@ export interface ContainerControlConnectionOptions {
    * with a generic "RPC session was shut down" message on the queued calls
    * that reject as a result of the abort.
    *
-   * Fired at most once per connection attempt. Not fired for `disconnect()`.
+   * Fired for connection-attempt failures before queued RPC calls are rejected.
+   * A single logical connect can emit multiple errors as the retry loop observes
+   * transient failures; the owner should treat the latest value as the current
+   * best startup cause. Not fired for `disconnect()`.
    */
   onConnectionError?: (error: unknown) => void;
   /**
@@ -448,8 +451,8 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Run the owner-provided `onConnectionError` callback exactly once per
-   * failed connection attempt, swallowing any listener errors.
+   * Run the owner-provided `onConnectionError` callback, swallowing any
+   * listener errors.
    */
   private fireConnectionError(error: unknown): void {
     if (!this.onConnectionError) return;
@@ -645,9 +648,12 @@ export class ContainerControlConnection {
           try {
             await this.startContainer();
           } catch (error) {
-            // Stamp the real cause on the owner as soon as the first
-            // container-admission failure surfaces — before any retry/abort
-            // can mask it — so a teardown mid-retry still surfaces this.
+            // Stamp the converted structured cause on the owner as soon as a
+            // container-admission failure surfaces — before any retry/abort can
+            // mask it — so queued calls can surface it. Re-throw the original
+            // platform error because fetchWithResponseRetry's retry predicate
+            // matches the platform message, and doConnectInner converts the
+            // final exhausted error before exposing it to callers.
             this.fireConnectionError(
               tryConvertPlatformUnavailable(error) ?? error
             );

@@ -465,6 +465,12 @@ function maybePreferConnectionError(
  * before `doConnect` recorded a cause — which is, from the caller's view, the
  * container being unavailable. Retryable, with the raw transport message
  * preserved as `originalMessage` for diagnostics.
+ *
+ * `upgrade_failed` is intentionally excluded here. Unlike disposal/close
+ * during startup, an HTTP upgrade failure with no captured structured cause can
+ * be a permanent configuration or routing error (for example, a 404 on `/rpc`),
+ * so the generic transport classification is more accurate than retryable
+ * container unavailability.
  */
 function buildNeverConnectedUnavailableResponse(
   transportResponse: ErrorResponse<RPCTransportContext>,
@@ -786,10 +792,37 @@ export class ContainerControlClient {
   // Activity & busy/idle tracking
   // -------------------------------------------------------------------------
 
+  private fireUserCallback(
+    name: 'onActivity' | 'onSessionBusy' | 'onSessionIdle',
+    callback: (() => void) | undefined
+  ): void {
+    if (!callback) return;
+    try {
+      callback();
+    } catch (error) {
+      this.logger.warn('ContainerControlClient callback threw', {
+        callback: name,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private fireActivity(): void {
+    this.fireUserCallback('onActivity', this.onActivity);
+  }
+
+  private fireSessionBusy(): void {
+    this.fireUserCallback('onSessionBusy', this.onSessionBusy);
+  }
+
+  private fireSessionIdle(): void {
+    this.fireUserCallback('onSessionIdle', this.onSessionIdle);
+  }
+
   private markBusy(): void {
     if (!this.busy) {
       this.busy = true;
-      this.onSessionBusy?.();
+      this.fireSessionBusy();
     }
     this.clearIdleTimer();
   }
@@ -805,8 +838,19 @@ export class ContainerControlClient {
 
   private maybeTransitionIdle(): void {
     const conn = this.conn;
-    if (!conn || !conn.isConnected()) return;
+    if (!conn) return;
+    if (!conn.isConnected()) {
+      // Calls can settle while their sends are still queued behind the
+      // deferred WebSocket upgrade. Keep `busy` true until either the session
+      // connects and the poller observes the baseline stats, or the attempt
+      // fails and `destroyConnection()` releases the busy state.
+      return;
+    }
 
+    this.transitionIdleIfReady(conn);
+  }
+
+  private transitionIdleIfReady(conn: ContainerControlConnection): void {
     if (this.isSessionBusy(conn)) {
       this.markBusy();
       return;
@@ -814,7 +858,7 @@ export class ContainerControlClient {
 
     if (this.busy) {
       this.busy = false;
-      this.onSessionIdle?.();
+      this.fireSessionIdle();
       this.scheduleIdleDisconnect();
     } else if (!this.idleTimer) {
       this.scheduleIdleDisconnect();
@@ -830,7 +874,7 @@ export class ContainerControlClient {
   private recordCallStarted = (): void => {
     this.activeCalls++;
     this.markBusy();
-    this.onActivity?.();
+    this.fireActivity();
   };
 
   private recordCallSettled = (): void => {
@@ -892,17 +936,11 @@ export class ContainerControlClient {
       this.markBusy();
       // Renew on every busy tick — this is what keeps a long-lived stream
       // alive past sleepAfter.
-      this.onActivity?.();
-    } else if (this.busy) {
-      this.busy = false;
-      this.onSessionIdle?.();
-      this.scheduleIdleDisconnect();
-    } else {
-      // Already idle, no state change. Still ensure the disconnect timer
-      // is armed (covers the case where we connected but never observed
-      // any activity).
-      if (!this.idleTimer) this.scheduleIdleDisconnect();
+      this.fireActivity();
+      return;
     }
+
+    this.transitionIdleIfReady(conn);
   };
 
   private startBusyPoll(): void {
@@ -950,7 +988,7 @@ export class ContainerControlClient {
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
       this.busy = false;
-      this.onSessionIdle?.();
+      this.fireSessionIdle();
     }
     if (this.conn) {
       // Weakly stamp the teardown cause so queued RPC calls reject with a
@@ -1117,12 +1155,24 @@ export class ContainerControlClient {
    * queued calls surface it; if the attempt succeeds, the (now-established)
    * connection is then torn down cleanly with the cause.
    *
+   * During this deferral window `this.conn` still points at the connecting
+   * transport so queued calls can keep their original connection context.
+   * Container lifecycle code treats `disconnect()` as terminal and does not
+   * issue more RPC calls after requesting it.
+   *
    * `cause` should be a typed `SandboxError` describing why the connection is
    * being torn down (sandbox stopping, lifetime change, transport switch).
    */
   disconnect(cause?: unknown): void {
     const conn = this.conn;
     if (conn?.isConnecting()) {
+      this.stopBusyPoll();
+      this.clearIdleTimer();
+      this.activeCalls = 0;
+      if (this.busy) {
+        this.busy = false;
+        this.fireSessionIdle();
+      }
       // Weakly stamp the cause so an in-flight-attempt failure (authoritative)
       // still wins over this teardown reason.
       this.stampWeakConnectionCause(cause);
