@@ -21,9 +21,8 @@ async function handleAPISandboxRoute(env) {
 
   let proc = await sandbox.getProcess('vite-dev-server');
   if (!proc) {
-    // Unified exec surface: pass `processId` to make the background process
-    // addressable via `sandbox.getProcess()` on later requests. Replaces the
-    // legacy `sandbox.startProcess()` entrypoint.
+    // `processId` makes the background process addressable via
+    // `sandbox.getProcess()` on later requests.
     proc = await sandbox.exec('npm run dev', {
       processId: 'vite-dev-server',
       cwd: '/app',
