@@ -390,9 +390,15 @@ function withSandboxOperationContext<TArgs extends unknown[], TResult>(
         result != null &&
         typeof (result as { then?: unknown }).then === 'function'
       ) {
-        return (result as unknown as Promise<unknown>).catch((error: unknown) =>
-          translatePlatformInterruption(error, operation)
-        ) as TResult;
+        const caught = (result as unknown as Promise<unknown>).catch(
+          (error: unknown) => translatePlatformInterruption(error, operation)
+        );
+        // Preserve any own properties the source thenable attached to itself
+        // (e.g. `SandboxProcessPromise.output` / `.text` / `.json` / `.kill`).
+        // `Promise.prototype.catch` returns a bare promise, so without this
+        // copy those thenable-augmenting methods disappear.
+        Object.assign(caught, result);
+        return caught as TResult;
       }
       return result;
     } catch (error) {

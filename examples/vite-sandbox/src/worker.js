@@ -19,9 +19,11 @@ export default {
 async function handleAPISandboxRoute(env) {
   const sandbox = getSandbox(env.Sandbox, 'vite-sandbox');
 
-  const proc = await sandbox.getProcess('vite-dev-server');
+  let proc = await sandbox.getProcess('vite-dev-server');
   if (!proc) {
-    const proc = await sandbox.startProcess('npm run dev', {
+    // `processId` makes the background process addressable via
+    // `sandbox.getProcess()` on later requests.
+    proc = await sandbox.exec('npm run dev', {
       processId: 'vite-dev-server',
       cwd: '/app',
       env: {
