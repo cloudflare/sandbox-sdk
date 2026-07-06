@@ -85,11 +85,13 @@ async function toLegacyProcessJson(proc: SandboxProcess): Promise<{
       // state cannot be observed quickly.
     }
   }
+  const serializedStatus =
+    exitCode === 137 || exitCode === 143 ? 'killed' : status;
   return {
     id: proc.id,
     pid: proc.pid >= 0 ? proc.pid : undefined,
     command: proc.command,
-    status,
+    status: serializedStatus,
     startTime: proc.startTime,
     sessionId: proc.sessionId,
     ...(exitCode !== undefined && { exitCode })
