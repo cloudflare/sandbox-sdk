@@ -45,9 +45,9 @@ jobs:
              || "${{ steps.filter.outputs.sdk }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
-            echo "needs-sdk-tests=true" >> $GITHUB_OUTPUT
+            echo "needs-sdk-tests=true" >> "$GITHUB_OUTPUT"
           else
-            echo "needs-sdk-tests=false" >> $GITHUB_OUTPUT
+            echo "needs-sdk-tests=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Needs container unit tests?
@@ -55,20 +55,44 @@ jobs:
              || "${{ steps.filter.outputs.container }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
-            echo "needs-container-tests=true" >> $GITHUB_OUTPUT
+            echo "needs-container-tests=true" >> "$GITHUB_OUTPUT"
           else
-            echo "needs-container-tests=false" >> $GITHUB_OUTPUT
+            echo "needs-container-tests=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Needs quality checks? (source or config changes)
           if [[ "${{ steps.filter.outputs.any-source }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.ci-config }}" == "true" \
              || "${{ steps.filter.outputs.deps }}" == "true" \
              || "${{ steps.filter.outputs.changesets }}" == "true" ]]; then
-            echo "needs-quality=true" >> $GITHUB_OUTPUT
+            echo "needs-quality=true" >> "$GITHUB_OUTPUT"
           else
-            echo "needs-quality=false" >> $GITHUB_OUTPUT
+            echo "needs-quality=false" >> "$GITHUB_OUTPUT"
           fi
+
+  # --- Configuration guard (unconditional and independent of reusable workflows) ---
+  config-guard:
+    name: ci/config
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Validate CI configuration
+        run: npm run test:release-tools
 
   # --- Build (JS only, no Docker — Docker moves to pr-privileged.yml) ---
   build:
@@ -95,15 +119,20 @@ jobs:
   basic-gate:
     name: ci/basic
     if: always()
-    needs: [build, quality]
+    needs: [config-guard, build, quality]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Check job results
         run: |
+          echo "config: ${{ needs.config-guard.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "quality: ${{ needs.quality.result }}"
 
+          if [[ "${{ needs.config-guard.result }}" != "success" ]]; then
+            echo "::error::CI configuration validation did not succeed"
+            exit 1
+          fi
           if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build.result }}" == "cancelled" ]]; then
             echo "::error::Build failed or was cancelled"
             exit 1

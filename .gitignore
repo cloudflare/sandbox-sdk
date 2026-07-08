@@ -167,3 +167,6 @@ perf-results/
 sandbox-linux-*
 
 test-results/
+
+# Superpowers working artifacts
+.superpowers/

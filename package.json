@@ -69,7 +69,8 @@
     "vite": "^7.3.5",
     "vitest": "^4.1.8",
     "wrangler": "^4.102.0",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0"
   },
   "private": true,
   "packageManager": "npm@11.6.4"
