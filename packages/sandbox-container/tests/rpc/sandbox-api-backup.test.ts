@@ -38,15 +38,32 @@ describe('SandboxControlAPI backup', () => {
       restoreArchive: vi.fn().mockResolvedValue({
         success: true,
         data: undefined
-      })
+      }),
+      uploadArchive: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: undefined }),
+      uploadParts: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: { parts: [] } }),
+      prepareRestore: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: { existingSize: 0 } }),
+      downloadArchive: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: undefined }),
+      extractArchive: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: undefined }),
+      cleanupArchive: vi
+        .fn()
+        .mockResolvedValue({ success: true, data: undefined })
     } as unknown as BackupService;
   });
 
-  it('accepts backup session IDs inside options objects', async () => {
+  it('routes backup calls to stateless service operations', async () => {
     const api = buildApi(mockBackupService);
 
     await api.backup.createArchive('/workspace/app', '/var/backups/app.sqsh', {
-      sessionId: 'session-1',
       gitignore: true,
       excludes: ['node_modules'],
       compression: {
@@ -54,22 +71,44 @@ describe('SandboxControlAPI backup', () => {
         threads: 2
       }
     });
-    await api.backup.restoreArchive('/workspace/app', '/var/backups/app.sqsh', {
-      sessionId: 'session-1'
+    await api.backup.restoreArchive('/workspace/app', '/var/backups/app.sqsh');
+    await api.backup.uploadArchive({
+      archivePath: '/var/backups/app.sqsh',
+      url: 'https://example.com/upload',
+      timeoutMs: 1_810_000
     });
+    await api.backup.downloadArchive({
+      archivePath: '/var/backups/app.sqsh',
+      expectedSize: 42,
+      parts: [{ url: 'https://example.com/download', offset: 0 }],
+      timeoutMs: 1_810_000
+    });
+    await api.backup.cleanupArchive('/var/backups/app.sqsh');
 
     expect(mockBackupService.createArchive).toHaveBeenCalledWith(
       '/workspace/app',
       '/var/backups/app.sqsh',
-      'session-1',
       true,
       ['node_modules'],
       { format: 'zstd', threads: 2 }
     );
     expect(mockBackupService.restoreArchive).toHaveBeenCalledWith(
       '/workspace/app',
-      '/var/backups/app.sqsh',
-      'session-1'
+      '/var/backups/app.sqsh'
+    );
+    expect(mockBackupService.uploadArchive).toHaveBeenCalledWith({
+      archivePath: '/var/backups/app.sqsh',
+      url: 'https://example.com/upload',
+      timeoutMs: 1_810_000
+    });
+    expect(mockBackupService.downloadArchive).toHaveBeenCalledWith({
+      archivePath: '/var/backups/app.sqsh',
+      expectedSize: 42,
+      parts: [{ url: 'https://example.com/download', offset: 0 }],
+      timeoutMs: 1_810_000
+    });
+    expect(mockBackupService.cleanupArchive).toHaveBeenCalledWith(
+      '/var/backups/app.sqsh'
     );
   });
 });

@@ -1,3 +1,4 @@
+import { ManagedProcessSupervisor } from '@repo/sandbox-execution';
 import type { Logger, SandboxControlCallback } from '@repo/shared';
 import { createLogger } from '@repo/shared';
 import { ExtensionHost } from '../extensions/extension-host';
@@ -5,21 +6,21 @@ import { TerminalWebSocketHandler } from '../handlers/terminal-ws-handler';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
 import { BackupService } from '../services/backup-service';
-import { ExecutionService } from '../services/execution-service';
+import { CommandContextService } from '../services/command-context-service';
 import { FileService } from '../services/file-service';
+import { InternalCommandRunner } from '../services/internal-command-runner';
 import { PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
-import { ProcessStore } from '../services/process-store';
-import { SessionManager } from '../services/session-manager';
 import { TerminalManager } from '../services/terminal-manager';
 import { TunnelService } from '../services/tunnel-service';
 import { WatchService } from '../services/watch-service';
 
 export interface Dependencies {
   // Services
-  processService: ProcessService;
   fileService: FileService;
   portService: PortService;
+  managedProcessSupervisor: ManagedProcessSupervisor;
+  processService: ProcessService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
@@ -28,9 +29,8 @@ export interface Dependencies {
   // Infrastructure
   logger: Logger;
   security: SecurityService;
-  sessionManager: SessionManager;
   terminalManager: TerminalManager;
-  executionService: ExecutionService;
+  commandContextService: CommandContextService;
 
   // Handlers
   terminalWsHandler: TerminalWebSocketHandler;
@@ -92,27 +92,26 @@ export class Container {
     const security = new SecurityService(logger);
     const securityAdapter = new SecurityServiceAdapter(security);
 
-    // Initialize stores
-    const processStore = new ProcessStore(logger);
-
     // Initialize execution infrastructure
-    const sessionManager = new SessionManager(logger);
     const terminalManager = new TerminalManager(logger);
-    const executionService = new ExecutionService(sessionManager, logger);
+    const internalCommandRunner = new InternalCommandRunner();
+    const commandContextService = new CommandContextService(
+      internalCommandRunner
+    );
 
     // Initialize services
-    const processService = new ProcessService(
-      processStore,
-      logger,
-      executionService
-    );
     const fileService = new FileService(
       securityAdapter,
       logger,
-      executionService
+      commandContextService
     );
     const portService = new PortService();
-    const backupService = new BackupService(logger, executionService);
+    const managedProcessSupervisor = new ManagedProcessSupervisor();
+    const processService = new ProcessService({
+      supervisor: managedProcessSupervisor,
+      logger
+    });
+    const backupService = new BackupService(logger, commandContextService);
     const watchService = new WatchService(logger);
     const tunnelService = new TunnelService(logger, () =>
       this.getControlCallback()
@@ -128,9 +127,10 @@ export class Container {
     // Store all dependencies
     this.dependencies = {
       // Services
-      processService,
       fileService,
       portService,
+      managedProcessSupervisor,
+      processService,
       backupService,
       watchService,
       tunnelService,
@@ -139,9 +139,8 @@ export class Container {
       // Infrastructure
       logger,
       security,
-      sessionManager,
       terminalManager,
-      executionService,
+      commandContextService,
 
       // Handlers
       terminalWsHandler

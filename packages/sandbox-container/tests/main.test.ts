@@ -55,6 +55,36 @@ describe('createSupervisorController', () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it('runs cleanup exactly once when shutdown signals repeat', async () => {
+    let resolveCleanup!: () => void;
+    const cleanup = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCleanup = resolve;
+        })
+    );
+    const exit = vi.fn();
+
+    const controller = createSupervisorController({
+      cleanup,
+      getChild: () => null,
+      exit,
+      logger: mockLogger
+    });
+
+    const firstShutdown = controller.onSignal('SIGTERM');
+    await controller.onSignal('SIGINT');
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+
+    resolveCleanup();
+    await firstShutdown;
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it('does not exit from child signal events once shutdown has started', async () => {
     let resolveCleanup!: () => void;
     const cleanup = vi.fn().mockImplementation(

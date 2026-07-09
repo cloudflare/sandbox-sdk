@@ -1,12 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import {
-  getExecutionTargetDisplayName,
-  type ServiceResult
-} from '@sandbox-container/core/types';
+import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
-import type { ExecutionService } from '@sandbox-container/services/execution-service';
-import type { RawExecResult } from '@sandbox-container/session-types';
+import type { CommandContextService } from '@sandbox-container/services/command-context-service';
+import type { InternalCommandResult } from '@sandbox-container/services/internal-command-result';
 import { mocked } from '../test-utils';
 
 const mockLogger = {
@@ -18,25 +15,37 @@ const mockLogger = {
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
 
-const mockSessionManager = {
-  executeInSession: vi.fn(),
-  startProcessStreamInSession: vi.fn(),
-  killCommand: vi.fn(),
+const mockCommandRunner = {
+  run: vi.fn(),
   setEnvVars: vi.fn(),
-  getSession: vi.fn(),
-  createSession: vi.fn(),
-  deleteSession: vi.fn(),
-  listSessions: vi.fn(),
-  destroy: vi.fn(),
-  withSession: vi.fn()
+  destroy: vi.fn()
 };
 
-const mockExecutionService = {
-  execute: vi.fn(),
-  startProcessStream: vi.fn(),
-  withExecution: vi.fn(),
-  kill: vi.fn()
-} as unknown as ExecutionService;
+async function mockCommandResult(
+  command: string,
+  options?: Record<string, unknown>
+) {
+  const result = await mockCommandRunner.run(command, options);
+  return (
+    result ?? {
+      success: true,
+      data: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        command,
+        duration: 0,
+        timestamp: new Date(0).toISOString()
+      }
+    }
+  );
+}
+
+// Mock CommandContextService with proper typing
+const mockCommandContextService = {
+  run: vi.fn(),
+  withExecution: vi.fn()
+} as unknown as CommandContextService;
 
 const mockFetch = vi.fn();
 let originalFetch: typeof fetch;
@@ -45,10 +54,11 @@ function execResult(
   exitCode: number,
   stdout = '',
   stderr = ''
-): ServiceResult<RawExecResult> {
+): ServiceResult<InternalCommandResult> {
   return {
     success: true,
     data: {
+      success: exitCode === 0,
       exitCode,
       stdout,
       stderr,
@@ -59,7 +69,10 @@ function execResult(
   };
 }
 
-function execSuccess(stdout = '', stderr = ''): ServiceResult<RawExecResult> {
+function execSuccess(
+  stdout = '',
+  stderr = ''
+): ServiceResult<InternalCommandResult> {
   return execResult(0, stdout, stderr);
 }
 
@@ -70,15 +83,16 @@ describe('BackupService', () => {
     vi.clearAllMocks();
     originalFetch = global.fetch;
     global.fetch = mockFetch as unknown as typeof fetch;
-    mocked(mockExecutionService.execute).mockImplementation(
+    mocked(mockCommandContextService.run).mockImplementation(
       async (command, options = {}) => {
-        const sessionId = getExecutionTargetDisplayName(
-          options.target ?? { kind: 'sessionless' }
-        );
-        return await mockSessionManager.executeInSession(sessionId, command);
+        const result = await mockCommandResult(command);
+        if (!result.success) {
+          throw result.error;
+        }
+        return result.data;
       }
     );
-    service = new BackupService(mockLogger, mockExecutionService);
+    service = new BackupService(mockLogger, mockCommandContextService);
   });
 
   afterEach(() => {
@@ -90,26 +104,24 @@ describe('BackupService', () => {
     const dir = '/app/project';
     const archivePath = '/var/backups/app-dir.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs')) {
-          return execSuccess('exists\n');
-        }
-        if (command.startsWith('/usr/bin/mksquashfs ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('42\n');
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs')) {
+        return execSuccess('exists\n');
       }
-    );
+      if (command.startsWith('/usr/bin/mksquashfs ')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('42\n');
+
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
     const result = await service.createArchive(dir, archivePath);
 
@@ -120,27 +132,24 @@ describe('BackupService', () => {
     const dir = '/app/project';
     const archivePath = '/var/backups/app-dir.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('test -f ')) return execSuccess();
-        if (command.includes('/usr/bin/fusermount3 -u ')) return execSuccess();
-        if (command.startsWith('for d in ')) return execSuccess();
-        if (command.startsWith('rm -rf ')) return execSuccess();
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
-        if (command.startsWith('/usr/bin/fuse-overlayfs '))
-          return execSuccess();
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('test -f ')) return execSuccess();
+      if (command.includes('/usr/bin/fusermount3 -u ')) return execSuccess();
+      if (command.startsWith('for d in ')) return execSuccess();
+      if (command.startsWith('rm -rf ')) return execSuccess();
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('/usr/bin/squashfuse ')) return execSuccess();
+      if (command.startsWith('/usr/bin/fuse-overlayfs ')) return execSuccess();
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
     const result = await service.restoreArchive(dir, archivePath);
 
@@ -342,52 +351,44 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/test.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
-        if (command.includes('rev-parse --is-inside-work-tree'))
-          return execSuccess('true\n');
-        if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
-        ) {
-          return execSuccess(
-            'node_modules/a.txt\nbuild output/日本語 file.txt\n'
-          );
-        }
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('rm -f ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('123\n');
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+      if (command.includes('rev-parse --is-inside-work-tree'))
+        return execSuccess('true\n');
+      if (
+        command.includes(
+          '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
+        )
+      ) {
+        return execSuccess(
+          'node_modules/a.txt\nbuild output/日本語 file.txt\n'
+        );
       }
-    );
+      if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('rm -f ')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('123\n');
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      true,
-      []
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
+
+    const result = await service.createArchive(dir, archivePath, true, []);
 
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
@@ -409,31 +410,29 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/default-no-gitignore.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('321\n');
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('321\n');
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
     const result = await service.createArchive(dir, archivePath);
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     expect(
       callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
@@ -451,34 +450,26 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/git-required.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command === 'command -v git >/dev/null 2>&1') return execResult(1);
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('100\n');
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command === 'command -v git >/dev/null 2>&1') return execResult(1);
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('100\n');
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      true,
-      []
-    );
+    const result = await service.createArchive(dir, archivePath, true, []);
     expect(result.success).toBe(true);
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -486,8 +477,8 @@ describe('BackupService', () => {
       expect.objectContaining({ dir })
     );
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
@@ -501,51 +492,43 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/escaped-patterns.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
-        if (command.includes('rev-parse --is-inside-work-tree'))
-          return execSuccess('true\n');
-        if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
-        ) {
-          return execSuccess(
-            'config[1].json\nbackup-2024*.log\nq?.txt\nfolder\\name.txt\n'
-          );
-        }
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('rm -f ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('999\n');
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+      if (command.includes('rev-parse --is-inside-work-tree'))
+        return execSuccess('true\n');
+      if (
+        command.includes(
+          '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
+        )
+      ) {
+        return execSuccess(
+          'config[1].json\nbackup-2024*.log\nq?.txt\nfolder\\name.txt\n'
+        );
       }
-    );
+      if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('rm -f ')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('999\n');
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      true,
-      []
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
+
+    const result = await service.createArchive(dir, archivePath, true, []);
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     const writeExcludeCommand = callArgs.find((command) =>
       command.startsWith("printf '%s\\n' ")
@@ -563,39 +546,34 @@ describe('BackupService', () => {
     const dir = '/workspace/app';
     const archivePath = '/var/backups/user-excludes.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('rm -f ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('rm -f ')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      false,
-      ['node_modules', '*.log']
-    );
+    const result = await service.createArchive(dir, archivePath, false, [
+      'node_modules',
+      '*.log'
+    ]);
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
 
     const squashCommand = callArgs.find((command) =>
@@ -624,50 +602,42 @@ describe('BackupService', () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/cleanup-on-throw.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
-        if (command.includes('rev-parse --is-inside-work-tree'))
-          return execSuccess('true\n');
-        if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
-        ) {
-          return execSuccess('node_modules/a.txt\n');
-        }
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.startsWith('/usr/bin/mksquashfs ')) {
-          throw new Error('mksquashfs threw unexpectedly');
-        }
-        if (command.startsWith('rm -f ')) return execSuccess();
-
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+      if (command.includes('rev-parse --is-inside-work-tree'))
+        return execSuccess('true\n');
+      if (
+        command.includes(
+          '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
+        )
+      ) {
+        return execSuccess('node_modules/a.txt\n');
       }
-    );
+      if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+      if (command.startsWith('/usr/bin/mksquashfs ')) {
+        throw new Error('mksquashfs threw unexpectedly');
+      }
+      if (command.startsWith('rm -f ')) return execSuccess();
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      true,
-      []
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
+
+    const result = await service.createArchive(dir, archivePath, true, []);
     expect(result.success).toBe(false);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     expect(
       callArgs.some(
@@ -681,39 +651,36 @@ describe('BackupService', () => {
     const dir = '/workspace/app';
     const archivePath = '/var/backups/globstar-excludes.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('rm -f ')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('rm -f ')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      false,
-      ['**/node_modules/.cache', '**/.next/cache', '**/.turbo', '**/dist']
-    );
+    const result = await service.createArchive(dir, archivePath, false, [
+      '**/node_modules/.cache',
+      '**/.next/cache',
+      '**/.turbo',
+      '**/dist'
+    ]);
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
 
     const writeExcludeCommand = callArgs.find((command) =>
@@ -748,37 +715,30 @@ describe('BackupService', () => {
     const dir = '/workspace/non-git-dir';
     const archivePath = '/var/backups/test-no-exclude.sqsh';
 
-    mockSessionManager.executeInSession.mockImplementation(
-      async (_sessionId: string, command: string) => {
-        if (command.startsWith('mkdir -p ')) return execSuccess();
-        if (command.startsWith('test -d ')) return execSuccess();
-        if (command.includes('test -x /usr/bin/mksquashfs'))
-          return execSuccess('exists\n');
-        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
+    mockCommandRunner.run.mockImplementation(async (command: string) => {
+      if (command.startsWith('mkdir -p ')) return execSuccess();
+      if (command.startsWith('test -d ')) return execSuccess();
+      if (command.includes('test -x /usr/bin/mksquashfs'))
+        return execSuccess('exists\n');
+      if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+      if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
 
-        return {
-          success: false,
-          error: {
-            message: `Unexpected command in test: ${command}`,
-            code: 'TEST_ERROR',
-            details: {}
-          }
-        };
-      }
-    );
+      return {
+        success: false,
+        error: {
+          message: `Unexpected command in test: ${command}`,
+          code: 'TEST_ERROR',
+          details: {}
+        }
+      };
+    });
 
-    const result = await service.createArchive(
-      dir,
-      archivePath,
-      undefined,
-      false
-    );
+    const result = await service.createArchive(dir, archivePath, false);
 
     expect(result.success).toBe(true);
 
-    const callArgs = mockSessionManager.executeInSession.mock.calls.map(
-      ([, command]) => command
+    const callArgs = mockCommandRunner.run.mock.calls.map(
+      ([command]) => command
     );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
@@ -789,6 +749,324 @@ describe('BackupService', () => {
     expect(
       callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
     ).toBe(false);
+  });
+
+  describe('stateless transfer and restore operations', () => {
+    it('uploads a single archive with a trusted escaped curl command', async () => {
+      mockCommandRunner.run.mockResolvedValue(execSuccess());
+
+      const result = await service.uploadArchive({
+        archivePath: '/var/backups/app.sqsh',
+        url: 'https://example.com/upload?token=a b',
+        timeoutMs: 1_810_000
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockCommandContextService.run).toHaveBeenCalledWith(
+        "curl -f -sS -X PUT --data-binary @'/var/backups/app.sqsh' 'https://example.com/upload?token=a b'",
+        { timeoutMs: 1_810_000 }
+      );
+    });
+
+    it('downloads small and ranged parts then validates the expected size', async () => {
+      mockCommandRunner.run.mockResolvedValue(execSuccess());
+
+      const result = await service.downloadArchive({
+        archivePath: '/var/backups/app.sqsh',
+        expectedSize: 12,
+        parts: [
+          { url: 'https://example.com/part-1', offset: 0, range: 'bytes=0-5' },
+          { url: 'https://example.com/part-2', offset: 6, range: 'bytes=6-11' }
+        ],
+        timeoutMs: 1_810_000
+      });
+
+      expect(result.success).toBe(true);
+      const [command, options] =
+        mocked(mockCommandContextService.run).mock.calls.at(-1) ?? [];
+      expect(command).toContain('set -euo pipefail');
+      expect(command).toContain('mktemp -d');
+      expect(command).toContain(
+        "-H 'Range: bytes=0-5' -o \"$part_file\" 'https://example.com/part-1' &"
+      );
+      expect(command).toContain(
+        "-H 'Range: bytes=6-11' -o \"$part_file\" 'https://example.com/part-2' &"
+      );
+      expect(command).toContain('for pid in $pids; do');
+      expect(command).toContain('wait "$pid"');
+      expect(command).toContain('wc -c < "$part_file"');
+      expect(command).toContain('mv "$tmp_archive" \'/var/backups/app.sqsh\'');
+      expect(command).not.toContain("rm -f '/var/backups/app.sqsh'");
+      expect(options).toEqual({ timeoutMs: 1_810_000 });
+    });
+
+    it('rejects malformed download coverage before running commands', async () => {
+      const invalidRequests = [
+        {
+          expectedSize: 12,
+          parts: [{ url: 'https://example.com/part-1', offset: 1 }]
+        },
+        {
+          expectedSize: 12,
+          parts: [
+            {
+              url: 'https://example.com/part-1',
+              offset: 0,
+              range: 'bytes=0-5'
+            },
+            {
+              url: 'https://example.com/part-2',
+              offset: 7,
+              range: 'bytes=7-11'
+            }
+          ]
+        },
+        {
+          expectedSize: 12,
+          parts: [
+            {
+              url: 'https://example.com/part-1',
+              offset: 0,
+              range: 'bytes=0-6'
+            },
+            {
+              url: 'https://example.com/part-2',
+              offset: 6,
+              range: 'bytes=6-11'
+            }
+          ]
+        },
+        {
+          expectedSize: 12,
+          parts: [
+            {
+              url: 'https://example.com/part-1',
+              offset: 0,
+              range: 'bytes=0-12'
+            }
+          ]
+        },
+        {
+          expectedSize: 12,
+          parts: [
+            {
+              url: 'https://example.com/part-1',
+              offset: 1,
+              range: 'bytes=0-11'
+            }
+          ]
+        },
+        {
+          expectedSize: Number.NaN,
+          parts: [{ url: 'https://example.com/part-1', offset: 0 }]
+        }
+      ];
+
+      for (const request of invalidRequests) {
+        vi.clearAllMocks();
+        const result = await service.downloadArchive({
+          archivePath: '/var/backups/app.sqsh',
+          expectedSize: request.expectedSize,
+          parts: request.parts,
+          timeoutMs: 1_810_000
+        });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe('INVALID_BACKUP_CONFIG');
+          expect(result.error.message).toContain('Invalid download request');
+        }
+        expect(mockCommandContextService.run).not.toHaveBeenCalled();
+      }
+    });
+
+    it('keeps the final archive transactional when curl or part verification fails', async () => {
+      mockCommandRunner.run.mockResolvedValue(
+        execResult(1, '', 'downloaded part size mismatch')
+      );
+
+      const result = await service.downloadArchive({
+        archivePath: '/var/backups/app.sqsh',
+        expectedSize: 12,
+        parts: [{ url: 'https://example.com/part-1', offset: 0 }],
+        timeoutMs: 1_810_000
+      });
+
+      expect(result.success).toBe(false);
+      const [command] =
+        mocked(mockCommandContextService.run).mock.calls.at(-1) ?? [];
+      expect(command).toContain('trap cleanup EXIT');
+      expect(command).toContain('failed=1');
+      expect(command).toContain('downloaded part size mismatch');
+      expect(command).toContain('mv "$tmp_archive" \'/var/backups/app.sqsh\'');
+      expect(command).not.toContain("truncate -s 12 '/var/backups/app.sqsh'");
+    });
+
+    it('returns a typed restore error when download size validation fails', async () => {
+      mockCommandRunner.run.mockResolvedValue(
+        execResult(1, '', 'size mismatch')
+      );
+
+      const result = await service.downloadArchive({
+        archivePath: '/var/backups/app.sqsh',
+        expectedSize: 12,
+        parts: [{ url: 'https://example.com/part-1', offset: 0 }],
+        timeoutMs: 1_810_000
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('BACKUP_RESTORE_FAILED');
+        expect(result.error.message).toContain('Backup download failed');
+      }
+    });
+
+    it('prepares restore by unmounting and reporting existing archive size', async () => {
+      mockCommandRunner.run.mockImplementation(async (command: string) => {
+        if (command.includes('mountpoint -q'))
+          return execSuccess('unmounted\n');
+        if (command.includes('stat -c %s')) return execSuccess('42\n');
+        return execSuccess();
+      });
+
+      const result = await service.prepareRestore({
+        dir: '/app/project',
+        backupId: 'app',
+        archivePath: '/var/backups/app.sqsh'
+      });
+
+      expect(result).toEqual({ success: true, data: { existingSize: 42 } });
+      const commands = mocked(mockCommandContextService.run).mock.calls.map(
+        ([command]) => command
+      );
+      expect(
+        commands.some((command) => command.includes('/usr/bin/fusermount3 -u'))
+      ).toBe(true);
+      expect(commands.at(-1)).toContain("if test -f '/var/backups/app.sqsh'");
+    });
+
+    it('rejects unsafe backup IDs before running restore cleanup commands', async () => {
+      for (const backupId of ['../evil', 'bad/id', 'bad\0id']) {
+        vi.clearAllMocks();
+        const result = await service.prepareRestore({
+          dir: '/app/project',
+          backupId,
+          archivePath: '/var/backups/app.sqsh'
+        });
+
+        expect(result.success).toBe(false);
+        expect(mockCommandContextService.run).not.toHaveBeenCalled();
+      }
+    });
+
+    it('removes the mount base when squashfuse mount fails', async () => {
+      mockCommandRunner.run.mockImplementation(async (command: string) => {
+        if (command.startsWith('/usr/bin/squashfuse ')) {
+          return execResult(1, '', 'squash failed');
+        }
+        return execSuccess();
+      });
+
+      const result = await service.restoreArchive(
+        '/app/project',
+        '/var/backups/app.sqsh'
+      );
+
+      expect(result.success).toBe(false);
+      const commands = mocked(mockCommandContextService.run).mock.calls.map(
+        ([command]) => command
+      );
+      expect(commands.some((command) => command.includes('rm -rf'))).toBe(true);
+      expect(
+        commands.some((command) =>
+          command.includes("rm -rf '/var/backups/mounts/app_")
+        )
+      ).toBe(true);
+    });
+
+    it('removes the mount base when overlay mount fails', async () => {
+      mockCommandRunner.run.mockImplementation(async (command: string) => {
+        if (command.startsWith('/usr/bin/fuse-overlayfs ')) {
+          return execResult(1, '', 'overlay failed');
+        }
+        return execSuccess();
+      });
+
+      const result = await service.restoreArchive(
+        '/app/project',
+        '/var/backups/app.sqsh'
+      );
+
+      expect(result.success).toBe(false);
+      const commands = mocked(mockCommandContextService.run).mock.calls.map(
+        ([command]) => command
+      );
+      expect(
+        commands.some(
+          (command) =>
+            command.includes(
+              "/usr/bin/fusermount3 -u '/var/backups/mounts/app_"
+            ) &&
+            command.includes('/lower') &&
+            command.includes("rm -rf '/var/backups/mounts/app_")
+        )
+      ).toBe(true);
+    });
+
+    it('extracts locally with unsquashfs and cleans up archives', async () => {
+      mockCommandRunner.run.mockImplementation(async (command: string) => {
+        if (command.startsWith('/usr/bin/unsquashfs ')) return execSuccess();
+        if (command.startsWith("rm -f '/var/backups/app.sqsh'"))
+          return execSuccess();
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      });
+
+      const extractResult = await service.extractArchive(
+        '/app/project',
+        '/var/backups/app.sqsh'
+      );
+      const cleanupResult = await service.cleanupArchive(
+        '/var/backups/app.sqsh'
+      );
+
+      expect(extractResult.success).toBe(true);
+      expect(cleanupResult.success).toBe(true);
+      const commands = mocked(mockCommandContextService.run).mock.calls.map(
+        ([command]) => command
+      );
+      expect(commands).toContain(
+        "/usr/bin/unsquashfs -f -d '/app/project' '/var/backups/app.sqsh'"
+      );
+      expect(commands.some((command) => command.includes('squashfuse'))).toBe(
+        false
+      );
+      expect(
+        commands.some((command) => command.includes('fuse-overlayfs'))
+      ).toBe(false);
+    });
+
+    it('returns a typed cleanup error when command execution fails', async () => {
+      mockCommandRunner.run.mockResolvedValue(
+        execResult(1, '', 'permission denied')
+      );
+
+      const result = await service.cleanupArchive('/var/backups/app.sqsh');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('INTERNAL_ERROR');
+        expect(result.error.message).toContain(
+          'Failed to clean up backup archive'
+        );
+      }
+    });
   });
 
   describe('normalizeMksquashfsPattern', () => {

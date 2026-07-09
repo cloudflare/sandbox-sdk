@@ -196,18 +196,6 @@ export class SecurityService {
 
   // Helper methods
 
-  generateSecureSessionId(): string {
-    // Use crypto.randomBytes for secure session ID generation
-    const timestamp = Date.now();
-    const randomBytes = new Uint8Array(16);
-    crypto.getRandomValues(randomBytes);
-    const randomHex = Array.from(randomBytes)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    return `session_${timestamp}_${randomHex}`;
-  }
-
   // Method to log security events for monitoring
   logSecurityEvent(event: string, details: Record<string, unknown>): void {
     this.logger.warn(`SECURITY_EVENT: ${event}`, {

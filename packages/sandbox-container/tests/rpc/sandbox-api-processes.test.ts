@@ -1,74 +1,114 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
-import type { ProcessService } from '@sandbox-container/services/process-service';
+import type {
+  ProcessLogEvent,
+  ProcessLogsRPCOptions,
+  ProcessStartOptions,
+  ProcessStatus,
+  SandboxCommand
+} from '@repo/shared';
+import { ProcessesRPCAPI } from '../../src/control-plane/processes-rpc';
+import { StreamSubscriptionRPC } from '../../src/control-plane/subscription-rpc';
 
-const mockLogger = {
-  info: vi.fn(),
-  error: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  child: vi.fn()
-} as Logger;
-mockLogger.child = vi.fn(() => mockLogger);
-
-function buildApi(processService: ProcessService): SandboxControlAPI {
-  return new SandboxControlAPI({
-    processService,
-    logger: mockLogger
-  } as unknown as SandboxAPIDeps);
+interface ProcessServiceStub {
+  start(
+    command: SandboxCommand,
+    options?: ProcessStartOptions
+  ): Promise<ProcessStatus>;
+  get(id: string): Promise<ProcessStatus | null>;
+  list(): Promise<ProcessStatus[]>;
+  openLogs(
+    id: string,
+    options?: ProcessLogsRPCOptions
+  ): Promise<ReadableStream<ProcessLogEvent>>;
+  kill(id: string, signal?: number): Promise<void>;
+  hasActive(): Promise<boolean>;
 }
 
-describe('SandboxControlAPI processes.startProcess', () => {
-  let mockProcessService: ProcessService;
+function status(id = 'proc-public'): ProcessStatus {
+  return {
+    id,
+    pid: 123,
+    command: ['node', 'server.js'],
+    cwd: '/workspace/app',
+    state: 'running' as const,
+    startedAt: '2026-07-08T00:00:00.000Z'
+  };
+}
+
+describe('ProcessesRPCAPI domain', () => {
+  let processService: ProcessServiceStub;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockProcessService = {
-      startProcess: vi.fn().mockResolvedValue({
-        success: true,
-        data: {
-          id: 'proc-1',
-          pid: 1234,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date('2026-01-01T00:00:00.000Z')
-        }
-      })
-    } as unknown as ProcessService;
+    processService = {
+      start: vi.fn(async () => status()),
+      get: vi.fn(async (id: string) => status(id)),
+      list: vi.fn(async () => [status('proc-a'), status('proc-b')]),
+      openLogs: vi.fn(async () => new ReadableStream<ProcessLogEvent>()),
+      kill: vi.fn(async () => undefined),
+      hasActive: vi.fn(async () => true)
+    };
   });
 
-  it('accepts process options as the second argument', async () => {
-    const api = buildApi(mockProcessService);
+  it('exposes final process RPC controls only', () => {
+    const api = new ProcessesRPCAPI(processService);
+    expect(api.start).toEqual(expect.any(Function));
+    expect(api.get).toEqual(expect.any(Function));
+    expect(api.list).toEqual(expect.any(Function));
+    expect(api.openLogs).toEqual(expect.any(Function));
+    expect(api.kill).toEqual(expect.any(Function));
+    expect(api.hasActive).toEqual(expect.any(Function));
+    expect('logs' in api).toBe(false);
+    expect('interrupt' in api).toBe(false);
+    expect('terminate' in api).toBe(false);
+    expect('waitForExit' in api).toBe(false);
+    expect('waitForLog' in api).toBe(false);
+  });
 
-    const result = await api.processes.startProcess('sleep 10', {
-      sessionId: 'session-1',
-      processId: 'proc-1',
-      timeoutMs: 1000,
-      env: { TEST_ENV: '1' },
+  it('starts processes with argv options and returns rich statuses', async () => {
+    const api = new ProcessesRPCAPI(processService);
+    const result = await api.start(['node', 'server.js'], {
       cwd: '/workspace/app',
-      encoding: 'utf8',
-      autoCleanup: false
+      env: { PORT: '8787' },
+      timeout: 5000
     });
 
-    expect(mockProcessService.startProcess).toHaveBeenCalledWith('sleep 10', {
-      sessionId: 'session-1',
-      processId: 'proc-1',
-      timeoutMs: 1000,
-      env: { TEST_ENV: '1' },
+    expect(result).toEqual(status());
+    expect(processService.start).toHaveBeenCalledWith(['node', 'server.js'], {
       cwd: '/workspace/app',
-      encoding: 'utf8',
-      autoCleanup: false
+      env: { PORT: '8787' },
+      timeout: 5000
     });
-    expect(result).toEqual({
-      success: true,
-      processId: 'proc-1',
-      pid: 1234,
-      command: 'sleep 10',
-      timestamp: '2026-01-01T00:00:00.000Z'
+  });
+
+  it('returns disposable log subscriptions and delegates kill exactly', async () => {
+    const api = new ProcessesRPCAPI(processService);
+    const logStream = new ReadableStream<ProcessLogEvent>({
+      start(controller) {
+        controller.enqueue({
+          type: 'stdout',
+          cursor: 'c1',
+          timestamp: 't1',
+          data: new Uint8Array([65])
+        });
+        controller.close();
+      }
     });
+    processService.openLogs = vi.fn(async () => logStream);
+
+    expect(await api.get('proc-a')).toEqual(status('proc-a'));
+    expect(await api.list()).toHaveLength(2);
+    const subscription = await api.openLogs('proc-a', { replay: true });
+    expect(subscription).toBeInstanceOf(StreamSubscriptionRPC);
+    await api.kill('proc-a', 2);
+    expect(await api.hasActive()).toBe(true);
+
+    expect(processService.get).toHaveBeenCalledWith('proc-a');
+    expect(processService.list).toHaveBeenCalled();
+    expect(processService.openLogs).toHaveBeenCalledWith('proc-a', {
+      replay: true
+    });
+    expect(processService.kill).toHaveBeenCalledWith('proc-a', 2);
+    expect(processService.hasActive).toHaveBeenCalled();
   });
 });

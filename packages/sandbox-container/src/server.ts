@@ -61,15 +61,15 @@ async function createApplication(): Promise<{
 
   // Create the control-plane API that calls services directly.
   const controlPlaneAPI = new SandboxControlAPI({
-    processService: container.get('processService'),
     fileService: container.get('fileService'),
     portService: container.get('portService'),
+    processService: container.get('processService'),
     backupService: container.get('backupService'),
     watchService: container.get('watchService'),
     tunnelService: container.get('tunnelService'),
     terminalManager: container.get('terminalManager'),
     extensionHost: container.get('extensionHost'),
-    sessionManager: container.get('sessionManager'),
+    commandContextService: container.get('commandContextService'),
     logger
   });
 
@@ -92,12 +92,14 @@ async function createApplication(): Promise<{
 
           const colsParam = url.searchParams.get('cols');
           const rowsParam = url.searchParams.get('rows');
+          const cursor = url.searchParams.get('cursor') ?? undefined;
 
           const upgraded = server.upgrade(req, {
             data: {
               type: 'terminal' as const,
               terminalId,
               connectionId: generateConnectionId(),
+              cursor,
               cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
               rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
             }
@@ -252,12 +254,12 @@ export async function startServer(): Promise<ServerInstance> {
       if (!app.container.isInitialized()) return;
 
       try {
-        const processService = app.container.get('processService');
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
         const tunnelService = app.container.get('tunnelService');
         const extensionHost = app.container.get('extensionHost');
         const terminalManager = app.container.get('terminalManager');
+        const processService = app.container.get('processService');
 
         const stoppedWatches = await watchService.stopAllWatches();
         if (stoppedWatches > 0) {
@@ -266,11 +268,11 @@ export async function startServer(): Promise<ServerInstance> {
           });
         }
 
-        await processService.destroy();
         portService.destroy();
         await tunnelService.destroyAll();
         await terminalManager.destroyAll();
         await extensionHost.stopAll();
+        await processService.shutdown();
 
         logger.info('Services cleaned up successfully');
       } catch (error) {
@@ -283,24 +285,41 @@ export async function startServer(): Promise<ServerInstance> {
   };
 }
 
-let shutdownRegistered = false;
+let registeredShutdownHandlers:
+  | {
+      sigterm: () => void;
+      sigint: () => void;
+    }
+  | undefined;
 
 /**
  * Register graceful shutdown handlers for SIGTERM and SIGINT.
- * Safe to call multiple times - handlers are only registered once.
+ * Later registrations replace the previous owner so tests and server
+ * instances do not retain stale cleanup callbacks.
  */
 export function registerShutdownHandlers(cleanup: () => Promise<void>): void {
-  if (shutdownRegistered) return;
-  shutdownRegistered = true;
+  if (registeredShutdownHandlers) {
+    process.off('SIGTERM', registeredShutdownHandlers.sigterm);
+    process.off('SIGINT', registeredShutdownHandlers.sigint);
+  }
 
-  process.on('SIGTERM', async () => {
+  let cleanupPromise: Promise<void> | undefined;
+  const runCleanupOnce = (): Promise<void> => {
+    cleanupPromise ??= cleanup();
+    return cleanupPromise;
+  };
+
+  const sigterm = (): void => {
     logger.info('Received SIGTERM, shutting down gracefully');
-    await cleanup();
-    process.exit(0);
-  });
+    void runCleanupOnce().finally(() => process.exit(0));
+  };
 
-  process.on('SIGINT', async () => {
+  const sigint = (): void => {
     logger.info('Received SIGINT, shutting down gracefully');
-    process.emit('SIGTERM');
-  });
+    sigterm();
+  };
+
+  registeredShutdownHandlers = { sigterm, sigint };
+  process.on('SIGTERM', sigterm);
+  process.on('SIGINT', sigint);
 }

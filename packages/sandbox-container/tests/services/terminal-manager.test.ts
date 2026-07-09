@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNoOpLogger } from '@repo/shared';
-import type { Pty } from '../../src/pty';
-import type { CreateTerminalOptions } from '../../src/services/terminal-manager';
-import { TerminalManager } from '../../src/services/terminal-manager';
+import { createNoOpLogger, ErrorCode } from '@repo/shared';
+import {
+  MAX_RETAINED_TERMINALS,
+  TerminalManager
+} from '../../src/services/terminal-manager';
 
 describe('TerminalManager', () => {
   let terminalManager: TerminalManager;
@@ -13,269 +14,174 @@ describe('TerminalManager', () => {
 
   afterEach(async () => {
     await terminalManager?.destroyAll();
-    if (testDir) {
-      await rm(testDir, { recursive: true, force: true });
-    }
+    if (testDir) await rm(testDir, { recursive: true, force: true });
   });
 
-  async function collectPtyOutput(
-    pty: Awaited<ReturnType<TerminalManager['getOrCreateTerminal']>>['pty'],
-    command: string,
-    waitMs = 500
-  ): Promise<string> {
-    const chunks: Uint8Array[] = [];
-    const disposable = pty.onData((data) => chunks.push(data));
-    pty.write(command);
-    await Bun.sleep(waitMs);
-    disposable.dispose();
-    return Buffer.concat(chunks).toString('utf8');
+  function createManager(): TerminalManager {
+    terminalManager = new TerminalManager(createNoOpLogger());
+    return terminalManager;
   }
 
-  it('creates terminal handles from explicit terminal options', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-handle-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const handle = await terminalManager.getOrCreateTerminal({
-      id: 'handle-terminal',
-      cwd: testDir,
-      env: { TERMINAL_MANAGER_VALUE: 'from-terminal' },
-      pty: { shell: '/bin/bash' }
-    });
-
-    expect(handle.id).toBe('handle-terminal');
-    expect(handle.pty).toBeDefined();
-
-    const output = await collectPtyOutput(
-      handle.pty,
-      'printf "cwd:%s env:%s\\n" "$PWD" "$TERMINAL_MANAGER_VALUE"\n'
-    );
-    expect(output).toContain(
-      `cwd:${await realpath(testDir)} env:from-terminal`
-    );
-  });
-
-  it('caches terminal handles by terminal ID', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-cache-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const firstHandle = await terminalManager.getOrCreateTerminal({
-      id: 'cache-terminal',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-    const secondHandle = await terminalManager.getOrCreateTerminal({
-      id: 'cache-terminal',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-
-    expect(secondHandle).toBe(firstHandle);
-    expect(terminalManager.getTerminal('cache-terminal')).toBe(firstHandle);
-  });
-
-  it('creates distinct terminals for different terminal IDs', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-distinct-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const firstHandle = await terminalManager.getOrCreateTerminal({
-      id: 'terminal-a',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-    const secondHandle = await terminalManager.getOrCreateTerminal({
-      id: 'terminal-b',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-
-    expect(firstHandle.id).toBe('terminal-a');
-    expect(secondHandle.id).toBe('terminal-b');
-    expect(secondHandle.pty).not.toBe(firstHandle.pty);
-  });
-
-  it('destroys one terminal resource without destroying siblings', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-siblings-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const firstHandle = await terminalManager.getOrCreateTerminal({
-      id: 'terminal-a',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-    const secondHandle = await terminalManager.getOrCreateTerminal({
-      id: 'terminal-b',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-
-    await terminalManager.destroyTerminal('terminal-a');
-
-    expect(terminalManager.getTerminal('terminal-a')).toBeUndefined();
-    expect(terminalManager.getTerminal('terminal-b')).toBe(secondHandle);
-    expect(() => firstHandle.pty.write('echo old\n')).toThrow();
-    expect(() => secondHandle.pty.write('echo still-open\n')).not.toThrow();
-  });
-
-  it('coalesces concurrent terminal creation for the same terminal ID', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-concurrent-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const [firstHandle, secondHandle] = await Promise.all([
-      terminalManager.getOrCreateTerminal({
-        id: 'concurrent-terminal',
-        cwd: testDir,
-        pty: { shell: '/bin/bash' }
-      }),
-      terminalManager.getOrCreateTerminal({
-        id: 'concurrent-terminal',
-        cwd: testDir,
-        pty: { shell: '/bin/bash' }
-      })
-    ]);
-
-    expect(secondHandle).toBe(firstHandle);
-    expect(terminalManager.getTerminal('concurrent-terminal')).toBe(
-      firstHandle
-    );
-  });
-
-  it('evicts a terminal when its shell exits naturally', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-exit-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const handle = await terminalManager.getOrCreateTerminal({
-      id: 'exit-terminal',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-
-    handle.pty.write('exit\n');
-
-    await Bun.sleep(300);
-
-    expect(handle.pty.closed).toBe(true);
-    expect(terminalManager.getTerminal('exit-terminal')).toBeUndefined();
-  });
-
-  it('destroys and clears a terminal by terminal ID', async () => {
-    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-destroy-'));
-    terminalManager = new TerminalManager(createNoOpLogger());
-
-    const firstHandle = await terminalManager.getOrCreateTerminal({
-      id: 'destroy-terminal',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-    await terminalManager.destroyTerminal('destroy-terminal');
-    const secondHandle = await terminalManager.getOrCreateTerminal({
-      id: 'destroy-terminal',
-      cwd: testDir,
-      pty: { shell: '/bin/bash' }
-    });
-
-    expect(secondHandle).not.toBe(firstHandle);
-    expect(() => firstHandle.pty.write('echo old\n')).toThrow();
-  });
-
-  describe('destroy-during-creation race', () => {
-    // Controllable TerminalManager that pauses creation until explicitly released.
-    // ManagedTerminal is a structural type (no private fields) so returning a
-    // compatible anonymous object satisfies the override without exporting the class.
-    function createPausableManager() {
-      let pauseResolve: (() => void) | null = null;
-      let pausePromise: Promise<void> = Promise.resolve();
-      const destroyedIds: string[] = [];
-
-      class PausableTerminalManager extends TerminalManager {
-        protected override createManagedTerminal(
-          options: CreateTerminalOptions
-        ) {
-          return pausePromise.then(() => {
-            const mockPty = {
-              closed: false,
-              destroy: async () => {
-                destroyedIds.push(options.id);
-                (mockPty as { closed: boolean }).closed = true;
-              }
-            } as unknown as Pty;
-            return {
-              handle: { id: options.id, pty: mockPty },
-              destroy: async () => {
-                await mockPty.destroy();
-              }
-            };
-          });
-        }
+  async function nextData(
+    stream: ReadableStream<
+      Awaited<ReturnType<TerminalManager['output']>> extends ReadableStream<
+        infer T
+      >
+        ? T
+        : never
+    >
+  ): Promise<string> {
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) return '';
+        if (result.value.type === 'data')
+          return Buffer.from(result.value.data).toString('utf8');
       }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+  }
 
-      const manager = new PausableTerminalManager(createNoOpLogger());
-      terminalManager = manager;
+  it('creates terminals with generated IDs and immutable snapshots', async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'terminal-manager-create-'));
+    const manager = createManager();
+    const command: [string, string, string] = ['/bin/sh', '-lc', 'sleep 1'];
 
-      return {
-        manager,
-        destroyedIds,
-        pauseCreation() {
-          pausePromise = new Promise<void>((resolve) => {
-            pauseResolve = resolve;
-          });
-        },
-        resumeCreation() {
-          pauseResolve?.();
-          pauseResolve = null;
-          pausePromise = Promise.resolve();
-        }
-      };
+    const snapshot = await manager.create({
+      command,
+      cwd: testDir,
+      env: { TERMINAL_MANAGER_VALUE: 'from-env' },
+      cols: 120,
+      rows: 40
+    });
+    command[2] = 'echo mutated';
+    // @ts-expect-error exercises runtime immutability against stale callers.
+    snapshot.command[2] = 'snapshot mutated';
+    const current = await manager.get(snapshot.id);
+
+    expect(snapshot.id).toBeString();
+    expect(current?.command).toEqual(['/bin/sh', '-lc', 'sleep 1']);
+    expect(current?.cwd).toBe(testDir);
+    expect(current?.status).toBe('running');
+    expect(manager.getTerminal(snapshot.id)?.id).toBe(snapshot.id);
+  });
+
+  it('gets, lists, reports active status, and records exit status', async () => {
+    const manager = createManager();
+    const snapshot = await manager.create({
+      command: ['/bin/sh', '-lc', 'exit 7']
+    });
+
+    expect(await manager.get(snapshot.id)).toMatchObject({
+      id: snapshot.id,
+      status: 'running'
+    });
+    expect((await manager.list()).map((item) => item.id)).toContain(
+      snapshot.id
+    );
+    expect(await manager.hasActive()).toBe(true);
+
+    await Bun.sleep(200);
+
+    expect(await manager.get(snapshot.id)).toMatchObject({
+      id: snapshot.id,
+      status: 'exited',
+      exit: { code: 7, timedOut: false }
+    });
+    expect(await manager.hasActive()).toBe(false);
+  });
+
+  it('writes, resizes, interrupts, and terminates running terminals', async () => {
+    const manager = createManager();
+    const snapshot = await manager.create({
+      command: ['/bin/sh'],
+      cols: 80,
+      rows: 24
+    });
+
+    await expect(manager.resize(snapshot.id, 100, 30)).resolves.toBeUndefined();
+    await expect(
+      manager.write(snapshot.id, new TextEncoder().encode('printf ok\\n\n'))
+    ).resolves.toBeUndefined();
+    expect(
+      await nextData(
+        await manager.output(snapshot.id, { replay: false, follow: true })
+      )
+    ).toContain('ok');
+    await expect(manager.interrupt(snapshot.id)).resolves.toBeUndefined();
+    await expect(manager.terminate(snapshot.id)).resolves.toBeUndefined();
+  });
+
+  it('retains only 25 exited terminals and never evicts active terminals', async () => {
+    const manager = createManager();
+    const active = await manager.create({
+      command: ['/bin/sh', '-lc', 'sleep 5']
+    });
+    const exitedIds: string[] = [];
+
+    for (let index = 0; index < MAX_RETAINED_TERMINALS + 1; index++) {
+      const snapshot = await manager.create({
+        command: ['/bin/sh', '-lc', `echo ${index}`]
+      });
+      exitedIds.push(snapshot.id);
     }
 
-    it('destroyTerminal does not leak a terminal whose creation wins the race', async () => {
-      const { manager, destroyedIds, pauseCreation, resumeCreation } =
-        createPausableManager();
+    await Bun.sleep(500);
 
-      pauseCreation();
+    expect(await manager.get(active.id)).toMatchObject({
+      id: active.id,
+      status: 'running'
+    });
+    expect(await manager.get(exitedIds[0])).toBeNull();
+    expect(await manager.get(exitedIds.at(-1) ?? '')).toMatchObject({
+      status: 'exited'
+    });
+    expect(await manager.list()).toHaveLength(MAX_RETAINED_TERMINALS + 1);
+  });
 
-      // Start creation — suspends inside createManagedTerminal
-      const creationPromise = manager.getOrCreateTerminal({
-        id: 'race-terminal'
-      });
+  it('validates not found, invalid command, and invalid cursor errors', async () => {
+    const manager = createManager();
 
-      // Destroy while creation is in-flight
-      const destroyPromise = manager.destroyTerminal('race-terminal');
-
-      // Allow creation to complete
-      resumeCreation();
-
-      await Promise.all([creationPromise, destroyPromise]);
-
-      // Terminal must not be left in the map after destroy
-      expect(manager.getTerminal('race-terminal')).toBeUndefined();
-      // The PTY created during the race must have been destroyed
-      expect(destroyedIds).toContain('race-terminal');
+    await expect(
+      manager.write('missing', new Uint8Array())
+    ).rejects.toMatchObject({ code: ErrorCode.TERMINAL_NOT_FOUND });
+    // @ts-expect-error exercises runtime validation at the RPC boundary.
+    await expect(manager.create({ command: [] })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_COMMAND
     });
 
-    it('destroyAll does not leave live PTYs for in-flight creations', async () => {
-      const { manager, destroyedIds, pauseCreation, resumeCreation } =
-        createPausableManager();
-
-      pauseCreation();
-
-      // Start two creations — both suspend inside createManagedTerminal
-      const creationA = manager.getOrCreateTerminal({ id: 'race-a' });
-      const creationB = manager.getOrCreateTerminal({ id: 'race-b' });
-
-      // destroyAll while both creations are in-flight
-      const destroyAllPromise = manager.destroyAll();
-
-      // Allow creations to complete
-      resumeCreation();
-
-      await Promise.all([creationA, creationB, destroyAllPromise]);
-
-      // No terminals should survive the destroyAll
-      expect(manager.getTerminal('race-a')).toBeUndefined();
-      expect(manager.getTerminal('race-b')).toBeUndefined();
-      // Both PTYs must have been destroyed
-      expect(destroyedIds).toContain('race-a');
-      expect(destroyedIds).toContain('race-b');
+    await expect(manager.create({ command: [''] })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_COMMAND
     });
+    // @ts-expect-error exercises runtime validation at the RPC boundary.
+    await expect(manager.create({ command: [123] })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_COMMAND
+    });
+
+    const emptyArgument = await manager.create({ command: ['printf', ''] });
+    await Bun.sleep(100);
+    await expect(manager.get(emptyArgument.id)).resolves.toMatchObject({
+      status: 'exited',
+      exit: { code: 0, timedOut: false }
+    });
+
+    await expect(
+      manager.create({ command: ['/bin/sh'], cwd: '/definitely/missing/cwd' })
+    ).rejects.toMatchObject({
+      code: ErrorCode.INVALID_TERMINAL_CWD,
+      details: {
+        cwd: '/definitely/missing/cwd',
+        operation: 'create'
+      }
+    });
+
+    const snapshot = await manager.create({
+      command: ['/bin/sh', '-lc', 'sleep 1']
+    });
+    await expect(
+      manager.output(snapshot.id, { since: '' })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_TERMINAL_CURSOR });
   });
 });
