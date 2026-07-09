@@ -5,6 +5,7 @@ sdk:
   - 'packages/sandbox/package.json'
 container:
   - 'packages/sandbox-container/**'
+  - 'packages/sandbox-execution/**'
 docker-config:
   - 'packages/sandbox/Dockerfile'
   - 'docker-bake.hcl'

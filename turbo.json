@@ -27,6 +27,8 @@
         "src/**/*.astro",
         "tests/**/*.ts",
         "vitest.config.ts",
+        "Dockerfile.test",
+        "scripts/**",
         "package.json"
       ],
       "env": ["NODE_ENV"]

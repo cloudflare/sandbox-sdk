@@ -12,6 +12,10 @@ const qualityWorkflowSource = readFileSync(
   '.github/workflows/reusable-quality.yml',
   'utf8'
 );
+const turboConfig = JSON.parse(readFileSync('turbo.json', 'utf8')) as {
+  tasks: { test: { inputs: string[] } };
+};
+
 type WorkflowConfig = {
   jobs: Record<string, JobConfig | undefined>;
 };
@@ -21,6 +25,7 @@ type JobConfig = {
   name?: unknown;
   needs?: unknown;
   steps?: StepConfig[];
+  'timeout-minutes'?: unknown;
   uses?: unknown;
   with?: Record<string, unknown>;
 };
@@ -197,7 +202,37 @@ function assertPRContainerForwarding(workflowSource: string): void {
   );
 }
 
-test('CI configuration changes request quality checks', () => {
+function assertContainerTestJob(workflowSource: string): void {
+  const workflow = parseWorkflow(workflowSource);
+
+  const containerTests = job(workflow, 'container-tests');
+
+  assert.equal(containerTests.if, '${{ inputs.run_container_tests }}');
+  assert.equal(containerTests['timeout-minutes'], 10);
+  assertActiveJobRun(
+    workflowSource,
+    'container-tests',
+    'npm test -w @repo/sandbox-container'
+  );
+  assertActiveJobRun(
+    workflowSource,
+    'container-tests',
+    'npm test -w @repo/sandbox-execution'
+  );
+}
+
+test('sandbox-execution changes request container-backed tests', () => {
+  assertFilterIncludes('container', 'packages/sandbox-execution/**');
+  assertFilterIncludes('any-source', 'packages/**');
+  assertDerivedCondition('needs-container-tests', [
+    'shared',
+    'container',
+    'build-config',
+    'deps'
+  ]);
+});
+
+test('source and configuration changes request quality checks', () => {
   assertDerivedCondition('needs-quality', [
     'any-source',
     'build-config',
@@ -300,4 +335,64 @@ test('quality workflow runs release/config tests from the PR quality job', () =>
     'lint-typecheck',
     'npm run test:release-tools'
   );
+});
+
+test('quality workflow requires active container and execution package tests', () => {
+  assertContainerTestJob(qualityWorkflowSource);
+});
+
+test('quality workflow container test assertions reject inactive matches', () => {
+  const command = 'npm test -w @repo/sandbox-execution';
+
+  for (const replacement of [
+    '# run: npm test -w @repo/sandbox-execution',
+    'if: false\n        run: npm test -w @repo/sandbox-execution',
+    'if: ${{ 1 == 0 }}\n        run: npm test -w @repo/sandbox-execution',
+    'run: echo npm test -w @repo/sandbox-execution'
+  ]) {
+    assert.throws(() =>
+      assertActiveJobRun(
+        qualityWorkflowSource.replace(
+          'run: npm test -w @repo/sandbox-execution',
+          replacement
+        ),
+        'container-tests',
+        command
+      )
+    );
+  }
+
+  assert.throws(() =>
+    assertActiveJobRun(
+      qualityWorkflowSource
+        .replace(
+          'run: npm test -w @repo/sandbox-execution',
+          'run: npm test -w @repo/sandbox'
+        )
+        .replace(
+          '\n  container-tests:\n',
+          '\n      - name: Wrong-job execution lifecycle tests\n        run: npm test -w @repo/sandbox-execution\n\n  container-tests:\n'
+        ),
+      'container-tests',
+      command
+    )
+  );
+
+  assert.throws(() =>
+    assertContainerTestJob(
+      qualityWorkflowSource.replace(
+        '    if: ${{ inputs.run_container_tests }}',
+        '    if: false'
+      )
+    )
+  );
+});
+
+test('sandbox-execution test harness files are package-relative Turbo inputs', () => {
+  const testInputs = turboConfig.tasks.test.inputs;
+
+  assert.ok(testInputs.includes('Dockerfile.test'));
+  assert.ok(testInputs.includes('scripts/**'));
+  assert.ok(!testInputs.includes('packages/sandbox-execution/Dockerfile.test'));
+  assert.ok(!testInputs.includes('packages/sandbox-execution/scripts/**'));
 });
