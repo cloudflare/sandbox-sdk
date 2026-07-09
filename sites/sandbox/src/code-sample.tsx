@@ -41,10 +41,11 @@ export default {
       "https://github.com/cloudflare/agents"
     );
     // Run tests
-    const testResult = await sandbox.exec("npm test");
+    const testProcess = await sandbox.exec(["npm", "test"]);
+    const testResult = await testProcess.output({ encoding: "utf8" });
     return new Response(
       JSON.stringify({
-        tests: testResult.exitCode === 0 
+        tests: testResult.exitCode === 0
           ? "passed"
           : "failed",
         output: testResult.stdout,
@@ -68,9 +69,9 @@ await sandbox.writeFile(
 );
 
 // Install dependencies and start the server
-await sandbox.exec("npm init -y");
-await sandbox.exec("npm install express");
-const server = await sandbox.startProcess("node app.js");
+await sandbox.exec(["npm", "init", "-y"]);
+await sandbox.exec(["npm", "install", "express"]);
+const server = await sandbox.exec(["node", "app.js"]);
 
 // Expose it to the internet
 const preview = await sandbox.exposePort(3000);
@@ -93,9 +94,9 @@ export const nodeExample = `<pre class="shiki custom-theme max-w-full max-h-full
 <span class="line"><span style="color:var(--foreground)">);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--color-neutral-400)">// Install dependencies and start the server</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec(</span><span style="color:var(--color-orange-800)">"npm init -y"</span><span style="color:var(--foreground)">);</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec(</span><span style="color:var(--color-orange-800)">"npm install express"</span><span style="color:var(--foreground)">);</span></span>
-<span class="line"><span style="color:var(--foreground)">const server </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.startProcess(</span><span style="color:var(--color-orange-800)">"node app.js"</span><span style="color:var(--foreground)">);</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"npm"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"init"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"-y"</span><span style="color:var(--foreground)">]);</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"npm"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"install"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"express"</span><span style="color:var(--foreground)">]);</span></span>
+<span class="line"><span style="color:var(--foreground)">const server </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"node"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"app.js"</span><span style="color:var(--foreground)">]);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--color-neutral-400)">// Expose it to the internet</span></span>
 <span class="line"><span style="color:var(--foreground)">const preview </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.exposePort(3000);</span></span>
@@ -118,7 +119,8 @@ export const code = `<pre class="shiki custom-theme max-w-full max-h-full overfl
 <span class="line"><span style="color:var(--color-orange-800)">      "https://github.com/cloudflare/agents"</span></span>
 <span class="line"><span style="color:var(--foreground)">    );</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">    // Run tests</span></span>
-<span class="line"><span style="color:var(--foreground)">    const testResult </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.exec(</span><span style="color:var(--color-orange-800)">"npm test"</span><span style="color:var(--foreground)">);</span></span>
+<span class="line"><span style="color:var(--foreground)">    const testProcess </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"npm"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"test"</span><span style="color:var(--foreground)">]);</span></span>
+<span class="line"><span style="color:var(--foreground)">    const testResult </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> testProcess.output({ encoding: </span><span style="color:var(--color-orange-800)">"utf8"</span><span style="color:var(--foreground)"> });</span></span>
 <span class="line"><span style="color:var(--foreground);font-weight:bold">    return</span><span style="color:var(--foreground);font-weight:bold"> new</span><span style="color:var(--foreground)"> Response(</span></span>
 <span class="line"><span style="color:var(--foreground)">      JSON.stringify({</span></span>
 <span class="line"><span style="color:var(--foreground)">        tests: testResult.exitCode </span><span style="color:var(--foreground);font-weight:bold">===</span><span style="color:var(--foreground)"> 0 </span></span>
@@ -198,8 +200,8 @@ export const exposeExample = `<pre class="shiki custom-theme max-w-full max-h-fu
 <span class="line"><span style="color:var(--foreground)">);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--color-neutral-400)">// Install dependencies and start server</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec(</span><span style="color:var(--color-orange-800)">"pip install flask"</span><span style="color:var(--foreground)">);</span></span>
-<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.startProcess(</span><span style="color:var(--color-orange-800)">"python server.py"</span><span style="color:var(--foreground)">);</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"pip"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"install"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"flask"</span><span style="color:var(--foreground)">]);</span></span>
+<span class="line"><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec([</span><span style="color:var(--color-orange-800)">"python"</span><span style="color:var(--foreground)">, </span><span style="color:var(--color-orange-800)">"server.py"</span><span style="color:var(--foreground)">]);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--color-neutral-400)">// Expose with public preview URL</span></span>
 <span class="line"><span style="color:var(--foreground)">const preview </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.exposePort(5000);</span></span>
@@ -240,9 +242,10 @@ export const websocketExample = `<pre class="shiki custom-theme max-w-full overf
 <span class="line"><span style="color:var(--color-orange-800)">            }</span></span>
 <span class="line"><span style="color:var(--color-orange-800)">          });\`</span></span>
 <span class="line"><span style="color:var(--foreground)">        );</span></span>
-<span class="line"><span style="color:var(--foreground)">        </span><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.startProcess(</span></span>
-<span class="line"><span style="color:var(--color-orange-800)">          'bun /workspace/server.js'</span></span>
-<span class="line"><span style="color:var(--foreground)">        );</span></span>
+<span class="line"><span style="color:var(--foreground)">        </span><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.exec([</span></span>
+<span class="line"><span style="color:var(--color-orange-800)">          'bun'</span><span style="color:var(--foreground)">,</span></span>
+<span class="line"><span style="color:var(--color-orange-800)">          '/workspace/server.js'</span></span>
+<span class="line"><span style="color:var(--foreground)">        ]);</span></span>
 <span class="line"><span style="color:var(--foreground)">        initialized = true;</span></span>
 <span class="line"><span style="color:var(--foreground)">      }</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">      // Connect to WebSocket server</span></span>

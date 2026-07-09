@@ -128,11 +128,15 @@ For commits, see the **git-commit** skill (`.agents/skills/git-commit/SKILL.md`)
 
 See the **logging** skill (`.agents/skills/logging/SKILL.md`) for the constructor-injection pattern, child loggers, env-var configuration (`SANDBOX_LOG_LEVEL`, `SANDBOX_LOG_FORMAT`), and test mocking with `createNoOpLogger()`.
 
-### Session Management
+### Process Execution
 
-- Top-level `sandbox.exec()` and `sandbox.startProcess()` are stateless.
-- Explicit sessions isolate execution contexts (working directory, env vars, aliases, functions, etc.).
-- Multiple explicit sessions per sandbox are supported.
+See the **process-execution** skill (`.agents/skills/process-execution/SKILL.md`) for the argv process and terminal model.
+
+- `sandbox.exec(argv, options)` launches a supervised argv process and resolves after launch; it is not a hidden shell.
+- Use explicit shell argv such as `["/bin/bash", "-lc", script]` for shell syntax.
+- Recover runtime-local handles by ID without waking a missing runtime; old handles fail after runtime replacement.
+- Output/log replay and waits observe completion, cancellation is local, and `kill()` accepts numeric signals.
+- Keep terminal input, resize, interrupt, terminate, and reconnect behavior separate from process semantics.
 
 ### Port Management
 

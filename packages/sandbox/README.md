@@ -82,8 +82,12 @@ export default {
 
     // Execute Python code
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('python3 -c "print(2 + 2)"').output();
-      return Response.json({ output: result.stdout, success: result.success });
+      const process = await sandbox.exec(['python3', '-c', 'print(2 + 2)']);
+      const output = await process.output({ encoding: 'utf8' });
+      return Response.json({
+        output: output.stdout,
+        success: output.exitCode === 0
+      });
     }
 
     // Work with files
@@ -97,6 +101,48 @@ export default {
   }
 };
 ```
+
+## Process Execution
+
+A Sandbox is the long-running computer. `exec()` launches one supervised argv process and returns after the runtime confirms launch; it does not run through a hidden persistent shell.
+
+```ts
+const process = await sandbox.exec(['python3', '-c', 'print(2 + 2)']);
+const output = await process.output({ encoding: 'utf8' });
+
+console.log(process.id, process.pid, output.stdout, output.exitCode);
+```
+
+`await sandbox.exec(argv)` waits only for launch; `process.pid` is available once it resolves. `await process.output()` and `await process.waitForExit()` wait for completion. `process.status()` observes the current state, and `process.logs()` streams replayable cursor events incrementally.
+
+`output()` is replayable but may return `truncated: true`; use `logs({ since, replay, follow })` for cursor resume and output too large to buffer. `exec(argv, { timeout })` sets a remote process lifetime deadline: the supervisor may terminate and then kill the process internally, and completion is reported with `timedOut: true`. Timeouts and `AbortSignal`s on `logs()`, `output()`, `waitForExit()`, `waitForLog()`, and `waitForPort()` cancel only that local observation—they do not stop the process. Call `process.kill(signal)` with a numeric signal (default `15`) to request termination.
+
+Use explicit shell argv when you need shell syntax:
+
+```ts
+const proc = await sandbox.exec(['/bin/bash', '-lc', 'cd app && npm test'], {
+  cwd: '/workspace',
+  env: { CI: '1' }
+});
+```
+
+For asynchronous work, keep `proc.id` and recover the live process from a later Worker request:
+
+```ts
+const server = await sandbox.exec([
+  '/bin/bash',
+  '-lc',
+  'npm run dev -- --host 0.0.0.0'
+]);
+await server.waitForPort(3000);
+
+const recovered = await sandbox.getProcess(server.id);
+const running = await sandbox.listProcesses();
+```
+
+`getProcess()` and `listProcesses()` are non-waking discovery calls: with no active runtime they return `null` and `[]` instead of starting a replacement. Handles, IDs, PIDs, statuses, retained logs, and cursors belong to the runtime that launched the process. After sleep, restart, or replacement, discovery cannot recover them and operations on an old handle fail with `STALE_PROCESS_HANDLE` rather than targeting a replacement runtime.
+
+Use `createTerminal()` for a persistent interactive PTY shell with input, resize, interrupt, terminate, and reconnect semantics. Terminals remain separate from supervised processes and are also runtime-local.
 
 ## Quick tunnels
 
@@ -154,7 +200,7 @@ Notes:
 - **Edge-Native** - Runs on Cloudflare's global network
 - **Code Interpreter** - Execute Python and JavaScript with rich outputs
 - **File System Access** - Read, write, and manage files
-- **Command Execution** - Run commands with a Containers-style process handle, streaming output, stdin, and background process control
+- **Command Execution** - Run any command with streaming support
 - **Preview URLs** - Expose services with public URLs
 - **Quick tunnels** - Zero-config `*.trycloudflare.com` URLs via `sandbox.tunnels.get(port)`
 - **Git Integration** - Clone repositories directly

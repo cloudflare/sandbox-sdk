@@ -47,7 +47,7 @@ The musl image is a lightweight, functional sandbox. It supports all core SDK me
 
 | Capability                                 | Supported | Notes                                                           |
 | ------------------------------------------ | --------- | --------------------------------------------------------------- |
-| `exec()`, `startProcess()`                 | ✅        | Shell commands via `bash`                                       |
+| `exec()`                                   | ✅        | Runs argv directly; use explicit `bash` argv for shell syntax   |
 | `readFile()`, `writeFile()`, `listFiles()` | ✅        | Requires `file` (included)                                      |
 | `gitCheckout()`, `listBranches()`          | ✅        | Requires `git` (included)                                       |
 | `mountBucket()`, `unmountBucket()`         | ✅        | Requires `s3fs-fuse` and `fuse` (included)                      |
@@ -66,19 +66,18 @@ The `/sandbox` binary acts as a supervisor:
 
 ## Required Dependencies
 
-| Dependency           | Required For                                    | Install Command            |
-| -------------------- | ----------------------------------------------- | -------------------------- |
-| `file`               | `readFile()`, `writeFile()`, any file operation | `apt-get install file`     |
-| `git`                | `gitCheckout()`, `listBranches()`               | `apt-get install git`      |
-| `bash`               | Everything (core requirement)                   | Usually pre-installed      |
-| `libstdc++` `libgcc` | Alpine/musl only: Bun runtime C++ dependencies  | `apk add libstdc++ libgcc` |
+| Dependency           | Required For                                                               | Install Command            |
+| -------------------- | -------------------------------------------------------------------------- | -------------------------- |
+| `file`               | `readFile()`, `writeFile()`, any file operation                            | `apt-get install file`     |
+| `git`                | `gitCheckout()`, `listBranches()`                                          | `apt-get install git`      |
+| `bash`               | Only callers that launch shell argv such as `["/bin/bash", "-lc", script]` | Usually pre-installed      |
+| `libstdc++` `libgcc` | Alpine/musl only: Bun runtime C++ dependencies                             | `apk add libstdc++ libgcc` |
 
-Most glibc-based images (node:slim, python:slim, ubuntu) include everything except `file` and `git`. Alpine images also need `bash`, `libstdc++`, and `libgcc`.
+Most glibc-based images (node:slim, python:slim, ubuntu) include everything except `file` and `git`. Alpine images also need `libstdc++` and `libgcc`; install `bash` only if your code launches shell scripts through explicit Bash argv.
 
 ## What Works Without Extra Dependencies
 
-- `exec()` - Run shell commands
-- `startProcess()` - Background processes
+- `exec()` - Run executables by argv (for example `["node", "script.js"]`)
 - `exposePort()` - Expose services
 
 ## Troubleshooting
@@ -87,11 +86,11 @@ Most glibc-based images (node:slim, python:slim, ubuntu) include everything exce
 
 **"git: command not found"** - Install `git` (only needed for git operations)
 
-**"Executable not found in $PATH: bash"** - Install `bash` (`apk add bash` on Alpine)
+**"Executable not found in $PATH: bash"** - Install `bash` (`apk add bash` on Alpine) or launch a different executable directly by argv.
 
 **"Error loading shared library libstdc++.so.6"** - Install `libstdc++` and `libgcc` (`apk add libstdc++ libgcc` on Alpine)
 
-**Commands hang** - Ensure `bash` exists at `/bin/bash`
+**Shell commands hang** - Ensure your explicit shell argv points to an installed shell, for example `/bin/bash` or `/bin/sh`.
 
 ## Note on Code Interpreter
 

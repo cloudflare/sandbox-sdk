@@ -1,185 +1,41 @@
 # Sandbox SDK Architecture
 
-This document provides an architectural overview for contributors and AI assistants working on this codebase.
+The Sandbox SDK runs isolated computers on Cloudflare Containers. A Sandbox Durable Object gives each computer a stable identity and lifecycle, while the current container runtime owns runtime-local processes, terminals, and logs.
 
-## Overview
+## Layers
 
-The Sandbox SDK enables secure, isolated code execution in containers on Cloudflare's edge. Workers can execute commands, manage files, run background processes, and expose services.
+1. **`@cloudflare/sandbox` (`packages/sandbox`)**: public SDK, Durable Object, preview proxy, process and terminal handles, bridge routes.
+2. **`@repo/shared` (`packages/shared`)**: internal type and error contracts shared by SDK and container. It is not published independently.
+3. **`@repo/sandbox-container` (`packages/sandbox-container`)**: Bun control plane inside the container, process supervisor, PTY server, file/port/git services.
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│                        Your Worker Code                          │
-│   const sandbox = getSandbox(env.Sandbox, 'my-sandbox');         │
-│   const result = await sandbox.exec('python script.py');         │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────────┐
-│        Sandbox Durable Object (packages/sandbox/)                │
-│   • Manages container lifecycle and session state                │
-│   • Delegates container operations to ContainerControlClient     │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ capnweb RPC over /rpc WebSocket
-┌──────────────────────────▼───────────────────────────────────────┐
-│        Container Runtime (packages/sandbox-container/)           │
-│   • Bun server inside Docker/VM, SandboxControlAPI on /rpc       │
-│   • Executes commands, manages files/processes/sessions          │
-└──────────────────────────────────────────────────────────────────┘
-```
+The SDK depends on shared types and the container implements them. Container code does not import the public SDK.
 
-The DO-to-container control path is a typed control channel over `/rpc`. Preview/proxy traffic and PTY terminal WebSockets are separate channels with their own purposes.
+## Control channels
 
-## Three-Layer Architecture
+- `/rpc` WebSocket: typed capnweb control plane for files, ports, processes, terminals, backups, mounts, tunnels, and extensions.
+- Preview/proxy requests: user service traffic authorized by the Sandbox DO.
+- Terminal WebSocket: PTY I/O for interactive terminals.
 
-### Layer 1: `@cloudflare/sandbox` (`packages/sandbox/`)
+## Process execution
 
-The public SDK exported to npm.
+`sandbox.exec(argv, options)` is the single public supervised process primitive and the only process operation that may start a runtime. It accepts argv only and resolves once the runtime confirms launch, not when the process exits. Shell behavior is explicit: use `['/bin/bash', '-lc', script]` when a shell is required. The returned handle exposes immutable `id` and numeric `pid` fields plus `status()`, replayable `output()` and `logs()`, waits, and numeric `kill()`.
 
-| Directory                | Purpose                                                                      |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `src/sandbox.ts`         | Main Durable Object - extends `Container<Env>` from `@cloudflare/containers` |
-| `src/container-control/` | DO-to-container control client and `/rpc` connection lifecycle               |
-| `src/interpreter.ts`     | High-level `CodeInterpreter` API for Python/JS execution                     |
-| `src/request-handler.ts` | `proxyToSandbox()` for preview URL routing                                   |
-| `src/pty/`, `src/xterm/` | PTY terminal proxy and browser terminal helpers                              |
-| `src/storage-mount/`     | R2/S3 mount and egress helpers                                               |
+`cwd` is selected per launch. Processes and terminals inherit the complete container environment and apply `env` as an overlay. These launch options do not mutate the Sandbox computer or create a persistent shell. Separate Worker requests recover a live process with `sandbox.getProcess(id)` and resume logs from saved cursors. `getProcess()` and `listProcesses()` are non-waking and report no processes when there is no current runtime. Handles, IDs, PIDs, statuses, cursors, and retained logs are runtime-local; after sleep, restart, or replacement, old handles fail as stale rather than binding to the replacement. `exec(argv, { timeout })` sets a remote process lifetime deadline: the supervisor may terminate and then kill the process internally, and the exit outcome is reported with `timedOut: true`. By contrast, `AbortSignal`s and timeout options on `logs()`, `output()`, `waitForExit()`, `waitForLog()`, and `waitForPort()` cancel only that caller's local observation and never stop the process.
 
-The `Sandbox` class is the main entry point. It manages container lifecycle, session state, port exposure, backups, mounts, and delegates container operations to `ContainerControlClient`.
+See [PROCESS_EXECUTION.md](./PROCESS_EXECUTION.md).
 
-### Layer 2: `@repo/shared` (`packages/shared/`)
+## Terminals
 
-Internal shared types and utilities. This package is not published independently.
+`createTerminal()` is the single PTY primitive for interactive shells. A terminal has its own ID, cursor-retained output, input, resize, interrupt, terminate, and reconnect path via `getTerminal(id)`. These terminal controls are intentionally separate: use terminals for interactive PTY state and `exec()` for supervised argv processes and numeric signals.
 
-| Directory/file     | Purpose                                                     |
-| ------------------ | ----------------------------------------------------------- |
-| `src/rpc-types.ts` | Typed control API contract shared by SDK and container      |
-| `src/types.ts`     | Public SDK data types and operation result shapes           |
-| `src/errors/`      | Error codes, classes, contexts, suggestions, status mapping |
-| `src/logger/`      | Structured logging with trace context                       |
-| `src/sse.ts`       | SSE frame parsing for SDK-facing event streams              |
+## Active resources
 
-### Layer 3: `@repo/sandbox-container` (`packages/sandbox-container/`)
+The current runtime owns active process and terminal leases. Active resources pin the live Sandbox independent of the Worker request that launched them. Durable Object storage records durable sandbox configuration such as preview ports and mounts, not process or terminal truth.
 
-The container runtime bundled into the Docker image.
+## Concurrency
 
-| Directory/file            | Purpose                                         |
-| ------------------------- | ----------------------------------------------- |
-| `src/server.ts`           | Bun server entry point on port 3000             |
-| `src/control-plane/`      | Container-side implementation of `SandboxAPI`   |
-| `src/core/container.ts`   | Dependency injection container                  |
-| `src/services/`           | Business logic layer                            |
-| `src/managers/`           | Stateful managers such as process/file managers |
-| `src/handlers/terminal-*` | Terminal WebSocket handling                     |
-
-## Control Channel Architecture
-
-The SDK-side control path is implemented in `packages/sandbox/src/container-control/`.
-
-```text
-ContainerControlClient
-  -> ContainerControlConnection
-  -> DeferredTransport
-  -> capnweb RpcSession
-  -> WebSocket upgrade to http://localhost:3000/rpc
-```
-
-`ContainerControlClient` exposes typed domains matching `SandboxAPI`:
-
-```text
-commands, files, processes, ports, git, interpreter, utils, backup, watch, tunnels, terminals
-```
-
-`ContainerControlConnection` owns:
-
-- `/rpc` WebSocket upgrade and 503 retry during container startup;
-- capnweb `RpcSession` creation;
-- the deferred transport that queues sends until the WebSocket is active;
-- close/error detection and reconnection handoff.
-
-The container-side control plane is implemented in `packages/sandbox-container/src/control-plane/`. `SandboxControlAPI` exposes nested capnweb `RpcTarget` domains and calls services directly.
-
-## Request Flow
-
-A typical command execution flows through all layers:
-
-```text
-Worker code
-  -> sandbox.exec("echo hello")
-  -> Sandbox DO method
-  -> ContainerControlClient.commands.execute(...)
-  -> capnweb call over /rpc
-  -> SandboxControlAPI.commands.execute(...)
-  -> ProcessService.executeCommand(...)
-  -> ExecutionService.execute(...)
-  -> StatelessCommandRunner.exec(...)
-  -> one-shot shell command
-```
-
-Streaming operations return `ReadableStream<Uint8Array>` values over capnweb. The bytes are SSE-framed so existing SDK consumers can parse them with the same code, but the transport is the `/rpc` control channel.
-
-## Container Runtime Flow
-
-```text
-/rpc WebSocket
-  -> newBunWebSocketRpcSession(...)
-  -> SandboxControlAPI
-  -> Service
-  -> Manager or Session
-```
-
-The Bun server also keeps `/ws/terminal` for terminal resources. Non-WebSocket HTTP requests that are not preview/proxy traffic are not the SDK control plane.
-
-`core/container.ts` instantiates services and the terminal handler with explicit dependencies. Control-plane methods call these services directly.
-
-## Key Architectural Patterns
-
-### Sessions
-
-Explicit sessions isolate execution contexts such as working directory and environment variables. `SessionManager` serializes command execution per session and owns session lifecycle. Top-level `sandbox.exec()` and `sandbox.startProcess()` are stateless and do not create hidden persistent sessions.
-
-### Command Execution
-
-Command execution is split by semantics. `exec()` is completion-only; `startProcess()` owns streaming, kill, and timeout lifecycle. Explicit `session.exec()` preserves shell state through `@repo/sandbox-execution` `CommandSession`, while `session.startProcess()` starts a lifecycle-managed process from inherited session state without writing process mutations back to the parent session.
-
-See [SESSION_EXECUTION.md](./SESSION_EXECUTION.md) for details.
-
-### Port Exposure
-
-Services in the container can be exposed via preview URLs with token-based authentication. The Sandbox DO owns preview URL authorization and current-runtime activation. Requests are routed through `proxyToSandbox()` and only forward after `exposePort()` has activated the port for the current runtime.
-
-### Error Flow
-
-```text
-ServiceError / thrown control-plane error
-  -> capnweb propagation
-  -> ContainerControlClient.translateRPCError(...)
-  -> SDK SandboxError subclass
-  -> user code
-```
-
-Transport-level failures surface as `RPCTransportError` with structured context such as `peer_closed`, `connection_failed`, `upgrade_failed`, or `protocol_error`.
-
-### Streaming and Lifecycle
-
-The control channel is multiplexed. A method that returns a stream can resolve before the underlying operation is complete. `ContainerControlClient` polls capnweb session stats to keep the Durable Object active while calls or returned streams are still in flight.
-
-## Platform Context
-
-The SDK builds on Cloudflare Containers:
-
-- VM-based isolation: each sandbox runs in its own VM.
-- Durable Objects: provide persistent identity and container lifecycle management.
-- Edge distribution: sandboxes run geographically close to users.
-
-Sandbox lifecycle: starting -> running -> sleeping (ephemeral state lost) -> destroyed.
-
-For instance types, limits, and platform details, see the official Cloudflare documentation.
+Workers, Durable Objects, and Bun are single-threaded event loops that interleave at awaits. Spawned processes and PTYs are OS resources and run independently. The SDK does not serialize unrelated process launches; callers coordinate their own workload-level ordering.
 
 ## Testing
 
-| Type             | Command                               | Runtime                       | Purpose                              |
-| ---------------- | ------------------------------------- | ----------------------------- | ------------------------------------ |
-| Unit (SDK)       | `npm test -w @cloudflare/sandbox`     | Workers (vitest-pool-workers) | Test SDK logic with mocked container |
-| Unit (Container) | `npm test -w @repo/sandbox-container` | Bun                           | Test container services              |
-| E2E              | `npm run test:e2e`                    | Real Docker + Workers         | Full integration tests               |
-
-E2E tests share a single container instance, using sessions for isolation. See [E2E_TESTING.md](./E2E_TESTING.md) for details.
+Unit tests cover SDK handle behavior, bridge schemas, and container services. E2E tests prove real Docker/Worker behavior for argv execution, process recovery, cursor replay, active pinning, terminal reconnects, and coding-agent harness mechanics.
