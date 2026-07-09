@@ -68,16 +68,6 @@ describe('buildMessage', () => {
     expect(msg).toBe('file.write success /workspace/test/file.txt (0ms, 6B)');
   });
 
-  it('formats session create with sessionId', () => {
-    const msg = buildMessage({
-      event: 'session.create',
-      outcome: 'success',
-      durationMs: 0,
-      sessionId: 'session-1c8a'
-    });
-    expect(msg).toBe('session.create success session-1c8a (0ms)');
-  });
-
   it('formats port expose', () => {
     const msg = buildMessage({
       event: 'port.expose',
@@ -410,8 +400,6 @@ describe('resolveLogLevel', () => {
 
   it('demotes DEBUG_ON_SUCCESS events to debug', () => {
     for (const event of [
-      'session.create',
-      'session.destroy',
       'file.read',
       'file.write',
       'file.delete',

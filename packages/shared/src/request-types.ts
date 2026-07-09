@@ -6,41 +6,11 @@ import type { BackupCompressionOptions } from './types.js';
  */
 
 /**
- * Request to execute a command
- */
-export interface ExecuteRequest {
-  command: string;
-  sessionId?: string;
-  background?: boolean;
-  timeoutMs?: number;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-  origin?: 'user' | 'internal';
-}
-
-/**
- * Request to start a background process
- * Uses flat structure consistent with other endpoints
- */
-export interface StartProcessRequest {
-  command: string;
-  sessionId?: string;
-  processId?: string;
-  timeoutMs?: number;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-  encoding?: string;
-  autoCleanup?: boolean;
-  origin?: 'user' | 'internal';
-}
-
-/**
  * Request to read a file
  */
 export interface ReadFileRequest {
   path: string;
   encoding?: string;
-  sessionId?: string;
 }
 
 /**
@@ -50,7 +20,6 @@ export interface WriteFileRequest {
   path: string;
   content: string;
   encoding?: string;
-  sessionId?: string;
 }
 
 /**
@@ -58,7 +27,6 @@ export interface WriteFileRequest {
  */
 export interface DeleteFileRequest {
   path: string;
-  sessionId?: string;
 }
 
 /**
@@ -67,7 +35,6 @@ export interface DeleteFileRequest {
 export interface RenameFileRequest {
   oldPath: string;
   newPath: string;
-  sessionId?: string;
 }
 
 /**
@@ -76,7 +43,6 @@ export interface RenameFileRequest {
 export interface MoveFileRequest {
   sourcePath: string;
   destinationPath: string;
-  sessionId?: string;
 }
 
 /**
@@ -85,7 +51,6 @@ export interface MoveFileRequest {
 export interface MkdirRequest {
   path: string;
   recursive?: boolean;
-  sessionId?: string;
 }
 
 /**
@@ -93,7 +58,6 @@ export interface MkdirRequest {
  */
 export interface FileExistsRequest {
   path: string;
-  sessionId?: string;
 }
 
 /**
@@ -105,24 +69,6 @@ export interface ListFilesRequest {
     recursive?: boolean;
     includeHidden?: boolean;
   };
-  sessionId?: string;
-}
-
-/**
- * Request to create a session
- */
-export interface SessionCreateRequest {
-  id?: string;
-  name?: string;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-}
-
-/**
- * Request to delete a session
- */
-export interface SessionDeleteRequest {
-  sessionId: string;
 }
 
 /**
@@ -140,7 +86,6 @@ export interface CreateBackupRequest {
   /** Glob patterns to exclude from the backup */
   excludes?: string[];
   compression?: BackupCompressionOptions;
-  sessionId?: string;
 }
 
 /**
@@ -167,7 +112,6 @@ export interface UploadPartsRequest {
   archivePath: string;
   /** Parts to upload in parallel */
   parts: UploadPart[];
-  sessionId?: string;
 }
 
 /**
@@ -206,7 +150,6 @@ export interface RestoreBackupRequest {
   dir: string;
   /** Path to the archive file in the container */
   archivePath: string;
-  sessionId?: string;
 }
 
 /**

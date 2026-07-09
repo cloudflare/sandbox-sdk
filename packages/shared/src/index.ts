@@ -5,6 +5,13 @@
 
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
+export type {
+  ErrorCodeType,
+  ErrorResponse,
+  ServiceError
+} from './errors/index.js';
+// Export error contracts
+export { ErrorCode } from './errors/index.js';
 // Export git utilities
 export {
   DEFAULT_GIT_CLONE_TIMEOUT_MS,
@@ -36,22 +43,38 @@ export {
   redactSensitiveParams,
   truncateForLog
 } from './logger/sanitize.js';
+// Export process control types
+export type {
+  ProcessExit,
+  ProcessFailure,
+  ProcessLogCursor,
+  ProcessLogEvent,
+  ProcessLogSubscriptionAPI,
+  ProcessLogsRPCOptions,
+  ProcessStartOptions,
+  ProcessStatus,
+  SandboxCommand,
+  SandboxProcessesAPI,
+  WaitForLogResult
+} from './process-types.js';
 // Export PTY types
 export type {
-  PtyControlMessage,
-  PtyOptions,
-  PtyStatusMessage,
-  SandboxTerminal,
-  TerminalConnectOptions,
-  TerminalCreateOptions,
-  TerminalOptions
+  CreateTerminalOptions,
+  PtyClientControlMessage,
+  PtyServerControlMessage,
+  SandboxTerminalsAPI,
+  Terminal,
+  TerminalOutputCursor,
+  TerminalOutputEvent,
+  TerminalOutputOptions,
+  TerminalOutputSubscriptionAPI,
+  TerminalSnapshot
 } from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
   CreateBackupRequest,
   CreateBackupResponse,
   DeleteFileRequest,
-  ExecuteRequest,
   FileExistsRequest,
   ListFilesRequest,
   MkdirRequest,
@@ -60,9 +83,6 @@ export type {
   RenameFileRequest,
   RestoreBackupRequest,
   RestoreBackupResponse,
-  SessionCreateRequest,
-  SessionDeleteRequest,
-  StartProcessRequest,
   UploadedPart,
   UploadPart,
   UploadPartsRequest,
@@ -71,8 +91,12 @@ export type {
 } from './request-types.js';
 export type {
   BackupCreateArchiveOptions,
-  BackupRestoreArchiveOptions,
-  CommandExecuteOptions,
+  BackupDownloadArchiveRequest,
+  BackupPrepareRestoreRequest,
+  BackupUploadArchiveRequest,
+  BackupUploadPartsRequest,
+  CreateWorkspaceArchiveRequest,
+  CreateWorkspaceArchiveResult,
   EnsureNamedTunnelRunRequest,
   EnsureQuickTunnelRunRequest,
   EnsureTunnelRunRequest,
@@ -81,29 +105,30 @@ export type {
   ExtensionHealth,
   ExtensionPackage,
   ExtensionRegistration,
-  FileSessionOptions,
+  ExtractWorkspaceArchiveRequest,
   MkdirOptions,
+  MountCommandResult,
+  MountS3FSRequest,
   NamedTunnelInfo,
   NamedTunnelRunSnapshot,
-  ProcessStartOptions,
   QuickTunnelInfo,
   QuickTunnelRunSnapshot,
   ReadFileBinaryOptions,
   ReadFileOptions,
   ReadFileStreamOptions,
+  RemoveMountDirectoryRequest,
+  S3FSOptionValue,
   SandboxAPI,
   SandboxBackupAPI,
-  SandboxCommandsAPI,
   SandboxControlCallback,
   SandboxExtensionsAPI,
   SandboxFilesAPI,
+  SandboxMountsAPI,
   SandboxPortsAPI,
-  SandboxProcessesAPI,
-  SandboxTerminalsAPI,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI,
-  SessionCreateOptions,
+  SandboxWorkspaceAPI,
   StopTunnelRunRequest,
   StopTunnelRunResult,
   TunnelInfo,
@@ -112,6 +137,7 @@ export type {
   TunnelRunIdentity,
   TunnelRunMode,
   TunnelRunSnapshot,
+  WatchSubscriptionAPI,
   WriteFileOptions
 } from './rpc-types.js';
 // RPC interface types (shared between SDK and container)
@@ -126,7 +152,6 @@ export type {
   // Backup types
   BackupCompressionOptions,
   BackupOptions,
-  BaseExecOptions,
   // Bucket mounting types
   BucketCredentials,
   BucketProvider,
@@ -137,10 +162,7 @@ export type {
   DirectoryBackup,
   Disposable,
   EnvSetResult,
-  ExecEvent,
   ExecOptions,
-  ExecResult,
-  ExecutionSession,
   // File streaming types
   FileChunk,
   FileEncoding,
@@ -157,7 +179,6 @@ export type {
   ListFilesOptions,
   ListFilesResult,
   LocalMountBucketOptions,
-  LogEvent,
   MkdirResult,
   MountBucketOptions,
   MoveFileResult,
@@ -166,52 +187,27 @@ export type {
   PortExposeResult,
   PortWatchEvent,
   PortWatchRequest,
-  Process,
-  ProcessCleanupResult,
-  ProcessInfoResult,
-  ProcessKillResult,
-  ProcessListResult,
-  ProcessLogsResult,
-  ProcessOptions,
-  ProcessQueryOptions,
-  // Process management result types
-  ProcessStartResult,
-  ProcessStatus,
+  PortWatchRPCOptions,
+  PortWatchSubscriptionAPI,
+  ProcessLogsOptions,
+  ProcessOutput,
+  ProcessOutputOptions,
+  ProcessTextOutputOptions,
   R2BindingMountBucketOptions,
   ReadFileResult,
   ReadFileStreamResult,
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
-  // Unified exec surface (mirrors ctx.container.exec contract)
-  SandboxExecBufferOutput,
-  SandboxExecOptions,
-  SandboxExecOutput,
-  SandboxExecStringOutput,
   // Sandbox configuration options
   SandboxOptions,
-  SandboxOutputEncoding,
-  SandboxOutputMode,
   SandboxProcess,
-  SandboxProcessPromise,
-  SandboxStderrMode,
-  // Session management result types
-  SessionCreateResult,
-  SessionDeleteResult,
-  SessionOptions,
   ShutdownResult,
-  // Process readiness types
-  WaitForExitResult,
-  WaitForLogResult,
+  WaitForExitOptions,
+  WaitForLogOptions,
   WaitForPortOptions,
   // File watch types
   WatchOptions,
   WatchRequest,
   WriteFileResult
-} from './types.js';
-export {
-  isExecResult,
-  isProcess,
-  isProcessStatus,
-  isTerminalStatus
 } from './types.js';

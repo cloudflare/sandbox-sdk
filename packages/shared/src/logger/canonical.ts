@@ -4,8 +4,6 @@ import type { Logger } from './types.js';
 
 /** Events that are low-value at info on success */
 const DEBUG_ON_SUCCESS = new Set([
-  'session.create',
-  'session.destroy',
   'file.read',
   'file.write',
   'file.delete',
@@ -63,9 +61,9 @@ function sanitizePayload(payload: CanonicalEventPayload): {
  * Format: `{event} {outcome} {key_context} [— {reason}] ({durationMs}ms[, {sizeBytes}B])`
  *
  * The if/else chain for key context has implicit priority: command > path >
- * sessionId > port > repoUrl > pid. If a payload has multiple, only the
- * highest-priority one appears in the message. All fields are still present
- * as discrete queryable keys in the structured log context.
+ * port > repoUrl > pid. If a payload has multiple, only the highest-priority
+ * one appears in the message. All fields are still present as discrete
+ * queryable keys in the structured log context.
  */
 export function buildMessage(
   payload: CanonicalEventPayload,
@@ -97,8 +95,6 @@ export function buildMessage(
     parts.push(value);
   } else if (payload.path !== undefined) {
     parts.push(payload.path);
-  } else if (event.includes('session') && payload.sessionId !== undefined) {
-    parts.push(payload.sessionId);
   } else if (payload.port !== undefined) {
     parts.push(String(payload.port));
   } else if (payload.repoUrl !== undefined) {

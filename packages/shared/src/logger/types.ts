@@ -37,11 +37,6 @@ export interface LogContext {
   sandboxId?: string;
 
   /**
-   * Session identifier (which session within sandbox)
-   */
-  sessionId?: string;
-
-  /**
    * Process identifier (which background process)
    */
   processId?: string;
