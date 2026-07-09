@@ -32,8 +32,7 @@ export interface FileOperationResult {
   timestamp: number;
 }
 
-import { createLogger, type Logger } from '@repo/shared';
-import type { Sandbox } from '../sandbox';
+import { createLogger, type ISandbox, type Logger } from '@repo/shared';
 
 // Helper functions for error handling
 function isErrorWithProperties(error: unknown): error is {
@@ -71,7 +70,7 @@ export class Shell implements OpenAIShell {
   public results: CommandResult[] = [];
   private readonly logger: Logger;
 
-  constructor(private readonly sandbox: Sandbox) {
+  constructor(private readonly sandbox: ISandbox) {
     this.logger = createLogger({
       component: 'sandbox-do',
       operation: 'openai-shell'
@@ -95,16 +94,14 @@ export class Shell implements OpenAIShell {
         exitCode: 0
       };
       try {
-        const result = await this.sandbox
-          .exec(command, {
-            timeout: action.timeoutMs,
-            cwd: this.cwd
-          })
-          .output({ encoding: 'utf8' });
-        stdout = result.stdout;
-        stderr = result.stderr;
-        exitCode = result.exitCode;
-        // exec returns a result even for failed commands, so check success field
+        const proc = await this.sandbox.exec(['/bin/bash', '-lc', command], {
+          timeout: action.timeoutMs,
+          cwd: this.cwd
+        });
+        const out = await proc.output();
+        stdout = new TextDecoder().decode(out.stdout);
+        stderr = new TextDecoder().decode(out.stderr);
+        exitCode = out.exitCode;
         // Timeout would be indicated by a specific error or exit code
         outcome = { type: 'exit', exitCode };
 
@@ -210,7 +207,7 @@ export class Editor implements OpenAIEeditor {
   private readonly logger: Logger;
 
   constructor(
-    private readonly sandbox: Sandbox,
+    private readonly sandbox: ISandbox,
     private readonly root: string = '/workspace'
   ) {
     this.logger = createLogger({

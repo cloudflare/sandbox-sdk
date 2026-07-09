@@ -2,7 +2,11 @@ import {
   SandboxExtension,
   type SandboxLike
 } from '@cloudflare/sandbox/extensions';
-import { createOpenCodeServer, type OpenCodeSandboxLike } from './opencode';
+import {
+  createOpenCodeServer,
+  findExistingOpenCodeProcess,
+  type OpenCodeSandboxLike
+} from './opencode';
 import type { OpenCodeOptions, OpenCodeServer } from './types';
 
 const DEFAULT_PORT = 4096;
@@ -46,11 +50,6 @@ const STATE_KEY_PREFIX = 'opencode:desired-state:';
 function isContainerUnavailable(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   return (error as { name?: unknown }).name === 'ContainerUnavailableError';
-}
-
-/** Stable process id for the OpenCode server on a given port. */
-function defaultProcessId(port: number): string {
-  return `opencode-${port}`;
 }
 
 /**
@@ -123,11 +122,16 @@ export class OpenCodeHandle extends SandboxExtension {
   async status(): Promise<OpenCodeStatus> {
     const resolved = { ...this.#defaults, ...this.#lastOptions };
     const port = resolved.port ?? DEFAULT_PORT;
-    const processId = resolved.processId ?? defaultProcessId(port);
-    const proc = await this.#sandbox.getProcess(processId);
-    const status = proc ? await proc.status() : null;
-    const running = status === 'running' || status === 'starting';
-    return { running, port, url: `http://localhost:${port}` };
+    const process = await findExistingOpenCodeProcess(
+      this.#sandbox,
+      port,
+      resolved.directory
+    );
+    return {
+      running: process !== null,
+      port,
+      url: `http://localhost:${port}`
+    };
   }
 
   /** Snapshot of the resolved configuration the client builder reads. */

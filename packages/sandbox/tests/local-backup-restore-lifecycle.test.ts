@@ -17,6 +17,8 @@ vi.mock('@cloudflare/containers', () => {
     async getState(): Promise<{ status: string }> {
       return { status: 'healthy' };
     }
+
+    async startAndWaitForPorts(): Promise<void> {}
   }
 
   return {
@@ -123,7 +125,7 @@ async function createLocalRestoreSandbox(params?: {
       id: backupId,
       dir: '/workspace/project',
       sizeBytes: 4,
-      ttl: 3600,
+      ttl: 31_536_000,
       createdAt: '2026-06-15T12:00:00.000Z'
     })
   );
@@ -150,40 +152,11 @@ async function createLocalRestoreSandbox(params?: {
   });
 
   sandbox.client = createMockControlClient();
-  vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
-    success: true,
-    id: 'backup-session',
-    message: 'Created'
-  } as never);
-  vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-    success: true,
-    sessionId: 'backup-session',
-    timestamp: '2026-06-15T12:00:00.000Z'
-  } as never);
-  vi.spyOn(sandbox.client.files, 'writeFileStream').mockResolvedValue({
-    success: true,
-    path: `/var/backups/${backupId}.sqsh`,
-    bytesWritten: 4,
-    timestamp: '2026-06-15T12:00:00.000Z'
-  } as never);
-  vi.spyOn(sandbox.client.commands, 'execute').mockResolvedValue({
-    success: true,
-    stdout: '',
-    stderr: '',
-    exitCode: 0,
-    command: '',
-    timestamp: '2026-06-15T12:00:00.000Z'
-  } as never);
 
   return { sandbox, storageMap, backupId };
 }
 
 describe('local backup restore lifecycle', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
-  });
-
   it('writes a verified operation record after local restore succeeds', async () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
 
@@ -210,7 +183,7 @@ describe('local backup restore lifecycle', () => {
     });
   });
 
-  it('initializes the backup session before capturing cold-start runtime identity', async () => {
+  it('captures cold-start runtime identity before restore transfer', async () => {
     const order: string[] = [];
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox({
       storageHooks: {
@@ -222,16 +195,6 @@ describe('local backup restore lifecycle', () => {
       }
     });
     storageMap.delete('currentRuntimeIdentity');
-    vi.spyOn(sandbox.client.utils, 'createSession').mockImplementationOnce(
-      async () => {
-        order.push('createSession');
-        return {
-          success: true,
-          id: 'backup-session',
-          message: 'Created'
-        } as never;
-      }
-    );
 
     await sandbox.restoreBackup({
       id: backupId,
@@ -239,7 +202,7 @@ describe('local backup restore lifecycle', () => {
       localBucket: true
     });
 
-    expect(order.slice(0, 2)).toEqual(['createSession', 'runtimeReady']);
+    expect(order.slice(0, 1)).toEqual(['runtimeReady']);
   });
 
   it('does not mark the local archive ready before stream upload completes', async () => {

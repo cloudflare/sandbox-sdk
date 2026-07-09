@@ -11,12 +11,13 @@
 // exercises.
 
 import { DurableObject } from 'cloudflare:workers';
+import type { ProcessStatus, SandboxCommand } from '@repo/shared';
 import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
 import { type OpenCodeHandle, withOpenCode } from '../src/lifecycle';
 
 interface StartedProcess {
-  command: string;
-  options: { processId?: string };
+  command: SandboxCommand;
+  options: { cwd?: string };
 }
 
 /**
@@ -33,17 +34,25 @@ export class OpenCodeFixture extends DurableObject {
     super(ctx, env);
 
     const sandbox = {
-      exec: async (command: string, options: { processId?: string } = {}) => {
+      exec: async (command: SandboxCommand, options: { cwd?: string } = {}) => {
         this.#started.push({ command, options });
+        const status: ProcessStatus = {
+          id: 'proc',
+          pid: 123,
+          command,
+          cwd: options.cwd,
+          state: 'running',
+          startedAt: new Date().toISOString()
+        };
         return {
-          id: options.processId ?? 'proc',
+          id: status.id,
           command,
           startTime: new Date(),
           exitCode: Promise.resolve(0),
           waitForPort: async () => {},
-          kill: () => {},
+          kill: async () => {},
           getLogs: async () => ({ stdout: '', stderr: '' }),
-          status: async () => 'running'
+          status: async () => status
         };
       },
       getProcess: async () => null,
@@ -70,7 +79,7 @@ export class OpenCodeFixture extends DurableObject {
   }
 
   /** Commands the stub sandbox was asked to start, in order. */
-  startedCommands(): string[] {
+  startedCommands(): SandboxCommand[] {
     return this.#started.map((entry) => entry.command);
   }
 

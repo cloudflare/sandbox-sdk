@@ -13,11 +13,6 @@ export interface OpenCodeOptions {
   config?: Config;
   /** Additional environment variables to pass to the OpenCode process */
   env?: Record<string, string>;
-  /**
-   * Stable process id for the OpenCode server so it can be looked up directly
-   * instead of scanning all processes. Defaults to `opencode-{port}`.
-   */
-  processId?: string;
 }
 
 /**

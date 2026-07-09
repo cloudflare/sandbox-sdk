@@ -1,182 +1,97 @@
+import type { ProcessLogEvent, ProcessStatus, SandboxCommand, TerminalSnapshot } from '@repo/shared';
 import { vi } from 'vitest';
 
-/**
- * Shape returned by `sandbox.exec()` / `session.exec()` after the unified
- * exec refactor (`docs/spikes/EXEC_UNIFICATION.md`). The bridge worker
- * consumes `stdout` / `stderr` byte streams and awaits `exitCode`, so the
- * helper below builds a minimal `SandboxProcess`-shaped object that
- * satisfies the bridge code while letting each test stage its own byte
- * sequences and exit code.
- */
-export interface MockExecProcess {
-  stdout: ReadableStream<Uint8Array> | null;
-  stderr: ReadableStream<Uint8Array> | null;
-  exitCode: Promise<number>;
-  kill: (signal?: number | string) => void;
-  output: (opts?: { encoding?: 'utf8' | 'buffer' }) => Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-    success: boolean;
-    duration: number;
-    command: string;
-    timestamp: string;
-  }>;
-}
+type MockProcess = ReturnType<typeof createMockProcess>;
+type MockTerminal = ReturnType<typeof createMockTerminal>;
 
-/**
- * Bun.spawn-style thenable returned by `sandbox.exec()` after the unified
- * exec refactor: a `Promise<MockExecProcess>` plus `.output()` / `.text()`
- * / `.json()` / `.kill()` methods attached directly to the promise so
- * callers can write either `await sandbox.exec(cmd)` or
- * `await sandbox.exec(cmd).output()`.
- */
-export type MockExecProcessPromise = Promise<MockExecProcess> & {
-  output: MockExecProcess['output'];
-  text: () => Promise<string>;
-  json: <T = unknown>() => Promise<T>;
-  kill: (signal?: number | string) => Promise<void>;
-};
-
-/**
- * Wrap a `MockExecProcess` promise as a `MockExecProcessPromise`, matching
- * the production `createSandboxProcessPromise` shape so test code that
- * does `sandbox.exec(cmd).output()` works against the mock.
- */
-export function asMockExecPromise(spawn: Promise<MockExecProcess>): MockExecProcessPromise {
-  const promise = spawn as MockExecProcessPromise;
-  promise.output = async (opts) => (await spawn).output(opts);
-  promise.text = async () => (await promise.output()).stdout;
-  promise.json = async <T>() => JSON.parse(await promise.text()) as T;
-  promise.kill = async (signal) => {
-    (await spawn).kill(signal);
+export function createMockProcess(overrides: Partial<ProcessStatus> & { logs?: ProcessLogEvent[] } = {}) {
+  const base = {
+    id: overrides.id ?? 'mock-process',
+    command: overrides.command ?? ['echo', 'ok'],
+    cwd: overrides.cwd,
+    startedAt: overrides.startedAt ?? '2026-07-08T00:00:00.000Z',
+    pid: overrides.pid ?? 123
   };
-  return promise;
-}
-
-/**
- * Build a `MockExecProcess` whose `stdout` / `stderr` emit the given chunk
- * sequence (interleaved in declaration order) and whose `exitCode` resolves
- * to the given code after all chunks have been enqueued.
- *
- * Helpful for porting tests that previously used `onOutput` / `onComplete`
- * callbacks: each `{ stream, data }` entry maps 1:1 to an old
- * `onOutput(stream, data)` call.
- */
-export function makeMockExecProcess(
-  chunks: Array<{ stream: 'stdout' | 'stderr'; data: string }> = [],
-  options: { exitCode?: number; error?: Error; command?: string } = {}
-): MockExecProcess {
-  const encoder = new TextEncoder();
-  const stdoutChunks: Uint8Array[] = [];
-  const stderrChunks: Uint8Array[] = [];
-  for (const c of chunks) {
-    const bytes = encoder.encode(c.data);
-    if (c.stream === 'stdout') stdoutChunks.push(bytes);
-    else stderrChunks.push(bytes);
-  }
-
-  const makeStream = (payload: Uint8Array[]): ReadableStream<Uint8Array> | null =>
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (const c of payload) controller.enqueue(c);
-        controller.close();
-      }
-    });
-
-  const exitCode = options.error ? Promise.reject(options.error) : Promise.resolve(options.exitCode ?? 0);
-  // Mark observed so unhandled-rejection warnings don't flood tests that
-  // never await `exitCode` directly.
-  exitCode.catch(() => undefined);
-
-  const command = options.command ?? '';
+  const status: ProcessStatus =
+    overrides.state === 'exited'
+      ? {
+          ...base,
+          state: 'exited',
+          exit: overrides.exit,
+          endedAt: overrides.endedAt
+        }
+      : overrides.state === 'error'
+        ? {
+            ...base,
+            state: 'error',
+            error: overrides.error,
+            endedAt: overrides.endedAt
+          }
+        : { ...base, state: 'running' };
+  const logEvents = overrides.logs ?? [];
 
   return {
-    stdout: makeStream(stdoutChunks),
-    stderr: makeStream(stderrChunks),
-    exitCode,
-    kill: vi.fn(),
-    output: async () => {
-      const decoder = new TextDecoder();
-      const code = await exitCode.catch(() => 1);
-      return {
-        stdout: stdoutChunks.map((c) => decoder.decode(c)).join(''),
-        stderr: stderrChunks.map((c) => decoder.decode(c)).join(''),
-        exitCode: code,
-        success: code === 0,
-        duration: 0,
-        command,
-        timestamp: new Date().toISOString()
-      };
-    }
+    id: status.id,
+    pid: status.pid,
+    status: vi.fn(async () => status),
+    logs: vi.fn(
+      async () =>
+        new ReadableStream<ProcessLogEvent>({
+          start(controller) {
+            for (const event of logEvents) controller.enqueue(event);
+            controller.close();
+          }
+        })
+    ),
+    waitForExit: vi.fn(async () => (status.state === 'exited' ? status.exit : { code: 0, timedOut: false })),
+    waitForLog: vi.fn(),
+    waitForPort: vi.fn(),
+    kill: vi.fn(async () => {})
   };
 }
 
-/**
- * Creates a mock session object matching the shape returned by sandbox.getSession().
- * Each method is a vi.fn() so tests can inspect calls and configure returns.
- *
- * The default `exec` returns a `MockExecProcessPromise` (thenable
- * `Promise<MockExecProcess>` with `.output()` / `.text()` / `.json()` /
- * `.kill()` attached). Override per-test via `vi.fn(() => asMockExecPromise(...))`.
- */
-export function createMockSession(id = 'mock-session') {
+export function createMockTerminal(overrides: Partial<TerminalSnapshot> = {}) {
+  const snapshot: TerminalSnapshot = {
+    id: overrides.id ?? 'mock-terminal',
+    command: overrides.command ?? ['bash'],
+    cwd: overrides.cwd,
+    status: overrides.status ?? 'running',
+    pid: overrides.pid,
+    exit: overrides.exit
+  };
   return {
-    id,
-    exec: vi.fn(() => asMockExecPromise(Promise.resolve(makeMockExecProcess()))),
-    run: vi.fn(async () => ({
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-      success: true,
-      command: '',
-      duration: 0,
-      timestamp: new Date().toISOString()
-    })),
-    readFileStream: vi.fn(async () => new ReadableStream()),
-    writeFile: vi.fn(async () => {})
+    id: snapshot.id,
+    getSnapshot: vi.fn(async () => snapshot),
+    write: vi.fn(async () => {}),
+    resize: vi.fn(async () => {}),
+    output: vi.fn(async () => new ReadableStream()),
+    waitForExit: vi.fn(async () => snapshot.exit ?? { code: 0, timedOut: false }),
+    interrupt: vi.fn(async () => {}),
+    terminate: vi.fn(async () => {}),
+    connect: vi.fn(async () => new Response(null, { status: 200 }))
   };
 }
 
 /**
  * Creates a mock sandbox object matching the shape returned by getSandbox().
  * Each method is a vi.fn() so tests can inspect calls and configure returns.
- *
- * The default `exec` returns a `MockExecProcessPromise` (thenable wrapping
- * a `MockExecProcess`). Override per-test via
- * `vi.fn(() => asMockExecPromise(...))` for streams/errors.
  */
 export function createMockSandbox() {
-  return {
-    exec: vi.fn(() => asMockExecPromise(Promise.resolve(makeMockExecProcess()))),
-    run: vi.fn(async () => ({
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-      success: true,
-      command: '',
-      duration: 0,
-      timestamp: new Date().toISOString()
-    })),
+  const sandbox = {
+    exec: vi.fn(async (argv: SandboxCommand) => createMockProcess({ command: argv })),
+    getProcess: vi.fn(async (id: string): Promise<MockProcess | null> => createMockProcess({ id })),
+    listProcesses: vi.fn(async (): Promise<ProcessStatus[]> => []),
+    isRuntimeActive: vi.fn(async () => true),
     readFile: vi.fn(async () => ({ content: 'file content' })),
     readFileStream: vi.fn(async () => new ReadableStream()),
     writeFile: vi.fn(async () => {}),
-    terminal: vi.fn((opts?: { id?: string }) => ({
-      id: opts?.id ?? 'mock-terminal',
-      // In real usage this returns a 101 WebSocket upgrade response, but Node
-      // doesn't allow constructing Response with status 101, so we use 200.
-      connect: vi.fn(async () => new Response(null, { status: 200 })),
-      destroy: vi.fn(async () => {})
-    })),
-    getSession: vi.fn(async (sessionId: string) => createMockSession(sessionId)),
-    createSession: vi.fn(async (opts?: { id?: string }) => ({
-      id: opts?.id || 'auto-session-id'
-    })),
-    deleteSession: vi.fn(async (sessionId: string) => ({
-      success: true,
-      sessionId,
-      timestamp: new Date().toISOString()
-    })),
+    createWorkspaceArchive: vi.fn(async () => '/tmp/sandbox-workspace-test.tar'),
+    extractWorkspaceArchive: vi.fn(async () => {}),
+    cleanupWorkspaceArchive: vi.fn(async () => {}),
+    cleanupMountDirectory: vi.fn(async () => {}),
+    createTerminal: vi.fn(async (): Promise<MockTerminal> => createMockTerminal()),
+    getTerminal: vi.fn(async (id: string): Promise<MockTerminal | null> => createMockTerminal({ id })),
+    listTerminals: vi.fn(async (): Promise<MockTerminal[]> => []),
     mountBucket: vi.fn(async () => {}),
     unmountBucket: vi.fn(async () => {}),
     tunnels: {
@@ -185,6 +100,7 @@ export function createMockSandbox() {
     },
     destroy: vi.fn(async () => {})
   };
+  return sandbox;
 }
 
 /** Base URL used for all test requests against the Hono app. */
@@ -208,11 +124,11 @@ export function parseSSE(text: string): Array<{ event: string; data: string }> {
     } else if (line.startsWith('data: ')) {
       currentData += (currentData ? '\n' : '') + line.slice(6);
     } else if (line === '') {
-      if (currentEvent) {
+      if (currentEvent || currentData) {
         events.push({ event: currentEvent, data: currentData });
-        currentEvent = '';
-        currentData = '';
       }
+      currentEvent = '';
+      currentData = '';
     }
   }
   return events;

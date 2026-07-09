@@ -1,4 +1,4 @@
-import type { ExecResult, Logger } from '@repo/shared';
+import type { Logger, MountCommandResult } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
 import { cleanupBucketMountsForDestroy } from '../src/storage-mount/lifecycle-cleanup';
@@ -17,16 +17,14 @@ function createLogger(): Logger {
   } as unknown as Logger;
 }
 
-function execResult(overrides?: Partial<ExecResult>): ExecResult {
+function mountResult(
+  overrides?: Partial<MountCommandResult>
+): MountCommandResult {
   return {
-    success:
-      overrides?.exitCode === undefined ? true : overrides.exitCode === 0,
+    success: overrides?.exitCode === undefined || overrides.exitCode === 0,
     exitCode: 0,
     stdout: '',
     stderr: '',
-    command: '',
-    duration: 0,
-    timestamp: '2026-07-02T00:00:00.000Z',
     ...overrides
   };
 }
@@ -67,15 +65,17 @@ function createR2Mount(mountPath: string): R2BindingMountInfo {
 describe('bucket mount destroy lifecycle cleanup', () => {
   it('preserves failed FUSE unmounts for a later destroy cleanup retry', async () => {
     const logger = createLogger();
-    const execInternal = vi
-      .fn<(command: string) => Promise<ExecResult>>()
-      .mockResolvedValueOnce(execResult({ exitCode: 1, stderr: 'busy' }))
-      .mockResolvedValueOnce(execResult())
-      .mockResolvedValue(execResult());
+    const unmountFuse = vi
+      .fn<(path: string) => Promise<MountCommandResult>>()
+      .mockResolvedValueOnce(mountResult({ exitCode: 1, stderr: 'busy' }))
+      .mockResolvedValueOnce(mountResult())
+      .mockResolvedValue(mountResult());
+    const deleteFile = vi.fn(async () => undefined);
     const s3fsHost: S3FSHost = {
-      client: {} as unknown as ContainerControlClient,
-      logger,
-      execInternal
+      client: {
+        mounts: { unmountFuse, deleteFile }
+      } as unknown as ContainerControlClient,
+      logger
     };
     const outboundHost = createOutboundHost(logger);
     const registry = new MountRegistry();
@@ -93,11 +93,7 @@ describe('bucket mount destroy lifecycle cleanup', () => {
     expect(firstResult).toEqual({ mountsProcessed: 1, mountFailures: 1 });
     expect(registry.has('/mnt/r2')).toBe(true);
     expect(registry.get('/mnt/r2')?.mounted).toBe(true);
-    expect(
-      execInternal.mock.calls.some(([command]) =>
-        command.includes('fusermount -u')
-      )
-    ).toBe(true);
+    expect(unmountFuse).toHaveBeenCalledWith('/mnt/r2');
 
     const retryResult = await cleanupBucketMountsForDestroy({
       registry,
@@ -109,17 +105,8 @@ describe('bucket mount destroy lifecycle cleanup', () => {
 
     expect(retryResult).toEqual({ mountsProcessed: 1, mountFailures: 0 });
     expect(registry.activeMounts.size).toBe(0);
-    expect(
-      execInternal.mock.calls.some(
-        ([command]) =>
-          command.startsWith('rm -f ') && command.includes('passwd')
-      )
-    ).toBe(true);
-    expect(
-      execInternal.mock.calls.some(
-        ([command]) => command.startsWith('rm -f ') && command.includes('ahbe')
-      )
-    ).toBe(true);
+    expect(deleteFile).toHaveBeenCalledWith('/tmp/passwd--mnt-r2');
+    expect(deleteFile).toHaveBeenCalledWith('/tmp/ahbe--mnt-r2');
     expect(outboundHost.removeOutboundByHost).toHaveBeenCalledWith(
       'r2.internal'
     );

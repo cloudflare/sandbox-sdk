@@ -2,51 +2,6 @@ import { vi } from 'vitest';
 import type { Sandbox } from '../../src/sandbox';
 
 /**
- * Default `startProcess` mock return value used by `sandbox.exec()`.
- *
- * Tests that only need "exec succeeded" get sensible defaults without having
- * to wire the new RPC path explicitly. Override per-test where the specific
- * pid / processId / command matters.
- */
-function defaultStartProcessResponse(
-  command: string,
-  _sessionId: string
-): Promise<{
-  success: boolean;
-  processId: string;
-  pid: number;
-  command: string;
-  timestamp: string;
-}> {
-  return Promise.resolve({
-    success: true,
-    processId: `proc-${Math.random().toString(36).slice(2, 10)}`,
-    pid: 1234,
-    command,
-    timestamp: new Date().toISOString()
-  });
-}
-
-/**
- * Default `streamProcessLogs` mock that emits a single `exit` SSE frame and
- * closes. Lets the lazy `SandboxProcess.output()` / `exitCode` paths settle
- * immediately for tests that don't need a specific stream timing.
- */
-function defaultStreamProcessLogs(
-  processId: string
-): Promise<ReadableStream<Uint8Array>> {
-  return Promise.resolve(
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        const exitFrame = `data: ${JSON.stringify({ type: 'exit', exitCode: 0, processId, timestamp: new Date().toISOString() })}\n\n`;
-        controller.enqueue(new TextEncoder().encode(exitFrame));
-        controller.close();
-      }
-    })
-  );
-}
-
-/**
  * Create a test double for Sandbox's container control client.
  *
  * Keep this aligned with ContainerControlClient's public surface so tests can
@@ -54,21 +9,6 @@ function defaultStreamProcessLogs(
  */
 export function createMockControlClient(): Sandbox['client'] {
   return {
-    commands: {
-      // Default success used by internal infra paths (env setup,
-      // bucket-mount helpers, backup, etc.) that still go through the
-      // legacy `client.commands.execute` RPC. Override per-test when a
-      // specific stdout/exitCode is required.
-      execute: vi.fn().mockResolvedValue({
-        success: true,
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        command: '',
-        timestamp: new Date().toISOString()
-      }),
-      executeStream: vi.fn()
-    },
     files: {
       readFile: vi.fn(),
       readFileStream: vi.fn(),
@@ -81,36 +21,96 @@ export function createMockControlClient(): Sandbox['client'] {
       listFiles: vi.fn(),
       exists: vi.fn()
     },
-    processes: {
-      // Pre-populated default so `sandbox.exec(cmd)` succeeds in tests that
-      // don't override the mock. Override per-test when the test asserts on
-      // a specific `processId` / `pid`.
-      startProcess: vi.fn(defaultStartProcessResponse),
-      listProcesses: vi.fn(),
-      getProcess: vi.fn(),
-      killProcess: vi.fn(),
-      killAllProcesses: vi.fn(),
-      getProcessLogs: vi.fn(),
-      // Default emits an immediate exit so `.output()` / `exitCode` paths
-      // settle without test-side wiring. Override when a test needs a
-      // specific stdout/stderr/exit sequence.
-      streamProcessLogs: vi.fn(defaultStreamProcessLogs)
-    },
     ports: {
-      watchPort: vi.fn()
+      openWatch: vi.fn()
+    },
+    processes: {
+      start: vi.fn(async (command) => ({
+        id: 'mock-process-id',
+        pid: 123,
+        command,
+        state: 'running',
+        startedAt: new Date().toISOString()
+      })),
+      get: vi.fn(async (id) => ({
+        id,
+        pid: 123,
+        command: ['/bin/true'],
+        state: 'running',
+        startedAt: new Date().toISOString()
+      })),
+      list: vi.fn(async () => []),
+      openLogs: vi.fn(async () => ({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue({
+                  state: 'exited',
+                  cursor: '1',
+                  timestamp: new Date().toISOString(),
+                  exit: { code: 0, timedOut: false }
+                });
+                controller.close();
+              }
+            })
+        ),
+        cancel: vi.fn(async () => undefined),
+        [Symbol.dispose]: vi.fn()
+      })),
+      kill: vi.fn(),
+      hasActive: vi.fn(async () => false)
+    },
+    mounts: {
+      pathExists: vi.fn(async () => true),
+      ensureDirectory: vi.fn(async () => undefined),
+      chmodOwnerOnly: vi.fn(async () => undefined),
+      deleteFile: vi.fn(async () => undefined),
+      mountS3FS: vi.fn(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: '',
+        stderr: ''
+      })),
+      mountS3FSAndVerify: vi.fn(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: '',
+        stderr: ''
+      })),
+      isMountpoint: vi.fn(async () => true),
+      unmountFuse: vi.fn(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: '',
+        stderr: ''
+      })),
+      unmountFuseIfMounted: vi.fn(async () => undefined),
+      removeMountDirectory: vi.fn(async () => ({
+        success: true,
+        exitCode: 0,
+        stdout: '',
+        stderr: ''
+      }))
     },
     utils: {
       ping: vi.fn(),
-      getVersion: vi.fn(),
-      getCommands: vi.fn(),
-      createSession: vi.fn(),
-      deleteSession: vi.fn(),
-      listSessions: vi.fn()
+      getVersion: vi.fn()
+    },
+    workspace: {
+      createArchive: vi.fn(async () => ({ archivePath: '/tmp/archive.tar' })),
+      extractArchive: vi.fn(async () => undefined),
+      cleanupArchive: vi.fn(async () => undefined)
     },
     backup: {
       createArchive: vi.fn(),
-      restoreArchive: vi.fn(),
-      uploadParts: vi.fn()
+      restoreArchive: vi.fn(async () => ({ success: true })),
+      uploadArchive: vi.fn(async () => undefined),
+      uploadParts: vi.fn(async () => ({ success: true, parts: [] })),
+      prepareRestore: vi.fn(async () => ({ existingSize: 0 })),
+      downloadArchive: vi.fn(async () => undefined),
+      extractArchive: vi.fn(async () => undefined),
+      cleanupArchive: vi.fn(async () => undefined)
     },
     watch: {
       watch: vi.fn(),
@@ -121,8 +121,15 @@ export function createMockControlClient(): Sandbox['client'] {
       stopTunnelRun: vi.fn()
     },
     terminals: {
-      createTerminal: vi.fn(),
-      destroyTerminal: vi.fn()
+      create: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+      output: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      interrupt: vi.fn(),
+      terminate: vi.fn(),
+      hasActive: vi.fn()
     },
     setRetryTimeoutMs: vi.fn(),
     isWebSocketConnected: vi.fn(),

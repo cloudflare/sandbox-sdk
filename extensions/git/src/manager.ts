@@ -6,7 +6,11 @@
  * `GitManager` so the extension can drive everything through `exec`.
  */
 
-import { DEFAULT_GIT_CLONE_TIMEOUT_MS, extractRepoName } from '@repo/shared';
+import {
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
+  extractRepoName,
+  type SandboxCommand
+} from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { GitCheckoutOptions } from './types.js';
 
@@ -43,10 +47,10 @@ export function buildCloneArgs(
   repoUrl: string,
   targetDir: string,
   options: GitCheckoutOptions = {}
-): string[] {
+): SandboxCommand {
   const timeoutMs = options.cloneTimeoutMs ?? DEFAULT_GIT_CLONE_TIMEOUT_MS;
   const timeoutSeconds = gitCloneTimeoutSeconds(timeoutMs);
-  const args = [
+  const args: [string, ...string[]] = [
     'timeout',
     '-k',
     String(GIT_CLONE_KILL_GRACE_SECONDS),
@@ -73,15 +77,15 @@ export function buildCloneArgs(
   return args;
 }
 
-export function buildCheckoutArgs(branch: string): string[] {
+export function buildCheckoutArgs(branch: string): SandboxCommand {
   return ['git', 'checkout', branch];
 }
 
-export function buildGetCurrentBranchArgs(): string[] {
+export function buildGetCurrentBranchArgs(): SandboxCommand {
   return ['git', 'branch', '--show-current'];
 }
 
-export function buildListBranchesArgs(): string[] {
+export function buildListBranchesArgs(): SandboxCommand {
   return ['git', 'branch', '-a'];
 }
 

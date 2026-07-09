@@ -10,11 +10,9 @@ import type {
   Logger,
   SandboxAPI,
   SandboxBackupAPI,
-  SandboxCommandsAPI,
   SandboxControlCallback,
   SandboxFilesAPI,
   SandboxPortsAPI,
-  SandboxProcessesAPI,
   SandboxUtilsAPI,
   SandboxWatchAPI
 } from '@repo/shared';
@@ -143,11 +141,16 @@ export class ContainerControlConnection {
   private ws: WebSocket | null = null;
   private connected = false;
   private connectPromise: Promise<void> | null = null;
+  private activeUpgradeAbortController: AbortController | null = null;
   private readonly containerStub: ContainerFetchStub;
   private readonly port: number;
   private readonly logger: Logger;
   private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
+  private readonly disposalError = new Error(
+    'Container control connection was disconnected'
+  );
+  private disposed = false;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -192,6 +195,7 @@ export class ContainerControlConnection {
   }
 
   async connect(): Promise<void> {
+    if (this.disposed) throw this.disposalError;
     if (this.connected) return;
 
     if (this.connectPromise) {
@@ -207,28 +211,24 @@ export class ContainerControlConnection {
   }
 
   disconnect(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.activeUpgradeAbortController?.abort();
+    this.activeUpgradeAbortController = null;
+    if (this.ws) {
+      // Unbind first so close/error delivery from transport abortion cannot
+      // invoke owner recovery for an explicitly disposed connection.
+      this.ws.removeEventListener('close', this.onWebSocketClose);
+      this.ws.removeEventListener('error', this.onWebSocketError);
+    }
+    this.transport.abort(this.disposalError);
     try {
       (this.stub as unknown as Disposable)[Symbol.dispose]?.();
     } catch {
       // Stub may already be disposed
     }
-    if (this.ws) {
-      // Unbind first so a late `close` / `error` event dispatched by
-      // the runtime after we've decided this connection is dead can't
-      // reach a successor that the owner installed in our place — see
-      // the WebSocket-listener-unbinding tests in container-connection
-      // for the race this prevents.
-      this.ws.removeEventListener('close', this.onWebSocketClose);
-      this.ws.removeEventListener('error', this.onWebSocketError);
-      try {
-        this.ws.close();
-      } catch {
-        // WebSocket may already be closed
-      }
-      this.ws = null;
-    }
+    this.ws = null;
     this.connected = false;
-    this.connectPromise = null;
   }
 
   /**
@@ -289,6 +289,11 @@ export class ContainerControlConnection {
     try {
       const response = await this.fetchUpgradeWithRetry();
 
+      if (this.disposed) {
+        this.closeUpgradeWebSocket(response);
+        throw this.disposalError;
+      }
+
       if (response.status !== 101) {
         const containerUnavailable =
           await this.parseContainerUnavailableUpgradeError(response);
@@ -343,12 +348,23 @@ export class ContainerControlConnection {
     } catch (error) {
       this.connected = false;
       this.transport.abort(error);
+      if (this.disposed) throw this.disposalError;
       this.logger.error(
         'ContainerControlConnection failed',
         error instanceof Error ? error : new Error(String(error))
       );
       this.fireOnClose();
       throw error;
+    }
+  }
+
+  private closeUpgradeWebSocket(response: Response): void {
+    const ws = (response as unknown as { webSocket?: WebSocket }).webSocket;
+    if (!ws) return;
+    try {
+      ws.close(3000, this.disposalError.message);
+    } catch {
+      // A late upgrade may already have closed its WebSocket.
     }
   }
 
@@ -431,6 +447,7 @@ export class ContainerControlConnection {
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
     const controller = new AbortController();
+    this.activeUpgradeAbortController = controller;
     const timeout = setTimeout(
       () => controller.abort(),
       DEFAULT_CONNECT_TIMEOUT_MS
@@ -445,9 +462,17 @@ export class ContainerControlConnection {
         },
         signal: controller.signal
       });
-      return await this.containerStub.fetch(request);
+      const response = await this.containerStub.fetch(request);
+      if (this.disposed) {
+        this.closeUpgradeWebSocket(response);
+        throw this.disposalError;
+      }
+      return response;
     } finally {
       clearTimeout(timeout);
+      if (this.activeUpgradeAbortController === controller) {
+        this.activeUpgradeAbortController = null;
+      }
     }
   }
 }
@@ -470,6 +495,14 @@ export class DeferredTransport implements RpcTransport {
   #error?: unknown;
 
   activate(ws: WebSocket): void {
+    if (this.#error) {
+      const message =
+        this.#error instanceof Error
+          ? this.#error.message
+          : String(this.#error);
+      ws.close(3000, message);
+      throw this.#error;
+    }
     this.#ws = ws;
 
     ws.addEventListener('message', (event: MessageEvent) => {
@@ -510,6 +543,7 @@ export class DeferredTransport implements RpcTransport {
   }
 
   async send(message: string): Promise<void> {
+    if (this.#error) throw this.#error;
     if (this.#ws) {
       this.#ws.send(message);
     } else {
@@ -530,13 +564,19 @@ export class DeferredTransport implements RpcTransport {
     this.#fail(reason instanceof Error ? reason : new Error(String(reason)));
     if (this.#ws) {
       const message = reason instanceof Error ? reason.message : String(reason);
-      this.#ws.close(3000, message);
+      try {
+        this.#ws.close(3000, message);
+      } catch {
+        // The transport remains failed even if its WebSocket is already closed.
+      }
     }
   }
 
   #fail(err: unknown): void {
     if (this.#error) return;
     this.#error = err;
+    this.#sendQueue = [];
+    this.#receiveQueue = [];
     this.#receiveRejecter?.(err);
     this.#receiveResolver = undefined;
     this.#receiveRejecter = undefined;

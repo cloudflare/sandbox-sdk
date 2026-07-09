@@ -1,9 +1,16 @@
+import { ErrorCode as SharedErrorCode } from '@repo/shared/errors';
 import { describe, expect, it } from 'vitest';
 import {
   createErrorFromResponse,
   ErrorCode,
   OperationInterruptedError
 } from '../src/errors';
+
+describe('SDK error exports', () => {
+  it('exports the current shared ErrorCode registry directly', () => {
+    expect(ErrorCode).toBe(SharedErrorCode);
+  });
+});
 
 describe('OperationInterruptedError', () => {
   it('translates OPERATION_INTERRUPTED into a typed public-safe SDK error', () => {

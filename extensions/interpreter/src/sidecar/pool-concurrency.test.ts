@@ -3,7 +3,7 @@
  *
  * reserveExecutorForContext() holds the per-language mutex while spawning child
  * processes (~300-500ms), serializing parallel context creation. These tests mock
- * createProcess with a controlled delay and assert parallel completion time.
+ * lifecycle createProcess with a controlled delay and assert parallel completion time.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -48,7 +48,7 @@ function createMockChildProcess() {
 
 /**
  * Creates a ProcessPoolManager with minSize: 0 (skips pre-warming) and replaces
- * the private createProcess with a mock that sleeps for `spawnDelayMs`. Returns
+ * lifecycle createProcess with a mock that sleeps for `spawnDelayMs`. Returns
  * a tracker recording spawn start/end timestamps for concurrency assertions.
  *
  * Uses env var overrides because the config parser treats `0 || defaultMinSize`
@@ -89,7 +89,7 @@ function createTestPool(
     spawnEnds: [] as number[]
   };
 
-  (pool as any).createProcess = async (
+  (pool as any).lifecycle.createProcess = async (
     language: InterpreterLanguage,
     sessionId?: string
   ): Promise<InterpreterProcess> => {
@@ -326,8 +326,10 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
 
       // Make the next createProcess call fail
       let callCount = 0;
-      const originalCreate = (pool as any).createProcess.bind(pool);
-      (pool as any).createProcess = async (...args: any[]) => {
+      const originalCreate = (pool as any).lifecycle.createProcess.bind(
+        (pool as any).lifecycle
+      );
+      (pool as any).lifecycle.createProcess = async (...args: any[]) => {
         callCount++;
         if (callCount === 2) {
           throw new Error('Simulated spawn failure');
@@ -400,8 +402,10 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       const MAX = 3;
       ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
 
-      const originalCreate = (pool as any).createProcess.bind(pool);
-      (pool as any).createProcess = async (...args: any[]) => {
+      const originalCreate = (pool as any).lifecycle.createProcess.bind(
+        (pool as any).lifecycle
+      );
+      (pool as any).lifecycle.createProcess = async (...args: any[]) => {
         const executor = await originalCreate(...args);
         executor.process.exitCode = 1;
         return executor;
@@ -417,8 +421,10 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
 
       let shouldDie = true;
-      const originalCreate = (pool as any).createProcess.bind(pool);
-      (pool as any).createProcess = async (...args: any[]) => {
+      const originalCreate = (pool as any).lifecycle.createProcess.bind(
+        (pool as any).lifecycle
+      );
+      (pool as any).lifecycle.createProcess = async (...args: any[]) => {
         const executor = await originalCreate(...args);
         if (shouldDie) {
           executor.process.exitCode = 1;

@@ -3,45 +3,29 @@ import type {
   BackupOptions,
   CheckChangesOptions,
   CheckChangesResult,
-  CommandExecuteOptions,
+  CreateTerminalOptions,
   DirectoryBackup,
   ExecOptions,
-  ExecResult,
-  ExecutionSession,
   FileEncoding,
   ISandbox,
   ListFilesOptions,
-  LogEvent,
   MountBucketOptions,
   PortWatchEvent,
-  Process,
-  ProcessOptions,
-  ProcessQueryOptions,
   ProcessStatus,
   ReadFileResult,
   ReadFileStreamResult,
   RestoreBackupResult,
-  SandboxExecOptions,
+  SandboxCommand,
   SandboxOptions,
-  SandboxProcess,
-  SandboxProcessPromise,
-  SandboxTerminal,
-  SessionOptions,
-  TerminalCreateOptions,
-  TerminalOptions,
-  WaitForExitResult,
-  WaitForLogResult,
+  Terminal,
   WaitForPortOptions,
   WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
-  filterEnvVars,
   getEnvString,
   logCanonicalEvent,
   partitionEnvVars,
-  type SessionDeleteResult,
-  shellEscape,
   TraceContext
 } from '@repo/shared';
 import {
@@ -54,6 +38,7 @@ import {
   BackupService
 } from './backup/backup-service';
 import { ContainerControlClient } from './container-control';
+import { RuntimeControlClient } from './container-control/runtime-client';
 import {
   CurrentRuntimeIdentity,
   type RuntimeIdentity
@@ -77,14 +62,19 @@ import {
   type PreviewForwardingContainer,
   PreviewService
 } from './preview/service';
+import { createSandboxProcess } from './processes';
 import {
-  createSandboxProcessPromise,
-  resolveStdinForRpc,
-  type SandboxProcessDeps,
-  SandboxProcessImpl,
-  toRpcSandboxProcess
-} from './process';
-import { createSandboxTerminal, proxyTerminal } from './pty';
+  type ProcessCapabilityControl,
+  ProcessCapabilityTarget
+} from './processes/process-capability';
+import { ProcessLifecycle } from './processes/process-lifecycle';
+import { openRemoteSubscription } from './processes/remote-subscription';
+import type { ProcessRPCDescriptor } from './processes/rpc-types';
+import { terminalHandle as terminalHandleFromSnapshot } from './pty';
+import {
+  ResourceActivityGate,
+  type ResourceActivityOperation
+} from './resource-activity-gate';
 import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
   SandboxSecurityError,
@@ -111,9 +101,69 @@ import { SDK_VERSION } from './version';
 
 export { ContainerProxy };
 
-type ExecuteResponse = Awaited<
-  ReturnType<ContainerControlClient['commands']['execute']>
->;
+function validateExecArgv(command: SandboxCommand): SandboxCommand {
+  if (!Array.isArray(command)) {
+    throw invalidCommand('exec() requires argv as an array of strings.');
+  }
+  if (command.length === 0) {
+    throw invalidCommand('exec() requires a non-empty argv command.');
+  }
+  const [executable] = command;
+  if (typeof executable !== 'string' || executable.length === 0) {
+    throw invalidCommand('exec() requires a non-empty executable.');
+  }
+  for (const [index, value] of command.entries()) {
+    if (typeof value !== 'string') {
+      throw invalidCommand(`exec() argv[${index}] must be a string.`);
+    }
+  }
+  return command;
+}
+
+function invalidCommand(
+  message: string
+): SandboxError<Record<string, unknown>> {
+  return new SandboxError({
+    code: ErrorCode.INVALID_COMMAND,
+    message,
+    context: {},
+    httpStatus: getHttpStatus(ErrorCode.INVALID_COMMAND),
+    suggestion: getSuggestion(ErrorCode.INVALID_COMMAND, {}),
+    timestamp: new Date().toISOString()
+  });
+}
+
+function runtimeInterrupted(
+  operation: string,
+  effect: 'none' | 'unknown'
+): OperationInterruptedError {
+  const context: OperationInterruptedContext = {
+    reason: 'runtime_replaced',
+    operation,
+    admitted: true,
+    retryable: false,
+    effect
+  };
+  return new OperationInterruptedError({
+    code: ErrorCode.OPERATION_INTERRUPTED,
+    message: `Sandbox operation ${operation} was interrupted because the runtime changed`,
+    context,
+    httpStatus: 409,
+    timestamp: new Date().toISOString()
+  });
+}
+
+function processCapabilityControl(
+  client: ContainerControlClient
+): ProcessCapabilityControl {
+  const processes = client.processesWithoutActivity();
+  return {
+    getProcess: (id) => processes.get(id),
+    openLogs: (id, options) => processes.openLogs(id, options),
+    openPortWatch: (port, options) => client.ports.openWatch(port, options),
+    kill: (id, signal) => processes.kill(id, signal)
+  };
+}
 
 type SandboxConfiguration = {
   sandboxName?: {
@@ -153,39 +203,23 @@ type ConfigurableSandboxStub = {
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
-  createSession: (opts?: SessionOptions) => Promise<ExecutionSession>;
-  getSession: (sessionId: string) => Promise<ExecutionSession>;
   callExtension: (
     extensionName: string,
     method: string,
     args: unknown[]
   ) => Promise<unknown>;
-  createTerminal: (options: TerminalCreateOptions) => Promise<void>;
-  destroyTerminal: (id: string) => Promise<void>;
-  /**
-   * Unified exec primitive. Returns the resolved `SandboxProcess` (the
-   * client-side `enhancedMethods.exec` wraps this in a
-   * `SandboxProcessPromise` so the thenable convenience methods are
-   * available at the call site).
-   */
+  createTerminal: (options: CreateTerminalOptions) => Promise<Terminal>;
+  getTerminal: (id: string) => Promise<Terminal | null>;
+  listTerminals: () => Promise<Terminal[]>;
   exec: (
-    command: string | string[],
-    options?: SandboxExecOptions
-  ) => Promise<SandboxProcess>;
-  getProcess: (
-    id: string,
-    sessionId?: string
-  ) => Promise<SandboxProcess | null>;
-  run: (
-    command: string,
-    options?: ExecOptions & { sessionId?: string }
-  ) => Promise<ExecResult>;
-  runWithSessionToken: (
-    command: string,
-    sessionId: string,
+    command: SandboxCommand,
     options?: ExecOptions
-  ) => Promise<ExecResult>;
+  ) => Promise<ProcessRPCDescriptor>;
+  getProcess: (id: string) => Promise<ProcessRPCDescriptor | null>;
+  listProcesses: () => Promise<ProcessStatus[]>;
 };
+
+export type SandboxClient<T> = Omit<T, keyof ISandbox> & ISandbox;
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -393,11 +427,6 @@ function withSandboxOperationContext<TArgs extends unknown[], TResult>(
         const caught = (result as unknown as Promise<unknown>).catch(
           (error: unknown) => translatePlatformInterruption(error, operation)
         );
-        // Preserve any own properties the source thenable attached to itself
-        // (e.g. `SandboxProcessPromise.output` / `.text` / `.json` / `.kill`).
-        // `Promise.prototype.catch` returns a bare promise, so without this
-        // copy those thenable-augmenting methods disappear.
-        Object.assign(caught, result);
         return caught as TResult;
       }
       return result;
@@ -411,7 +440,7 @@ export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
   options?: SandboxOptions
-): T {
+): SandboxClient<T> {
   const sanitizedId = sanitizeSandboxId(id);
   const effectiveId = options?.normalizeId
     ? sanitizedId.toLowerCase()
@@ -459,120 +488,50 @@ export function getSandbox<T extends Sandbox<any>>(
 
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
+    exec: async (command: SandboxCommand, execOptions?: ExecOptions) =>
+      createSandboxProcess(
+        await stub.exec(command, sanitizeExecOptions(execOptions))
+      ),
+    getProcess: async (processId: string) => {
+      const descriptor = await stub.getProcess(processId);
+      return descriptor ? createSandboxProcess(descriptor) : null;
+    },
+    listProcesses: () => stub.listProcesses(),
 
-    // Unified exec (mirrors `ctx.container.exec()` contract). Wrapped in
-    // `createSandboxProcessPromise` so callers get the Bun.spawn-style
-    // thenable that exposes `.output()` / `.text()` / `.json()` / `.kill()`
-    // directly on the returned promise.
-    exec: (command: string | string[], execOptions?: SandboxExecOptions) =>
-      createSandboxProcessPromise(stub.exec(command, execOptions)),
-    run: (command: string, runOptions?: ExecOptions & { sessionId?: string }) =>
-      stub.run(command, runOptions),
-    getProcess: (id: string, options?: ProcessQueryOptions) =>
-      options?.sessionId === undefined
-        ? stub.getProcess(id)
-        : stub.getProcess(id, { sessionId: options.sessionId }),
-    listProcesses: (options?: ProcessQueryOptions) =>
-      options?.sessionId === undefined
-        ? stub.listProcesses()
-        : stub.listProcesses({ sessionId: options.sessionId }),
     writeFile: (
       path: string,
       content: string | ReadableStream<Uint8Array>,
-      fileOptions: { encoding?: string; sessionId?: string } = {}
-    ) =>
-      stub.writeFile(path, content, {
-        ...fileOptions,
-        ...(fileOptions.sessionId !== undefined && {
-          sessionId: fileOptions.sessionId
-        })
-      }),
+      fileOptions: { encoding?: string } = {}
+    ) => stub.writeFile(path, content, fileOptions),
     readFile: (
       path: string,
       fileOptions:
-        | { encoding: 'none'; sessionId?: string }
-        | { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string } = {}
+        | { encoding: 'none' }
+        | { encoding?: Exclude<FileEncoding, 'none'> } = {}
     ) => {
-      const options = {
-        ...fileOptions,
-        ...(fileOptions.sessionId !== undefined && {
-          sessionId: fileOptions.sessionId
-        })
-      };
-
-      if (options.encoding === 'none') {
-        return stub.readFile(path, options);
+      if (fileOptions.encoding === 'none') {
+        return stub.readFile(path, fileOptions);
       }
-
-      return stub.readFile(path, options);
+      return stub.readFile(path, fileOptions);
     },
-    readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
-      stub.readFileStream(path, {
-        ...fileOptions,
-        ...(fileOptions.sessionId !== undefined && {
-          sessionId: fileOptions.sessionId
-        })
-      }),
-    mkdir: (
-      path: string,
-      mkdirOptions: { recursive?: boolean; sessionId?: string } = {}
-    ) =>
-      stub.mkdir(path, {
-        ...mkdirOptions,
-        ...(mkdirOptions.sessionId !== undefined && {
-          sessionId: mkdirOptions.sessionId
-        })
-      }),
-    deleteFile: (path: string, options: { sessionId?: string } = {}) =>
-      options.sessionId === undefined
-        ? stub.deleteFile(path)
-        : stub.deleteFile(path, { sessionId: options.sessionId }),
-    renameFile: (
-      oldPath: string,
-      newPath: string,
-      options: { sessionId?: string } = {}
-    ) =>
-      options.sessionId === undefined
-        ? stub.renameFile(oldPath, newPath)
-        : stub.renameFile(oldPath, newPath, { sessionId: options.sessionId }),
-    moveFile: (
-      sourcePath: string,
-      destinationPath: string,
-      options: { sessionId?: string } = {}
-    ) =>
-      options.sessionId === undefined
-        ? stub.moveFile(sourcePath, destinationPath)
-        : stub.moveFile(sourcePath, destinationPath, {
-            sessionId: options.sessionId
-          }),
+    readFileStream: (path: string) => stub.readFileStream(path),
+    mkdir: (path: string, mkdirOptions: { recursive?: boolean } = {}) =>
+      stub.mkdir(path, mkdirOptions),
+    deleteFile: (path: string) => stub.deleteFile(path),
+    renameFile: (oldPath: string, newPath: string) =>
+      stub.renameFile(oldPath, newPath),
+    moveFile: (sourcePath: string, destinationPath: string) =>
+      stub.moveFile(sourcePath, destinationPath),
     listFiles: (path: string, listOptions?: ListFilesOptions) =>
-      stub.listFiles(path, {
-        ...listOptions,
-        sessionId: listOptions?.sessionId
-      }),
-    exists: (path: string, options: { sessionId?: string } = {}) =>
-      options.sessionId === undefined
-        ? stub.exists(path)
-        : stub.exists(path, { sessionId: options.sessionId }),
-    createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
-      const rpcSession = await stub.createSession(opts);
-      return rpcSession as ExecutionSession;
-    },
-    getSession: async (sessionId: string): Promise<ExecutionSession> => {
-      const rpcSession = await stub.getSession(sessionId);
-      return rpcSession as ExecutionSession;
-    },
+      stub.listFiles(path, listOptions),
     watch: (path: string, options: WatchOptions = {}) =>
-      stub.watch(path, {
-        ...options,
-        sessionId: options.sessionId
-      }),
+      stub.watch(path, options),
     checkChanges: (path: string, options: CheckChangesOptions = {}) =>
-      stub.checkChanges(path, {
-        ...options,
-        sessionId: options.sessionId
-      }),
-    terminal: (opts?: TerminalOptions) => createSandboxTerminal(stub, opts),
+      stub.checkChanges(path, options),
+    createTerminal: (options: CreateTerminalOptions) =>
+      stub.createTerminal(options),
+    getTerminal: (id: string) => stub.getTerminal(id),
+    listTerminals: () => stub.listTerminals(),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
@@ -587,7 +546,9 @@ export function getSandbox<T extends Sandbox<any>>(
 
   // Proxy intercepts enhanced methods, passes all others to stub directly.
   // We must access target[prop] directly (not via Reflect.get with receiver)
-  // to preserve the RPC stub's internal Proxy handling.
+  // to preserve the RPC stub's internal Proxy handling. The final assertion is
+  // isolated to this Workers RPC boundary where process wire descriptors are
+  // replaced by caller-local ISandbox handles.
   return new Proxy(stub, {
     get(target, prop) {
       if (typeof prop === 'string' && prop in enhancedMethods) {
@@ -629,7 +590,16 @@ export function getSandbox<T extends Sandbox<any>>(
         }
       );
     }
-  }) as T;
+  }) as unknown as SandboxClient<T>;
+}
+
+function sanitizeExecOptions(options?: ExecOptions): ExecOptions | undefined {
+  if (!options) return undefined;
+  const sanitized: ExecOptions = {};
+  if (options.cwd !== undefined) sanitized.cwd = options.cwd;
+  if (options.env !== undefined) sanitized.env = options.env;
+  if (options.timeout !== undefined) sanitized.timeout = options.timeout;
+  return sanitized;
 }
 
 function getConcreteExtensionMethod(
@@ -671,7 +641,7 @@ export function connect(stub: {
   };
 }
 
-export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
+export class Sandbox<Env = unknown> extends Container<Env> {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
@@ -699,6 +669,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
   private previewService: PreviewService;
+  private resourceActivityGate: ResourceActivityGate;
+  private runtimeControlClient: RuntimeControlClient;
+  private processLifecycle: ProcessLifecycle;
+  private controlSessionActivity: ResourceActivityOperation | null = null;
 
   private r2AccessKeyId: string | null = null;
   private r2SecretAccessKey: string | null = null;
@@ -794,15 +768,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return Math.max(120_000, startupBudgetMs + 30_000);
   }
 
+  private renewActivityTimeoutIfAvailable(): void {
+    const renewActivityTimeout = this.renewActivityTimeout;
+    if (typeof renewActivityTimeout === 'function') {
+      renewActivityTimeout.call(this);
+    }
+  }
+
   /**
    * Create the single control-plane client used for all SDK operations.
    */
   private createClient(): ContainerControlClient {
-    // Access the base Container's private inflightRequests counter so
-    // the alarm loop's isActivityExpired() check sees active work and
-    // skips the sleepAfterMs comparison while RPC calls or returned
-    // streams are still active over the capnweb session.
-    const self = this as unknown as { inflightRequests: number };
     return new ContainerControlClient({
       stub: this,
       port: 3000,
@@ -816,29 +792,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // returns a ReadableStream resolves its promise long before the
       // stream is actually drained. Instead, ContainerControlClient polls
       // capnweb's session stats and reports busy/idle *transitions* of the
-      // whole session. We treat one transition as equivalent to one
-      // in-flight request: increment on busy, decrement on idle. See the
-      // file-level comment in container-control/client.ts for details.
+      // current session. The resource activity gate owns that operation
+      // until the session returns to idle. See the file-level comment in
+      // container-control/client.ts for details.
       onActivity: () => {
-        // Called at the start of each RPC call AND on every busy-poll
-        // tick while the session has work in flight. Equivalent to the
-        // top of containerFetch(): push the sleepAfter deadline forward.
-        this.renewActivityTimeout();
+        this.resourceActivityGate.recordActivity();
+      },
+      onOperationStarted: () => {
+        const activity = this.resourceActivityGate.beginOperation();
+        return {
+          beforeCall: activity.beforeCall.then(() =>
+            this.ensureContainerRunning()
+          ),
+          finish: activity.finish
+        };
       },
       onSessionBusy: () => {
-        // Idle → busy: a new RPC call started or a stream return is now
-        // in flight. Mark the DO busy so isActivityExpired() returns false
-        // until the session goes idle again.
-        self.inflightRequests = (self.inflightRequests ?? 0) + 1;
+        this.controlSessionActivity =
+          this.resourceActivityGate.beginOperation();
       },
       onSessionIdle: () => {
-        // Busy → idle: all RPC promises have settled and all stream exports
-        // have been released. Equivalent to containerFetch's finally block —
-        // decrement and restart the inactivity window from now.
-        self.inflightRequests = Math.max(0, (self.inflightRequests ?? 0) - 1);
-        if (self.inflightRequests === 0) {
-          this.renewActivityTimeout();
-        }
+        this.controlSessionActivity?.finish();
+        this.controlSessionActivity = null;
       }
     });
   }
@@ -876,8 +851,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       getEnv: () => this.env,
       logger: this.logger,
       getClient: () => this.client,
-      execWithSession: (command, sessionId, options) =>
-        this.execWithSession(command, sessionId, options),
       currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime
     });
@@ -893,6 +866,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       () => this.tunnelExitHandler,
       this.logger
     );
+    this.resourceActivityGate = new ResourceActivityGate(
+      () => this.renewActivityTimeoutIfAvailable(),
+      () => super.onActivityExpired()
+    );
+    this.runtimeControlClient = new RuntimeControlClient({
+      getTcpPort: (port) => {
+        const container = this.getPreviewForwardingContainer();
+        if (!container) throw new Error('Container runtime is not available');
+        return container.getTcpPort(port);
+      },
+      beginNonWakingOperation: () =>
+        this.resourceActivityGate.beginNonWakingOperation(),
+      logger: this.logger
+    });
+    this.currentRuntime.onChange(() => this.runtimeControlClient.dispose());
+    this.processLifecycle = new ProcessLifecycle({
+      currentRuntime: this.currentRuntime,
+      runtimeClient: this.runtimeControlClient,
+      beginNonWakingOperation: () =>
+        this.resourceActivityGate.beginNonWakingOperation()
+    });
 
     this.client = this.createClient();
     this.bucketMounts = new BucketMountService({
@@ -904,7 +898,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       currentLifetime: this.currentLifetime,
       getR2AccessKeyID: () => this.r2AccessKeyId,
       getR2SecretAccessKey: () => this.r2SecretAccessKey,
-      execInternal: (command) => this.execInternal(command),
       getOutboundHost: () => this.getMountOutboundHost()
     });
     this.previewService = new PreviewService({
@@ -1244,8 +1237,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.currentLifetime.rotate();
       await this.currentRuntime.clear();
 
-      // Unmount all mounted buckets and cleanup. This runs before disconnecting
-      // the control client because FUSE teardown uses execInternal.
+      // Unmount all mounted buckets and cleanup before disconnecting the
+      // control client used by the mount lifecycle RPCs.
       ({ mountsProcessed, mountFailures } =
         await this.bucketMounts.cleanupForDestroy());
       if (mountFailures > 0) {
@@ -1323,6 +1316,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async stop(
     signal?: Parameters<Container<Env>['stop']>[0]
   ): Promise<void> {
+    this.runtimeControlClient.dispose();
+    this.client.disconnect();
     await this.currentRuntime.clear();
     await this.previewService.clearActivePreviewPorts();
     await super.stop(signal);
@@ -1376,6 +1371,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
+    this.runtimeControlClient.dispose();
     await this.currentRuntime.clear();
     await this.previewService.clearActivePreviewPorts();
 
@@ -1423,97 +1419,126 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       portParam
     );
 
-    const state = await this.getState();
-    const containerRunning = this.ctx.container?.running;
+    const activity = this.resourceActivityGate.beginOperation();
+    try {
+      await activity.beforeCall;
 
-    // Start container if persisted state is not healthy OR if runtime reports container is not running.
-    // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
-    // but Docker container is gone).
-    const staleStateDetected =
-      state.status === 'healthy' && containerRunning === false;
-    if (state.status !== 'healthy' || containerRunning === false) {
-      try {
-        await this.startAndWaitForPorts({
-          ports: port,
-          cancellationOptions: {
-            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-            waitInterval: this.containerTimeouts.waitIntervalMS,
-            abort: request.signal
-          }
-        });
-      } catch (e) {
-        // 1. Provisioning: Container VM not yet available
-        if (this.isNoInstanceError(e)) {
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.CONTAINER_UNAVAILABLE,
-            message:
-              'Container is currently provisioning. This can take several minutes on first deployment.',
-            context: { reason: 'container_starting', retryable: true },
-            httpStatus: 503,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'The container is still being provisioned. Retry the operation in a moment.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 503,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '10'
+      const state = await this.getState();
+      const containerRunning = this.ctx.container?.running;
+
+      // Start container if persisted state is not healthy OR if runtime reports container is not running.
+      // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
+      // but Docker container is gone).
+      const staleStateDetected =
+        state.status === 'healthy' && containerRunning === false;
+      if (state.status !== 'healthy' || containerRunning === false) {
+        try {
+          await this.startAndWaitForPorts({
+            ports: port,
+            cancellationOptions: {
+              instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+              portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+              waitInterval: this.containerTimeouts.waitIntervalMS,
+              abort: request.signal
             }
           });
-        }
-
-        // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
-        // These will never recover on retry — fail fast so the caller gets a clear signal.
-        // Checked before transient to avoid broad transient patterns (e.g., "container did not
-        // start") masking specific permanent causes in wrapped error messages.
-        if (this.isPermanentStartupError(e)) {
-          this.logger.error(
-            'Permanent container startup error, returning 500',
-            e instanceof Error ? e : new Error(String(e))
-          );
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.INTERNAL_ERROR,
-            message:
-              'Container failed to start due to a permanent error. Check your container configuration.',
-            context: {
-              phase: 'startup',
-              error: e instanceof Error ? e.message : String(e)
-            },
-            httpStatus: 500,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'This error will not resolve with retries. Check container logs, image name, and resource limits.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 500,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-
-        // 3. Transient startup errors: Container starting, port not ready yet
-        if (this.isTransientStartupError(e)) {
-          // If startup failed after detecting stale state, the container runtime is likely stuck
-          // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
-          // next request gets a fresh instance with a clean container binding. This mirrors the
-          // recovery pattern in the base Container class for 'Network connection lost' errors.
-          if (staleStateDetected) {
-            this.logger.warn('container.startup', {
-              outcome: 'stale_state_abort',
-              staleStateDetected: true,
-              error: e instanceof Error ? e.message : String(e)
-            });
-            this.ctx.abort();
-          } else {
-            this.logger.debug('container.startup', {
-              outcome: 'transient_error',
-              staleStateDetected,
-              error: e instanceof Error ? e.message : String(e)
+        } catch (e) {
+          // 1. Provisioning: Container VM not yet available
+          if (this.isNoInstanceError(e)) {
+            const errorBody: ErrorResponse = {
+              code: ErrorCode.CONTAINER_UNAVAILABLE,
+              message:
+                'Container is currently provisioning. This can take several minutes on first deployment.',
+              context: { reason: 'container_starting', retryable: true },
+              httpStatus: 503,
+              timestamp: new Date().toISOString(),
+              suggestion:
+                'The container is still being provisioned. Retry the operation in a moment.'
+            };
+            return new Response(JSON.stringify(errorBody), {
+              status: 503,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': '10'
+              }
             });
           }
+
+          // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
+          // These will never recover on retry — fail fast so the caller gets a clear signal.
+          // Checked before transient to avoid broad transient patterns (e.g., "container did not
+          // start") masking specific permanent causes in wrapped error messages.
+          if (this.isPermanentStartupError(e)) {
+            this.logger.error(
+              'Permanent container startup error, returning 500',
+              e instanceof Error ? e : new Error(String(e))
+            );
+            const errorBody: ErrorResponse = {
+              code: ErrorCode.INTERNAL_ERROR,
+              message:
+                'Container failed to start due to a permanent error. Check your container configuration.',
+              context: {
+                phase: 'startup',
+                error: e instanceof Error ? e.message : String(e)
+              },
+              httpStatus: 500,
+              timestamp: new Date().toISOString(),
+              suggestion:
+                'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+            };
+            return new Response(JSON.stringify(errorBody), {
+              status: 500,
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+
+          // 3. Transient startup errors: Container starting, port not ready yet
+          if (this.isTransientStartupError(e)) {
+            // If startup failed after detecting stale state, the container runtime is likely stuck
+            // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
+            // next request gets a fresh instance with a clean container binding. This mirrors the
+            // recovery pattern in the base Container class for 'Network connection lost' errors.
+            if (staleStateDetected) {
+              this.logger.warn('container.startup', {
+                outcome: 'stale_state_abort',
+                staleStateDetected: true,
+                error: e instanceof Error ? e.message : String(e)
+              });
+              this.ctx.abort();
+            } else {
+              this.logger.debug('container.startup', {
+                outcome: 'transient_error',
+                staleStateDetected,
+                error: e instanceof Error ? e.message : String(e)
+              });
+            }
+            const errorBody: ErrorResponse = {
+              code: ErrorCode.CONTAINER_UNAVAILABLE,
+              message: 'Container is starting. Please retry in a moment.',
+              context: { reason: 'container_starting', retryable: true },
+              httpStatus: 503,
+              timestamp: new Date().toISOString(),
+              suggestion:
+                'The container is not ready yet. Retry the operation in a moment.'
+            };
+            return new Response(JSON.stringify(errorBody), {
+              status: 503,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': '3'
+              }
+            });
+          }
+
+          // 4. Unrecognized errors: Treat as transient since retries are safe
+          // and new platform error messages may not yet be in our pattern list.
+          this.logger.warn('container.startup', {
+            outcome: 'unrecognized_error',
+            staleStateDetected,
+            error: e instanceof Error ? e.message : String(e)
+          });
           const errorBody: ErrorResponse = {
             code: ErrorCode.CONTAINER_UNAVAILABLE,
             message: 'Container is starting. Please retry in a moment.',
@@ -1527,39 +1552,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             status: 503,
             headers: {
               'Content-Type': 'application/json',
-              'Retry-After': '3'
+              'Retry-After': '5'
             }
           });
         }
-
-        // 4. Unrecognized errors: Treat as transient since retries are safe
-        // and new platform error messages may not yet be in our pattern list.
-        this.logger.warn('container.startup', {
-          outcome: 'unrecognized_error',
-          staleStateDetected,
-          error: e instanceof Error ? e.message : String(e)
-        });
-        const errorBody: ErrorResponse = {
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          message: 'Container is starting. Please retry in a moment.',
-          context: { reason: 'container_starting', retryable: true },
-          httpStatus: 503,
-          timestamp: new Date().toISOString(),
-          suggestion:
-            'The container is not ready yet. Retry the operation in a moment.'
-        };
-        return new Response(JSON.stringify(errorBody), {
-          status: 503,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': '5'
-          }
-        });
       }
+
+      // Delegate to parent for the actual fetch (handles TCP port access internally)
+      return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    } finally {
+      activity.finish();
+    }
+  }
+
+  private async ensureContainerRunning(signal?: AbortSignal): Promise<void> {
+    const state = await this.getState();
+    if (state.status === 'healthy' && this.ctx.container?.running === true) {
+      return;
     }
 
-    // Delegate to parent for the actual fetch (handles TCP port access internally)
-    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    await this.start({
+      envVars: this.envVars,
+      entrypoint: this.entrypoint,
+      enableInternet: this.enableInternet,
+      labels: this.labels
+    });
+
+    if (signal?.aborted) {
+      throw new Error('Operation was aborted');
+    }
   }
 
   /**
@@ -1697,21 +1718,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return { request, port };
   }
 
-  /**
-   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
-   * When keepAlive is disabled, calls parent implementation which stops the container
-   */
   override async onActivityExpired(): Promise<void> {
-    if (this.keepAliveEnabled) {
-      this.logger.debug(
-        'Activity expired but keepAlive is enabled - container will stay alive'
-      );
-      // Do nothing - don't call stop(), container stays alive
-    } else {
-      // Default behavior: stop the container
-      this.logger.debug('Activity expired - stopping container');
-      await super.onActivityExpired();
-    }
+    await this.resourceActivityGate.runExpiry(
+      {
+        availability: async () => {
+          const state = await this.getState();
+          if (state.status !== 'healthy') return 'absent';
+          if (this.ctx.container?.running === false) return 'absent';
+          if (this.ctx.container?.running !== true) return 'unknown';
+          return 'available';
+        },
+        processesHasActive: () =>
+          this.client.processesWithoutActivity().hasActive(),
+        terminalsHasActive: () =>
+          this.client.terminalsWithoutActivity().hasActive()
+      },
+      this.keepAliveEnabled
+    );
   }
 
   private getPreviewForwardingContainer(): PreviewForwardingContainerState['container'] {
@@ -1801,18 +1824,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  terminal(_options?: TerminalOptions): SandboxTerminal {
-    throw new Error(
-      'terminal must be called on the stub returned by getSandbox()'
+  async createTerminal(options: CreateTerminalOptions): Promise<Terminal> {
+    return terminalHandleFromSnapshot(
+      this.terminalStub(),
+      await this.client.terminals.create(options)
     );
   }
 
-  async createTerminal(options: TerminalCreateOptions): Promise<void> {
-    await this.client.terminals.createTerminal(options);
+  async getTerminal(id: string): Promise<Terminal | null> {
+    const snapshot = await this.client.terminals.get(id);
+    return snapshot
+      ? terminalHandleFromSnapshot(this.terminalStub(), snapshot)
+      : null;
   }
 
-  async destroyTerminal(id: string): Promise<void> {
-    await this.client.terminals.destroyTerminal(id);
+  async listTerminals(): Promise<Terminal[]> {
+    return (await this.client.terminals.list()).map((snapshot) =>
+      terminalHandleFromSnapshot(this.terminalStub(), snapshot)
+    );
+  }
+
+  private terminalStub() {
+    const terminals = this.client.terminals;
+    return {
+      create: (options: CreateTerminalOptions) => terminals.create(options),
+      get: (id: string) => terminals.get(id),
+      list: () => terminals.list(),
+      output: (id: string, options?: Parameters<typeof terminals.output>[1]) =>
+        terminals.output(id, options),
+      write: (id: string, data: Uint8Array) => terminals.write(id, data),
+      resize: (id: string, cols: number, rows: number) =>
+        terminals.resize(id, cols, rows),
+      interrupt: (id: string) => terminals.interrupt(id),
+      terminate: (id: string) => terminals.terminate(id),
+      hasActive: () => terminals.hasActive(),
+      fetch: (request: Request) => this.fetch(request)
+    };
   }
 
   private determinePort(url: URL): number {
@@ -1828,920 +1875,171 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 3000;
   }
 
-  /**
-
-
-   * Persist the container's placement ID in DO storage.
-   *
-   * Called from the session-create handshake so subsequent reads via
-   * `getContainerPlacementId()` do not require a round-trip to the container. The value
-   * is overwritten on every handshake so that container replacements (which
-   * assign a new placement ID) are reflected on the next session-create.
-   *
-   * A value of `undefined` means the handshake response omitted the field
-   * (older container, unexpected error shape) and the stored value is left
-   * untouched. `null` means the env var is not set in the container and is
-   * stored as-is so callers can distinguish "observed and absent" from "not
-   * yet observed."
-   */
-  private async capturePlacementId(
-    containerPlacementId: string | null | undefined
-  ): Promise<void> {
-    if (containerPlacementId === undefined) return;
-    await this.ctx.storage.put('containerPlacementId', containerPlacementId);
-  }
-
-  private validateExplicitSessionId(sessionId: string): void {
-    if (sessionId.trim().length === 0) {
-      throw new Error('sessionId must not be empty or whitespace');
-    }
-  }
-
-  /**
-   * Validate an optional explicit session id without creating a session.
-   *
-   * Top-level process reads are sandbox-scoped, so they only carry a public
-   * session annotation when the caller provides an explicit session id. The
-   * resolved value is only used to populate `Process.sessionId` on the returned
-   * object — it is never sent to the container API.
-   */
-  private validateOptionalSessionId(
-    explicitSessionId?: string
-  ): string | undefined {
-    if (explicitSessionId !== undefined) {
-      this.validateExplicitSessionId(explicitSessionId);
-    }
-    return explicitSessionId;
-  }
-
-  private resolveExecutionEnv(
-    sessionId: string | undefined,
-    env?: Record<string, string | undefined>
-  ): Record<string, string | undefined> | undefined {
-    if (sessionId === undefined) {
-      const mergedEnv = filterEnvVars({ ...this.envVars, ...(env ?? {}) });
-      return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
-    }
-
-    if (env === undefined) {
-      return undefined;
-    }
-
-    const filteredEnv = filterEnvVars(env);
-    return Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
-  }
-
-  private buildExecutionRequestOptions(
-    sessionId: string | undefined,
-    options?: {
-      timeout?: number;
-      env?: Record<string, string | undefined>;
-      cwd?: string;
-      origin?: 'user' | 'internal';
-    }
-  ): CommandExecuteOptions | undefined {
-    const env = this.resolveExecutionEnv(sessionId, options?.env);
-
-    if (
-      options?.timeout === undefined &&
-      env === undefined &&
-      options?.cwd === undefined &&
-      options?.origin === undefined
-    ) {
-      return undefined;
-    }
-
-    return {
-      ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-      ...(env !== undefined && { env }),
-      ...(options?.cwd !== undefined && { cwd: options.cwd }),
-      ...(options?.origin !== undefined && { origin: options.origin })
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // Unified exec surface (mirrors `ctx.container.exec()` from workers-types).
-  // -------------------------------------------------------------------------
-
-  exec(
-    command: string | string[],
-    options?: SandboxExecOptions
-  ): SandboxProcessPromise {
-    return createSandboxProcessPromise(
-      this.spawnSandboxProcess(command, options)
-    );
-  }
-
-  /**
-   * Buffered, session-state-preserving execution helper. Uses the foreground
-   * session command path, preserving shell state such as cwd, aliases,
-   * functions, and exported variables.
-   */
-  async run(
-    command: string,
-    options?: ExecOptions & { sessionId?: string }
-  ): Promise<ExecResult> {
-    return this.executeCommand(command, options?.sessionId, options);
-  }
-
-  async runWithSessionToken(
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    this.validateExplicitSessionId(sessionId);
-    return this.executeCommand(command, sessionId, options);
-  }
-
-  /**
-   * Internal: start a process via `client.processes.startProcess` and
-   * construct a `SandboxProcess` handle that demultiplexes the log stream
-   * into `stdout` / `stderr` and resolves `exitCode` on the `exit` event.
-   */
-  private async spawnSandboxProcess(
-    command: string | string[],
-    options?: SandboxExecOptions
-  ): Promise<SandboxProcess> {
-    if (options?.sessionId !== undefined) {
-      this.validateExplicitSessionId(options.sessionId);
-    }
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    // Wire-level command sent to the container's session shell. Strings pass
-    // through verbatim (the container already shell-executes them); arrays
-    // get shell-quoted so argv-form input survives the shell hop. The two
-    // shapes produce the same command on the wire as `ctx.container.exec()`
-    // would interpret — future iteration can move array-form straight to
-    // `ctx.container.exec(argv, ...)` without going through the shell.
-    const display = Array.isArray(command)
-      ? command.map((arg) => shellEscape(arg)).join(' ')
-      : command;
-
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    const processSession = session;
-
-    const executionOptions = this.buildExecutionRequestOptions(session, {
-      timeout: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd,
-      origin: options?.origin
-    });
-
-    // Resolve the caller-supplied `stdin` (`"pipe"` | `ReadableStream` |
-    // `string` | undefined) into the pair of streams the wire & SDK need:
-    //   - `stdinSource`: a `ReadableStream<Uint8Array>` passed across RPC
-    //     to the container, which pumps it into the per-command FIFO.
-    //   - `stdinWriter`: the `WritableStream<Uint8Array>` exposed to the
-    //     caller as `proc.stdin` when they asked for `"pipe"`.
-    const { stdinSource, stdinWriter } = resolveStdinForRpc(options?.stdin);
-    const stderrMode = options?.stderr ?? 'pipe';
-    const stdoutMode = options?.stdout ?? 'pipe';
-
-    // Normalize to `undefined` when no options were provided. Keeps wire
-    // compatibility with the legacy `execWithSession` shape and avoids
-    // sending a noisy empty object across RPC.
-    const hasProcessOption =
-      session !== undefined ||
-      options?.processId !== undefined ||
-      options?.autoCleanup !== undefined ||
-      options?.stdout !== undefined ||
-      options?.stderr !== undefined;
-    const requestOptions =
-      executionOptions === undefined && !hasProcessOption
-        ? undefined
-        : {
-            ...executionOptions,
-            ...(session !== undefined && { sessionId: session }),
-            ...(options?.processId !== undefined && {
-              processId: options.processId
-            }),
-            ...(options?.autoCleanup !== undefined && {
-              autoCleanup: options.autoCleanup
-            }),
-            ...(options?.stdout !== undefined && { stdout: stdoutMode }),
-            ...(options?.stderr !== undefined && { stderr: stderrMode })
-          };
-
-    const response =
-      requestOptions !== undefined || stdinSource !== undefined
-        ? await this.client.processes.startProcess(
-            display,
-            requestOptions,
-            stdinSource
-          )
-        : await this.client.processes.startProcess(display);
-
-    const proc = new SandboxProcessImpl(
-      {
-        id: response.processId,
-        pid: response.pid ?? -1,
-        command: response.command ?? display,
-        sessionId: processSession,
-        startTime: new Date(),
-        status: 'running' as ProcessStatus,
-        ownership: 'owner',
-        stdout: stdoutMode,
-        stderr: stderrMode,
-        stdin: stdinWriter
-      },
-      this.buildSandboxProcessDeps()
-    );
-    // Wrap in a plain object literal that workerd can serialize across
-    // the DO RPC boundary. See `toRpcSandboxProcess` for the rationale.
-    const procDto: SandboxProcess = toRpcSandboxProcess(proc);
-
-    // Wire AbortSignal → kill (best-effort; matches `ExecProcess` lifetime).
-    if (options?.signal) {
-      const onAbort = () => proc.kill(15 /* SIGTERM */);
-      if (options.signal.aborted) onAbort();
-      else options.signal.addEventListener('abort', onAbort, { once: true });
-    }
-
-    // Wall-clock timeout → SIGTERM. Container-side already has its own
-    // timeoutMs honored via executionOptions; this is the SDK-side belt to
-    // make `proc.exitCode` settle even if the container is wedged.
-    if (options?.timeout && Number.isFinite(options.timeout)) {
-      const handle = setTimeout(() => proc.kill(15), options.timeout);
-      void proc.exitCode.finally(() => clearTimeout(handle));
-    }
-
-    return procDto;
-  }
-
-  private buildSandboxProcessDeps(): SandboxProcessDeps {
-    // Keep these tied to the live `this` so re-entrant RPCs use the same
-    // capnweb session as the spawn that produced the handle.
-    return {
-      openLogStream: (id) => this.client.processes.streamProcessLogs(id),
-      readLogs: async (id) => {
-        const r = await this.client.processes.getProcessLogs(id);
-        return { stdout: r.stdout, stderr: r.stderr };
-      },
-      fetchStatus: async (id) => {
-        try {
-          const r = await this.client.processes.getProcess(id);
-          return r.process?.status ?? 'error';
-        } catch (error) {
-          if (error instanceof ProcessNotFoundError) return 'error';
-          throw error;
-        }
-      },
-      killProcess: async (id, signal) => {
-        await this.client.processes.killProcess(id, signal);
-      },
-      waitForPort: (id, command, port, opts) =>
-        this.waitForPortReady(id, command, port, opts),
-      waitForLogPattern: (id, command, pattern, timeout) =>
-        this.waitForLogPattern(id, command, pattern, timeout),
-      waitForProcessExit: (id, command, timeout) =>
-        this.waitForProcessExit(id, command, timeout)
-    };
-  }
-
-  /**
-   * Execute an infrastructure command (backup, mount, env setup, etc.)
-   * tagged with origin: 'internal' so logging demotes it to debug level.
-   */
-  private async execInternal(command: string): Promise<ExecResult> {
-    return this.executeCommand(command, undefined, {
-      origin: 'internal'
-    });
-  }
-
-  private async execWithSession(
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    return this.executeCommand(command, sessionId, options);
-  }
-
-  /**
-   * Internal command execution implementation used by public exec() and
-   * explicit session wrappers.
-   */
-  private async executeCommand(
-    command: string,
-    sessionId: string | undefined,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
+  async exec(
+    command: SandboxCommand,
+    options: ExecOptions = {}
+  ): Promise<ProcessRPCDescriptor> {
+    const argv = validateExecArgv(command);
     const startTime = Date.now();
-    let execOutcome: { exitCode: number; success: boolean } | undefined;
-    let execError: Error | undefined;
+    const commandText = argv.join(' ');
+    const activity = this.resourceActivityGate.beginOperation();
 
     try {
-      const executionOptions = this.buildExecutionRequestOptions(
-        sessionId,
-        options
-      );
-      const commandOptions: CommandExecuteOptions | undefined =
-        sessionId === undefined
-          ? executionOptions
-          : { ...(executionOptions ?? {}), sessionId };
+      await activity.beforeCall;
+      await this.ensureContainerRunning();
+      const owningRuntime = await this.currentRuntime.get();
+      if (!owningRuntime) {
+        throw runtimeInterrupted('process.start', 'none');
+      }
+      await this.assertLaunchRuntime(owningRuntime, 'none');
 
-      const response = commandOptions
-        ? await this.client.commands.execute(command, commandOptions)
-        : await this.client.commands.execute(command);
+      const status = await this.client.processes.start(argv, options);
+      await this.assertLaunchRuntime(owningRuntime, 'unknown');
+      const descriptor = this.processDescriptor(status, owningRuntime);
 
-      const duration = Date.now() - startTime;
-      const result = this.mapExecuteResponseToExecResult(
-        response,
-        duration,
-        sessionId
-      );
-
-      execOutcome = { exitCode: result.exitCode, success: result.success };
-
-      return result;
-    } catch (error) {
-      execError = error instanceof Error ? error : new Error(String(error));
-      throw error;
-    } finally {
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
-        outcome: execError ? 'error' : 'success',
-        command,
-        exitCode: execOutcome?.exitCode,
+        outcome: 'success',
+        command: commandText,
+        processId: status.id,
+        pid: status.pid,
         durationMs: Date.now() - startTime,
-        sessionId,
-        origin: options?.origin ?? 'user',
-        error: execError ?? undefined,
-        errorMessage: execError?.message
+        origin: 'user'
       });
+      return descriptor;
+    } catch (error) {
+      const execError =
+        error instanceof Error ? error : new Error(String(error));
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.exec',
+        outcome: 'error',
+        command: commandText,
+        durationMs: Date.now() - startTime,
+        origin: 'user',
+        error: execError,
+        errorMessage: execError.message
+      });
+      throw error;
+    } finally {
+      activity.finish();
     }
   }
 
-  private mapExecuteResponseToExecResult(
-    response: ExecuteResponse,
-    duration: number,
-    sessionId?: string
-  ): ExecResult {
+  private async assertLaunchRuntime(
+    runtime: RuntimeIdentity,
+    effect: 'none' | 'unknown'
+  ): Promise<void> {
+    try {
+      await this.currentRuntime.assertActive(runtime);
+    } catch {
+      this.runtimeControlClient.dispose();
+      throw runtimeInterrupted('process.start', effect);
+    }
+  }
+
+  private processDescriptor(
+    status: ProcessStatus,
+    runtime: RuntimeIdentity
+  ): ProcessRPCDescriptor {
+    const lifecycle = this.processCapabilityLifecycle(runtime, {
+      id: status.id,
+      pid: status.pid
+    });
     return {
-      success: response.success,
-      exitCode: response.exitCode,
-      stdout: response.stdout,
-      stderr: response.stderr,
-      command: response.command,
-      duration,
-      timestamp: response.timestamp,
-      sessionId
+      id: status.id,
+      pid: status.pid,
+      capability: new ProcessCapabilityTarget({
+        id: status.id,
+        pid: status.pid,
+        runtime,
+        lifecycle
+      })
     };
   }
 
-  /**
-   * Wait for a log pattern to appear in process output
-   */
-  private async waitForLogPattern(
-    processId: string,
-    command: string,
-    pattern: string | RegExp,
-    timeout?: number
-  ): Promise<WaitForLogResult> {
-    const startTime = Date.now();
-    const conditionStr = this.conditionToString(pattern);
-    let collectedStdout = '';
-    let collectedStderr = '';
-
-    // First check existing logs
-    try {
-      const existingLogs =
-        await this.client.processes.getProcessLogs(processId);
-      // Ensure existing logs end with newline for proper line separation from streamed output
-      collectedStdout = existingLogs.stdout;
-      if (collectedStdout && !collectedStdout.endsWith('\n')) {
-        collectedStdout += '\n';
-      }
-      collectedStderr = existingLogs.stderr;
-      if (collectedStderr && !collectedStderr.endsWith('\n')) {
-        collectedStderr += '\n';
-      }
-
-      // Check stdout
-      const stdoutResult = this.matchPattern(existingLogs.stdout, pattern);
-      if (stdoutResult) {
-        return stdoutResult;
-      }
-
-      // Check stderr
-      const stderrResult = this.matchPattern(existingLogs.stderr, pattern);
-      if (stderrResult) {
-        return stderrResult;
-      }
-    } catch (error) {
-      // Process might have already exited, continue to streaming
-      this.logger.debug('Could not get existing logs, will stream', {
-        processId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    // Stream new logs and check for pattern
-    const stream = await this.client.processes.streamProcessLogs(processId);
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      const remainingTime = timeout - (Date.now() - startTime);
-      if (remainingTime <= 0) {
-        throw this.createReadyTimeoutError(
-          processId,
-          command,
-          conditionStr,
-          timeout
-        );
-      }
-
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              conditionStr,
-              timeout
-            )
-          );
-        }, remainingTime);
-      });
-    }
-
-    try {
-      // Process stream
-      const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const checkPattern = (): WaitForLogResult | null => {
-          const stdoutResult = this.matchPattern(collectedStdout, pattern);
-          if (stdoutResult) return stdoutResult;
-          const stderrResult = this.matchPattern(collectedStderr, pattern);
-          if (stderrResult) return stderrResult;
-          return null;
-        };
-
-        for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'stdout' || event.type === 'stderr') {
-            const data = event.data || '';
-
-            if (event.type === 'stdout') {
-              collectedStdout += data;
-            } else {
-              collectedStderr += data;
-            }
-
-            const result = checkPattern();
-            if (result) return result;
-          }
-
-          // Process exited - do final check before throwing
-          if (event.type === 'exit') {
-            // Final check in case pattern arrived in last chunk
-            const result = checkPattern();
-            if (result) return result;
-            throw this.createExitedBeforeReadyError(
-              processId,
-              command,
-              conditionStr,
-              event.exitCode ?? 1
-            );
-          }
-        }
-
-        // Stream ended without exit event — do final check
-        const finalResult = checkPattern();
-        if (finalResult) return finalResult;
-        // Stream ended without finding pattern - this indicates process exited
-        throw this.createExitedBeforeReadyError(
-          processId,
-          command,
-          conditionStr,
-          0
-        );
-      };
-
-      // Race with timeout if specified, otherwise just run stream processor
-      if (timeoutPromise) {
-        return await Promise.race([streamProcessor(), timeoutPromise]);
-      }
-      return await streamProcessor();
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  /**
-   * Wait for a port to become available (for process readiness checking)
-   */
-  private async waitForPortReady(
-    processId: string,
-    command: string,
-    port: number,
-    options?: WaitForPortOptions
-  ): Promise<void> {
-    const {
-      mode = 'http',
-      path = '/',
-      status = { min: 200, max: 399 },
-      timeout,
-      interval = 500
-    } = options ?? {};
-
-    const conditionStr =
-      mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
-
-    // Normalize status to min/max
-    const statusMin = typeof status === 'number' ? status : status.min;
-    const statusMax = typeof status === 'number' ? status : status.max;
-
-    // Open streaming watch - container handles internal polling
-    const stream = await this.client.ports.watchPort({
-      port,
-      mode,
-      path,
-      statusMin,
-      statusMax,
-      processId,
-      interval
+  private processCapabilityLifecycle(
+    owningRuntime: RuntimeIdentity,
+    process: { id: string; pid: number }
+  ) {
+    const lifecycle = new ProcessLifecycle({
+      currentRuntime: this.currentRuntime,
+      runtimeClient: this.runtimeControlClient,
+      beginNonWakingOperation: () =>
+        this.resourceActivityGate.beginNonWakingOperation(),
+      process
     });
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              conditionStr,
-              timeout
-            )
-          );
-        }, timeout);
-      });
-    }
-
-    try {
-      const streamProcessor = async (): Promise<void> => {
-        for await (const event of parseSSEStream<PortWatchEvent>(stream)) {
-          switch (event.type) {
-            case 'ready':
-              return; // Success!
-            case 'process_exited':
-              throw this.createExitedBeforeReadyError(
-                processId,
-                command,
-                conditionStr,
-                event.exitCode ?? 1
-              );
-            case 'error':
-              throw new Error(event.error || 'Port watch failed');
-            // 'watching' - continue
-          }
-        }
-        throw new Error('Port watch stream ended unexpectedly');
-      };
-
-      if (timeoutPromise) {
-        await Promise.race([streamProcessor(), timeoutPromise]);
-      } else {
-        await streamProcessor();
-      }
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      // Cancel the stream to stop container-side polling
-      try {
-        await stream.cancel();
-      } catch {
-        // Stream may already be closed
-      }
-    }
-  }
-
-  /**
-   * Wait for a process to exit
-   * Returns the exit code
-   */
-  private async waitForProcessExit(
-    processId: string,
-    command: string,
-    timeout?: number
-  ): Promise<WaitForExitResult> {
-    const stream = await this.client.processes.streamProcessLogs(processId);
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              'process exit',
-              timeout
-            )
-          );
-        }, timeout);
-      });
-    }
-
-    try {
-      const streamProcessor = async (): Promise<WaitForExitResult> => {
-        for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'exit') {
-            return {
-              exitCode: event.exitCode ?? 1
-            };
-          }
-        }
-
-        // Stream ended without exit event - shouldn't happen, but handle gracefully
-        throw new Error(
-          `Process ${processId} stream ended unexpectedly without exit event`
-        );
-      };
-
-      if (timeoutPromise) {
-        return await Promise.race([streamProcessor(), timeoutPromise]);
-      }
-      return await streamProcessor();
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  /**
-   * Match a pattern against text
-   */
-  private matchPattern(
-    text: string,
-    pattern: string | RegExp
-  ): WaitForLogResult | null {
-    if (typeof pattern === 'string') {
-      // Simple substring match
-      if (text.includes(pattern)) {
-        // Find the line containing the pattern
-        const lines = text.split('\n');
-        for (const line of lines) {
-          if (line.includes(pattern)) {
-            return { line };
-          }
-        }
-        return { line: pattern };
-      }
-    } else {
-      const safePattern = new RegExp(
-        pattern.source,
-        pattern.flags.replace('g', '')
-      );
-      const match = text.match(safePattern);
-      if (match) {
-        // Find the full line containing the match
-        const lines = text.split('\n');
-        for (const line of lines) {
-          const lineMatch = line.match(safePattern);
-          if (lineMatch) {
-            return { line, match: lineMatch };
-          }
-        }
-        return { line: match[0], match };
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Convert a log pattern to a human-readable string
-   */
-  private conditionToString(pattern: string | RegExp): string {
-    if (typeof pattern === 'string') {
-      return `"${pattern}"`;
-    }
-    return pattern.toString();
-  }
-
-  /**
-   * Create a ProcessReadyTimeoutError
-   */
-  private createReadyTimeoutError(
-    processId: string,
-    command: string,
-    condition: string,
-    timeout: number
-  ): ProcessReadyTimeoutError {
-    return new ProcessReadyTimeoutError({
-      code: ErrorCode.PROCESS_READY_TIMEOUT,
-      message: `Process did not become ready within ${timeout}ms. Waiting for: ${condition}`,
-      context: {
-        processId,
-        command,
-        condition,
-        timeout
-      },
-      httpStatus: 408,
-      timestamp: new Date().toISOString(),
-      suggestion: `Check if your process outputs ${condition}. You can increase the timeout parameter.`
-    });
-  }
-
-  /**
-   * Create a ProcessExitedBeforeReadyError
-   */
-  private createExitedBeforeReadyError(
-    processId: string,
-    command: string,
-    condition: string,
-    exitCode: number
-  ): ProcessExitedBeforeReadyError {
-    return new ProcessExitedBeforeReadyError({
-      code: ErrorCode.PROCESS_EXITED_BEFORE_READY,
-      message: `Process exited with code ${exitCode} before becoming ready. Waiting for: ${condition}`,
-      context: {
-        processId,
-        command,
-        condition,
-        exitCode
-      },
-      httpStatus: 500,
-      timestamp: new Date().toISOString(),
-      suggestion: 'Check process logs with getLogs() for error messages'
-    });
-  }
-
-  // Background process management ----------------------------------------
-
-  /** Re-attach to an existing process by id. */
-  async getProcess(
-    id: string,
-    options?: ProcessQueryOptions
-  ): Promise<SandboxProcess | null> {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    try {
-      const response = await this.client.processes.getProcess(id);
-      if (!response.process) return null;
-      const data = response.process;
-      return toRpcSandboxProcess(
-        new SandboxProcessImpl(
-          {
-            id: data.id,
-            pid: data.pid ?? -1,
-            command: data.command,
-            sessionId: session,
-            startTime:
-              typeof data.startTime === 'string'
-                ? new Date(data.startTime)
-                : (data.startTime ?? new Date()),
-            status: data.status,
-            ownership: 'attached',
-            stdout: data.stdout ?? 'pipe',
-            stderr: data.stderr ?? 'pipe',
-            stdin: null
-          },
-          this.buildSandboxProcessDeps()
+    return {
+      runRead: <T>(
+        _runtime: { readonly id: string },
+        operation: string,
+        call: (control: ProcessCapabilityControl) => Promise<T>
+      ) =>
+        lifecycle.runRead(owningRuntime, operation, (client) =>
+          call(processCapabilityControl(client))
+        ),
+      runControl: <T>(
+        _runtime: { readonly id: string },
+        operation: string,
+        call: (control: ProcessCapabilityControl) => Promise<T>
+      ) =>
+        lifecycle.runControl(owningRuntime, operation, (client) =>
+          call(processCapabilityControl(client))
         )
-      );
-    } catch (error) {
-      if (error instanceof ProcessNotFoundError) return null;
-      throw error;
-    }
+    };
   }
 
-  /** Return lightweight process snapshots. */
-  async listProcesses(
-    options?: ProcessQueryOptions
-  ): Promise<SandboxProcess[]> {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    const response = await this.client.processes.listProcesses();
-    const deps = this.buildSandboxProcessDeps();
-    return response.processes.map((data) =>
-      toRpcSandboxProcess(
-        new SandboxProcessImpl(
-          {
-            id: data.id,
-            pid: data.pid ?? -1,
-            command: data.command,
-            sessionId: session,
-            startTime:
-              typeof data.startTime === 'string'
-                ? new Date(data.startTime)
-                : (data.startTime ?? new Date()),
-            status: data.status,
-            ownership: 'attached',
-            stdout: data.stdout ?? 'ignore',
-            stderr: data.stderr ?? 'ignore',
-            stdin: null
-          },
-          deps
-        )
-      )
+  /** Internal bridge liveness read that neither starts nor renews a runtime. */
+  async isRuntimeActive(): Promise<boolean> {
+    return (await this.processLifecycle.captureCurrent()) !== null;
+  }
+
+  async getProcess(id: string): Promise<ProcessRPCDescriptor | null> {
+    const runtime = await this.processLifecycle.captureCurrent();
+    if (!runtime) return null;
+    const status = await this.processLifecycle.runRead(
+      runtime,
+      'process.get',
+      (client) => client.processesWithoutActivity().get(id)
+    );
+    return status ? this.processDescriptor(status, runtime) : null;
+  }
+
+  async listProcesses(): Promise<ProcessStatus[]> {
+    const runtime = await this.processLifecycle.captureCurrent();
+    if (!runtime) return [];
+    return this.processLifecycle.runRead(runtime, 'process.list', (client) =>
+      client.processesWithoutActivity().list()
     );
   }
 
-  async killAllProcesses(): Promise<number> {
-    const response = await this.client.processes.killAllProcesses();
-    return response.cleanedCount;
-  }
-
-  async cleanupCompletedProcesses(): Promise<number> {
-    // Not yet implemented — requires container endpoint.
-    return 0;
-  }
-
-  async getProcessLogs(
-    id: string
-  ): Promise<{ stdout: string; stderr: string; processId: string }> {
-    const response = await this.client.processes.getProcessLogs(id);
-    return {
-      stdout: response.stdout,
-      stderr: response.stderr,
-      processId: response.processId
-    };
-  }
-
-  /**
-   * Stream logs from a background process as a ReadableStream.
-   */
-  async streamProcessLogs(
-    processId: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<ReadableStream<Uint8Array>> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    return this.client.processes.streamProcessLogs(processId);
-  }
-
-  async mkdir(
-    path: string,
-    options: { recursive?: boolean; sessionId?: string } = {}
-  ) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return this.client.files.mkdir(path, {
-      ...(session !== undefined && { sessionId: session }),
-      recursive: options.recursive
-    });
+  async mkdir(path: string, options: { recursive?: boolean } = {}) {
+    return this.client.files.mkdir(path, { recursive: options.recursive });
   }
 
   async writeFile(
     path: string,
     content: string | ReadableStream<Uint8Array>,
-    options: { encoding?: string; sessionId?: string } = {}
+    options: { encoding?: string } = {}
   ) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-
     if (content instanceof ReadableStream) {
-      return this.client.files.writeFileStream(path, content, {
-        ...(session !== undefined && { sessionId: session })
-      });
+      return this.client.files.writeFileStream(path, content);
     }
 
     return this.client.files.writeFile(path, content, {
-      ...(session !== undefined && { sessionId: session }),
       encoding: options.encoding
     });
   }
 
-  async deleteFile(path: string, options: { sessionId?: string } = {}) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return session === undefined
-      ? this.client.files.deleteFile(path)
-      : this.client.files.deleteFile(path, { sessionId: session });
+  async deleteFile(path: string) {
+    return this.client.files.deleteFile(path);
   }
 
-  async renameFile(
-    oldPath: string,
-    newPath: string,
-    options: { sessionId?: string } = {}
-  ) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return session === undefined
-      ? this.client.files.renameFile(oldPath, newPath)
-      : this.client.files.renameFile(oldPath, newPath, { sessionId: session });
+  async renameFile(oldPath: string, newPath: string) {
+    return this.client.files.renameFile(oldPath, newPath);
   }
 
-  async moveFile(
-    sourcePath: string,
-    destinationPath: string,
-    options: { sessionId?: string } = {}
-  ) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return session === undefined
-      ? this.client.files.moveFile(sourcePath, destinationPath)
-      : this.client.files.moveFile(sourcePath, destinationPath, {
-          sessionId: session
-        });
+  async moveFile(sourcePath: string, destinationPath: string) {
+    return this.client.files.moveFile(sourcePath, destinationPath);
   }
 
   /**
@@ -2756,58 +2054,67 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async readFile(
     path: string,
-    options: { encoding: 'none'; sessionId?: string }
+    options: { encoding: 'none' }
   ): Promise<ReadFileStreamResult>;
   async readFile(
     path: string,
-    options?: { encoding?: Exclude<FileEncoding, 'none'>; sessionId?: string }
+    options?: { encoding?: Exclude<FileEncoding, 'none'> }
   ): Promise<ReadFileResult>;
   async readFile(
     path: string,
-    options: { encoding?: FileEncoding; sessionId?: string } = {}
+    options: { encoding?: FileEncoding } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    const session = this.validateOptionalSessionId(options.sessionId);
     if (options.encoding === 'none') {
-      return this.client.files.readFile(path, {
-        ...(session !== undefined && { sessionId: session }),
-        encoding: 'none'
-      });
+      return this.client.files.readFile(path, { encoding: options.encoding });
     }
-    return this.client.files.readFile(path, {
-      ...(session !== undefined && { sessionId: session }),
-      encoding: options.encoding
-    });
+    return this.client.files.readFile(path, { encoding: options.encoding });
   }
 
   /**
    * Stream a file from the sandbox using Server-Sent Events
    * Returns a ReadableStream that can be consumed with streamFile() or collectFile() utilities
    * @param path - Path to the file to stream
-   * @param options - Optional session ID
    */
-  async readFileStream(
-    path: string,
-    options: { sessionId?: string } = {}
-  ): Promise<ReadableStream<Uint8Array>> {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return this.client.files.readFileStream(path, {
-      ...(session !== undefined && { sessionId: session })
+  async createWorkspaceArchive(
+    options: { root: string; excludes?: readonly string[] } = {
+      root: '/workspace'
+    }
+  ): Promise<string> {
+    const result = await this.client.workspace.createArchive({
+      root: options.root,
+      excludes: options.excludes ?? []
     });
+    return result.archivePath;
+  }
+
+  async extractWorkspaceArchive(options: {
+    root: string;
+    archivePath: string;
+  }): Promise<void> {
+    await this.client.workspace.extractArchive(options);
+  }
+
+  async cleanupWorkspaceArchive(archivePath: string): Promise<void> {
+    await this.client.workspace.cleanupArchive(archivePath);
+  }
+
+  async cleanupMountDirectory(mountPath: string): Promise<void> {
+    await this.client.mounts.removeMountDirectory({
+      path: mountPath,
+      onlyIfNotMountpoint: true
+    });
+  }
+
+  async readFileStream(path: string): Promise<ReadableStream<Uint8Array>> {
+    return this.client.files.readFileStream(path);
   }
 
   async listFiles(path: string, options?: ListFilesOptions) {
-    const session = this.validateOptionalSessionId(options?.sessionId);
-    return this.client.files.listFiles(path, {
-      ...options,
-      ...(session !== undefined && { sessionId: session })
-    });
+    return this.client.files.listFiles(path, options);
   }
 
-  async exists(path: string, options: { sessionId?: string } = {}) {
-    const session = this.validateOptionalSessionId(options.sessionId);
-    return session === undefined
-      ? this.client.files.exists(path)
-      : this.client.files.exists(path, { sessionId: session });
+  async exists(path: string) {
+    return this.client.files.exists(path);
   }
 
   /**
@@ -2827,14 +2134,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const sessionId = this.validateOptionalSessionId(options.sessionId);
-    return this.client.watch.watch({
-      path,
-      recursive: options.recursive,
-      include: options.include,
-      exclude: options.exclude,
-      sessionId
-    });
+    return openRemoteSubscription(
+      this.client.watch.watch({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude
+      }),
+      { operation: 'open filesystem watch' }
+    );
   }
 
   /**
@@ -2851,29 +2159,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    const sessionId = this.validateOptionalSessionId(options.sessionId);
     return this.client.watch.checkChanges({
       path,
       recursive: options.recursive,
       include: options.include,
       exclude: options.exclude,
-      since: options.since,
-      sessionId
+      since: options.since
     });
   }
 
   private async ensureRuntimeActiveForPreview(): Promise<RuntimeIdentity> {
-    await this.startAndWaitForPorts({
-      ports: this.defaultPort,
-      cancellationOptions: {
-        instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-        portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-        waitInterval: this.containerTimeouts.waitIntervalMS
-      }
-    });
+    const activity = this.resourceActivityGate.beginOperation();
+    try {
+      await activity.beforeCall;
+      await this.startAndWaitForPorts({
+        ports: this.defaultPort,
+        cancellationOptions: {
+          instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS
+        }
+      });
 
-    const runtime = await this.currentRuntime.get();
-    return runtime ?? (await this.currentRuntime.markStarted());
+      const runtime = await this.currentRuntime.get();
+      return runtime ?? (await this.currentRuntime.markStarted());
+    } finally {
+      activity.finish();
+    }
   }
 
   /**
@@ -2994,199 +2306,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.tunnelServiceHandle = built;
     this.tunnelsHandler = built.tunnels;
     this.tunnelExitHandler = built.handleTunnelExit;
-  }
-
-  // ============================================================================
-  // Session Management - Advanced Use Cases
-  // ============================================================================
-
-  /**
-   * Create isolated execution session for advanced use cases
-   * Returns ExecutionSession with full sandbox API bound to specific session
-   */
-  async createSession(options?: SessionOptions): Promise<ExecutionSession> {
-    const sessionId = options?.id || `session-${Date.now()}`;
-
-    const mergedEnv = {
-      ...this.envVars,
-      ...(options?.env ?? {})
-    };
-    const filteredEnv = filterEnvVars(mergedEnv);
-    const envPayload =
-      Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
-
-    // Create session in container
-    const response = await this.client.utils.createSession({
-      id: sessionId,
-      ...(envPayload && { env: envPayload }),
-      ...(options?.cwd && { cwd: options.cwd }),
-      ...(options?.commandTimeoutMs !== undefined && {
-        commandTimeoutMs: options.commandTimeoutMs
-      })
-    });
-
-    await this.capturePlacementId(response.containerPlacementId);
-
-    // Return wrapper that binds sessionId to all operations
-    return this.getSessionWrapper(sessionId);
-  }
-
-  /**
-   * Get an existing session by ID
-   * Returns ExecutionSession wrapper bound to the specified session
-   *
-   * This is useful for retrieving sessions across different requests/contexts
-   * without storing the ExecutionSession object (which has RPC lifecycle limitations)
-   *
-   * @param sessionId - The ID of an existing session
-   * @returns ExecutionSession wrapper bound to the session
-   */
-  async getSession(sessionId: string): Promise<ExecutionSession> {
-    // No need to verify session exists in container - operations will fail naturally if it doesn't
-    return this.getSessionWrapper(sessionId);
-  }
-
-  /**
-   * Delete an execution session.
-   *
-   * Cleans up explicit session resources and removes them from the container.
-   *
-   * @param sessionId - The ID of the session to delete
-   * @returns Result with success status, sessionId, and timestamp
-   */
-  async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
-    const response = await this.client.utils.deleteSession(sessionId);
-
-    // Map HTTP response to result type
-    return {
-      success: response.success,
-      sessionId: response.sessionId,
-      timestamp: response.timestamp
-    };
-  }
-
-  /**
-   * Get the Cloudflare placement ID observed for the underlying container.
-   *
-   * The placement ID is captured during the first session-create handshake
-   * after a container start and stored in Durable Object storage, so this
-   * method returns the cached value without contacting the container. A new
-   * placement ID is captured on each subsequent session-create handshake,
-   * which occurs whenever the container has been replaced.
-   *
-   * Returns `null` when a handshake has completed but the container's
-   * `CLOUDFLARE_PLACEMENT_ID` environment variable is not set (for example,
-   * in local development).
-   *
-   * Returns `undefined` when no explicit session-create handshake has been
-   * observed yet on this sandbox. Call `createSession()` to populate the value.
-   */
-  async getContainerPlacementId(): Promise<string | null | undefined> {
-    return this.ctx.storage.get<string | null>('containerPlacementId');
-  }
-
-  private getSessionWrapper(sessionId: string): ExecutionSession {
-    // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
-    return {
-      id: sessionId,
-      terminal: null as unknown as ExecutionSession['terminal'],
-
-      // Unified exec (mirrors `ctx.container.exec()` contract). Session-scoped:
-      // caller-provided `options.sessionId` is overridden by this wrapper's
-      // sessionId to enforce session pinning.
-      exec: (command: string | string[], execOptions?: SandboxExecOptions) =>
-        createSandboxProcessPromise(
-          this.spawnSandboxProcess(command, { ...execOptions, sessionId })
-        ),
-
-      run: (command, options) =>
-        this.executeCommand(command, sessionId, options),
-
-      // Process management
-      listProcesses: () => this.listProcesses({ sessionId }),
-      getProcess: (id) => this.getProcess(id, { sessionId }),
-      killAllProcesses: () => this.killAllProcesses(),
-      cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
-
-      // File operations - pass sessionId via options
-      writeFile: (path, content, options) =>
-        this.writeFile(path, content, { ...options, sessionId }),
-      readFile: ((
-        path: string,
-        options?: { encoding?: FileEncoding; sessionId?: string }
-      ) => {
-        const encoding = options?.encoding;
-        if (encoding === 'none') {
-          return this.readFile(path, { encoding: 'none', sessionId });
-        }
-        return this.readFile(path, { encoding, sessionId });
-      }) as ExecutionSession['readFile'],
-      readFileStream: (path) => this.readFileStream(path, { sessionId }),
-      watch: (path, options) => this.watch(path, { ...options, sessionId }),
-      checkChanges: (path, options) =>
-        this.checkChanges(path, { ...options, sessionId }),
-      mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
-      deleteFile: (path) => this.deleteFile(path, { sessionId }),
-      renameFile: (oldPath, newPath) =>
-        this.renameFile(oldPath, newPath, { sessionId }),
-      moveFile: (sourcePath, destPath) =>
-        this.moveFile(sourcePath, destPath, { sessionId }),
-      listFiles: (path, options) =>
-        this.listFiles(path, { ...options, sessionId }),
-      exists: (path) => this.exists(path, { sessionId }),
-
-      setEnvVars: async (envVars: Record<string, string | undefined>) => {
-        const { toSet, toUnset } = partitionEnvVars(envVars);
-
-        try {
-          for (const key of toUnset) {
-            const unsetCommand = `unset ${key}`;
-
-            const result = await this.client.commands.execute(unsetCommand, {
-              sessionId,
-              origin: 'internal'
-            });
-
-            if (result.exitCode !== 0) {
-              throw new Error(
-                `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
-              );
-            }
-          }
-
-          for (const [key, value] of Object.entries(toSet)) {
-            const exportCommand = `export ${key}=${shellEscape(value)}`;
-
-            const result = await this.client.commands.execute(exportCommand, {
-              sessionId,
-              origin: 'internal'
-            });
-
-            if (result.exitCode !== 0) {
-              throw new Error(
-                `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
-              );
-            }
-          }
-        } catch (error) {
-          this.logger.error(
-            'Failed to set environment variables',
-            error instanceof Error ? error : new Error(String(error)),
-            { sessionId }
-          );
-          throw error;
-        }
-      },
-
-      // Bucket mounting - sandbox-level operations
-      mountBucket: (bucket, mountPath, options) =>
-        this.mountBucket(bucket, mountPath, options),
-      unmountBucket: (mountPath) => this.unmountBucket(mountPath),
-
-      // Backup operations - sandbox-level, uses R2 binding
-      createBackup: (options) => this.createBackup(options),
-      restoreBackup: (backup: DirectoryBackup) => this.restoreBackup(backup)
-    };
   }
 
   // ============================================================================

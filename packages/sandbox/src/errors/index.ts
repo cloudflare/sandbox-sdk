@@ -49,7 +49,7 @@ export type {
   CommandNotFoundContext,
   ContainerUnavailableContext,
   ContextNotFoundContext,
-  ErrorCodeType,
+  ErrorCode as ErrorCodeType,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
@@ -62,23 +62,32 @@ export type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  InvalidProcessCursorContext,
+  InvalidProcessCwdContext,
+  InvalidProcessEnvironmentContext,
+  InvalidTerminalCursorContext,
+  InvalidTerminalCwdContext,
   OperationInterruptedContext,
   OperationInterruptedReason,
   OperationType,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
+  ProcessAbortedContext,
   ProcessErrorContext,
+  ProcessExitedBeforeLogContext,
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  ProcessSpawnFailedContext,
+  ProcessWaitTimeoutContext,
   RPCTransportContext,
   RPCTransportErrorKind,
-  SessionDestroyedContext,
-  SessionTerminatedContext,
+  StaleProcessHandleContext,
+  TerminalControlErrorContext,
+  TerminalNotFoundContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
-// Re-export shared types and constants
 export { ErrorCode, Operation } from '@repo/shared/errors';
 
 // Export adapter function
@@ -115,6 +124,11 @@ export {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  InvalidProcessCursorError,
+  InvalidProcessCwdError,
+  InvalidProcessEnvironmentError,
+  InvalidTerminalCursorError,
+  InvalidTerminalCwdError,
   OperationInterruptedError,
   PermissionDeniedError,
   // Port Errors
@@ -122,20 +136,24 @@ export {
   PortError,
   PortInUseError,
   PortNotExposedError,
+  // Process Errors
+  ProcessAbortedError,
   ProcessError,
+  ProcessExitedBeforeLogError,
   // Process Readiness Errors
   ProcessExitedBeforeReadyError,
-  // Process Errors
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
+  ProcessSpawnFailedError,
+  ProcessWaitTimeoutError,
   // RPC Transport Errors (SDK-side, raised on WebSocket failures)
   RPCTransportError,
   SandboxError,
   ServiceNotRespondingError,
-  // Session Errors
-  SessionAlreadyExistsError,
-  SessionDestroyedError,
-  SessionTerminatedError,
+  StaleProcessHandleError,
+  TerminalControlError,
+  // Terminal Errors
+  TerminalNotFoundError,
   // Validation Errors
   ValidationFailedError
 } from './classes';

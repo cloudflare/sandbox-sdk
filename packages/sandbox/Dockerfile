@@ -161,7 +161,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -rf /var/cache/apt/* /var/lib/apt/lists/* && \
     apt-get update && apt-get install -y --no-install-recommends \
     s3fs fuse3 squashfs-tools squashfuse fuse-overlayfs \
-    ca-certificates curl wget procps git unzip zip jq file \
+    ca-certificates curl wget procps git unzip zip jq file tini \
     inotify-tools \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
     libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
@@ -222,7 +222,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-ENTRYPOINT ["/container-server/sandbox"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/container-server/sandbox"]
 
 # ============================================================================
 # Stage 5b: Python image - full, with Python + data science packages
@@ -253,7 +253,7 @@ ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-ENTRYPOINT ["/container-server/sandbox"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/container-server/sandbox"]
 
 # ============================================================================
 # Stage 5c: OpenCode image - with OpenCode CLI for AI coding agent
@@ -278,7 +278,7 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=3
 # Expose OpenCode server port (in addition to 3000 from runtime-base)
 EXPOSE 4096
 
-ENTRYPOINT ["/container-server/sandbox"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/container-server/sandbox"]
 
 # ============================================================================
 # Stage 5d: Musl image - Alpine-based with musl-linked binary
@@ -301,7 +301,7 @@ RUN --mount=type=secret,id=wrangler_ca \
         apk add --no-cache ca-certificates; \
     fi
 
-RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse
+RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse tini
 
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
@@ -324,4 +324,4 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=0
 ENV TYPESCRIPT_POOL_MIN_SIZE=0
 
-ENTRYPOINT ["/container-server/sandbox"]
+ENTRYPOINT ["/sbin/tini", "--", "/container-server/sandbox"]

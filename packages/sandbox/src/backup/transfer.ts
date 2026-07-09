@@ -1,5 +1,4 @@
-import type { ExecOptions, ExecResult } from '@repo/shared';
-import { type createLogger, getEnvString, shellEscape } from '@repo/shared';
+import { type createLogger, getEnvString } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import type { ContainerControlClient } from '../container-control';
 import {
@@ -11,7 +10,6 @@ import {
 } from '../errors';
 import { isR2Bucket } from '../storage-mount';
 import {
-  BACKUP_CONTAINER_DIR,
   BACKUP_DOWNLOAD_MAX_PARTS,
   BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE,
   BACKUP_DOWNLOAD_PARALLEL_PARTS,
@@ -25,11 +23,6 @@ type BackupTransferDeps = {
   getEnv: () => unknown;
   getClient: () => ContainerControlClient;
   logger: ReturnType<typeof createLogger>;
-  execWithSession: (
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ) => Promise<ExecResult>;
 };
 
 export class BackupTransfer {
@@ -45,14 +38,6 @@ export class BackupTransfer {
 
   private get client(): ContainerControlClient {
     return this.deps.getClient();
-  }
-
-  private execWithSession(
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    return this.deps.execWithSession(command, sessionId, options);
   }
 
   private parseBackupBucketEndpoint(
@@ -249,37 +234,15 @@ export class BackupTransfer {
     r2Key: string,
     archiveSize: number,
     backupId: string,
-    dir: string,
-    backupSession: string
+    dir: string
   ): Promise<void> {
     const presignedURL = await this.generatePresignedPutURL(r2Key);
 
-    const curlCmd = [
-      'curl -sSf',
-      '-X PUT',
-      "-H 'Content-Type: application/octet-stream'",
-      '--connect-timeout 10',
-      '--max-time 1800',
-      '--retry 2',
-      '--retry-max-time 60',
-      `-T ${shellEscape(archivePath)}`,
-      shellEscape(presignedURL)
-    ].join(' ');
-
-    const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000,
-      origin: 'internal'
+    await this.client.backup.uploadArchive({
+      archivePath,
+      url: presignedURL,
+      timeoutMs: 1_810_000
     });
-
-    if (result.exitCode !== 0) {
-      throw new BackupCreateError({
-        message: `Presigned URL upload failed (exit code ${result.exitCode}): ${result.stderr}`,
-        code: ErrorCode.BACKUP_CREATE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
 
     // Verify the upload landed correctly in R2
     const bucket = this.requireBackupBucket();
@@ -290,7 +253,7 @@ export class BackupTransfer {
       // local-dev mismatch where presigned URLs target real R2 while the
       // BACKUP_BUCKET binding points to local (miniflare) storage.
       const localDevHint =
-        result.exitCode === 0 && actualSize === 0
+        actualSize === 0
           ? ' This usually means the BACKUP_BUCKET R2 binding is using local storage ' +
             'while presigned URLs upload to remote R2. Add `"remote": true` to your ' +
             'BACKUP_BUCKET R2 binding in wrangler.jsonc to fix this.'
@@ -340,8 +303,7 @@ export class BackupTransfer {
     r2Key: string,
     sizeBytes: number,
     backupId: string,
-    dir: string,
-    backupSession: string
+    dir: string
   ): Promise<void> {
     const targetParts = calculatePartCount(
       sizeBytes,
@@ -359,8 +321,7 @@ export class BackupTransfer {
         r2Key,
         sizeBytes,
         backupId,
-        dir,
-        backupSession
+        dir
       );
     }
 
@@ -429,8 +390,7 @@ export class BackupTransfer {
       try {
         uploadResult = await this.client.backup.uploadParts({
           archivePath,
-          parts,
-          sessionId: backupSession
+          parts
         });
       } catch (err) {
         if (
@@ -443,8 +403,7 @@ export class BackupTransfer {
             r2Key,
             sizeBytes,
             backupId,
-            dir,
-            backupSession
+            dir
           );
         }
         throw err;
@@ -517,151 +476,41 @@ export class BackupTransfer {
     r2Key: string,
     expectedSize: number,
     backupId: string,
-    dir: string,
-    backupSession: string
+    dir: string
   ): Promise<void> {
     const presignedURL = await this.generatePresignedGetURL(r2Key);
-    await this.execWithSession(
-      `mkdir -p ${BACKUP_CONTAINER_DIR}`,
-      backupSession,
-      { origin: 'internal' }
-    );
+    const parts =
+      expectedSize < BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE
+        ? [{ url: presignedURL, offset: 0 }]
+        : (() => {
+            const partCount = calculatePartCount(
+              expectedSize,
+              BACKUP_DOWNLOAD_PARALLEL_PARTS,
+              BACKUP_DOWNLOAD_MAX_PARTS
+            );
+            const partSize = Math.floor(expectedSize / partCount);
+            return Array.from({ length: partCount }, (_, i) => {
+              const start = i * partSize;
+              const end =
+                i < partCount - 1 ? start + partSize - 1 : expectedSize - 1;
+              return {
+                url: presignedURL,
+                offset: start,
+                range: `bytes=${start}-${end}`
+              };
+            });
+          })();
 
-    const tmpPath = `${archivePath}.tmp`;
-
-    if (expectedSize < BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE) {
-      const curlCmd = [
-        'curl -sSf',
-        '--connect-timeout 10',
-        '--max-time 1800',
-        '--retry 2',
-        '--retry-max-time 60',
-        `-o ${shellEscape(tmpPath)}`,
-        shellEscape(presignedURL)
-      ].join(' ');
-
-      const result = await this.execWithSession(curlCmd, backupSession, {
-        timeout: 1810_000,
-        origin: 'internal'
-      });
-
-      if (result.exitCode !== 0) {
-        await this.execWithSession(
-          `rm -f ${shellEscape(tmpPath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
-        throw new BackupRestoreError({
-          message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId },
-          timestamp: new Date().toISOString()
-        });
-      }
-    } else {
-      const numParts = calculatePartCount(
+    try {
+      await this.client.backup.downloadArchive({
+        archivePath,
         expectedSize,
-        BACKUP_DOWNLOAD_PARALLEL_PARTS,
-        BACKUP_DOWNLOAD_MAX_PARTS
-      );
-      const partSize = Math.floor(expectedSize / numParts);
-      const ranges = Array.from({ length: numParts }, (_, i) => {
-        const start = i * partSize;
-        const end = i < numParts - 1 ? start + partSize - 1 : expectedSize - 1;
-        return { start, range: `${start}-${end}` };
+        parts,
+        timeoutMs: 1_810_000
       });
-
-      const curlCmds = ranges.map(({ start, range }) =>
-        [
-          'curl -sSf',
-          '--connect-timeout 10',
-          '--max-time 1800',
-          `-H ${shellEscape(`Range: bytes=${range}`)}`,
-          shellEscape(presignedURL),
-          '|',
-          'dd',
-          `of=${shellEscape(tmpPath)}`,
-          'oflag=seek_bytes',
-          `seek=${start}`,
-          'conv=notrunc',
-          '2>/dev/null'
-        ].join(' ')
-      );
-
-      const startLines = curlCmds.map(
-        (cmd, i) => `(set -o pipefail; ${cmd}) & J${i}=$!`
-      );
-      const waitLines = Array.from(
-        { length: numParts },
-        (_, i) => `wait $J${i}; E${i}=$?`
-      );
-      const exitVars = Array.from({ length: numParts }, (_, i) => `$E${i}`);
-
-      const script = [
-        `rm -f ${shellEscape(tmpPath)}`,
-        `truncate -s ${expectedSize} ${shellEscape(tmpPath)}`,
-        ...startLines,
-        ...waitLines,
-        `FAILED=$(( ${exitVars.join(' + ')} ))`,
-        `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
-      ].join('; ');
-
-      const result = await this.execWithSession(script, backupSession, {
-        timeout: 1810_000,
-        origin: 'internal'
-      });
-
-      if (result.exitCode !== 0) {
-        await this.execWithSession(
-          `rm -f ${shellEscape(tmpPath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
-        throw new BackupRestoreError({
-          message: `Parallel download failed (exit code ${result.exitCode}): ${result.stderr}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId },
-          timestamp: new Date().toISOString()
-        });
-      }
-    }
-
-    const sizeCheck = await this.execWithSession(
-      `stat -c %s ${shellEscape(tmpPath)}`,
-      backupSession,
-      { origin: 'internal' }
-    );
-    const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
-    if (actualSize !== expectedSize) {
-      await this.execWithSession(
-        `rm -f ${shellEscape(tmpPath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
+    } catch (error) {
       throw new BackupRestoreError({
-        message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const mvResult = await this.execWithSession(
-      `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
-      backupSession,
-      { origin: 'internal' }
-    );
-    if (mvResult.exitCode !== 0) {
-      await this.execWithSession(
-        `rm -f ${shellEscape(tmpPath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
-      throw new BackupRestoreError({
-        message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
+        message: `Presigned URL download failed: ${error instanceof Error ? error.message : String(error)}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         httpStatus: 500,
         context: { dir, backupId },

@@ -1,5 +1,4 @@
 import type {
-  ExecResult,
   LocalMountBucketOptions,
   Logger,
   MountBucketOptions,
@@ -35,7 +34,6 @@ export interface BucketMountServiceDeps {
   currentLifetime: CurrentSandboxLifetime;
   getR2AccessKeyID(): string | null;
   getR2SecretAccessKey(): string | null;
-  execInternal(command: string): Promise<ExecResult>;
   getOutboundHost(): MountOutboundHost;
 }
 
@@ -122,7 +120,7 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        execInternal: (command) => this.deps.execInternal(command),
+        getMounts: () => this.client.mounts,
         getOutboundHost: () => this.deps.getOutboundHost(),
         getS3FSHost: () => this.getS3FSHost(),
         getEnv: () => this.deps.getEnv(),
@@ -138,8 +136,7 @@ export class BucketMountService {
   private getS3FSHost(): S3FSHost {
     return {
       client: this.client,
-      logger: this.deps.logger,
-      execInternal: (command: string) => this.deps.execInternal(command)
+      logger: this.deps.logger
     };
   }
 
@@ -152,7 +149,7 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        execInternal: (command) => this.deps.execInternal(command),
+        getMounts: () => this.client.mounts,
         getOutboundHost: () => this.deps.getOutboundHost(),
         getS3FSHost: () => this.getS3FSHost(),
         lifecycle: this.lifecycle
@@ -172,7 +169,7 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        execInternal: (command) => this.deps.execInternal(command),
+        getMounts: () => this.client.mounts,
         getOutboundHost: () => this.deps.getOutboundHost(),
         getS3FSHost: () => this.getS3FSHost(),
         getEnv: () => this.deps.getEnv(),
@@ -204,7 +201,7 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        execInternal: (command) => this.deps.execInternal(command),
+        getMounts: () => this.client.mounts,
         getOutboundHost: () => this.deps.getOutboundHost(),
         getS3FSHost: () => this.getS3FSHost()
       },

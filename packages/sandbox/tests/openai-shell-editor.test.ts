@@ -1,7 +1,7 @@
 import type { ApplyPatchOperation } from '@openai/agents';
+import type { ISandbox } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor, Shell } from '../src/openai/index';
-import type { Sandbox } from '../src/sandbox';
 
 interface MockSandbox {
   exec?: ReturnType<typeof vi.fn>;
@@ -41,30 +41,24 @@ describe('Shell', () => {
   });
 
   it('runs commands and collects results', async () => {
-    // The Shell now calls `sandbox.exec(cmd, opts).output({ encoding: 'utf8' })`.
-    // Mock returns a `SandboxProcessPromise`-shaped object whose `.output()`
-    // resolves to the buffered exec output. Test logic unchanged.
-    const execMock = vi.fn().mockReturnValue({
+    const execMock = vi.fn().mockResolvedValue({
       output: vi.fn().mockResolvedValue({
-        stdout: 'hello\n',
-        stderr: '',
+        stdout: new TextEncoder().encode('hello\n'),
+        stderr: new Uint8Array(),
         exitCode: 0,
-        success: true,
-        duration: 0,
-        command: 'echo hello',
-        timestamp: new Date().toISOString()
+        truncated: false
       })
     });
 
     const mockSandbox: MockSandbox = { exec: execMock };
-    const shell = new Shell(mockSandbox as unknown as Sandbox);
+    const shell = new Shell(mockSandbox as unknown as ISandbox);
 
     const result = await shell.run({
       commands: ['echo hello'],
       timeoutMs: 500
     });
 
-    expect(execMock).toHaveBeenCalledWith('echo hello', {
+    expect(execMock).toHaveBeenCalledWith(['/bin/bash', '-lc', 'echo hello'], {
       timeout: 500,
       cwd: '/workspace'
     });
@@ -82,16 +76,41 @@ describe('Shell', () => {
     );
   });
 
-  it('halts subsequent commands after a timeout error', async () => {
-    const timeoutError = new Error('Command timed out');
-    // `.output()` on the returned thenable rejects with the timeout error;
-    // the surrounding shell error-handling path is unchanged.
-    const execMock = vi.fn().mockReturnValue({
-      output: vi.fn().mockRejectedValue(timeoutError)
+  it('preserves signal termination as a numeric exit outcome', async () => {
+    const execMock = vi.fn().mockResolvedValue({
+      output: vi.fn().mockResolvedValue({
+        stdout: new Uint8Array(),
+        stderr: new TextEncoder().encode('terminated\n'),
+        exitCode: 143,
+        signal: 15,
+        timedOut: false,
+        truncated: false
+      })
     });
 
     const mockSandbox: MockSandbox = { exec: execMock };
-    const shell = new Shell(mockSandbox as unknown as Sandbox);
+    const shell = new Shell(mockSandbox as unknown as ISandbox);
+
+    const result = await shell.run({ commands: ['sleep 10'] });
+
+    expect(result.output[0]).toMatchObject({
+      command: 'sleep 10',
+      stderr: 'terminated\n',
+      outcome: { type: 'exit', exitCode: 143 }
+    });
+    expect(shell.results[0].exitCode).toBe(143);
+    expect(loggerSpies.warn).toHaveBeenCalledWith(
+      'Command failed with exit code 143',
+      expect.objectContaining({ command: 'sleep 10' })
+    );
+  });
+
+  it('halts subsequent commands after a timeout error', async () => {
+    const timeoutError = new Error('Command timed out');
+    const execMock = vi.fn().mockRejectedValue(timeoutError);
+
+    const mockSandbox: MockSandbox = { exec: execMock };
+    const shell = new Shell(mockSandbox as unknown as ISandbox);
     const action = {
       commands: ['sleep 1', 'echo never'],
       timeoutMs: 25
@@ -130,7 +149,7 @@ describe('Editor', () => {
       writeFile: vi.fn().mockResolvedValue(undefined)
     };
 
-    const editor = new Editor(mockSandbox as unknown as Sandbox);
+    const editor = new Editor(mockSandbox as unknown as ISandbox);
     const operation = {
       type: 'create_file',
       path: 'src/app.ts',
@@ -167,7 +186,7 @@ describe('Editor', () => {
       writeFile: vi.fn().mockResolvedValue(undefined)
     };
 
-    const editor = new Editor(mockSandbox as unknown as Sandbox);
+    const editor = new Editor(mockSandbox as unknown as ISandbox);
     const operation = {
       type: 'update_file',
       path: 'README.md',
@@ -201,7 +220,7 @@ describe('Editor', () => {
       readFile: vi.fn().mockRejectedValue(missingError)
     };
 
-    const editor = new Editor(mockSandbox as unknown as Sandbox);
+    const editor = new Editor(mockSandbox as unknown as ISandbox);
     const operation = {
       type: 'update_file',
       path: 'missing.txt',
@@ -225,7 +244,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: '../etc/passwd',
@@ -244,7 +263,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: '../../etc/passwd',
@@ -263,7 +282,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: 'src/../../etc/passwd',
@@ -282,7 +301,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: '/../../etc/passwd',
@@ -301,7 +320,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: './../../etc/passwd',
@@ -319,7 +338,7 @@ describe('Editor', () => {
         readFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'update_file',
         path: '../../etc/passwd',
@@ -337,7 +356,7 @@ describe('Editor', () => {
         deleteFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'delete_file',
         path: '../../etc/passwd'
@@ -357,7 +376,7 @@ describe('Editor', () => {
         writeFile: vi.fn().mockResolvedValue(undefined)
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: 'src/subdir/../../file.txt',
@@ -382,7 +401,7 @@ describe('Editor', () => {
         writeFile: vi.fn().mockResolvedValue(undefined)
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: 'src//subdir///file.txt',
@@ -404,7 +423,7 @@ describe('Editor', () => {
         writeFile: vi.fn()
       };
 
-      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const editor = new Editor(mockSandbox as unknown as ISandbox);
       const operation = {
         type: 'create_file',
         path: 'a/b/c/../../../../etc/passwd',
@@ -426,7 +445,7 @@ describe('Editor', () => {
       };
 
       const editor = new Editor(
-        mockSandbox as unknown as Sandbox,
+        mockSandbox as unknown as ISandbox,
         '/workspace'
       );
       const operation = {

@@ -85,14 +85,20 @@ export interface BridgeEnv {
 // JSON wire types — shared between HTTP clients and this worker
 // ---------------------------------------------------------------------------
 
-/** Sent by the client for /exec requests. */
+/** Sent by the client to launch a process. */
 export interface ExecRequest {
   /** Argv array — already shell-expanded by the client layer if shell=True. */
-  argv: string[];
-  /** Per-call timeout in milliseconds (optional). */
-  timeout_ms?: number;
+  argv: [string, ...string[]];
+  /**
+   * Remote process lifetime deadline in milliseconds. When reached, the
+   * sandbox may stop the process and the process exit outcome reports
+   * `timedOut: true`; this is not caller-local observation cancellation.
+   */
+  timeout?: number;
   /** Working directory for the command (optional, defaults to sandbox cwd). */
   cwd?: string;
+  /** Environment overrides for the command. */
+  env?: Record<string, string>;
 }
 
 /** Returned by /write on success. */

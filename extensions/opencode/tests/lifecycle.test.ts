@@ -9,10 +9,11 @@ import { withOpenCode } from '../src/lifecycle';
 
 interface MockProcess {
   id: string;
-  command: string;
+  command: readonly [string, ...string[]];
   startTime: Date;
   exitCode: Promise<number>;
   waitForPort: ReturnType<typeof vi.fn>;
+  waitForExit: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   getLogs: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
@@ -25,21 +26,60 @@ interface MockSandbox {
   containerFetch: ReturnType<typeof vi.fn>;
 }
 
+function createProcessStatus(
+  state: ProcessStatus['state'],
+  overrides: Partial<MockProcess> = {}
+): ProcessStatus {
+  const base = {
+    id: overrides.id ?? 'proc-1',
+    pid: 123,
+    command:
+      overrides.command ??
+      ([
+        'opencode',
+        'serve',
+        '--port',
+        '4096',
+        '--hostname',
+        '0.0.0.0'
+      ] as const),
+    startedAt: new Date().toISOString()
+  };
+  if (state === 'exited') {
+    return {
+      ...base,
+      state,
+      exit: { code: 0, timedOut: false },
+      endedAt: new Date().toISOString()
+    };
+  }
+  if (state === 'error') {
+    return {
+      ...base,
+      state,
+      error: { code: 'ERROR', message: 'failed' },
+      endedAt: new Date().toISOString()
+    };
+  }
+  return { ...base, state };
+}
+
 function createMockProcess(
   overrides: Partial<Omit<MockProcess, 'status'>> & {
-    status?: ProcessStatus;
+    state?: ProcessStatus['state'];
   } = {}
 ): MockProcess {
-  const { status: initialStatus = 'running', ...rest } = overrides;
+  const { state: initialStatus = 'running', ...rest } = overrides;
   return {
     id: 'proc-1',
-    command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+    command: ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
     startTime: new Date(),
     exitCode: Promise.resolve(0),
     waitForPort: vi.fn().mockResolvedValue(undefined),
-    kill: vi.fn(),
+    waitForExit: vi.fn().mockResolvedValue(undefined),
+    kill: vi.fn().mockResolvedValue(undefined),
     getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
-    status: vi.fn().mockResolvedValue(initialStatus),
+    status: vi.fn().mockResolvedValue(createProcessStatus(initialStatus, rest)),
     ...rest
   };
 }
@@ -89,34 +129,10 @@ describe('withOpenCode', () => {
       const server = await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
-        'opencode serve --port 4096 --hostname 0.0.0.0',
+        ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
         expect.any(Object)
       );
       expect(server).toEqual({ port: 4096, url: 'http://localhost:4096' });
-    });
-
-    it('starts the server under a stable named process id', async () => {
-      const handle = withOpenCode(mockSandbox as unknown as Sandbox);
-
-      await handle.start();
-
-      expect(mockSandbox.exec).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ processId: 'opencode-4096' })
-      );
-    });
-
-    it('honors a custom process id', async () => {
-      const handle = withOpenCode(mockSandbox as unknown as Sandbox, {
-        processId: 'my-opencode'
-      });
-
-      await handle.start();
-
-      expect(mockSandbox.exec).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ processId: 'my-opencode' })
-      );
     });
 
     it('applies factory default options', async () => {
@@ -127,8 +143,8 @@ describe('withOpenCode', () => {
       await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
-        "cd '/home/user/agents' && opencode serve --port 4096 --hostname 0.0.0.0",
-        expect.any(Object)
+        ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
+        expect.objectContaining({ cwd: '/home/user/agents' })
       );
     });
 
@@ -140,19 +156,23 @@ describe('withOpenCode', () => {
       await handle.start({ port: 8080 });
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
-        'opencode serve --port 8080 --hostname 0.0.0.0',
+        ['opencode', 'serve', '--port', '8080', '--hostname', '0.0.0.0'],
         expect.any(Object)
       );
     });
 
-    it('reuses an already-running named server without scanning', async () => {
-      mockSandbox.getProcess.mockResolvedValue(createMockProcess());
+    it('reuses an already-running matching server', async () => {
+      const existingProcess = createMockProcess();
+      mockSandbox.listProcesses.mockResolvedValue([
+        createProcessStatus('running')
+      ]);
+      mockSandbox.getProcess.mockResolvedValue(existingProcess);
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
       const server = await handle.start();
 
-      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
-      expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
+      expect(mockSandbox.listProcesses).toHaveBeenCalledWith();
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('proc-1');
       expect(mockSandbox.exec).not.toHaveBeenCalled();
       expect(server.port).toBe(4096);
     });
@@ -190,14 +210,17 @@ describe('withOpenCode', () => {
   });
 
   describe('status', () => {
-    it('reports running via a named-process lookup', async () => {
+    it('reports running via matching process discovery', async () => {
+      mockSandbox.listProcesses.mockResolvedValue([
+        createProcessStatus('running')
+      ]);
       mockSandbox.getProcess.mockResolvedValue(createMockProcess());
       const handle = withOpenCode(mockSandbox as unknown as Sandbox);
 
       const status = await handle.status();
 
-      expect(mockSandbox.getProcess).toHaveBeenCalledWith('opencode-4096');
-      expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
+      expect(mockSandbox.listProcesses).toHaveBeenCalledWith();
+      expect(mockSandbox.getProcess).toHaveBeenCalledWith('proc-1');
       expect(status).toEqual({
         running: true,
         port: 4096,
@@ -248,7 +271,7 @@ describe('withOpenCode', () => {
       await handle.start();
 
       expect(mockSandbox.exec).toHaveBeenCalledWith(
-        'opencode serve --port 8080 --hostname 0.0.0.0',
+        ['opencode', 'serve', '--port', '8080', '--hostname', '0.0.0.0'],
         expect.any(Object)
       );
     });

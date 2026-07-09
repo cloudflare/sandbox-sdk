@@ -1,15 +1,9 @@
 import type {
   BackupOptions,
   DirectoryBackup,
-  ExecOptions,
-  ExecResult,
   RestoreBackupResult
 } from '@repo/shared';
-import {
-  type createLogger,
-  logCanonicalEvent,
-  shellEscape
-} from '@repo/shared';
+import { type createLogger, logCanonicalEvent } from '@repo/shared';
 import type { ContainerControlClient } from '../container-control';
 import type { CurrentRuntimeIdentity } from '../current-runtime-identity';
 import {
@@ -48,11 +42,6 @@ type BackupServiceDeps = {
   getEnv: () => unknown;
   logger: ReturnType<typeof createLogger>;
   getClient: () => ContainerControlClient;
-  execWithSession: (
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ) => Promise<ExecResult>;
   currentRuntime: CurrentRuntimeIdentity;
   currentLifetime: CurrentSandboxLifetime;
 };
@@ -82,16 +71,13 @@ export class BackupService {
     this.transfer = new BackupTransfer({
       getEnv: deps.getEnv,
       getClient: deps.getClient,
-      logger: deps.logger,
-      execWithSession: deps.execWithSession
+      logger: deps.logger
     });
     this.creator = new BackupCreator({
       getEnv: deps.getEnv,
       getClient: deps.getClient,
       logger: deps.logger,
-      transfer: this.transfer,
-      ensureBackupSession: () => this.ensureBackupSession(),
-      execWithSession: deps.execWithSession
+      transfer: this.transfer
     });
   }
 
@@ -103,28 +89,8 @@ export class BackupService {
     return this.deps.getClient();
   }
 
-  private execWithSession(
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    return this.deps.execWithSession(command, sessionId, options);
-  }
-
   private static readonly UUID_REGEX =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  /**
-   * Create a unique, dedicated session for a single backup operation.
-   * Each call produces a fresh session ID so concurrent or sequential
-   * operations never share shell state. Callers must destroy the session
-   * in a finally block via `client.utils.deleteSession()`.
-   */
-  private async ensureBackupSession(): Promise<string> {
-    const sessionId = `__sandbox_backup_${crypto.randomUUID()}`;
-    await this.client.utils.createSession({ id: sessionId, cwd: '/' });
-    return sessionId;
-  }
 
   /**
    * Serialize backup operations so concurrent calls run one at a time.
@@ -232,7 +198,6 @@ export class BackupService {
 
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
-    let backupSession: string | undefined;
 
     try {
       // Step 1: Read metadata to check TTL
@@ -300,49 +265,22 @@ export class BackupService {
         });
       }
 
-      backupSession = await this.ensureBackupSession();
       await lifecycle.runtimeReady(archiveHead.size);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      // Step 3: Tear down existing FUSE mounts before overwriting the archive.
-      // squashfuse holds the .sqsh file open; writing a new archive to the same
-      // path while the old mount is active corrupts the backing store.
-      // Unmount the overlay on dir, then iterate over all mount bases for this
-      // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
-      // their squashfuse lower dirs.
-      const mountGlob = `${BACKUP_CONTAINER_DIR}/mounts/${id}`;
-      await this.execWithSession(
-        `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
-      await this.execWithSession(
-        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
+      const prepareResult = await this.client.backup.prepareRestore({
+        dir,
+        backupId: id,
+        archivePath
+      });
 
-      // Step 4: Write archive to the container (skip if already present and
-      // same size — avoids overwriting a file that a lazily-unmounted
-      // squashfuse may still hold open).
-      const sizeCheck = await this.execWithSession(
-        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => ({ stdout: '0' }));
-      const existingSize = Number.parseInt(
-        (sizeCheck.stdout ?? '0').trim(),
-        10
-      );
-
-      if (existingSize !== archiveHead.size) {
+      if (prepareResult.existingSize !== archiveHead.size) {
         await this.transfer.downloadBackupParallel(
           archivePath,
           r2Key,
           archiveHead.size,
           id,
-          dir,
-          backupSession
+          dir
         );
       }
 
@@ -350,8 +288,7 @@ export class BackupService {
 
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
-        archivePath,
-        { sessionId: backupSession }
+        archivePath
       );
 
       if (!restoreResult.success) {
@@ -376,19 +313,12 @@ export class BackupService {
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      if (id && backupSession) {
+      if (id) {
         const cleanupPath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(cleanupPath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
+        await this.client.backup.cleanupArchive(cleanupPath).catch(() => {});
       }
       throw error;
     } finally {
-      if (backupSession) {
-        await this.client.utils.deleteSession(backupSession).catch(() => {});
-      }
       logCanonicalEvent(this.logger, {
         event: 'backup.restore',
         outcome,
@@ -414,7 +344,6 @@ export class BackupService {
 
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
-    let backupSession: string | undefined;
 
     // Resolve backup bucket from env as an R2 binding
     const envObj = this.env as Record<string, unknown>;
@@ -498,16 +427,14 @@ export class BackupService {
         });
       }
 
-      backupSession = await this.ensureBackupSession();
       await lifecycle.runtimeReady(metadata.sizeBytes);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      // Ensure backup directory exists
-      await this.execWithSession(
-        `mkdir -p ${BACKUP_CONTAINER_DIR}`,
-        backupSession,
-        { origin: 'internal' }
-      );
+      await this.client.backup.prepareRestore({
+        dir,
+        backupId: id,
+        archivePath
+      });
 
       // Stream the archive into the container to avoid base64-encoding the
       // whole archive in Worker memory and hitting workerd's 32 MiB RPC
@@ -522,35 +449,14 @@ export class BackupService {
           timestamp: new Date().toISOString()
         });
       }
-      await this.client.files.writeFileStream(archivePath, body, {
-        sessionId: backupSession
-      });
+      await this.client.files.writeFileStream(archivePath, body);
 
       await lifecycle.archiveReady(metadata.sizeBytes);
 
-      // Step 3: Extract archive using unsquashfs (no FUSE needed)
-      const extractResult = await this.execWithSession(
-        `/usr/bin/unsquashfs -f -d ${shellEscape(dir)} ${shellEscape(archivePath)}`,
-        backupSession,
-        { origin: 'internal' }
-      );
-
-      if (extractResult.exitCode !== 0) {
-        throw new BackupRestoreError({
-          message: `unsquashfs extraction failed (exit code ${extractResult.exitCode}): ${extractResult.stderr}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId: id },
-          timestamp: new Date().toISOString()
-        });
-      }
+      await this.client.backup.extractArchive(dir, archivePath);
 
       // Clean up archive after extraction (no FUSE mount holds it open)
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
+      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
 
       const result = {
         success: true as const,
@@ -564,19 +470,12 @@ export class BackupService {
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      if (id && backupSession) {
+      if (id) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(archivePath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
+        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
       }
       throw error;
     } finally {
-      if (backupSession) {
-        await this.client.utils.deleteSession(backupSession).catch(() => {});
-      }
       logCanonicalEvent(this.logger, {
         event: 'backup.restore',
         outcome,

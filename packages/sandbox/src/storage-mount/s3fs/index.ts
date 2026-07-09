@@ -94,7 +94,6 @@ export async function executeS3FSMount(
     options: RemoteMountBucketOptions;
     provider: BucketProvider | null;
     passwordFilePath: string;
-    sessionId?: string;
   }
 ): Promise<void> {
   const logSuffix = randomHex(4);
@@ -109,31 +108,12 @@ export async function executeS3FSMount(
     url: params.options.endpoint,
     ...(params.options.readOnly ? { ro: true } : {})
   };
-  const logFile = s3fsOptions.logfile as string;
-  const optionsStr = serializeS3fsOptions(s3fsOptions);
-
-  const script = sh`(
-    s3fs ${params.bucket} ${params.mountPath} -o ${optionsStr} >${logFile} 2>&1
-    rc=$?
-    if [ "$rc" -ne 0 ]; then tail -n 20 ${logFile} 2>/dev/null || true; exit 2; fi
-    for _ in $(seq 1 60); do
-      if mountpoint -q ${params.mountPath}; then exit 0; fi
-      sleep 0.1
-    done
-    tail -n 20 ${logFile} 2>/dev/null || true
-    exit 3
-  )`;
-
-  const exec =
-    params.sessionId && host.executeCommand
-      ? (command: string) =>
-          host.executeCommand!(command, params.sessionId!, {
-            origin: 'internal'
-          })
-      : (command: string) => host.execInternal(command);
-
-  const result = await exec(script);
-  if (result.exitCode === 0) return;
+  const result = await host.client.mounts.mountS3FSAndVerify({
+    source: params.bucket,
+    mountPath: params.mountPath,
+    options: s3fsOptions
+  });
+  if (result.success) return;
 
   const detail = result.stdout?.trim() || result.stderr?.trim() || '';
   if (result.exitCode === 2) {
@@ -156,10 +136,8 @@ export async function unmountTrackedFuseMount(
   if (!mountInfo.mounted) return true;
 
   host.logger.debug(`Unmounting bucket ${mountInfo.bucket} from ${mountPath}`);
-  const result = await host.execInternal(
-    `fusermount -u ${shellEscape(mountPath)}`
-  );
-  if (result.exitCode !== 0) {
+  const result = await host.client.mounts.unmountFuse(mountPath);
+  if (!result.success) {
     throw new Error(
       `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`
     );

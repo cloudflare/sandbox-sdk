@@ -1,6 +1,7 @@
+import { RpcTarget } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../src/errors';
-import { getSandbox } from '../src/sandbox';
+import { getSandbox, type Sandbox } from '../src/sandbox';
 
 // Mock the Container module
 vi.mock('@cloudflare/containers', () => ({
@@ -86,7 +87,7 @@ describe('getSandbox', () => {
     });
     const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
-    await expect(sandbox.exec('echo ready')).rejects.toMatchObject({
+    await expect(sandbox.exec(['echo', 'ready'])).rejects.toMatchObject({
       name: 'OperationInterruptedError',
       code: ErrorCode.OPERATION_INTERRUPTED,
       context: {
@@ -297,86 +298,72 @@ describe('getSandbox', () => {
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
-    it('routes implicit exec through direct sandbox exec', async () => {
+    it('creates caller-local process handles and sanitizes exec options', async () => {
+      const capability = {
+        status: vi.fn(),
+        openLogs: vi.fn(),
+        openPortWatch: vi.fn(),
+        kill: vi.fn()
+      };
       mockStub.exec = vi.fn().mockResolvedValue({
-        id: 'proc-sessionless',
-        pid: 1234,
-        command: 'sleep 10',
-        sessionId: undefined,
-        startTime: new Date(),
-        stdin: null,
-        stdout: null,
-        stderr: null,
-        exitCode: Promise.resolve(0),
-        output: async () => ({
-          stdout: '',
-          stderr: '',
-          exitCode: 0,
-          success: true,
-          duration: 0,
-          command: 'sleep 10',
-          timestamp: new Date().toISOString()
-        }),
-        kill: () => undefined,
-        status: async () => 'running',
-        getLogs: async () => ({ stdout: '', stderr: '' }),
-        waitForLog: async () => ({ line: '' }),
-        waitForPort: async () => undefined,
-        waitForExit: async () => ({ exitCode: 0 })
+        id: 'p1',
+        pid: 123,
+        capability
       });
-
-      const mockNamespace = {} as any;
+      const mockNamespace = {} as unknown as DurableObjectNamespace<Sandbox>;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+      const options = {
+        env: { TEST_ENV: '1' },
+        cwd: '/workspace/app',
+        timeout: 1000,
+        signal: new AbortController().signal,
+        callback: () => 'not serializable',
+        unrelated: true
+      };
 
-      await sandbox.exec('sleep 10', {
+      const process = await sandbox.exec(['echo', 'test'], options);
+
+      expect(process).not.toBeInstanceOf(RpcTarget);
+      expect(process).toMatchObject({ id: 'p1', pid: 123 });
+      expect(mockStub.exec).toHaveBeenCalledWith(['echo', 'test'], {
         env: { TEST_ENV: '1' },
         cwd: '/workspace/app',
         timeout: 1000
       });
-
-      expect(mockStub.exec).toHaveBeenCalledWith('sleep 10', {
-        env: { TEST_ENV: '1' },
-        cwd: '/workspace/app',
-        timeout: 1000
-      });
-      expect('execWithSessionToken' in mockStub).toBe(false);
     });
 
-    it('keeps implicit process reads sandbox-scoped', async () => {
-      mockStub.listProcesses = vi.fn().mockResolvedValue([]);
-      mockStub.getProcess = vi.fn().mockResolvedValue(null);
-
-      const mockNamespace = {} as any;
+    it('converts recovered descriptors and returns process listings as data', async () => {
+      const capability = {
+        status: vi.fn(),
+        openLogs: vi.fn(),
+        openPortWatch: vi.fn(),
+        kill: vi.fn()
+      };
+      const status = {
+        id: 'p1',
+        pid: 123,
+        command: ['/bin/true'],
+        state: 'running',
+        startedAt: new Date().toISOString()
+      };
+      mockStub.getProcess = vi
+        .fn()
+        .mockResolvedValueOnce({ id: 'p1', pid: 123, capability })
+        .mockResolvedValueOnce(null);
+      mockStub.listProcesses = vi.fn().mockResolvedValue([status]);
+      const mockNamespace = {} as unknown as DurableObjectNamespace<Sandbox>;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
-      await sandbox.listProcesses();
-      await sandbox.getProcess('proc-sessionless');
-
-      expect(mockStub.listProcesses).toHaveBeenCalledWith();
-      expect(mockStub.getProcess).toHaveBeenCalledWith('proc-sessionless');
+      await expect(sandbox.getProcess('p1')).resolves.toMatchObject({
+        id: 'p1',
+        pid: 123
+      });
+      await expect(sandbox.getProcess('missing')).resolves.toBeNull();
+      await expect(sandbox.listProcesses()).resolves.toEqual([status]);
+      expect(capability.status).not.toHaveBeenCalled();
     });
 
-    it('preserves explicit sessionIds for process reads', async () => {
-      mockStub.listProcesses = vi.fn().mockResolvedValue([]);
-      mockStub.getProcess = vi.fn().mockResolvedValue(null);
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.listProcesses({ sessionId: 'explicit-session' });
-      await sandbox.getProcess('proc-explicit', {
-        sessionId: 'explicit-session'
-      });
-
-      expect(mockStub.listProcesses).toHaveBeenCalledWith({
-        sessionId: 'explicit-session'
-      });
-      expect(mockStub.getProcess).toHaveBeenCalledWith('proc-explicit', {
-        sessionId: 'explicit-session'
-      });
-    });
-
-    it('routes implicit file operations without session IDs', async () => {
+    it('routes file operations through file RPC methods', async () => {
       mockStub.writeFile = vi.fn().mockResolvedValue({});
       mockStub.readFile = vi.fn().mockResolvedValue({});
       mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
@@ -411,8 +398,7 @@ describe('getSandbox', () => {
         encoding: 'utf8'
       });
       expect(mockStub.readFileStream).toHaveBeenCalledWith(
-        '/workspace/file.txt',
-        {}
+        '/workspace/file.txt'
       );
       expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
         recursive: true
@@ -432,139 +418,16 @@ describe('getSandbox', () => {
       expect(mockStub.exists).toHaveBeenCalledWith('/workspace/file.txt');
     });
 
-    it('passes explicit session IDs through file operation options', async () => {
-      mockStub.writeFile = vi.fn().mockResolvedValue({});
-      mockStub.readFile = vi.fn().mockResolvedValue({});
-      mockStub.readFileStream = vi.fn().mockResolvedValue(new ReadableStream());
-      mockStub.mkdir = vi.fn().mockResolvedValue({});
-      mockStub.deleteFile = vi.fn().mockResolvedValue({});
-      mockStub.renameFile = vi.fn().mockResolvedValue({});
-      mockStub.moveFile = vi.fn().mockResolvedValue({});
-      mockStub.listFiles = vi.fn().mockResolvedValue({ files: [] });
-      mockStub.exists = vi.fn().mockResolvedValue({ exists: true });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.writeFile('/workspace/file.txt', 'content', {
-        sessionId: 'my-session',
-        encoding: 'utf8'
-      });
-      await sandbox.readFile('/workspace/file.txt', {
-        sessionId: 'my-session',
-        encoding: 'utf8'
-      });
-      await sandbox.readFileStream('/workspace/file.txt', {
-        sessionId: 'my-session'
-      });
-      await sandbox.mkdir('/workspace/dir', {
-        sessionId: 'my-session',
-        recursive: true
-      });
-      await sandbox.deleteFile('/workspace/file.txt', {
-        sessionId: 'my-session'
-      });
-      await sandbox.renameFile('/workspace/old.txt', '/workspace/new.txt', {
-        sessionId: 'my-session'
-      });
-      await sandbox.moveFile('/workspace/src.txt', '/workspace/dest.txt', {
-        sessionId: 'my-session'
-      });
-      await sandbox.listFiles('/workspace', {
-        sessionId: 'my-session',
-        includeHidden: true
-      });
-      await sandbox.exists('/workspace/file.txt', { sessionId: 'my-session' });
-
-      expect(mockStub.writeFile).toHaveBeenCalledWith(
-        '/workspace/file.txt',
-        'content',
-        { sessionId: 'my-session', encoding: 'utf8' }
-      );
-      expect(mockStub.readFile).toHaveBeenCalledWith('/workspace/file.txt', {
-        sessionId: 'my-session',
-        encoding: 'utf8'
-      });
-      expect(mockStub.readFileStream).toHaveBeenCalledWith(
-        '/workspace/file.txt',
-        { sessionId: 'my-session' }
-      );
-      expect(mockStub.mkdir).toHaveBeenCalledWith('/workspace/dir', {
-        sessionId: 'my-session',
-        recursive: true
-      });
-      expect(mockStub.deleteFile).toHaveBeenCalledWith('/workspace/file.txt', {
-        sessionId: 'my-session'
-      });
-      expect(mockStub.renameFile).toHaveBeenCalledWith(
-        '/workspace/old.txt',
-        '/workspace/new.txt',
-        { sessionId: 'my-session' }
-      );
-      expect(mockStub.moveFile).toHaveBeenCalledWith(
-        '/workspace/src.txt',
-        '/workspace/dest.txt',
-        { sessionId: 'my-session' }
-      );
-      expect(mockStub.listFiles).toHaveBeenCalledWith('/workspace', {
-        sessionId: 'my-session',
-        includeHidden: true
-      });
-      expect(mockStub.exists).toHaveBeenCalledWith('/workspace/file.txt', {
-        sessionId: 'my-session'
-      });
-    });
-
-    it('routes implicit watch and change checks without session IDs', async () => {
-      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
-      mockStub.checkChanges = vi
-        .fn()
-        .mockResolvedValue({ status: 'unchanged', version: 1 });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.watch('/workspace', { recursive: false });
-      await sandbox.checkChanges('/workspace', { since: 'watch-1:0' });
-
-      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
-        recursive: false
-      });
-      expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
-        since: 'watch-1:0'
-      });
-    });
-
-    it('passes explicit session IDs through watch and change checks', async () => {
-      mockStub.watch = vi.fn().mockResolvedValue(new ReadableStream());
-      mockStub.checkChanges = vi
-        .fn()
-        .mockResolvedValue({ status: 'unchanged', version: 1 });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.watch('/workspace', { sessionId: 'my-session' });
-      await sandbox.checkChanges('/workspace', { sessionId: 'my-session' });
-
-      expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {
-        sessionId: 'my-session'
-      });
-      expect(mockStub.checkChanges).toHaveBeenCalledWith('/workspace', {
-        sessionId: 'my-session'
-      });
-    });
-
-    it('routes terminal handle connections with explicit terminal IDs', async () => {
+    it('routes terminal handle connections with generated terminal IDs', async () => {
       let proxiedRequest: Request | undefined;
       mockStub.fetch = vi.fn(async (request: Request) => {
         proxiedRequest = request;
         return new Response(null, { status: 200 });
       });
-      mockStub.createTerminal = vi.fn(
-        async (_options: { id: string; cwd?: string; shell?: string }) =>
-          undefined
-      );
+      mockStub.createTerminal = vi.fn(async () => ({
+        id: 'terminal-a',
+        connect: (request: Request) => mockStub.fetch(request)
+      }));
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
@@ -572,77 +435,56 @@ describe('getSandbox', () => {
         headers: { Upgrade: 'websocket' }
       });
 
-      const terminal = sandbox.terminal({ id: 'terminal-a' });
+      const terminal = await sandbox.createTerminal({ command: ['bash'] });
       await terminal.connect(request);
 
       expect(terminal.id).toBe('terminal-a');
       expect(mockStub.createTerminal).toHaveBeenCalledWith({
+        command: ['bash']
+      });
+      expect(mockStub.fetch).toHaveBeenCalledOnce();
+      expect(proxiedRequest?.url).toBe('https://example.com/terminal');
+    });
+
+    it('gets and lists terminal handles by snapshot', async () => {
+      mockStub.getTerminal = vi.fn(async () => ({
+        id: 'terminal-a',
+        command: ['bash'],
+        status: 'running'
+      }));
+      mockStub.listTerminals = vi.fn(async () => [
+        { id: 'terminal-a', command: ['bash'], status: 'running' }
+      ]);
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      await expect(sandbox.getTerminal('terminal-a')).resolves.toMatchObject({
         id: 'terminal-a'
       });
-      expect(mockStub.fetch).toHaveBeenCalledOnce();
-      const url = new URL(proxiedRequest?.url ?? 'http://missing');
-      expect(url.pathname).toBe('/proxy/3000/ws/terminal');
-      expect(url.searchParams.get('terminalId')).toBe('terminal-a');
+      await expect(sandbox.listTerminals()).resolves.toHaveLength(1);
+
+      expect(mockStub.getTerminal).toHaveBeenCalledWith('terminal-a');
+      expect(mockStub.listTerminals).toHaveBeenCalledOnce();
     });
 
-    it('generates terminal IDs instead of using default session IDs', async () => {
-      let proxiedRequest: Request | undefined;
-      mockStub.fetch = vi.fn(async (request: Request) => {
-        proxiedRequest = request;
-        return new Response(null, { status: 200 });
-      });
-      mockStub.createTerminal = vi.fn(
-        async (_options: { id: string; cwd?: string; shell?: string }) =>
-          undefined
-      );
+    it('forwards terminal interrupt and terminate through handle methods', async () => {
+      mockStub.getTerminal = vi.fn(async () => ({
+        id: 'terminal-a',
+        command: ['bash'],
+        status: 'running',
+        interrupt: vi.fn(),
+        terminate: vi.fn()
+      }));
 
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-      const request = new Request('https://example.com/terminal', {
-        headers: { Upgrade: 'websocket' }
-      });
+      const terminal = await sandbox.getTerminal('terminal-a');
 
-      const terminal = sandbox.terminal();
-      await terminal.connect(request);
+      await terminal?.interrupt();
+      await terminal?.terminate();
 
-      expect(terminal.id).toMatch(/^terminal-[0-9a-f-]{36}$/);
-      expect(mockStub.createTerminal).toHaveBeenCalledWith({
-        id: terminal.id
-      });
-      expect(mockStub.fetch).toHaveBeenCalledOnce();
-      const url = new URL(proxiedRequest?.url ?? 'http://missing');
-      expect(url.searchParams.get('terminalId')).toBe(terminal.id);
-      expect(url.searchParams.get('terminalId')).not.toBe(
-        'sandbox-test-sandbox'
-      );
-    });
-
-    it('destroys terminal handles by ID through the sandbox RPC method', async () => {
-      mockStub.fetch = vi.fn(async () => new Response(null, { status: 204 }));
-      mockStub.createTerminal = vi.fn(
-        async (_options: { id: string; cwd?: string; shell?: string }) =>
-          undefined
-      );
-      mockStub.destroyTerminal = vi.fn(async (_id: string) => undefined);
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      await sandbox.terminal({ id: 'terminal-a' }).destroy();
-
-      expect(mockStub.destroyTerminal).toHaveBeenCalledWith('terminal-a');
-      expect(mockStub.fetch).not.toHaveBeenCalled();
-    });
-
-    it('does not attach terminal helpers to command sessions', async () => {
-      mockStub.createSession = vi.fn().mockResolvedValue({ id: 'session-a' });
-
-      const mockNamespace = {} as any;
-      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
-
-      const session = await sandbox.createSession({ id: 'session-a' });
-
-      expect('terminal' in session).toBe(false);
+      expect(mockStub.getTerminal).toHaveBeenCalledWith('terminal-a');
     });
 
     it('should read properties directly from the stub', () => {

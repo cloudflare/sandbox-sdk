@@ -1,4 +1,4 @@
-import { logCanonicalEvent, shellEscape } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import { BucketUnmountError, InvalidMountConfigError } from '../errors';
 import {
   configureR2EgressOutbound,
@@ -38,10 +38,8 @@ export async function unmountBucketOperation(
     } else {
       let unmounted = !mountInfo.mounted;
       if (mountInfo.mounted) {
-        const result = await context.execInternal(
-          `fusermount -u ${shellEscape(mountPath)}`
-        );
-        if (result.exitCode !== 0) {
+        const result = await context.getMounts().unmountFuse(mountPath);
+        if (!result.success) {
           const stderr = result.stderr || 'unknown error';
           throw new BucketUnmountError(
             `fusermount -u failed (exit ${result.exitCode}): ${stderr}`
@@ -72,10 +70,11 @@ export async function unmountBucketOperation(
       context.registry.delete(mountPath);
 
       try {
-        const cleanup = await context.execInternal(
-          `mountpoint -q ${shellEscape(mountPath)} || rmdir ${shellEscape(mountPath)}`
-        );
-        if (cleanup.exitCode !== 0) {
+        const cleanup = await context.getMounts().removeMountDirectory({
+          path: mountPath,
+          onlyIfNotMountpoint: true
+        });
+        if (!cleanup.success) {
           context.logger.warn('mount directory removal failed', {
             mountPath,
             exitCode: cleanup.exitCode,

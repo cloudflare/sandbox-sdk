@@ -22,6 +22,8 @@ vi.mock('@cloudflare/containers', () => {
     async getState(): Promise<{ status: string }> {
       return { status: 'healthy' };
     }
+
+    async startAndWaitForPorts(): Promise<void> {}
   }
 
   return {
@@ -150,36 +152,6 @@ async function createBackupSandbox(params?: {
   });
 
   sandbox.client = createMockControlClient();
-  vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
-    success: true,
-    id: 'backup-session',
-    message: 'Created'
-  } as never);
-  vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-    success: true,
-    sessionId: 'backup-session',
-    timestamp: '2026-06-15T12:00:00.000Z'
-  } as never);
-  const sandboxInternals = sandbox as unknown as {
-    executeCommand: () => Promise<{
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      success: boolean;
-      command: string;
-      duration: number;
-      timestamp: string;
-    }>;
-  };
-  vi.spyOn(sandboxInternals, 'executeCommand').mockResolvedValue({
-    stdout: '42',
-    stderr: '',
-    exitCode: 0,
-    success: true,
-    command: 'du -sb /workspace/project',
-    duration: 0,
-    timestamp: '2026-06-15T12:00:00.000Z'
-  });
   vi.spyOn(sandbox.client.backup, 'restoreArchive').mockResolvedValue({
     success: true,
     dir: '/workspace/project'
@@ -224,7 +196,7 @@ describe('backup restore lifecycle', () => {
     });
   });
 
-  it('initializes the backup session before capturing cold-start runtime identity', async () => {
+  it('captures cold-start runtime identity before restore transfer', async () => {
     const order: string[] = [];
     const storageMap = new Map<string, StoredValue>();
     const { sandbox } = await createBackupSandbox({
@@ -238,23 +210,13 @@ describe('backup restore lifecycle', () => {
       }
     });
     storageMap.delete('currentRuntimeIdentity');
-    vi.spyOn(sandbox.client.utils, 'createSession').mockImplementationOnce(
-      async () => {
-        order.push('createSession');
-        return {
-          success: true,
-          id: 'backup-session',
-          message: 'Created'
-        } as never;
-      }
-    );
 
     await sandbox.restoreBackup({
       id: crypto.randomUUID(),
       dir: '/workspace/project'
     });
 
-    expect(order.slice(0, 2)).toEqual(['createSession', 'runtimeReady']);
+    expect(order.slice(0, 1)).toEqual(['runtimeReady']);
   });
 
   it('does not retry non-retryable restore interruptions', async () => {

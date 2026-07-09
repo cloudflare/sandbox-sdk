@@ -119,14 +119,14 @@ export function resolveWorkspacePath(userPath: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Session ID validation
+// Terminal ID validation
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a session ID. Rejects path traversal, control chars, and excessive length.
+ * Validate a terminal ID. Rejects path traversal, control chars, and excessive length.
  * Returns the validated ID or null if invalid.
  */
-export function validateSessionId(id: string): string | null {
+export function validateTerminalId(id: string): string | null {
   if (!/^[a-zA-Z0-9._-]{1,128}$/.test(id)) return null;
   if (id.includes('..')) return null;
   return id;
@@ -144,18 +144,82 @@ export function sseToByteStream(
   sse: ReadableStream<Uint8Array>
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const chunk of streamFile(sse)) {
+  const iterator: AsyncIterator<string | Uint8Array> =
+    streamFile(sse)[Symbol.asyncIterator]();
+  let finished = false;
+
+  async function finish(cancelSource: boolean): Promise<void> {
+    if (finished) return;
+    finished = true;
+    if (!cancelSource) return;
+    await iterator.return?.().catch(() => undefined);
+  }
+
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const result = await iterator.next();
+          if (result.done) {
+            await finish(false);
+            controller.close();
+            return;
+          }
           controller.enqueue(
-            chunk instanceof Uint8Array ? chunk : encoder.encode(chunk)
+            result.value instanceof Uint8Array
+              ? result.value
+              : encoder.encode(result.value)
           );
+        } catch (error) {
+          await finish(true);
+          controller.error(error);
         }
-        controller.close();
-      } catch (err) {
-        controller.error(err);
+      },
+      async cancel() {
+        await finish(true);
       }
+    },
+    { highWaterMark: 0 }
+  );
+}
+
+export function withStreamCleanup(
+  source: ReadableStream<Uint8Array>,
+  cleanup: () => Promise<void>
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let finished = false;
+
+  async function finish(cancelSource: boolean): Promise<void> {
+    if (finished) return;
+    finished = true;
+    if (cancelSource) {
+      await reader.cancel().catch(() => undefined);
     }
-  });
+    reader.releaseLock();
+    await cleanup().catch(() => undefined);
+  }
+
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const result = await reader.read();
+          if (result.done) {
+            await finish(false);
+            controller.close();
+            return;
+          }
+          controller.enqueue(result.value);
+        } catch (error) {
+          await finish(true);
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await finish(true);
+      }
+    },
+    { highWaterMark: 0 }
+  );
 }

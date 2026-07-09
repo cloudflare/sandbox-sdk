@@ -1,3 +1,4 @@
+import type { SandboxCommand } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connect, Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
@@ -26,6 +27,7 @@ vi.mock('@cloudflare/containers', () => {
     async getState() {
       return { status: 'healthy' };
     }
+    async startAndWaitForPorts(): Promise<void> {}
     renewActivityTimeout() {}
   };
 
@@ -183,29 +185,6 @@ describe('Local Backup & Restore', () => {
       wsConnect: connect(stub)
     });
     sandbox.client = createMockControlClient();
-
-    // Mock session creation
-    vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
-      success: true,
-      id: 'sandbox-default',
-      message: 'Created'
-    } as any);
-
-    vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-      success: true,
-      sessionId: 'sandbox-default',
-      timestamp: new Date().toISOString()
-    } as any);
-
-    // Mock command execution (for exec, rm, mkdir, unsquashfs)
-    vi.spyOn(sandbox.client.commands, 'execute').mockResolvedValue({
-      success: true,
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-      command: '',
-      timestamp: new Date().toISOString()
-    } as any);
   });
 
   afterEach(() => {
@@ -255,7 +234,6 @@ describe('Local Backup & Restore', () => {
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         {
-          sessionId: expect.any(String),
           gitignore: false,
           excludes: [],
           compression: {
@@ -334,8 +312,8 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('Container failed to create backup archive');
 
-      // Verify session was cleaned up
-      expect(sandbox.client.utils.deleteSession).toHaveBeenCalled();
+      // Verify archive cleanup uses specialized backup RPC.
+      expect(sandbox.client.backup.cleanupArchive).toHaveBeenCalled();
     });
 
     it('should not require presigned URL credentials', async () => {
@@ -406,7 +384,6 @@ describe('Local Backup & Restore', () => {
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         {
-          sessionId: expect.any(String),
           gitignore: false,
           excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
@@ -466,18 +443,14 @@ describe('Local Backup & Restore', () => {
       // Verify archive was streamed to container
       expect(sandbox.client.files.writeFileStream).toHaveBeenCalledWith(
         expect.stringContaining('/var/backups/'),
-        expect.any(ReadableStream),
-        expect.objectContaining({ sessionId: expect.any(String) })
+        expect.any(ReadableStream)
       );
 
-      // Verify unsquashfs was called
-      const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
-      const unsquashfsCall = execCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('unsquashfs')
+      // Verify extraction used the specialized backup RPC.
+      expect(sandbox.client.backup.extractArchive).toHaveBeenCalledWith(
+        '/workspace/myapp',
+        expect.stringContaining('/var/backups/')
       );
-      expect(unsquashfsCall).toBeDefined();
-      expect(unsquashfsCall![0]).toContain('/usr/bin/unsquashfs');
-      expect(unsquashfsCall![0]).toContain('/workspace/myapp');
     });
 
     it('should throw if BACKUP_BUCKET binding is missing for restore', async () => {
@@ -568,15 +541,10 @@ describe('Local Backup & Restore', () => {
         localBucket: true
       });
 
-      // Verify cleanup rm -f was called for the archive
-      const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
-      const rmCall = execCalls.find(
-        (call) =>
-          typeof call[0] === 'string' &&
-          call[0].includes('rm -f') &&
-          call[0].includes('.sqsh')
+      // Verify cleanup used the specialized backup RPC.
+      expect(sandbox.client.backup.cleanupArchive).toHaveBeenCalledWith(
+        expect.stringContaining('.sqsh')
       );
-      expect(rmCall).toBeDefined();
     });
 
     it('should handle unsquashfs failure', async () => {
@@ -605,28 +573,9 @@ describe('Local Backup & Restore', () => {
         timestamp: new Date().toISOString()
       } as any);
 
-      // Make unsquashfs fail
-      vi.mocked(sandbox.client.commands.execute).mockImplementation(
-        async (command: string) => {
-          if (command.includes('unsquashfs')) {
-            return {
-              success: false,
-              stdout: '',
-              stderr: 'unsquashfs: bad archive',
-              exitCode: 1,
-              command,
-              timestamp: new Date().toISOString()
-            } as any;
-          }
-          return {
-            success: true,
-            stdout: '',
-            stderr: '',
-            exitCode: 0,
-            command,
-            timestamp: new Date().toISOString()
-          } as any;
-        }
+      // Make specialized extraction fail
+      vi.spyOn(sandbox.client.backup, 'extractArchive').mockRejectedValue(
+        new Error('unsquashfs extraction failed: unsquashfs: bad archive')
       );
 
       await expect(
@@ -670,11 +619,7 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('disk full');
 
-      const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
-      const unsquashfsCall = execCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('unsquashfs')
-      );
-      expect(unsquashfsCall).toBeUndefined();
+      expect(sandbox.client.backup.extractArchive).not.toHaveBeenCalled();
     });
   });
 
@@ -721,18 +666,12 @@ describe('Local Backup & Restore', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify unsquashfs was used (local path), not presigned URLs
-      const execCalls = vi.mocked(sandbox.client.commands.execute).mock.calls;
-      const unsquashfsCall = execCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('unsquashfs')
+      // Verify local extraction was used, not production transfer commands.
+      expect(sandbox.client.backup.extractArchive).toHaveBeenCalledWith(
+        '/workspace/myapp',
+        expect.stringContaining('/var/backups/')
       );
-      expect(unsquashfsCall).toBeDefined();
-
-      // Verify no curl calls (production uses curl for presigned URLs)
-      const curlCall = execCalls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('curl')
-      );
-      expect(curlCall).toBeUndefined();
+      expect(sandbox.client.backup.downloadArchive).not.toHaveBeenCalled();
     });
 
     it('should use production path when localBucket is not set', async () => {

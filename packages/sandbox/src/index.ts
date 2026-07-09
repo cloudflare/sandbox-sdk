@@ -3,16 +3,13 @@
 // Export core SDK types for consumers
 export type {
   BackupOptions,
-  BaseExecOptions,
   BucketCredentials,
   BucketProvider,
   CheckChangesOptions,
   CheckChangesResult,
+  CreateTerminalOptions,
   DirectoryBackup,
-  ExecEvent,
   ExecOptions,
-  ExecResult,
-  ExecutionSession,
   FileChunk,
   FileMetadata,
   FileStreamEvent,
@@ -21,31 +18,36 @@ export type {
   ISandbox,
   ListFilesOptions,
   LocalMountBucketOptions,
-  LogEvent,
   MountBucketOptions,
   NamedTunnelInfo,
-  Process,
-  ProcessOptions,
+  ProcessExit,
+  ProcessFailure,
+  ProcessLogCursor,
+  ProcessLogEvent,
+  ProcessLogsOptions,
+  ProcessOutput,
+  ProcessOutputOptions,
   ProcessStatus,
-  PtyOptions,
+  ProcessTextOutputOptions,
   QuickTunnelInfo,
   RemoteMountBucketOptions,
   RestoreBackupResult,
-  SandboxExecOptions,
-  SandboxExecOutput,
+  SandboxCommand,
   SandboxOptions,
   SandboxProcess,
-  SandboxProcessPromise,
-  SessionOptions,
-  TerminalOptions,
+  Terminal,
+  TerminalOutputCursor,
+  TerminalOutputEvent,
+  TerminalOutputOptions,
+  TerminalSnapshot,
   TunnelInfo,
   TunnelOptions,
+  WaitForExitOptions,
+  WaitForLogOptions,
   WaitForLogResult,
   WaitForPortOptions,
   WatchOptions
 } from '@repo/shared';
-// Export type guards for runtime validation
-export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 export type { RPCTransportContext, RPCTransportErrorKind } from './errors';
 // Export backup and process readiness errors
 export {
@@ -55,11 +57,25 @@ export {
   BackupRestoreError,
   ContainerUnavailableError,
   InvalidBackupConfigError,
+  InvalidProcessCursorError,
+  InvalidProcessCwdError,
+  InvalidProcessEnvironmentError,
+  InvalidTerminalCursorError,
+  InvalidTerminalCwdError,
+  OperationInterruptedError,
+  ProcessAbortedError,
+  ProcessError,
+  ProcessExitedBeforeLogError,
   ProcessExitedBeforeReadyError,
+  ProcessNotFoundError,
   ProcessReadyTimeoutError,
+  ProcessSpawnFailedError,
+  ProcessWaitTimeoutError,
   // RPC transport error (raised on capnweb WebSocket session failures)
   RPCTransportError,
-  SessionTerminatedError
+  StaleProcessHandleError,
+  TerminalControlError,
+  TerminalNotFoundError
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
@@ -67,7 +83,7 @@ export {
   isDurableObjectCodeUpdateReset,
   isPlatformTransientError
 } from './platform-errors';
-export { createSandboxTerminal, proxyTerminal } from './pty';
+export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export { proxyToSandbox, type SandboxEnv } from './request-handler';
 // Required export for egress intercepting

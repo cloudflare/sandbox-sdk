@@ -6,8 +6,7 @@
  * {@link SandboxExtension}, captured lazily via a `withX(this)` factory.
  *
  * - No sidecar? Extend {@link SandboxExtension} and use `this.exec()` or
- *   `this.client.<subApi>` (`commands`, `files`, `interpreter`, \u2026). Don't pass
- *   a package.
+ *   `this.client.<subApi>` (`files`, `ports`, \u2026). Don't pass a package.
  * - Need a container sidecar? Pass an {@link ExtensionPackage} to `super()`.
  *   Then call {@link SandboxExtension.sidecar} to obtain the sidecar's typed
  *   capnweb remote main. Calls on that stub stream through capnweb \u2014 callback
@@ -21,17 +20,43 @@
 
 import { RpcTarget } from 'cloudflare:workers';
 import type {
+  ExecOptions,
   ExtensionHealth,
   ExtensionPackage,
-  SandboxAPI,
-  SandboxExecOptions,
-  SandboxProcessPromise
+  ProcessStatus,
+  SandboxBackupAPI,
+  SandboxCommand,
+  SandboxExtensionsAPI,
+  SandboxFilesAPI,
+  SandboxPortsAPI,
+  SandboxProcess,
+  SandboxTerminalsAPI,
+  SandboxTunnelsAPI,
+  SandboxUtilsAPI,
+  SandboxWatchAPI
 } from '@repo/shared';
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
+import { createSandboxProcess } from '../processes';
+import type { ProcessRPCDescriptor } from '../processes/rpc-types';
 
 // Re-export the wire types so consumers can author extensions from this
 // subpath without reaching into `@repo/shared` directly.
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
+
+/**
+ * The slice of the Sandbox an extension captures: just its control `client`.
+ * Narrow on purpose \u2014 an extension never holds the whole instance.
+ */
+export type ExtensionControlClient = {
+  readonly files: SandboxFilesAPI;
+  readonly ports: SandboxPortsAPI;
+  readonly backup: SandboxBackupAPI;
+  readonly watch: SandboxWatchAPI;
+  readonly tunnels: SandboxTunnelsAPI;
+  readonly terminals: SandboxTerminalsAPI;
+  readonly extensions: SandboxExtensionsAPI;
+  readonly utils: SandboxUtilsAPI;
+};
 
 export interface HTTPAuthHostConfig {
   token: string;
@@ -43,26 +68,72 @@ export interface HTTPAuthInterceptorParams {
   hosts: Record<string, HTTPAuthHostConfig>;
 }
 
-/**
- * The slice of the Sandbox an extension captures: its control `client`, unified
- * `exec()` surface, and sandbox-level environment variables. Narrow on purpose
- * \u2014 an extension never holds the whole instance.
- *
- * `envVars` mirrors what the Sandbox applies to sessionless execution, so an
- * extension that drives commands through `client` directly can still honour
- * sandbox-level env (tokens, proxy settings) without an explicit session.
- */
 export type SandboxLike = {
-  readonly client: SandboxAPI;
+  readonly client: ExtensionControlClient;
   readonly exec?: (
-    command: string | string[],
-    options?: SandboxExecOptions
-  ) => SandboxProcessPromise;
+    command: SandboxCommand,
+    options?: ExecOptions
+  ) => Promise<SandboxProcess | ProcessRPCDescriptor>;
+  readonly getProcess?: (
+    processId: string
+  ) => Promise<SandboxProcess | ProcessRPCDescriptor | null>;
+  readonly listProcesses?: () => Promise<ProcessStatus[]>;
   readonly envVars?: Record<string, string>;
   registerGitAuthInterceptor?: (
     params: HTTPAuthInterceptorParams
   ) => Promise<void>;
 };
+
+export interface ExtensionProcessSandbox {
+  exec(command: SandboxCommand, options?: ExecOptions): Promise<SandboxProcess>;
+  getProcess(processId: string): Promise<SandboxProcess | null>;
+  listProcesses(): Promise<ProcessStatus[]>;
+}
+
+function isProcessRPCDescriptor(
+  process: SandboxProcess | ProcessRPCDescriptor
+): process is ProcessRPCDescriptor {
+  return 'capability' in process;
+}
+
+/** Normalize local RPC descriptors and caller-side handles for extensions. */
+export function createExtensionProcessSandbox(
+  sandbox: SandboxLike
+): ExtensionProcessSandbox {
+  return {
+    async exec(command, options) {
+      if (!sandbox.exec) {
+        throw new Error(
+          'Sandbox extension requires the exec surface from the owning Sandbox'
+        );
+      }
+      const process = await sandbox.exec.call(sandbox, command, options);
+      return isProcessRPCDescriptor(process)
+        ? createSandboxProcess(process)
+        : process;
+    },
+    async getProcess(processId) {
+      if (!sandbox.getProcess) {
+        throw new Error(
+          'Sandbox extension requires the getProcess surface from the owning Sandbox'
+        );
+      }
+      const process = await sandbox.getProcess.call(sandbox, processId);
+      if (!process) return null;
+      return isProcessRPCDescriptor(process)
+        ? createSandboxProcess(process)
+        : process;
+    },
+    listProcesses() {
+      if (!sandbox.listProcesses) {
+        throw new Error(
+          'Sandbox extension requires the listProcesses surface from the owning Sandbox'
+        );
+      }
+      return sandbox.listProcesses.call(sandbox);
+    }
+  };
+}
 
 /**
  * The one base class for *every* extension.
@@ -76,10 +147,11 @@ export type SandboxLike = {
  *
  * ```ts
  * // SDK-only
- * class Git extends SandboxExtension {
+ * class GitStatus extends SandboxExtension {
  *   constructor(s: SandboxLike) { super(s); }
- *   async status(sid: string) {
- *     return this.exec('git status', { sessionId: sid }).output();
+ *   async status() {
+ *     const process = await this.exec(['git', 'status']);
+ *     return process.output({ encoding: 'utf8' });
  *   }
  * }
  *
@@ -113,29 +185,19 @@ export abstract class SandboxExtension extends RpcTarget {
   }
 
   /** The container control client. Use inside your own methods, lazily. */
-  protected get client(): SandboxAPI {
+  protected get client(): ExtensionControlClient {
     return this.#sandbox.client;
   }
 
-  /** Unified process-handle exec surface from the owning Sandbox. */
+  /** Launch an argv process through the owning Sandbox. */
   protected exec(
-    command: string | string[],
-    options?: SandboxExecOptions
-  ): SandboxProcessPromise {
-    const exec = this.#sandbox.exec;
-    if (!exec) {
-      throw new Error(
-        'Sandbox extension requires the unified exec surface from the owning Sandbox'
-      );
-    }
-    return exec.call(this.#sandbox, command, options);
+    command: SandboxCommand,
+    options?: ExecOptions
+  ): Promise<SandboxProcess> {
+    return createExtensionProcessSandbox(this.#sandbox).exec(command, options);
   }
 
-  /**
-   * Sandbox-level environment variables. Apply these to sessionless execution
-   * so commands driven straight through `client` still inherit sandbox env
-   * (tokens, proxy settings) the way the Sandbox's own sessionless path does.
-   */
+  /** Sandbox-level environment applied to extension-launched processes. */
   protected get envVars(): Record<string, string> {
     return this.#sandbox.envVars ?? {};
   }
@@ -240,13 +302,8 @@ export abstract class SandboxExtension extends RpcTarget {
  */
 function isTarballRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const candidate = error as {
-    name?: unknown;
-    message?: unknown;
-    code?: unknown;
-  };
+  const candidate = error as { name?: unknown; message?: unknown };
   if (candidate.name === EXTENSION_TARBALL_REQUIRED) return true;
-  if (candidate.code === EXTENSION_TARBALL_REQUIRED) return true;
   if (typeof candidate.message !== 'string') return false;
   return (
     candidate.message.includes(EXTENSION_TARBALL_REQUIRED) ||

@@ -104,14 +104,18 @@ function createMockFileClient() {
 function createMockWatchClient() {
   // Returns a stream that never emits (watch loop runs in background)
   return {
-    watch: vi.fn(
-      async () =>
-        new ReadableStream({
-          start() {
-            // Stream stays open — test will stop the manager to clean up
-          }
-        })
-    )
+    watch: vi.fn(async () => ({
+      stream: vi.fn(
+        async () =>
+          new ReadableStream({
+            start() {
+              // Stream stays open — test will stop the manager to clean up
+            }
+          })
+      ),
+      cancel: vi.fn(async () => undefined),
+      [Symbol.dispose]: vi.fn()
+    }))
   };
 }
 
@@ -123,6 +127,8 @@ function createMockWatchClient() {
 function createControllableWatchClient() {
   const encoder = new TextEncoder();
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const cancel = vi.fn(async () => undefined);
+  const dispose = vi.fn();
 
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
@@ -141,10 +147,16 @@ function createControllableWatchClient() {
 
   return {
     client: {
-      watch: vi.fn(async () => stream)
+      watch: vi.fn(async () => ({
+        stream: vi.fn(async () => stream),
+        cancel,
+        [Symbol.dispose]: dispose
+      }))
     },
     emit,
-    close
+    close,
+    cancel,
+    dispose
   };
 }
 
@@ -543,6 +555,41 @@ describe('LocalMountSyncManager', () => {
 
       close();
       await manager.stop();
+    });
+
+    it('releases its watch subscription exactly once after consuming data', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        cancel,
+        dispose
+      } = createControllableWatchClient();
+      const client = createMockControlClient(fileClient, watchClient);
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/mnt/data/foo.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+      await vi.waitFor(() => expect(bucket.put).toHaveBeenCalledTimes(1));
+
+      await manager.stop();
+      await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+      expect(dispose).toHaveBeenCalledTimes(1);
     });
 
     it('should treat a bare slash prefix as no prefix', async () => {
