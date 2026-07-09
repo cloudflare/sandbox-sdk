@@ -1,682 +1,729 @@
 #!/usr/bin/env bun
 
 /**
- * Integration tests for the cloudflare-sandbox-bridge Worker.
+ * Integration tests for the deployed Cloudflare Sandbox Bridge.
  *
- * By default, starts `wrangler dev` (with containers disabled — no Docker
- * required) and exercises every API endpoint via real HTTP requests.
- *
- * Set BASE_URL to skip the local server and run against a remote service:
- *
- *   BASE_URL=https://bridge.example.com SANDBOX_API_KEY=secret script/integration
- *
- * Uses Bun for:
- *   - Built-in WebSocket client with custom headers support
- *   - fetch() that doesn't strip the Upgrade header
- *
- * Sandbox SDK calls will fail (no container backend), so tests validate:
- *   - Routing & HTTP method matching
- *   - Auth middleware (Bearer token)
- *   - Input validation (bad JSON, missing fields, path traversal, etc.)
- *   - Error shapes (JSON with {error, code})
- *   - SSE stream format (for /exec)
- *   - WebSocket upgrade requirement (for /pty)
- *   - OpenAPI schema availability
- *
- * Usage:
- *   script/integration                                              # local, auth disabled
- *   SANDBOX_API_KEY=secret script/integration                       # local, auth enabled
- *   BASE_URL=https://bridge.example.com script/integration          # remote, auth disabled
- *   BASE_URL=https://bridge.example.com SANDBOX_API_KEY=s script/integration  # remote, auth enabled
+ * A remote BASE_URL exercises real process and terminal resources. Without
+ * BASE_URL, the script starts Wrangler with containers disabled and validates
+ * routing, authentication, input validation, and API metadata only.
  */
 
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 const REMOTE_BASE = process.env.BASE_URL?.replace(/\/$/, '');
-const PORT = process.env.PORT || 18787;
-const BASE = REMOTE_BASE || `http://127.0.0.1:${PORT}`;
-const TOKEN = process.env.SANDBOX_API_KEY || '';
-let SANDBOX_ID = 'integration-test';
+const PORT = process.env.PORT ?? '18787';
+const BASE = REMOTE_BASE ?? `http://127.0.0.1:${PORT}`;
+const TOKEN = process.env.SANDBOX_API_KEY ?? '';
+const DEADLINE_MS = 20_000;
 
-// ---------------------------------------------------------------------------
-// Sandbox lifecycle
-// ---------------------------------------------------------------------------
-
-async function createSandbox(): Promise<string> {
-  const res = await fetch(`${BASE}/v1/sandbox`, {
-    method: 'POST',
-    headers: authHeadersRaw()
-  });
-  if (!res.ok) {
-    throw new Error(`POST /v1/sandbox failed: ${res.status} ${await res.text()}`);
-  }
-  const body: any = await res.json();
-  if (!body.id || typeof body.id !== 'string') {
-    throw new Error(`POST /v1/sandbox returned unexpected body: ${JSON.stringify(body)}`);
-  }
-  return body.id;
+interface ProcessExit {
+  code: number;
+  signal?: number;
+  timedOut: boolean;
 }
 
-async function destroySandbox(id: string): Promise<void> {
-  try {
-    await fetch(`${BASE}/v1/sandbox/${id}`, {
-      method: 'DELETE',
-      headers: authHeadersRaw()
-    });
-  } catch {
-    // Best-effort cleanup
-  }
+interface ProcessStatus {
+  id: string;
+  pid: number;
+  state: 'running' | 'exited' | 'error';
+  exit?: ProcessExit;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+interface ProcessEvent {
+  type: string;
+  data?: string;
+  cursor?: string;
+  exit?: ProcessExit;
+}
 
+interface TerminalSnapshot {
+  id: string;
+  status: 'running' | 'exited' | 'error';
+}
+
+let sandboxId = '';
 let passed = 0;
 let failed = 0;
-const failures: { name: string; error: Error }[] = [];
+const failures: Array<{ name: string; error: Error }> = [];
+const activeProcesses = new Set<string>();
+const activeTerminals = new Set<string>();
+const openReaders = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+const openSockets = new Set<WebSocket>();
+
+function errorFrom(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function assert(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function equal(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(
+      `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+    );
+  }
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  assert(
+    typeof value === 'object' && value !== null && !Array.isArray(value),
+    `${label} must be an object`
+  );
+  return value;
+}
+
+function stringField(value: Record<string, unknown>, key: string): string {
+  const field = value[key];
+  assert(typeof field === 'string', `${key} must be a string`);
+  return field;
+}
+
+function numberField(value: Record<string, unknown>, key: string): number {
+  const field = value[key];
+  assert(typeof field === 'number', `${key} must be a number`);
+  return field;
+}
 
 function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (TOKEN) h['Authorization'] = `Bearer ${TOKEN}`;
-  return h;
+  return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 }
 
-function authHeadersRaw(): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (TOKEN) h['Authorization'] = `Bearer ${TOKEN}`;
-  return h;
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(authHeaders())) {
+    if (!headers.has(key)) headers.set(key, value);
+  }
+  return fetch(`${BASE}${path}`, {
+    ...init,
+    headers,
+    signal: init.signal ?? AbortSignal.timeout(DEADLINE_MS)
+  });
 }
 
-async function test(name: string, fn: () => Promise<void>) {
+async function requestObject(
+  path: string,
+  init: RequestInit = {}
+): Promise<{ response: Response; body: Record<string, unknown> }> {
+  const response = await request(path, init);
+  const body: unknown = await response.json();
+  return { response, body: record(body, path) };
+}
+
+async function test(name: string, operation: () => Promise<void>): Promise<void> {
   try {
-    await fn();
+    await operation();
     passed++;
     console.log(`  ✅ ${name}`);
-  } catch (err: any) {
+  } catch (error) {
+    const failure = errorFrom(error);
     failed++;
-    failures.push({ name, error: err });
-    console.log(`  ❌ ${name}`);
-    console.log(`     ${err.message}`);
+    failures.push({ name, error: failure });
+    console.log(`  ❌ ${name}\n     ${failure.message}`);
   }
 }
 
-function assert(condition: boolean, msg: string) {
-  if (!condition) throw new Error(msg);
-}
-
-function assertEqual(actual: any, expected: any, label = '') {
-  if (actual !== expected) {
-    throw new Error(`${label ? label + ': ' : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+function processStatus(value: unknown): ProcessStatus {
+  const body = record(value, 'process status');
+  const state = stringField(body, 'state');
+  assert(
+    state === 'running' || state === 'exited' || state === 'error',
+    `invalid process state: ${state}`
+  );
+  const status: ProcessStatus = {
+    id: stringField(body, 'id'),
+    pid: numberField(body, 'pid'),
+    state
+  };
+  if (body.exit !== undefined) {
+    const exit = record(body.exit, 'process exit');
+    status.exit = {
+      code: numberField(exit, 'code'),
+      timedOut: exit.timedOut === true
+    };
+    if (typeof exit.signal === 'number') status.exit.signal = exit.signal;
   }
+  return status;
 }
 
-function assertIncludes(str: string, sub: string, label = '') {
-  if (!str.includes(sub)) {
-    throw new Error(
-      `${label ? label + ': ' : ''}expected string to include ${JSON.stringify(sub)}, got ${JSON.stringify(str.slice(0, 200))}`
-    );
-  }
+async function launch(argv: string[]): Promise<ProcessStatus> {
+  const { response, body } = await requestObject(
+    `/v1/sandbox/${sandboxId}/processes`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ argv })
+    }
+  );
+  equal(response.status, 200, 'process launch status');
+  const status = processStatus(body);
+  activeProcesses.add(status.id);
+  return status;
 }
 
-/** Parse SSE text into [{event, data}] */
-function parseSSE(text: string) {
-  const events: { event: string; data: string }[] = [];
-  let currentEvent = '';
-  let currentData = '';
-  for (const line of text.split('\n')) {
-    if (line.startsWith('event: ')) {
-      currentEvent = line.slice(7);
-    } else if (line.startsWith('data: ')) {
-      currentData += (currentData ? '\n' : '') + line.slice(6);
-    } else if (line === '') {
-      if (currentEvent) {
-        events.push({ event: currentEvent, data: currentData });
-        currentEvent = '';
-        currentData = '';
+function decodeBase64(value: string): string {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+async function readWithDeadline<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  deadline: number
+): Promise<ReadableStreamReadResult<T>> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error('stream observation timed out');
+  return Promise.race([
+    reader.read(),
+    sleep(remaining).then(() => {
+      throw new Error('stream observation timed out');
+    })
+  ]);
+}
+
+async function observeProcess(
+  id: string,
+  predicate: (events: ProcessEvent[]) => boolean
+): Promise<ProcessEvent[]> {
+  const response = await request(
+    `/v1/sandbox/${sandboxId}/processes/${id}/logs?replay=true&follow=true`
+  );
+  equal(response.status, 200, 'process logs status');
+  assert(response.body !== null, 'process logs response has no body');
+  const reader = response.body.getReader();
+  openReaders.add(reader);
+  const decoder = new TextDecoder();
+  const events: ProcessEvent[] = [];
+  const deadline = Date.now() + DEADLINE_MS;
+  let buffer = '';
+  try {
+    while (!predicate(events)) {
+      const result = await readWithDeadline(reader, deadline);
+      if (result.done) break;
+      buffer += decoder.decode(result.value, { stream: true });
+      for (;;) {
+        const boundary = buffer.indexOf('\n\n');
+        if (boundary < 0) break;
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const data = frame
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n');
+        if (!data) continue;
+        const parsed = record(JSON.parse(data), 'process log event');
+        const event: ProcessEvent = { type: stringField(parsed, 'type') };
+        if (typeof parsed.data === 'string') event.data = parsed.data;
+        if (typeof parsed.cursor === 'string') event.cursor = parsed.cursor;
+        if (parsed.exit !== undefined) {
+          const exit = record(parsed.exit, 'process log exit');
+          event.exit = {
+            code: numberField(exit, 'code'),
+            timedOut: exit.timedOut === true
+          };
+          if (typeof exit.signal === 'number') event.exit.signal = exit.signal;
+        }
+        events.push(event);
       }
     }
+    assert(predicate(events), 'process logs ended before the expected event');
+    return events;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    openReaders.delete(reader);
   }
-  return events;
 }
 
-// ---------------------------------------------------------------------------
-// Server lifecycle
-// ---------------------------------------------------------------------------
+async function killProcess(id: string, signal = 15): Promise<void> {
+  const response = await request(
+    `/v1/sandbox/${sandboxId}/processes/${id}/kill`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signal })
+    }
+  );
+  equal(response.status, 204, 'process kill status');
+}
 
-async function startServer() {
-  const env = { ...process.env, SANDBOX_API_KEY: TOKEN, WRANGLER_SKIP_UPDATE_CHECK: '1' };
-  const child = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--enable-containers=false'], {
-    cwd: process.cwd(),
-    env,
+function terminalSnapshot(value: unknown): TerminalSnapshot {
+  const body = record(value, 'terminal snapshot');
+  const status = stringField(body, 'status');
+  assert(
+    status === 'running' || status === 'exited' || status === 'error',
+    `invalid terminal status: ${status}`
+  );
+  return { id: stringField(body, 'id'), status };
+}
+
+async function createTerminal(argv: string[]): Promise<TerminalSnapshot> {
+  const { response, body } = await requestObject(
+    `/v1/sandbox/${sandboxId}/terminals`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ argv, cols: 80, rows: 24 })
+    }
+  );
+  equal(response.status, 200, 'terminal create status');
+  const snapshot = terminalSnapshot(body);
+  activeTerminals.add(snapshot.id);
+  return snapshot;
+}
+
+interface TerminalConnection {
+  socket: WebSocket;
+  output: string;
+  ready: boolean;
+  cursor?: string;
+  terminalEvent?: 'exit' | 'error';
+  failure?: Error;
+}
+
+async function connectTerminal(
+  id: string,
+  cursor?: string
+): Promise<TerminalConnection> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  const url = `${BASE.replace(/^http/, 'ws')}/v1/sandbox/${sandboxId}/terminals/${id}/connect${query}`;
+  const connection: TerminalConnection = {
+    socket: new WebSocket(url, { headers: authHeaders() }),
+    output: '',
+    ready: false
+  };
+  openSockets.add(connection.socket);
+  let pendingChunk = false;
+
+  connection.socket.addEventListener('message', async (event) => {
+    try {
+      if (typeof event.data === 'string') {
+        const message = record(JSON.parse(event.data), 'terminal control');
+        const type = stringField(message, 'type');
+        if (type === 'ready') {
+          connection.ready = true;
+          if (typeof message.cursor === 'string') {
+            connection.cursor = message.cursor;
+          }
+        } else if (type === 'chunk') {
+          pendingChunk = true;
+          if (typeof message.cursor === 'string') connection.cursor = message.cursor;
+        } else if (type === 'exit' || type === 'error') {
+          connection.terminalEvent = type;
+        }
+        return;
+      }
+      assert(pendingChunk, 'terminal binary frame arrived without chunk control');
+      pendingChunk = false;
+      let bytes: Uint8Array;
+      if (event.data instanceof ArrayBuffer) {
+        bytes = new Uint8Array(event.data);
+      } else if (ArrayBuffer.isView(event.data)) {
+        bytes = new Uint8Array(
+          event.data.buffer,
+          event.data.byteOffset,
+          event.data.byteLength
+        );
+      } else if (event.data instanceof Blob) {
+        bytes = new Uint8Array(await event.data.arrayBuffer());
+      } else {
+        throw new Error('unsupported terminal WebSocket frame');
+      }
+      connection.output += new TextDecoder().decode(bytes);
+    } catch (error) {
+      connection.failure = errorFrom(error);
+    }
+  });
+  connection.socket.addEventListener('error', () => {
+    connection.failure ??= new Error('terminal WebSocket failed');
+  });
+
+  await waitUntil(
+    () => connection.socket.readyState === WebSocket.OPEN,
+    'terminal WebSocket open'
+  );
+  return connection;
+}
+
+async function waitUntil(
+  predicate: () => boolean,
+  label: string,
+  timeout = DEADLINE_MS
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`${label} timed out`);
+    await sleep(20);
+  }
+}
+
+async function terminateTerminal(id: string): Promise<void> {
+  const response = await request(
+    `/v1/sandbox/${sandboxId}/terminals/${id}/terminate`,
+    { method: 'POST' }
+  );
+  equal(response.status, 204, 'terminal terminate status');
+}
+
+async function createSandbox(): Promise<string> {
+  const { response, body } = await requestObject('/v1/sandbox', {
+    method: 'POST'
+  });
+  equal(response.status, 200, 'sandbox create status');
+  return stringField(body, 'id');
+}
+
+async function destroySandbox(): Promise<void> {
+  if (!sandboxId) return;
+  await request(`/v1/sandbox/${sandboxId}`, { method: 'DELETE' }).catch(
+    () => undefined
+  );
+}
+
+interface LocalServer {
+  child: ReturnType<typeof spawn>;
+  cleanup(): Promise<void>;
+}
+
+async function startServer(): Promise<LocalServer> {
+  const args = ['wrangler', 'dev', '--port', PORT, '--enable-containers=false'];
+  const envDirectory = TOKEN
+    ? await mkdtemp(join(tmpdir(), 'sandbox-bridge-integration-'))
+    : undefined;
+  if (envDirectory) {
+    const envFile = join(envDirectory, '.env');
+    await writeFile(envFile, `SANDBOX_API_KEY=${JSON.stringify(TOKEN)}\n`, {
+      mode: 0o600
+    });
+    args.push('--env-file', envFile);
+  }
+
+  const child = spawn('npx', args, {
+    cwd: new URL('../worker', import.meta.url).pathname,
+    env: {
+      ...process.env,
+      WRANGLER_SKIP_UPDATE_CHECK: '1'
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
-
-  let stdout = '';
-  let stderr = '';
-  child.stdout!.on('data', (d: Buffer) => (stdout += d.toString()));
-  child.stderr!.on('data', (d: Buffer) => (stderr += d.toString()));
-
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (stdout.includes('Ready on') || stderr.includes('Ready on')) break;
-    await sleep(300);
-  }
-
-  if (!stdout.includes('Ready on') && !stderr.includes('Ready on')) {
+  let output = '';
+  child.stdout?.on('data', (data: Buffer) => (output += data.toString()));
+  child.stderr?.on('data', (data: Buffer) => (output += data.toString()));
+  try {
+    await waitUntil(() => output.includes('Ready on'), 'Wrangler startup', 30_000);
+  } catch (error) {
     child.kill('SIGTERM');
-    throw new Error(`wrangler dev did not start within 30s.\nstdout: ${stdout}\nstderr: ${stderr}`);
+    if (envDirectory) await rm(envDirectory, { recursive: true, force: true });
+    throw error;
   }
-
-  await sleep(500);
-  return child;
+  return {
+    child,
+    cleanup: async () => {
+      if (envDirectory) await rm(envDirectory, { recursive: true, force: true });
+    }
+  };
 }
 
-function stopServer(child: ReturnType<typeof spawn>) {
-  if (!child || child.killed) return;
-  child.kill('SIGTERM');
-  setTimeout(() => {
-    try {
-      child.kill('SIGKILL');
-    } catch {}
-  }, 3000);
-}
-
-// ---------------------------------------------------------------------------
-// Test suites
-// ---------------------------------------------------------------------------
-
-async function runTests() {
-  // ── Sandbox creation ──────────────────────────────────
-  console.log('\n📋 Sandbox creation');
-
-  await test('POST /v1/sandbox returns a sandbox ID', async () => {
-    SANDBOX_ID = await createSandbox();
-    assert(SANDBOX_ID.length > 0, 'sandbox ID should be non-empty');
-    console.log(`     (using sandbox ID: ${SANDBOX_ID})`);
+async function runCommonTests(): Promise<void> {
+  console.log('\n📋 Bridge routing and validation');
+  await test('health endpoint is available', async () => {
+    const { response, body } = await requestObject('/health');
+    equal(response.status, 200, 'health status');
+    equal(body.ok, true, 'health body');
   });
-
-  // ── Health ──────────────────────────────────────────────
-  console.log('\n📋 Health');
-
-  await test('GET /health returns {ok: true}', async () => {
-    const res = await fetch(`${BASE}/health`);
-    assertEqual(res.status, 200, 'status');
-    const body = await res.json();
-    assertEqual(body.ok, true, 'body.ok');
+  await test('removed execution routes return 404', async () => {
+    for (const [method, path] of [
+      ['POST', 'exec'],
+      ['GET', 'pty'],
+      ['POST', 'session']
+    ]) {
+      const response = await request(`/v1/sandbox/${sandboxId}/${path}`, {
+        method
+      });
+      equal(response.status, 404, `${method} /${path}`);
+    }
   });
-
-  // ── Auth ───────────────────────────────────────────────
+  await test('OpenAPI exposes only resource execution routes', async () => {
+    const { response, body } = await requestObject('/v1/openapi.json');
+    equal(response.status, 200, 'OpenAPI status');
+    equal(body.openapi, '3.1.0', 'OpenAPI version');
+    const paths = record(body.paths, 'OpenAPI paths');
+    assert(paths['/v1/sandbox/{id}/processes'] !== undefined, 'missing process path');
+    assert(paths['/v1/sandbox/{id}/terminals'] !== undefined, 'missing terminal path');
+    assert(paths['/v1/sandbox/{id}/exec'] === undefined, 'obsolete exec path present');
+    assert(paths['/v1/sandbox/{id}/pty'] === undefined, 'obsolete pty path present');
+    assert(paths['/v1/sandbox/{id}/session'] === undefined, 'obsolete session path present');
+  });
   if (TOKEN) {
-    console.log('\n📋 Auth (SANDBOX_API_KEY is set)');
-
-    await test('rejects /v1/sandbox/:id/running without token', async () => {
-      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`);
-      assertEqual(res.status, 401, 'status');
-      const body: any = await res.json();
-      assertEqual(body.code, 'unauthorized', 'code');
-    });
-
-    await test('rejects /v1/sandbox/:id/running with wrong token', async () => {
-      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
-        headers: { Authorization: 'Bearer wrong-token' }
-      });
-      assertEqual(res.status, 401, 'status');
-    });
-
-    await test('accepts /v1/sandbox/:id/running with valid token', async () => {
-      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
-        headers: { Authorization: `Bearer ${TOKEN}` }
-      });
-      assertEqual(res.status, 200, 'status');
-    });
-
-    await test('rejects /v1/openapi.json without token', async () => {
-      const res = await fetch(`${BASE}/v1/openapi.json`);
-      assertEqual(res.status, 401, 'status');
-    });
-  } else {
-    console.log('\n📋 Auth (SANDBOX_API_KEY not set — auth disabled)');
-
-    await test('allows unauthenticated requests when token is empty', async () => {
-      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`);
-      assertEqual(res.status, 200, 'status');
+    await test('authentication rejects missing and incorrect credentials', async () => {
+      const processPath = `${BASE}/v1/sandbox/${sandboxId}/processes`;
+      equal((await fetch(processPath)).status, 401, 'missing process auth');
+      equal(
+        (await fetch(processPath, { headers: { Authorization: 'Bearer wrong' } })).status,
+        401,
+        'incorrect process auth'
+      );
+      equal((await fetch(`${BASE}/v1/openapi.json`)).status, 401, 'missing OpenAPI auth');
+      equal(
+        (await fetch(`${BASE}/v1/openapi.json`, { headers: authHeaders() })).status,
+        200,
+        'valid OpenAPI auth'
+      );
     });
   }
+}
 
-  // ── Sandbox ID validation ──────────────────────────────
-  console.log('\n📋 Sandbox ID validation');
-
-  await test('rejects sandbox ID with shell injection chars', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/foo;rm/running`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'Invalid sandbox ID format');
-  });
-
-  await test('rejects sandbox ID longer than 128 chars', async () => {
-    const longId = 'a'.repeat(129);
-    const res = await fetch(`${BASE}/v1/sandbox/${longId}/running`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 400, 'status');
-  });
-
-  // ── POST /exec — validation ────────────────────────────
-  console.log('\n📋 POST /v1/sandbox/:id/exec — validation');
-
-  await test('rejects invalid JSON body', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: 'not json'
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertEqual(body.code, 'invalid_request', 'code');
-  });
-
-  await test('rejects empty argv', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ argv: [] })
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'argv must be a non-empty array');
-  });
-
-  await test('rejects missing argv', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({})
-    });
-    assertEqual(res.status, 400, 'status');
-  });
-
-  await test('rejects cwd outside /workspace', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ argv: ['ls'], cwd: '/tmp' })
-    });
-    assertEqual(res.status, 403, 'status');
-    const body: any = await res.json();
-    assertEqual(body.code, 'invalid_request', 'code');
-  });
-
-  await test('rejects cwd with path traversal', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ argv: ['ls'], cwd: '/workspace/../../etc' })
-    });
-    assertEqual(res.status, 403, 'status');
-  });
-
-  await test('returns SSE stream for valid exec (SDK may error)', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/exec`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ argv: ['echo', 'hello'] })
-    });
-    assertEqual(res.status, 200, 'status');
-    assertEqual(res.headers.get('Content-Type'), 'text/event-stream', 'content-type');
-
-    const text = await res.text();
-    const events = parseSSE(text);
-    assert(events.length > 0, 'expected at least one SSE event');
-    const lastEvent = events[events.length - 1];
-    assert(
-      lastEvent.event === 'exit' || lastEvent.event === 'error',
-      `expected terminal SSE event, got: ${lastEvent.event}`
+async function runRemoteTests(): Promise<void> {
+  console.log('\n📋 Deployed process resources');
+  await test('resource routes reject unsafe input', async () => {
+    const invalidProcess = await requestObject(
+      `/v1/sandbox/${sandboxId}/processes`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ argv: [] })
+      }
     );
-  });
+    equal(invalidProcess.response.status, 400, 'invalid process status');
+    equal(invalidProcess.body.code, 'invalid_request', 'invalid process code');
 
-  // ── GET /file — validation ────────────────────────────
-  console.log('\n📋 GET /v1/sandbox/:id/file/* — validation');
-
-  await test('rejects empty file path', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/`, {
-      headers: authHeadersRaw()
-    });
-    assert(res.status === 400 || res.status === 404, `expected 400 or 404, got ${res.status}`);
-  });
-
-  // A single .. stays within the /file/* route but escapes /workspace.
-  // fetch() normalises workspace/../tmp/secret → tmp/secret which matches
-  // the route wildcard, then resolveWorkspacePath("/tmp/secret") → null → 403.
-  await test('rejects GET file path traversal via ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/secret`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 403, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'within /workspace');
-  });
-
-  await test('rejects path outside /workspace', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/tmp/secret`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 403, 'status');
-  });
-
-  // ── PUT /file — validation ────────────────────────────
-  console.log('\n📋 PUT /v1/sandbox/:id/file/* — validation');
-
-  await test('rejects PUT file path traversal via ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/file/workspace/../tmp/evil`, {
-      method: 'PUT',
-      headers: authHeadersRaw(),
-      body: 'bad content'
-    });
-    assertEqual(res.status, 403, 'status');
-  });
-
-  // ── GET /running ──────────────────────────────────────
-  console.log('\n📋 GET /v1/sandbox/:id/running');
-
-  await test('returns {running: bool} shape', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/running`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 200, 'status');
-    const body: any = await res.json();
-    assertEqual(typeof body.running, 'boolean', 'body.running type');
-  });
-
-  // ── POST /persist — validation ─────────────────────────
-  console.log('\n📋 POST /v1/sandbox/:id/persist — validation');
-
-  await test('rejects excludes with ..', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/persist?excludes=../secret`, {
+    const file = await request(`/v1/sandbox/${sandboxId}/file/tmp/secret`);
+    equal(file.status, 403, 'file traversal status');
+    const persist = await request(
+      `/v1/sandbox/${sandboxId}/persist?excludes=../secret`,
+      { method: 'POST' }
+    );
+    equal(persist.status, 400, 'persist exclusion status');
+    const hydrate = await request(`/v1/sandbox/${sandboxId}/hydrate`, {
       method: 'POST',
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, '..');
-  });
-
-  // ── POST /hydrate — validation ─────────────────────────
-  console.log('\n📋 POST /v1/sandbox/:id/hydrate — validation');
-
-  await test('rejects empty body', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/hydrate`, {
-      method: 'POST',
-      headers: { ...authHeadersRaw(), 'Content-Type': 'application/octet-stream' },
       body: new Uint8Array(0)
     });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'Empty tar payload');
+    equal(hydrate.status, 400, 'empty hydrate status');
+    const mount = await request(`/v1/sandbox/${sandboxId}/mount`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mountPath: 'relative', options: {} })
+    });
+    equal(mount.status, 400, 'mount validation status');
   });
 
-  // ── DELETE /v1/sandbox/:id ──────────────────────────────
-  console.log('\n📋 DELETE /v1/sandbox/:id');
-
-  await test('returns 204 No Content (best-effort)', async () => {
-    // Create a throwaway sandbox to test deletion without destroying
-    // the main sandbox used by other tests.
-    const throwawayId = await createSandbox();
-    const res = await fetch(`${BASE}/v1/sandbox/${throwawayId}`, {
-      method: 'DELETE',
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 204, 'status');
-    const body = await res.text();
-    assertEqual(body, '', 'body should be empty');
-  });
-
-  // ── GET /v1/sandbox/:id/pty — WebSocket upgrade ───────
-  console.log('\n📋 GET /v1/sandbox/:id/pty — WebSocket PTY');
-
-  await test('rejects plain GET without Upgrade header', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'WebSocket upgrade required');
-    assertEqual(body.code, 'invalid_request', 'code');
-  });
-
-  await test('rejects non-numeric cols via fetch with Upgrade header', async () => {
-    // Bun's fetch passes the Upgrade header through
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&cols=abc`, {
-      headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'cols and rows must be valid numbers');
-  });
-
-  await test('rejects non-numeric rows via fetch with Upgrade header', async () => {
-    const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&rows=xyz`, {
-      headers: { ...authHeadersRaw(), Upgrade: 'websocket', Connection: 'Upgrade' }
-    });
-    assertEqual(res.status, 400, 'status');
-    const body: any = await res.json();
-    assertIncludes(body.error, 'cols and rows must be valid numbers');
-  });
-
-  await test('WebSocket upgrade reaches the PTY route (may error without container)', async () => {
-    // Bun's WebSocket supports custom headers via the second arg.
-    // Without a real container the SDK terminal() will throw,
-    // resulting in a 502 or a WS close — but the key assertion is
-    // that the route is reached (not a 404).
-    const wsBase = BASE.replace(/^http/, 'ws');
-    const wsUrl = `${wsBase}/v1/sandbox/${SANDBOX_ID}/pty?terminalId=iterm&cols=80&rows=24`;
-
-    const result = await new Promise<{
-      opened: boolean;
-      closedCode?: number;
-      error?: string;
-    }>((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          resolve({ opened: false, error: 'timeout after 5s' });
-        }
-      }, 5000);
-
-      const ws = new WebSocket(wsUrl, {
-        headers: authHeadersRaw()
-      } as any);
-
-      ws.addEventListener('open', () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          ws.close();
-          resolve({ opened: true });
-        }
-      });
-
-      ws.addEventListener('error', () => {
-        // error always fires before close in Bun — wait for close event
-        // to get the code. If close doesn't fire, the timeout resolves.
-      });
-
-      ws.addEventListener('close', (ev) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve({ opened: false, closedCode: ev.code });
-        }
-      });
-    });
-
-    // The test passes if the WS opened OR closed with a code.
-    // Both mean the server accepted the upgrade (route matched).
-    // A timeout or connection-refused would mean routing failed.
-    assert(
-      result.opened || result.closedCode !== undefined,
-      `WebSocket did not reach upgrade stage: ${JSON.stringify(result)}`
+  await test('captures process output and numeric exit status', async () => {
+    const process = await launch([
+      'sh',
+      '-lc',
+      'printf out; printf err >&2; exit 7'
+    ]);
+    const events = await observeProcess(process.id, (items) =>
+      items.some((event) => event.type === 'terminal')
     );
+    const stdout = events
+      .flatMap((event) =>
+        event.type === 'stdout' && event.data !== undefined
+          ? [decodeBase64(event.data)]
+          : []
+      )
+      .join('');
+    const stderr = events
+      .flatMap((event) =>
+        event.type === 'stderr' && event.data !== undefined
+          ? [decodeBase64(event.data)]
+          : []
+      )
+      .join('');
+    equal(stdout, 'out', 'stdout');
+    equal(stderr, 'err', 'stderr');
+    const terminal = events.find((event) => event.type === 'terminal');
+    equal(terminal?.exit?.code, 7, 'exit code');
+    equal(terminal?.exit?.timedOut, false, 'timedOut');
+
+    const fetched = await requestObject(
+      `/v1/sandbox/${sandboxId}/processes/${process.id}`
+    );
+    equal(processStatus(fetched.body).id, process.id, 'fetched process ID');
+    const listed = await request(`/v1/sandbox/${sandboxId}/processes`);
+    const listBody: unknown = await listed.json();
+    assert(Array.isArray(listBody), 'process list must be an array');
+    assert(
+      listBody.some((item) => processStatus(item).id === process.id),
+      'launched process missing from list'
+    );
+    activeProcesses.delete(process.id);
   });
 
-  if (TOKEN) {
-    await test('WebSocket rejects without auth token', async () => {
-      const res = await fetch(`${BASE}/v1/sandbox/${SANDBOX_ID}/pty`, {
-        headers: { Upgrade: 'websocket', Connection: 'Upgrade' }
-      });
-      assertEqual(res.status, 401, 'status');
+  await test('log cancellation leaves the process running', async () => {
+    const process = await launch(['sh', '-lc', 'echo ready; sleep 300']);
+    const events = await observeProcess(process.id, (items) =>
+      items.some(
+        (event) =>
+          event.type === 'stdout' &&
+          event.data !== undefined &&
+          decodeBase64(event.data).includes('ready')
+      )
+    );
+    assert(events.length > 0, 'ready output not observed');
+    const fetched = await requestObject(
+      `/v1/sandbox/${sandboxId}/processes/${process.id}`
+    );
+    equal(processStatus(fetched.body).state, 'running', 'process state');
+    await killProcess(process.id);
+    const terminal = await observeProcess(process.id, (items) =>
+      items.some((event) => event.type === 'terminal')
+    );
+    assert(
+      terminal.some((event) => event.type === 'terminal'),
+      'kill did not produce terminal event'
+    );
+    activeProcesses.delete(process.id);
+  });
+
+  console.log('\n📋 Deployed terminal resources');
+  await test('terminal exchanges binary input and output', async () => {
+    const terminal = await createTerminal([
+      'sh',
+      '-lc',
+      'printf ready; read line; printf "received:%s" "$line"'
+    ]);
+    const connection = await connectTerminal(terminal.id);
+    await waitUntil(
+      () => connection.output.includes('ready') || connection.failure !== undefined,
+      'terminal ready output'
+    );
+    if (connection.failure) throw connection.failure;
+    connection.socket.send(new TextEncoder().encode('hello\n'));
+    await waitUntil(
+      () =>
+        connection.output.includes('received:hello') ||
+        connection.failure !== undefined,
+      'terminal response output'
+    );
+    if (connection.failure) throw connection.failure;
+    equal(connection.output.includes('ready'), true, 'terminal ready output');
+    connection.socket.close();
+    openSockets.delete(connection.socket);
+    activeTerminals.delete(terminal.id);
+  });
+
+  await test('terminal observation closes without termination', async () => {
+    const terminal = await createTerminal([
+      'sh',
+      '-lc',
+      'printf ready; sleep 300'
+    ]);
+    const first = await connectTerminal(terminal.id);
+    await waitUntil(
+      () => first.output.includes('ready') || first.failure !== undefined,
+      'first terminal ready output'
+    );
+    if (first.failure) throw first.failure;
+    first.socket.close();
+    await waitUntil(
+      () => first.socket.readyState === WebSocket.CLOSED,
+      'first terminal observation close'
+    );
+    openSockets.delete(first.socket);
+
+    const fetched = await requestObject(
+      `/v1/sandbox/${sandboxId}/terminals/${terminal.id}`
+    );
+    equal(terminalSnapshot(fetched.body).status, 'running', 'terminal state');
+
+    const second = await connectTerminal(terminal.id, first.cursor);
+    await waitUntil(
+      () => second.ready || second.failure !== undefined,
+      'reconnected terminal ready control'
+    );
+    if (second.failure) throw second.failure;
+    await terminateTerminal(terminal.id);
+    await waitUntil(
+      () => second.terminalEvent !== undefined || second.failure !== undefined,
+      'terminal exit control'
+    );
+    if (second.failure) throw second.failure;
+    assert(
+      second.terminalEvent === 'exit' || second.terminalEvent === 'error',
+      'explicit terminate did not produce a terminal event'
+    );
+    second.socket.close();
+    openSockets.delete(second.socket);
+    activeTerminals.delete(terminal.id);
+  });
+
+  console.log('\n📋 Deployed workspace lifecycle');
+  await test('file and workspace archive round trip', async () => {
+    const marker = `bridge-${crypto.randomUUID()}`;
+    const filePath = `/v1/sandbox/${sandboxId}/file/workspace/integration.txt`;
+    equal(
+      (
+        await request(filePath, {
+          method: 'PUT',
+          body: new TextEncoder().encode(marker)
+        })
+      ).status,
+      200,
+      'file write status'
+    );
+    equal(await (await request(filePath)).text(), marker, 'file content');
+
+    const persisted = await request(`/v1/sandbox/${sandboxId}/persist`, {
+      method: 'POST'
     });
+    equal(persisted.status, 200, 'persist status');
+    const archive = await persisted.arrayBuffer();
+    assert(archive.byteLength > 0, 'persist archive must not be empty');
+    const hydrated = await request(`/v1/sandbox/${sandboxId}/hydrate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: archive
+    });
+    equal(hydrated.status, 200, 'hydrate status');
+  });
+}
+
+async function cleanup(): Promise<void> {
+  for (const reader of openReaders) await reader.cancel().catch(() => undefined);
+  for (const socket of openSockets) socket.close();
+  for (const id of activeProcesses) await killProcess(id).catch(() => undefined);
+  for (const id of activeTerminals)
+    await terminateTerminal(id).catch(() => undefined);
+  await destroySandbox();
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    console.log(`Usage: bridge/script/integration\n\nBASE_URL selects a deployed bridge. SANDBOX_API_KEY supplies bearer auth.`);
+    return;
   }
 
-  // ── OpenAPI ────────────────────────────────────────────
-  console.log('\n📋 OpenAPI');
-
-  await test('GET /v1/openapi.json returns valid schema', async () => {
-    const res = await fetch(`${BASE}/v1/openapi.json`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 200, 'status');
-    const body: any = await res.json();
-    assertEqual(body.openapi, '3.1.0', 'openapi version');
-    assert(body.paths['/v1/sandbox/{id}/exec'], 'missing /exec path');
-    assert(body.paths['/v1/sandbox/{id}/pty'], 'missing /pty path');
-    assert(body.paths['/v1/sandbox/{id}/file/{path}'], 'missing /file path');
-    assert(body.paths['/v1/sandbox/{id}/running'], 'missing /running path');
-    assert(body.paths['/v1/sandbox/{id}/persist'], 'missing /persist path');
-    assert(body.paths['/v1/sandbox/{id}/hydrate'], 'missing /hydrate path');
-    assert(body.paths['/health'], 'missing /health path');
-  });
-
-  await test('GET /v1/openapi.html returns HTML', async () => {
-    const res = await fetch(`${BASE}/v1/openapi.html`, {
-      headers: authHeadersRaw()
-    });
-    assertEqual(res.status, 200, 'status');
-    assertIncludes(res.headers.get('Content-Type') ?? '', 'text/html');
-    const text = await res.text();
-    // Case-insensitive check — the renderer may output <!doctype html> or <!DOCTYPE html>
-    assertIncludes(text.toLowerCase(), '<!doctype html');
-  });
-
-  await test('OpenAPI /pty entry has correct parameters', async () => {
-    const res = await fetch(`${BASE}/v1/openapi.json`, { headers: authHeadersRaw() });
-    const schema: any = await res.json();
-    const pty = schema.paths['/v1/sandbox/{id}/pty']?.get;
-    assert(pty, 'missing /pty GET entry');
-    assertEqual(pty.operationId, 'ptyTerminal', 'operationId');
-
-    const paramNames = pty.parameters.map((p: any) => p.name).sort();
-    assert(paramNames.includes('cols'), 'missing cols param');
-    assert(paramNames.includes('rows'), 'missing rows param');
-    assert(paramNames.includes('shell'), 'missing shell param');
-    assert(paramNames.includes('session'), 'missing session param');
-    assert(paramNames.includes('id'), 'missing id param');
-    assert(pty.responses['101'], 'missing 101 response');
-    assert(pty.responses['400'], 'missing 400 response');
-    assert(pty.responses['502'], 'missing 502 response');
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-function printHelp() {
-  console.log(`Integration tests for the cloudflare-sandbox-bridge Worker.
-
-USAGE
-  script/integration [--help | -h]
-
-  By default, starts \`wrangler dev\` (with containers disabled — no Docker
-  required) on a local port and exercises every API endpoint via real HTTP
-  requests. Set BASE_URL to skip the local server and run against a remote
-  deployment instead.
-
-ENVIRONMENT
-  BASE_URL          Optional. If set, tests run against this URL instead of
-                    starting a local wrangler dev server. Trailing slash is
-                    stripped. Example: https://bridge.example.com
-
-  SANDBOX_API_KEY   Optional. Bearer token used for the Authorization header
-                    on every request. When unset, the suite assumes auth is
-                    disabled and verifies that unauthenticated requests are
-                    accepted. When set, the suite additionally verifies that
-                    requests without / with a wrong token are rejected (401).
-
-  PORT              Optional. Port for the local wrangler dev server.
-                    Default: 18787. Ignored when BASE_URL is set.
-
-RUNTIME
-  Requires Bun (the script uses Bun's WebSocket client with custom headers
-  and a fetch() implementation that preserves the Upgrade header).
-
-EXAMPLES
-  script/integration
-      Local server, auth disabled.
-
-  SANDBOX_API_KEY=secret script/integration
-      Local server, auth enabled.
-
-  BASE_URL=https://bridge.example.com script/integration
-      Remote service, auth disabled.
-
-  BASE_URL=https://bridge.example.com SANDBOX_API_KEY=secret script/integration
-      Remote service, auth enabled.
-`);
-}
-
-if (process.argv.includes('--help') || process.argv.includes('-h')) {
-  printHelp();
-  process.exit(0);
-}
-
-async function main() {
-  let server: ReturnType<typeof spawn> | undefined;
-
-  if (REMOTE_BASE) {
-    console.log(`🌐 Testing remote service at ${REMOTE_BASE}`, TOKEN ? '(auth enabled)' : '(auth disabled)');
-    console.log();
-  } else {
-    console.log('🚀 Starting wrangler dev on port', PORT, TOKEN ? '(auth enabled)' : '(auth disabled)');
-    server = await startServer();
-    console.log('✅ Server started\n');
-  }
-
+  let server: LocalServer | undefined;
   try {
-    await runTests();
+    if (!REMOTE_BASE) server = await startServer();
+    console.log(`🌐 Testing ${BASE}${TOKEN ? ' with authentication' : ''}`);
+    sandboxId = await createSandbox();
+    await runCommonTests();
+    if (REMOTE_BASE) await runRemoteTests();
   } finally {
-    // Clean up the test sandbox
-    if (SANDBOX_ID && SANDBOX_ID !== 'integration-test') {
-      await destroySandbox(SANDBOX_ID);
+    await cleanup();
+    if (server) {
+      server.child.kill('SIGTERM');
+      await sleep(500);
+      if (!server.child.killed) server.child.kill('SIGKILL');
+      await server.cleanup();
     }
-    if (server) stopServer(server);
-    if (server) await sleep(1000);
   }
 
-  console.log('\n' + '─'.repeat(50));
-  console.log(`\n  Results: ${passed} passed, ${failed} failed\n`);
-
-  if (failures.length > 0) {
-    console.log('  Failed tests:');
-    for (const f of failures) {
-      console.log(`    ❌ ${f.name}`);
-      console.log(`       ${f.error.message}`);
-    }
-    console.log();
+  console.log(`\n${'─'.repeat(50)}\n  Results: ${passed} passed, ${failed} failed`);
+  for (const failure of failures) {
+    console.log(`  ❌ ${failure.name}\n     ${failure.error.message}`);
   }
-
-  process.exit(failed > 0 ? 1 : 0);
+  if (failed > 0) process.exitCode = 1;
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(2);
+await main().catch((error) => {
+  console.error('Fatal error:', errorFrom(error));
+  process.exitCode = 2;
 });

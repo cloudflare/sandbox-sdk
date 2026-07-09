@@ -27,26 +27,29 @@ describe('POST /v1/sandbox/:id/unmount', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSandbox.unmountBucket.mockResolvedValue(undefined);
+    mockSandbox.cleanupMountDirectory.mockResolvedValue(undefined);
   });
 
-  it('unmounts a bucket and runs cleanup command', async () => {
+  it('unmounts a bucket and runs semantic cleanup operation', async () => {
     const res = await unmountRequest({ mountPath: '/mnt/data' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
 
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/mnt/data');
-    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /mnt/data || rmdir /mnt/data');
+    expect(mockSandbox.cleanupMountDirectory).toHaveBeenCalledWith('/mnt/data');
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
-  it('succeeds even if cleanup command fails', async () => {
-    mockSandbox.exec.mockRejectedValueOnce(new Error('exec failed'));
+  it('succeeds even if cleanup operation fails', async () => {
+    mockSandbox.cleanupMountDirectory.mockRejectedValueOnce(new Error('cleanup failed'));
     const res = await unmountRequest({ mountPath: '/mnt/data' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
 
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/mnt/data');
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
   it('rejects missing mountPath', async () => {
@@ -69,6 +72,7 @@ describe('POST /v1/sandbox/:id/unmount', () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('filesystem root');
     expect(mockSandbox.unmountBucket).not.toHaveBeenCalled();
+    expect(mockSandbox.cleanupMountDirectory).not.toHaveBeenCalled();
     expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
@@ -78,20 +82,23 @@ describe('POST /v1/sandbox/:id/unmount', () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('filesystem root');
     expect(mockSandbox.unmountBucket).not.toHaveBeenCalled();
+    expect(mockSandbox.cleanupMountDirectory).not.toHaveBeenCalled();
   });
 
   it('allows single-segment paths like /workspace', async () => {
     const res = await unmountRequest({ mountPath: '/workspace' });
     expect(res.status).toBe(200);
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/workspace');
-    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /workspace || rmdir /workspace');
+    expect(mockSandbox.cleanupMountDirectory).toHaveBeenCalledWith('/workspace');
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
-  it('normalizes the path before passing to SDK and exec', async () => {
+  it('normalizes the path before passing to SDK cleanup', async () => {
     const res = await unmountRequest({ mountPath: '/mnt/data/../buckets/store' });
     expect(res.status).toBe(200);
     expect(mockSandbox.unmountBucket).toHaveBeenCalledWith('/mnt/buckets/store');
-    expect(mockSandbox.exec).toHaveBeenCalledWith('mountpoint -q /mnt/buckets/store || rmdir /mnt/buckets/store');
+    expect(mockSandbox.cleanupMountDirectory).toHaveBeenCalledWith('/mnt/buckets/store');
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
   it('rejects invalid JSON body', async () => {
@@ -117,7 +124,7 @@ describe('POST /v1/sandbox/:id/unmount', () => {
     expect(body.code).toBe('unmount_error');
     expect(body.error).toContain('No active mount found');
 
-    // exec should not be called since unmountBucket itself failed
+    expect(mockSandbox.cleanupMountDirectory).not.toHaveBeenCalled();
     expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 });

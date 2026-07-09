@@ -48,6 +48,14 @@ Verify the deployment:
 curl https://<your-worker>.workers.dev/health
 ```
 
+Run the bridge integration suite from this directory:
+
+```sh
+npm run test:integration
+```
+
+Without `BASE_URL`, the suite starts a local Worker with containers disabled and validates routes, authentication, input handling, and OpenAPI metadata. Set `BASE_URL` to a deployed Worker to run the full process, terminal, file, and workspace lifecycle suite against a real container.
+
 ### Container instance type
 
 The default configuration uses `"lite"` instances with `max_instances: 3`. This is a good starting point for development and light usage. For production workloads that need more CPU or memory, change `instance_type` to `"standard-1"` (4 vCPU / 8 GiB RAM) and increase `max_instances` in `wrangler.jsonc`.
@@ -69,7 +77,7 @@ npx wrangler deploy  # deploy the update
 
 ## Authentication
 
-All `/v1/sandbox/*` and `/v1/openapi.*` routes require:
+All `/v1/sandbox/*`, `/v1/pool/*`, and `/v1/openapi.*` routes require:
 
 ```
 Authorization: Bearer <SANDBOX_API_KEY>
@@ -83,25 +91,23 @@ wrangler secret put SANDBOX_API_KEY
 
 ## Sandbox Interface
 
-This worker is an HTTP bridge for the `BaseSandboxSession` abstract interface. Each abstract method maps to exactly one route:
+This worker exposes current Sandbox route domains over HTTP. Process execution is a launch/list/get/log/control API; terminals are separate PTY resources.
 
-| `BaseSandboxSession` method | Route                                 | Description                                      |
-| --------------------------- | ------------------------------------- | ------------------------------------------------ |
-| _(create session)_          | `POST /v1/sandbox`                    | Generate a new sandbox ID                        |
-| `_exec_internal()`          | `POST /v1/sandbox/:id/exec`           | Run a command; returns stdout/stderr/exit_code   |
-| `read()`                    | `GET /v1/sandbox/:id/file/*`          | Read a file from the workspace                   |
-| `write()`                   | `PUT /v1/sandbox/:id/file/*`          | Write a file into the workspace                  |
-| `running()`                 | `GET /v1/sandbox/:id/running`         | Check sandbox liveness                           |
-| `resolve_exposed_port()`    | `POST /v1/sandbox/:id/tunnel/:port`   | Create or reuse a tunnel for a port              |
-| _(delete tunnel)_           | `DELETE /v1/sandbox/:id/tunnel/:port` | Delete the tunnel for a port                     |
-| `persist_workspace()`       | `POST /v1/sandbox/:id/persist`        | Serialize workspace to a tar archive             |
-| `hydrate_workspace()`       | `POST /v1/sandbox/:id/hydrate`        | Populate workspace from a tar archive            |
-| `shutdown()`                | `DELETE /v1/sandbox/:id`              | Destroy sandbox via `destroy()` (returns 204)    |
-| _(terminal)_                | `GET /v1/sandbox/:id/pty`             | WebSocket PTY proxy (bidirectional terminal I/O) |
-| `mountBucket()`             | `POST /v1/sandbox/:id/mount`          | Mount an S3-compatible bucket                    |
-| `unmountBucket()`           | `POST /v1/sandbox/:id/unmount`        | Unmount a mounted bucket                         |
-| _(create session)_          | `POST /v1/sandbox/:id/session`        | Create an execution session                      |
-| _(delete session)_          | `DELETE /v1/sandbox/:id/session/:sid` | Delete an execution session                      |
+| Domain              | Route                                                                                                          | Description                                             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Sandbox lifecycle   | `POST /v1/sandbox`, `DELETE /v1/sandbox/:id`, `GET /v1/sandbox/:id/running`                                    | Create, destroy, and check a sandbox                    |
+| Processes           | `POST /v1/sandbox/:id/processes`                                                                               | Launch an argv process                                  |
+| Processes           | `GET /v1/sandbox/:id/processes`                                                                                | List runtime-local process statuses                     |
+| Processes           | `GET /v1/sandbox/:id/processes/:processId`                                                                     | Fetch one process status                                |
+| Process logs        | `GET /v1/sandbox/:id/processes/:processId/logs`                                                                | Stream SSE log events with cursor replay/follow options |
+| Process control     | `POST /v1/sandbox/:id/processes/:processId/kill`                                                               | Send a numeric signal to a process                      |
+| Terminals           | `POST /v1/sandbox/:id/terminals`, `GET /v1/sandbox/:id/terminals`, `GET /v1/sandbox/:id/terminals/:terminalId` | Create/list/fetch PTY terminal snapshots                |
+| Terminal connection | `GET /v1/sandbox/:id/terminals/:terminalId/connect`                                                            | WebSocket terminal connection/reconnection              |
+| Terminal control    | `POST /v1/sandbox/:id/terminals/:terminalId/interrupt`, `POST /v1/sandbox/:id/terminals/:terminalId/terminate` | Control a terminal                                      |
+| Files               | `GET /v1/sandbox/:id/file/*`, `PUT /v1/sandbox/:id/file/*`                                                     | Read/write workspace files                              |
+| Tunnels             | `POST /v1/sandbox/:id/tunnel/:port`, `DELETE /v1/sandbox/:id/tunnel/:port`                                     | Create/reuse/delete tunnels                             |
+| Workspace archives  | `POST /v1/sandbox/:id/persist`, `POST /v1/sandbox/:id/hydrate`                                                 | Persist/hydrate workspace tar archives                  |
+| Mounts              | `POST /v1/sandbox/:id/mount`, `POST /v1/sandbox/:id/unmount`                                                   | Mount/unmount S3-compatible buckets                     |
 
 ## API Reference
 
@@ -117,7 +123,7 @@ curl http://localhost:8787/health
 
 #### `POST /v1/sandbox`
 
-Create a new sandbox session. Returns a unique sandbox ID.
+Create a new sandbox. Returns a unique sandbox ID.
 
 ```sh
 curl -X POST http://localhost:8787/v1/sandbox \
@@ -132,25 +138,54 @@ Response:
 
 ---
 
----
+#### Process resources
 
-#### `POST /v1/sandbox/:id/exec`
-
-Run a shell command inside the sandbox. Returns base64-encoded stdout/stderr and an exit code.
+Launch argv directly. Shell syntax requires an explicit shell executable in `argv`. Optional fields are `timeout` (a remote process lifetime deadline in milliseconds), `cwd` (must resolve under `/workspace`), and string-valued `env`.
 
 ```sh
-curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/processes \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"argv": ["sh", "-lc", "echo hello"], "timeout_ms": 10000, "cwd": "/workspace"}'
+  -d '{"argv": ["/bin/bash", "-lc", "echo hello"], "timeout": 10000, "cwd": "/workspace", "env": {"CI": "1"}}'
 ```
+
+The response confirms launch and contains the current discriminated process status, including the process `id`, required numeric `pid`, `state`, timestamps, and numeric exit information when already available. It does not wait for completion. Launch is the only process route that allocates or wakes a runtime. If the launch timeout is reached, the supervisor may terminate and then kill the process internally, and completion is reported with `timedOut: true`. Use the ID later while the same sandbox runtime remains alive.
+
+```sh
+# List processes
+curl http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/processes \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+
+# Fetch one process
+curl http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/processes/<process-id> \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+List, fetch, log, and kill routes are lookup-only and do not wake a sandbox with no active runtime; list returns `[]`, while fetch, log, and kill return not found in that case. Process IDs, PIDs, statuses, retained logs, and cursors are runtime-local and cannot be recovered after sleep, restart, or replacement.
+
+Stream logs as Server-Sent Events. Use `replay=true` to include retained output, `follow=true` to keep the stream open for new output, and `since=<cursor>` to resume after a cursor. Each SSE frame is a `data:` JSON object. `stdout` and `stderr` events include base64 `data`, `cursor`, and `timestamp`; lifecycle events include their type/status fields. Closing the SSE connection cancels only that observation and leaves the process running.
+
+```sh
+curl -sN "http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/processes/<process-id>/logs?replay=true&follow=true" \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
+```
+
+Control a process:
+
+```sh
+curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/processes/<process-id>/kill \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"signal": 15}'
+```
+
+The control route defaults to signal 15 and accepts integer signals from 1 through 64. It returns `204 No Content`. Unknown process IDs return `{ "error": "Process not found", "code": "not_found" }` with 404. A signal request is control intent; final process status and log events remain the observed completion truth.
 
 ---
 
 #### `GET /v1/sandbox/:id/file/:path`
 
 Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` as an absolute path without the leading slash (e.g. `workspace/main.py` for `/workspace/main.py`). Must resolve within `/workspace`. Returns raw bytes (`application/octet-stream`).
-
 
 ```sh
 curl -X GET http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
@@ -265,35 +300,24 @@ curl -X POST "http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/hydrate" \
 
 ---
 
-#### `GET /v1/sandbox/:id/pty`
+#### Terminal resources
 
-Open a WebSocket terminal to the sandbox. The connection is a bidirectional proxy to the container's terminal via `sandbox.terminal()`.
-
-**Query parameters:**
-
-| Param        | Type   | Default  | Description                                 |
-| ------------ | ------ | -------- | ------------------------------------------- |
-| `cols`       | number | 80       | Terminal width in columns                   |
-| `rows`       | number | 24       | Terminal height in rows                     |
-| `shell`      | string | —        | Shell binary (e.g. `/bin/bash`)             |
-| `terminalId` | string | required | Terminal resource ID for reconnecting later |
-
-**WebSocket frame protocol:**
-
-| Direction       | Frame type  | Content                                                               |
-| --------------- | ----------- | --------------------------------------------------------------------- |
-| Client → Server | Binary      | UTF-8 encoded keystrokes / input                                      |
-| Server → Client | Binary      | Terminal output (including ANSI escape sequences)                     |
-| Client → Server | Text (JSON) | Control messages (e.g. `{"type": "resize", "cols": 120, "rows": 30}`) |
-| Server → Client | Text (JSON) | Status messages (`ready`, `exit`, `error`)                            |
-
-The request must include the `Upgrade: websocket` header; plain HTTP requests return `400`.
+Create a generated terminal resource with `argv`, optional `cwd`/`env`, and optional `cols`/`rows`, then connect to it over WebSocket.
 
 ```sh
-# Example using websocat
-websocat "ws://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/pty?terminalId=term-1&cols=120&rows=30" \
+curl -X POST "http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/terminals" \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"argv":["bash"],"cols":120,"rows":30}'
+
+websocat "ws://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/terminals/<terminal-id>/connect?cols=120&rows=30" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
+
+Use `GET /v1/sandbox/:id/terminals` to list retained terminals and
+`GET /v1/sandbox/:id/terminals/:terminalId` to fetch one snapshot. Reconnects
+can pass `cursor`, `cols`, and `rows` query parameters. Use terminal `interrupt`
+and `terminate` routes to control the PTY resource.
 
 ---
 
@@ -360,64 +384,15 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/unmount \
 
 ---
 
-#### `POST /v1/sandbox/:id/session`
-
-Create an execution session. Sessions provide separate working directories, environment variables, and command execution state within one sandbox. Use separate sandbox IDs for separate users or account workspaces.
-
-```sh
-curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/session \
-  -H "Authorization: Bearer $SANDBOX_API_KEY"
-```
-
-Response:
-
-```json
-{ "id": "sess_abc123" }
-```
-
-Pass the returned session ID via the `Session-Id` header on subsequent `/exec` and file operations when those operations should use the session's persistent context.
-
----
-
-#### `DELETE /v1/sandbox/:id/session/:sid`
-
-Delete an execution session.
-
-```sh
-curl -X DELETE http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/session/sess_abc123 \
-  -H "Authorization: Bearer $SANDBOX_API_KEY"
-```
-
-Returns 204 No Content on success.
-
----
-
-## Session Support
-
-The bridge supports the Sandbox SDK session mechanism through the `Session-Id` request header. Sessions separate command execution contexts, such as working directory and environment variables, within one sandbox. For user-facing applications, use one sandbox ID per user or account workspace.
-
-- **Create a session**: `POST /v1/sandbox/:id/session` — returns a session ID.
-- **Use a session**: Pass `Session-Id: <session-id>` on `/exec` and file operation requests that should use persistent session state.
-- **Delete a session**: `DELETE /v1/sandbox/:id/session/:sid` — tears down the session.
-- **Omit a session**: `/exec` uses top-level sandbox process semantics when no `Session-Id` header is provided. Create and pass an explicit session when commands need shared cwd/env state.
-
-### Session limitations
-
-- **Sessions don't survive container sleep.** If the container sleeps and restarts, explicit sessions must be recreated.
-- **`destroy()` kills in-flight operations immediately.** Deleting a sandbox via `DELETE /v1/sandbox/:id` calls `sandbox.destroy()`, which terminates all running commands and sessions without waiting for completion.
-- **Deleted sandbox IDs can be reused.** After destroying a sandbox, the same ID can be used again — it gets a fresh container.
-
----
-
 See `/v1/openapi.html` in local dev for full request/response schemas.
 
 ## Container Warm Pool
 
-The worker includes an optional **warm pool** that pre-starts sandbox containers so new sessions boot instantly. The implementation is adapted from [cf-container-warm-pool](https://github.com/mikenomitch/cf-container-warm-pool).
+The worker includes an optional **warm pool** that pre-starts sandbox containers so new sandboxes boot instantly.
 
 ### How it works
 
-A singleton `WarmPool` Durable Object maintains a set of pre-started containers. When a new sandbox session arrives, it is assigned a container from the pool instead of cold-starting one. Once assigned, a container is consumed and never returned to the pool. An alarm-driven loop continuously health-checks containers and replenishes the pool to the configured target.
+A singleton `WarmPool` Durable Object maintains a set of pre-started containers. When a new sandbox arrives, it is assigned a container from the pool instead of cold-starting one. Once assigned, a container is consumed and never returned to the pool. An alarm-driven loop continuously health-checks containers and replenishes the pool to the configured target.
 
 The pool is primed (its alarm loop started) in two ways:
 
@@ -462,7 +437,7 @@ Response:
 
 #### `POST /v1/pool/shutdown-prewarmed`
 
-Stops all idle (unassigned) warm containers. Does not affect containers currently assigned to sandbox sessions.
+Stops all idle (unassigned) warm containers. Does not affect containers currently assigned to sandboxes.
 
 ```sh
 curl -X POST http://localhost:8787/v1/pool/shutdown-prewarmed \
@@ -497,7 +472,7 @@ The worker applies multiple layers of security to constrain operations within th
 
 ### Authentication
 
-All `/v1/sandbox/*` and `/v1/openapi.*` routes require a Bearer token (`SANDBOX_API_KEY`). When the token is not configured, auth is skipped for local development convenience but a warning is logged. Always set the token before deploying:
+All `/v1/sandbox/*`, `/v1/pool/*`, and `/v1/openapi.*` routes require a Bearer token (`SANDBOX_API_KEY`). When the token is not configured, auth is skipped for local development convenience but a warning is logged. Always set the token before deploying:
 
 ```sh
 wrangler secret put SANDBOX_API_KEY
@@ -505,23 +480,25 @@ wrangler secret put SANDBOX_API_KEY
 
 ### Workspace containment
 
-All file operations (`/file/*`) and the `cwd` parameter on `/exec` are validated to resolve within `/workspace`. Paths are POSIX-normalised (`.` and `..` segments resolved) before the prefix check, preventing traversal attacks such as `/workspace/../../etc/passwd`.
+All file operations (`/file/*`) and process `cwd` parameters are validated to resolve within `/workspace`. Paths are POSIX-normalised (`.` and `..` segments resolved) before the prefix check, preventing traversal attacks such as `/workspace/../../etc/passwd`.
+
+Terminal creation currently validates `cwd` as a string but does not workspace-confine it before forwarding to the container runtime. The terminal `argv` must still be a non-empty string array.
 
 The `/persist` and `/hydrate` endpoints always operate on `/workspace` — there is no configurable root parameter. Exclude entries on `/persist` are validated against path traversal and shell-quoted before interpolation into commands.
 
 ### Non-root container user
 
-The container image creates a dedicated `sandbox` user. `/workspace` is owned by this user; sensitive directories like `/root` are locked down. This limits what commands executed via `/exec` can access — system files such as `/etc/shadow` are not readable.
+The container image creates a dedicated `sandbox` user. `/workspace` is owned by this user; sensitive directories like `/root` are locked down. This limits what launched processes can access — system files such as `/etc/shadow` are not readable.
 
 ### Input validation
 
 - **Sandbox IDs** must match `[a-z2-7]{1,128}` (base32 lowercase).
-- **Shell arguments** in `/exec` are single-quote-escaped via `shellQuote()` before being passed to the container shell.
+- **Process and terminal argv** must be non-empty string arrays; shell syntax is available only when the caller explicitly launches a shell in `argv`.
 - **Tar payloads** on `/hydrate` are capped at 32 MiB.
 
 ### Known limitations
 
-- **Exec runs arbitrary commands.** The `/exec` endpoint does not restrict which programs can be run. The non-root user and filesystem permissions are the primary constraints. Tools like `curl` remain available and could be used to exfiltrate data from the workspace or probe the network.
-- **Symlink escape.** Path validation happens at the HTTP layer by normalising path strings. It cannot resolve symlinks, which exist only inside the container. A caller could use `/exec` to create a symlink from `/workspace/link` to a file outside the workspace, then read that symlink via `/file/*`. The non-root user mitigates the impact (sensitive root-owned files are inaccessible), but world-readable files like `/etc/passwd` could still be read this way.
-- **`USER` directive scope.** The `USER sandbox` directive in the Dockerfile sets the default user for the container entrypoint. Whether `sandbox.exec()` inherits this user depends on the Cloudflare Sandbox runtime behaviour. Verify after deployment that commands run as `sandbox` (e.g. `exec ["whoami"]`).
+- **Processes run arbitrary executables.** The process launch route does not restrict which programs can be run. The non-root user and filesystem permissions are the primary constraints. Tools like `curl` remain available and could be used to exfiltrate data from the workspace or probe the network.
+- **Symlink escape.** Path validation happens at the HTTP layer by normalising path strings. It cannot resolve symlinks, which exist only inside the container. A caller could launch a process to create a symlink from `/workspace/link` to a file outside the workspace, then read that symlink via `/file/*`. The non-root user mitigates the impact (sensitive root-owned files are inaccessible), but world-readable files like `/etc/passwd` could still be read this way.
+- **`USER` directive scope.** The `USER sandbox` directive in the Dockerfile sets the default user for the container entrypoint. Whether `sandbox.exec()` inherits this user depends on the Cloudflare Sandbox runtime behaviour. Verify after deployment that commands run as `sandbox` (e.g. launch `argv: ["whoami"]`).
 - **No network restrictions.** There are no egress network controls within the container. If your threat model requires it, consider restricting outbound access at the container or platform level.

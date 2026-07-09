@@ -1,3 +1,4 @@
+import type { ProcessLogEvent } from '@repo/shared';
 import { validatePort } from '../../security';
 import { errorJson, resolveWorkspacePath } from '../helpers';
 import type { ExecRequest, RunningResponse } from '../types';
@@ -70,37 +71,7 @@ export function registerProcessRoutes(
       replay,
       follow
     });
-    const reader = logs.getReader();
-    const { readable, writable } = new TransformStream<Uint8Array>();
-    const writer = writable.getWriter();
-    const encoder = new TextEncoder();
-
-    (async () => {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const data =
-            'type' in value &&
-            (value.type === 'stdout' || value.type === 'stderr')
-              ? {
-                  type: value.type,
-                  cursor: value.cursor,
-                  timestamp: value.timestamp,
-                  data: bytesToBase64(value.data)
-                }
-              : value;
-          await writer.write(
-            encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-          );
-        }
-      } finally {
-        await reader.cancel().catch(() => undefined);
-        await writer.close().catch(() => undefined);
-      }
-    })().catch(() => undefined);
-
-    return new Response(readable, {
+    return new Response(processLogsToSSE(logs), {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache'
@@ -300,6 +271,56 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     value !== null &&
     !Array.isArray(value) &&
     Object.values(value).every((item) => typeof item === 'string')
+  );
+}
+
+function processLogsToSSE(
+  logs: ReadableStream<ProcessLogEvent>
+): ReadableStream<Uint8Array> {
+  const reader = logs.getReader();
+  const encoder = new TextEncoder();
+  let finished = false;
+
+  async function finish(cancelSource: boolean): Promise<void> {
+    if (finished) return;
+    finished = true;
+    if (cancelSource) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const result = await reader.read();
+          if (result.done) {
+            await finish(false);
+            controller.close();
+            return;
+          }
+          const event = result.value;
+          const data =
+            event.type === 'stdout' || event.type === 'stderr'
+              ? {
+                  type: event.type,
+                  cursor: event.cursor,
+                  timestamp: event.timestamp,
+                  data: bytesToBase64(event.data)
+                }
+              : event;
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch (error) {
+          await finish(true);
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await finish(true);
+      }
+    },
+    { highWaterMark: 0 }
   );
 }
 
