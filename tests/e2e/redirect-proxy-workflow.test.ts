@@ -1,9 +1,8 @@
-import type { PortExposeResult, Process } from '@repo/shared';
+import type { PortExposeResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -28,7 +27,7 @@ describe('Redirect Proxy Workflow', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
     portHeaders = {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
@@ -72,30 +71,23 @@ await Bun.sleep(60000);
         })
       });
 
-      // Start the server process
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `bun run /workspace/redirect-server.ts`
-        })
-      });
-      expect(startResponse.status).toBe(200);
-      const { id: processId } = (await startResponse.json()) as Process;
-
-      const waitPortResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitForPort`,
+      // Start the server process and wait for port
+      const startResponse = await fetch(
+        `${workerUrl}/api/exec-and-wait-for-port`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            port: REDIRECT_TEST_PORT,
-            timeout: 15000,
-            mode: 'tcp'
+            command: [
+              '/bin/bash',
+              '-lc',
+              `bun run /workspace/redirect-server.ts`
+            ],
+            port: REDIRECT_TEST_PORT
           })
         }
       );
-      expect(waitPortResponse.status).toBe(200);
+      expect(startResponse.status).toBe(200);
 
       // Expose the port so we get a preview URL
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
@@ -126,10 +118,6 @@ await Bun.sleep(60000);
       await fetch(`${workerUrl}/api/exposed-ports/${REDIRECT_TEST_PORT}`, {
         method: 'DELETE',
         headers: portHeaders
-      });
-      await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'DELETE',
-        headers
       });
     },
     90000

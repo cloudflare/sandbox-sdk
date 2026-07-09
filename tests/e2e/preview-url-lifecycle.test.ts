@@ -1,4 +1,4 @@
-import type { PortExposeResult, Process } from '@repo/shared';
+import type { PortExposeResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import {
@@ -9,7 +9,6 @@ import {
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -99,29 +98,22 @@ async function startPreviewServer(
 ): Promise<void> {
   await writePreviewServer(workerUrl, headers, port);
 
-  const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+  const startResponse = await fetch(`${workerUrl}/api/exec-and-wait-for-port`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      command: `bun run /workspace/preview-lifecycle-server-${port}.ts`
+      command: [
+        '/bin/bash',
+        '-lc',
+        `bun run /workspace/preview-lifecycle-server-${port}.ts`
+      ],
+      port
     })
   });
-  await assertOK(startResponse, `Starting preview server for port ${port}`);
-  const process = (await startResponse.json()) as Pick<Process, 'id'>;
-
-  const waitPortResponse = await fetch(
-    `${workerUrl}/api/process/${process.id}/waitForPort`,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        port,
-        timeout: 15000,
-        mode: 'tcp'
-      })
-    }
+  await assertOK(
+    startResponse,
+    `Starting preview server and waiting for port ${port}`
   );
-  await assertOK(waitPortResponse, `Waiting for preview server port ${port}`);
 }
 
 async function exposePreviewPort(
@@ -246,11 +238,7 @@ async function writeUnrelatedRuntimeFile(
 function createPortHeaders(
   headers: Record<string, string>
 ): Record<string, string> {
-  // Port APIs are sandbox-scoped, while file/process setup uses the test
-  // session headers for deterministic workspace state.
-  const portHeaders = { ...headers };
-  delete portHeaders['X-Session-Id'];
-  return portHeaders;
+  return { ...headers };
 }
 
 describe('Preview URL lifecycle', () => {
@@ -262,7 +250,7 @@ describe('Preview URL lifecycle', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
     portHeaders = createPortHeaders(headers);
   }, 120000);
 
@@ -603,7 +591,7 @@ describe('Preview URL lifecycle after sandbox destroy', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
     portHeaders = createPortHeaders(headers);
   }, 120000);
 

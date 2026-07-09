@@ -1,4 +1,3 @@
-import type { Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { fetchWithRetry } from './helpers/fetch-with-retry';
 import {
@@ -91,29 +90,22 @@ console.log("Server listening on port " + server.port);
       });
       expect(writeResponse.status).toBe(200);
 
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: 'bun run /workspace/named-tunnel-server.ts'
-        })
-      });
-      expect(startResponse.status).toBe(200);
-      const { id: processId } = (await startResponse.json()) as Process;
-
-      const waitPortResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitForPort`,
+      const startResponse = await fetch(
+        `${workerUrl}/api/exec-and-wait-for-port`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            port: TUNNEL_TEST_PORT,
-            timeout: 15_000,
-            mode: 'tcp'
+            command: [
+              '/bin/bash',
+              '-lc',
+              'bun run /workspace/named-tunnel-server.ts'
+            ],
+            port: TUNNEL_TEST_PORT
           })
         }
       );
-      expect(waitPortResponse.status).toBe(200);
+      expect(startResponse.status).toBe(200);
 
       // 2. Provision the named tunnel.
       let tunnel: NamedTunnelInfoWire | null = null;
@@ -151,10 +143,6 @@ console.log("Server listening on port " + server.port);
         //    a destroy failure here must not mask the original assertion
         //    failure, so swallow the inner error.
         await destroyTunnel(TUNNEL_TEST_PORT).catch(() => {});
-        await fetch(`${workerUrl}/api/process/${processId}/kill`, {
-          method: 'POST',
-          headers
-        }).catch(() => {});
       }
 
       // The remaining assertions only run if the try block succeeded.

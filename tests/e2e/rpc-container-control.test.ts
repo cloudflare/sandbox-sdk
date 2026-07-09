@@ -6,24 +6,17 @@
  * - Command execution (exec)
  * - Process log streaming
  * - File operations (write, read, list, delete)
- * - Session isolation
  *
  */
 
-import type { ExecResult, ListFilesResult, ReadFileResult } from '@repo/shared';
+import type { ListFilesResult, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-import {
-  collectProcessStdout,
-  collectProcessStreamEvents,
-  startProcessViaTestWorker,
-  streamProcessViaTestWorker
-} from './helpers/process-stream';
 
 describe('RPC Container Control', () => {
   let sandbox: TestSandbox | null = null;
@@ -33,7 +26,7 @@ describe('RPC Container Control', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -45,11 +38,11 @@ describe('RPC Container Control', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo hello-rpc' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'echo hello-rpc'] })
     });
 
     expect(response.status).toBe(200);
-    const result = (await response.json()) as ExecResult;
+    const result = (await response.json()) as CommandResponse;
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe('hello-rpc');
   });
@@ -58,11 +51,11 @@ describe('RPC Container Control', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'sh -c "exit 42"' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'sh -c "exit 42"'] })
     });
 
     expect(response.status).toBe(200);
-    const result = (await response.json()) as ExecResult;
+    const result = (await response.json()) as CommandResponse;
     expect(result.exitCode).toBe(42);
   });
 
@@ -97,7 +90,11 @@ describe('RPC Container Control', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `mkdir -p ${testDir} && touch ${testDir}/a.txt ${testDir}/b.txt`
+        command: [
+          '/bin/bash',
+          '-lc',
+          `mkdir -p ${testDir} && touch ${testDir}/a.txt ${testDir}/b.txt`
+        ]
       })
     });
 
@@ -113,36 +110,6 @@ describe('RPC Container Control', () => {
     const names = result.files.map((f) => f.name);
     expect(names).toContain('a.txt');
     expect(names).toContain('b.txt');
-  });
-
-  test('should stream process output', async () => {
-    const process = await startProcessViaTestWorker(
-      workerUrl,
-      headers,
-      'echo line1 && echo line2 && echo line3'
-    );
-    const response = await streamProcessViaTestWorker(
-      workerUrl,
-      headers,
-      process.id
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.body).toBeTruthy();
-
-    const events = await collectProcessStreamEvents(response);
-    const stdoutEvents = events.filter((event) => event.type === 'stdout');
-    const exitEvents = events.filter((event) => event.type === 'exit');
-
-    expect(stdoutEvents.length).toBeGreaterThan(0);
-    expect(exitEvents.length).toBe(1);
-
-    const allOutput = collectProcessStdout(events);
-    expect(allOutput).toContain('line1');
-    expect(allOutput).toContain('line2');
-    expect(allOutput).toContain('line3');
-
-    expect(exitEvents[0].exitCode).toBe(0);
   });
 
   test('should delete a file', async () => {
@@ -177,65 +144,5 @@ describe('RPC Container Control', () => {
       exists: boolean;
     };
     expect(existsResult.exists).toBe(false);
-  });
-
-  test('should create and use a separate session with isolated env', async () => {
-    const sessionId = createUniqueSession();
-
-    // Create session with custom env
-    const createResponse = await fetch(`${workerUrl}/api/session/create`, {
-      method: 'POST',
-      headers: sandbox!.headers(),
-      body: JSON.stringify({
-        id: sessionId,
-        env: { RPC_TEST: 'control-works' }
-      })
-    });
-    expect(createResponse.status).toBe(200);
-
-    // Execute in that session to verify env
-    const sessionHeaders = sandbox!.headers(sessionId);
-    const execResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: sessionHeaders,
-      body: JSON.stringify({ command: 'echo $RPC_TEST' })
-    });
-    expect(execResponse.status).toBe(200);
-    const result = (await execResponse.json()) as ExecResult;
-    expect(result.stdout.trim()).toBe('control-works');
-
-    // The original session should NOT have this env var
-    const defaultExecResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'echo $RPC_TEST' })
-    });
-    const defaultResult = (await defaultExecResponse.json()) as ExecResult;
-    expect(defaultResult.stdout.trim()).toBe('');
-  });
-
-  test('should expose container placement ID after a session handshake', async () => {
-    // Trigger a handshake so the DO captures CLOUDFLARE_PLACEMENT_ID from
-    // the createSession response.
-    const execResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'true' })
-    });
-    expect(execResponse.status).toBe(200);
-
-    const placementResponse = await fetch(`${workerUrl}/api/placement-id`, {
-      method: 'GET',
-      headers
-    });
-    expect(placementResponse.status).toBe(200);
-    const { placementId } = (await placementResponse.json()) as {
-      placementId: string | null | undefined;
-    };
-
-    // After a handshake the DO must have stored a value (string when
-    // CLOUDFLARE_PLACEMENT_ID is set, null when running locally) but not
-    // undefined, which would mean the RPC handshake dropped the field.
-    expect(placementId === null || typeof placementId === 'string').toBe(true);
   });
 });

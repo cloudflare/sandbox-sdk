@@ -10,12 +10,12 @@
  * - File operations work on Alpine filesystem
  */
 
-import type { ExecResult, ReadFileResult } from '@repo/shared';
+import type { ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -27,7 +27,7 @@ describe('Musl Image Variant', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox({ type: 'musl' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -39,11 +39,11 @@ describe('Musl Image Variant', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "ok"' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'echo "ok"'] })
     });
 
     expect(response.status).toBe(200);
-    const result = (await response.json()) as ExecResult;
+    const result = (await response.json()) as CommandResponse;
     expect(result.exitCode).toBe(0);
   });
 

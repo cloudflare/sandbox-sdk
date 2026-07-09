@@ -10,12 +10,12 @@
  * - Server continues running after CMD exits
  */
 
-import type { ExecResult, ReadFileResult } from '@repo/shared';
+import type { ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -27,10 +27,14 @@ describe('Standalone Binary Workflow', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox({
       type: 'standalone',
-      initCommand: 'until [ -f /tmp/startup-marker.txt ]; do sleep 0.1; done'
+      initCommand: [
+        '/bin/bash',
+        '-lc',
+        'until [ -f /tmp/startup-marker.txt ]; do sleep 0.1; done'
+      ]
     });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -42,11 +46,11 @@ describe('Standalone Binary Workflow', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo "ok"' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'echo "ok"'] })
     });
 
     expect(response.status).toBe(200);
-    const result = (await response.json()) as ExecResult;
+    const result = (await response.json()) as CommandResponse;
     expect(result.exitCode).toBe(0);
   });
 

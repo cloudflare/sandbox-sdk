@@ -23,7 +23,6 @@ import {
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
@@ -37,7 +36,7 @@ describe('File Operations Error Handling', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -82,7 +81,7 @@ describe('File Operations Error Handling', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `ls -d ${dirPath}`
+        command: ['/bin/bash', '-lc', `ls -d ${dirPath}`]
       })
     });
 
@@ -320,7 +319,7 @@ describe('File Streaming Write', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -358,7 +357,11 @@ describe('File Streaming Write', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `mkdir -p $(dirname ${testPath}) && printf '#!/bin/sh\necho original' > ${testPath} && chmod +x ${testPath}`
+        command: [
+          '/bin/bash',
+          '-lc',
+          `mkdir -p $(dirname ${testPath}) && printf '#!/bin/sh\necho original' > ${testPath} && chmod +x ${testPath}`
+        ]
       })
     });
 
@@ -377,7 +380,7 @@ describe('File Streaming Write', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `test -x ${testPath} && echo executable`
+        command: ['/bin/bash', '-lc', `test -x ${testPath} && echo executable`]
       })
     });
     expect(execResponse.status).toBe(200);
@@ -405,7 +408,9 @@ describe('File Streaming Write', () => {
     const execResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: `stat -c %s ${testPath}` })
+      body: JSON.stringify({
+        command: ['/bin/bash', '-lc', `stat -c %s ${testPath}`]
+      })
     });
     expect(execResponse.status).toBe(200);
     const result = (await execResponse.json()) as { stdout: string };
@@ -421,7 +426,7 @@ describe('File Binary Read', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 60000);
 
   afterAll(async () => {

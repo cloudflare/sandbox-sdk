@@ -21,12 +21,11 @@
  * returns the same 1011 error indefinitely.
  */
 
-import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -46,7 +45,7 @@ describe('RPC transport recovery after WebSocket failure', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -59,10 +58,10 @@ describe('RPC transport recovery after WebSocket failure', () => {
     const baseline = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: 'echo baseline' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'echo baseline'] })
     });
     expect(baseline.status).toBe(200);
-    const baselineResult = (await baseline.json()) as ExecResult;
+    const baselineResult = (await baseline.json()) as CommandResponse;
     expect(baselineResult.stdout.trim()).toBe('baseline');
 
     // Build the payload once and reuse it across all concurrent
@@ -96,12 +95,14 @@ describe('RPC transport recovery after WebSocket failure', () => {
       const probe = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: 'echo recovered' })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', 'echo recovered']
+        })
       });
       lastStatus = probe.status;
       lastBody = await probe.text();
       if (probe.status === 200) {
-        const result = JSON.parse(lastBody) as ExecResult;
+        const result = JSON.parse(lastBody) as CommandResponse;
         if (result.stdout.trim() === 'recovered') {
           recoveredOn = attempt;
           break;
