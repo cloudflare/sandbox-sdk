@@ -70,6 +70,9 @@ jobs:
       - name: Monorepo structure lint
         run: npx sherif
 
+      - name: Release and quality configuration tests
+        run: npm run test:release-tools
+
       - name: Validate changesets
         if: ${{ inputs.run_changeset_validation }}
         run: node scripts/validate-changesets.js .changeset/*.md
