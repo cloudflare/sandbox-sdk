@@ -41,7 +41,8 @@ describe('Backup & Restore', () => {
   }> = [
     { label: '100mb', fileCount: 4, fileSizeMB: 25 },
     { label: '500mb', fileCount: 5, fileSizeMB: 100 },
-    { label: '1gb', fileCount: 8, fileSizeMB: 128 }
+    { label: '1gb', fileCount: 8, fileSizeMB: 128 },
+    { label: '5gb', fileCount: 20, fileSizeMB: 256 }
   ];
 
   /**
@@ -112,7 +113,7 @@ describe('Backup & Restore', () => {
         await manager.executeCommand(
           sandbox,
           populateDirCmd(dir, fileCount, fileSizeMB),
-          { timeout: 600000 }
+          { timeout: 1_800_000 }
         );
 
         const result = await manager.createBackup(sandbox, dir, {
@@ -148,7 +149,7 @@ describe('Backup & Restore', () => {
       `${METRICS.BACKUP_CREATE_LATENCY}-100mb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
-  }, 3_600_000);
+  }, 7_200_000);
 
   test('should measure backup restore latency by directory size', async () => {
     if (!shouldRun) {
@@ -167,7 +168,7 @@ describe('Backup & Restore', () => {
         await manager.executeCommand(
           sandbox,
           populateDirCmd(dir, fileCount, fileSizeMB),
-          { timeout: 600000 }
+          { timeout: 1_800_000 }
         );
 
         const backup = await manager.createBackup(sandbox, dir, {
@@ -226,7 +227,7 @@ describe('Backup & Restore', () => {
       `${METRICS.BACKUP_RESTORE_LATENCY}-100mb`
     );
     expect(smallRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
-  }, 3_600_000);
+  }, 7_200_000);
 
   test('should measure post-restore read and write latency', async () => {
     if (!shouldRun) {

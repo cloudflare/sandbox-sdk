@@ -53,7 +53,6 @@
 
 - [#706](https://github.com/cloudflare/sandbox-sdk/pull/706) [`ae5f9a1`](https://github.com/cloudflare/sandbox-sdk/commit/ae5f9a10aa45dc59a48c8b9a30c5c14ea16cf75b) Thanks [@scuffi](https://github.com/scuffi)! - Add sessionless execution mode with a configurable default-session policy.
 
-  Set `enableDefaultSession: false` in `SandboxOptions` to run implicit top-level operations without a persistent shell — each command gets a fresh process with no shared state. The option is scoped to the sandbox object returned by `getSandbox(...)`; explicit per-call session IDs continue to target that session.
 
 ## 0.10.2
 

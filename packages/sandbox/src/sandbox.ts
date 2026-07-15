@@ -123,6 +123,7 @@ type SandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+  labels?: NonNullable<SandboxOptions['labels']>;
 };
 
 type CachedSandboxConfiguration = {
@@ -131,6 +132,7 @@ type CachedSandboxConfiguration = {
   sleepAfter?: string | number;
   keepAlive?: boolean;
   containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+  labels?: NonNullable<SandboxOptions['labels']>;
 };
 
 type PreviewForwardingContainerState = DurableObjectState<{}> & {
@@ -149,6 +151,7 @@ type ConfigurableSandboxStub = {
   setContainerTimeouts?: (
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
+  setLabels?: (labels: Record<string, string>) => Promise<void>;
 };
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
@@ -232,6 +235,28 @@ function sameContainerTimeouts(
   );
 }
 
+function sameLabels(
+  left?: Record<string, string>,
+  right?: Record<string, string>
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) return false;
+
+  for (const [key, value] of leftEntries) {
+    if (right[key] !== value) return false;
+  }
+
+  return true;
+}
+
+function cloneLabels(labels: Record<string, string>): Record<string, string> {
+  return { ...labels };
+}
+
 function buildSandboxConfiguration(
   effectiveId: string,
   options: SandboxOptions | undefined,
@@ -270,6 +295,13 @@ function buildSandboxConfiguration(
     configuration.containerTimeouts = options.containerTimeouts;
   }
 
+  if (
+    options?.labels !== undefined &&
+    !sameLabels(cached?.labels, options.labels)
+  ) {
+    configuration.labels = cloneLabels(options.labels);
+  }
+
   return configuration;
 }
 
@@ -278,7 +310,8 @@ function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
     configuration.sandboxName !== undefined ||
     configuration.sleepAfter !== undefined ||
     configuration.keepAlive !== undefined ||
-    configuration.containerTimeouts !== undefined
+    configuration.containerTimeouts !== undefined ||
+    configuration.labels !== undefined
   );
 }
 
@@ -300,6 +333,9 @@ function mergeSandboxConfiguration(
     }),
     ...(configuration.containerTimeouts !== undefined && {
       containerTimeouts: configuration.containerTimeouts
+    }),
+    ...(configuration.labels !== undefined && {
+      labels: cloneLabels(configuration.labels)
     })
   };
 }
@@ -342,6 +378,12 @@ function applySandboxConfiguration(
     );
   }
 
+  if (configuration.labels !== undefined) {
+    operations.push(
+      stub.setLabels?.(configuration.labels) ?? Promise.resolve()
+    );
+  }
+
   return Promise.all(operations).then(() => undefined);
 }
 
@@ -379,6 +421,57 @@ function translatePlatformInterruption(
   throw createPlatformInterruptedError(error, operation) ?? error;
 }
 
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return (
+    value != null &&
+    typeof (value as { then?: unknown }).then === 'function' &&
+    typeof (value as { catch?: unknown }).catch === 'function'
+  );
+}
+
+function isObjectLike(value: unknown): value is object {
+  return (
+    (typeof value === 'object' && value !== null) || typeof value === 'function'
+  );
+}
+
+function wrapPromiseWithOperationContext<TResult>(
+  result: Promise<unknown>,
+  operation: string
+): TResult {
+  const guarded = result.catch((error: unknown) =>
+    translatePlatformInterruption(error, operation)
+  );
+
+  if (!isObjectLike(result)) return guarded as TResult;
+
+  for (const key of Reflect.ownKeys(result)) {
+    const descriptor = Object.getOwnPropertyDescriptor(result, key);
+    if (!descriptor) continue;
+
+    if ('value' in descriptor && typeof descriptor.value === 'function') {
+      const method = descriptor.value as (...args: unknown[]) => unknown;
+      descriptor.value = (...args: unknown[]) => {
+        try {
+          const methodResult = method.apply(result, args);
+          if (isPromiseLike(methodResult)) {
+            return methodResult.catch((error: unknown) =>
+              translatePlatformInterruption(error, operation)
+            );
+          }
+          return methodResult;
+        } catch (error) {
+          translatePlatformInterruption(error, operation);
+        }
+      };
+    }
+
+    Object.defineProperty(guarded, key, descriptor);
+  }
+
+  return guarded as TResult;
+}
+
 function withSandboxOperationContext<TArgs extends unknown[], TResult>(
   operation: string,
   fn: (...args: TArgs) => TResult
@@ -386,19 +479,8 @@ function withSandboxOperationContext<TArgs extends unknown[], TResult>(
   return (...args: TArgs): TResult => {
     try {
       const result = fn(...args);
-      if (
-        result != null &&
-        typeof (result as { then?: unknown }).then === 'function'
-      ) {
-        const caught = (result as unknown as Promise<unknown>).catch(
-          (error: unknown) => translatePlatformInterruption(error, operation)
-        );
-        // Preserve any own properties the source thenable attached to itself
-        // (e.g. `SandboxProcessPromise.output` / `.text` / `.json` / `.kill`).
-        // `Promise.prototype.catch` returns a bare promise, so without this
-        // copy those thenable-augmenting methods disappear.
-        Object.assign(caught, result);
-        return caught as TResult;
+      if (isPromiseLike(result)) {
+        return wrapPromiseWithOperationContext(result, operation);
       }
       return result;
     } catch (error) {
@@ -943,6 +1025,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
 
+      const storedLabels =
+        await this.ctx.storage.get<Record<string, string>>('labels');
+      if (storedLabels !== undefined && storedLabels !== null) {
+        this.labels = cloneLabels(storedLabels);
+      }
+
       // Restore sleep timeout if previously set via RPC
       const storedSleepAfter = await this.ctx.storage.get<string | number>(
         'sleepAfter'
@@ -998,6 +1086,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
+
+    if (configuration.labels !== undefined) {
+      await this.setLabels(configuration.labels);
+    }
   }
 
   // RPC method to set the sleep timeout. Idempotent: re-applying the same
@@ -1031,6 +1123,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       delete this.envVars[key];
     }
     this.envVars = { ...this.envVars, ...toSet };
+  }
+
+  async setLabels(labels: Record<string, string>): Promise<void> {
+    const nextLabels = cloneLabels(labels);
+
+    if (sameLabels(this.labels, nextLabels)) return;
+
+    await this.ctx.storage.put('labels', nextLabels);
+    this.labels = nextLabels;
+
+    if (this.ctx.container?.running === true) {
+      this.logger.warn(
+        'Container labels updated while container is running; new labels apply on the next container start'
+      );
+    }
   }
 
   async setContainerTimeouts(
