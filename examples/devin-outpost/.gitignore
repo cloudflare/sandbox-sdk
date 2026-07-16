@@ -1,0 +1,12 @@
+.dev.vars
+.wrangler
+.turbo
+dist
+node_modules
+scripts
+
+# Generated locally by a personal build workaround (e.g. corporate TLS-
+# inspecting proxies). Never part of the tracked example.
+Dockerfile.local
+wrangler.local.jsonc
+local-warp-ca.pem

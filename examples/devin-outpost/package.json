@@ -1,0 +1,37 @@
+{
+  "name": "@cloudflare/sandbox-devin-outpost-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Devin Outposts orchestrator on Cloudflare Workers + Durable Object Containers.",
+  "cloudflare": {
+    "bindings": {
+      "DEVIN_POOL_ID": {
+        "description": "The Devin Outposts pool ID this Worker should serve."
+      },
+      "DEVIN_API_TOKEN": {
+        "description": "A Devin Enterprise API token with the `account.outposts.orchestrator` scope."
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "wrangler types --env-file .dev.vars.example --check && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "cf-typegen": "wrangler types --env-file .dev.vars.example"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.102.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,11 @@
+.dev.vars
+.git
+.github
+.wrangler
+.turbo
+dist
+node_modules
+README.md
+Dockerfile.local
+wrangler.local.jsonc
+scripts

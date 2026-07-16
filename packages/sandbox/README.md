@@ -218,6 +218,7 @@ See the [examples directory](./examples) for complete working examples:
 - [Minimal](./examples/minimal) - Start here: exec commands, read/write files
 - [Code Interpreter](./examples/code-interpreter) - Give [gpt-oss](https://developers.cloudflare.com/workers-ai/models/gpt-oss-120b/) on Workers AI a Python REPL
 - [Claude Code](./examples/claude-code) - Run [Claude Code](https://claude.ai/code) headless on any repo
+- [Devin Outposts](./examples/devin-outpost) - Run a self-hosted Devin Outposts fleet on Cloudflare Containers
 - [OpenAI Agents](./examples/openai-agents) - `Shell` and `Editor` tools for [OpenAI Agents SDK](https://openai.github.io/openai-agents-js/)
 - [OpenCode](./examples/opencode) - [OpenCode](https://github.com/sst/opencode) web UI or [SDK](https://opencode.ai/docs/sdk/) in a sandbox
 - [Git Repo Per Sandbox](./examples/git-repo-per-sandbox) - One Artifacts Git repo per sandbox

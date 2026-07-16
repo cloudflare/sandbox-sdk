@@ -24,6 +24,7 @@ The first run builds the container image, so it's slow. Subsequent runs reuse th
 | `minimal`                    | Smallest possible Sandbox SDK setup          |
 | `authentication`             | Auth-protected sandbox access                |
 | `claude-code`                | Running Claude Code inside a sandbox         |
+| `devin-outpost`              | Running Devin Outposts on Containers         |
 | `code-interpreter`           | `CodeInterpreter` API + Workers AI           |
 | `codex` / `codex-app-server` | OpenAI Codex integration patterns            |
 | `collaborative-terminal`     | Multi-user terminal sharing                  |
