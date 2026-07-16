@@ -33,7 +33,7 @@ function getErrorStack(error: unknown): string | undefined {
 async function handleRunRequest(
   request: Request,
   env: Env,
-  sessionId: string
+  conversationId: string
 ): Promise<Response> {
   console.debug('[openai-example]', 'handleRunRequest called', {
     method: request.method,
@@ -62,9 +62,9 @@ async function handleRunRequest(
 
     // Get sandbox instance (reused for both shell and editor)
     console.debug('[openai-example]', 'Getting sandbox instance', {
-      sandboxId: `session-${sessionId}`
+      sandboxId: `conversation-${conversationId}`
     });
-    const sandbox = getSandbox(env.Sandbox, `session-${sessionId}`);
+    const sandbox = getSandbox(env.Sandbox, `conversation-${conversationId}`);
 
     // Create shell (automatically collects results)
     console.debug('[openai-example]', 'Creating SandboxShell');
@@ -167,10 +167,10 @@ export default {
       method: request.method
     });
 
-    const sessionId = request.headers.get('X-Session-Id');
-    console.log({ sessionId });
-    if (!sessionId) {
-      return new Response('Missing X-Session-Id header', { status: 400 });
+    const conversationId = request.headers.get('X-Conversation-Id');
+    console.log({ conversationId });
+    if (!conversationId) {
+      return new Response('Missing X-Conversation-Id header', { status: 400 });
     }
 
     if (url.pathname === '/.well-known/appspecific/com.chrome.devtools.json') {
@@ -178,7 +178,7 @@ export default {
     }
 
     if (url.pathname === '/run' && request.method === 'POST') {
-      return handleRunRequest(request, env, sessionId);
+      return handleRunRequest(request, env, conversationId);
     }
 
     console.warn('[openai-example]', 'Route not found', {

@@ -167,6 +167,8 @@
         termView.classList.add('active');
       }
 
+
+
       /**
        * Drive a single session: create sandbox, open WebSocket, render terminal,
        * clean up on exit. Returns a Promise that resolves when the session ends.
@@ -178,7 +180,8 @@
           const body = await res.text();
           throw new Error(`Failed to create session (${res.status}): ${body}`);
         }
-        const { sandboxId } = await res.json();
+        const resBody = await res.json();
+        const { sandboxId, terminalId } = resBody;
 
         termMeta.textContent = sandboxId;
         termState.textContent = 'connecting…';
@@ -202,7 +205,7 @@
 
         // Connect WebSocket to the PTY proxy
         const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsURL = `${wsProto}//${location.host}/ws/terminal/${sandboxId}`;
+        const wsURL = `${wsProto}//${location.host}/ws/terminal/${sandboxId}?terminalId=${terminalId}`;
         const ws = new WebSocket(wsURL);
         ws.binaryType = 'arraybuffer';
 
@@ -272,10 +275,14 @@
         window.removeEventListener('resize', onWindowResize);
         term.dispose();
 
-        // Best-effort cleanup: unmount the bucket. The DO will be evicted
+        // Best-effort cleanup: unmount the bucket & terminate terminal. The DO will be evicted
         // shortly after; this just flushes pending writes.
         try {
-          await fetch(`/api/session/${sandboxId}/cleanup`, { method: 'POST' });
+          await fetch(`/api/session/${sandboxId}/cleanup`, {
+            method: 'POST',
+            body: JSON.stringify({ terminalId }),
+            headers: { 'Content-Type': 'application/json' }
+          });
         } catch {
           // ignore — cleanup is best-effort
         }

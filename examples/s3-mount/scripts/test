@@ -41,10 +41,10 @@ class PTYShell {
 		});
 	}
 
-	static async connect(sandboxId: string): Promise<PTYShell> {
+	static async connect(sandboxId: string, terminalId: string): Promise<PTYShell> {
 		const wsProto = BASE_URL.startsWith('https:') ? 'wss:' : 'ws:';
 		const host = new URL(BASE_URL).host;
-		const ws = new WebSocket(`${wsProto}//${host}/ws/terminal/${sandboxId}`);
+		const ws = new WebSocket(`${wsProto}//${host}/ws/terminal/${sandboxId}?terminalId=${terminalId}`);
 		await new Promise<void>((res, rej) => {
 			ws.addEventListener('open', () => res(), { once: true });
 			ws.addEventListener('error', (e) => rej(e), { once: true });
@@ -152,12 +152,13 @@ async function main(): Promise<void> {
 		console.error(`session create failed: ${sessRes.status} ${await sessRes.text()}`);
 		process.exit(1);
 	}
-	const { sandboxId } = (await sessRes.json()) as {
+	const { sandboxId, terminalId } = (await sessRes.json()) as {
 		sandboxId: string;
+		terminalId: string;
 	};
-	console.log(`  sandbox=${sandboxId}`);
+	console.log(`  sandbox=${sandboxId}, terminal=${terminalId}`);
 
-	const shell = await PTYShell.connect(sandboxId);
+	const shell = await PTYShell.connect(sandboxId, terminalId);
 	const unique = `pty-test-${Date.now()}`;
 	const path = `${unique}.txt`;
 	const body = `hello from pty ${unique}`;
@@ -196,7 +197,11 @@ async function main(): Promise<void> {
 	} finally {
 		await shell.close();
 		console.log(`▶ POST ${BASE_URL}/api/session/${sandboxId}/cleanup`);
-		await fetch(`${BASE_URL}/api/session/${sandboxId}/cleanup`, { method: 'POST' }).catch(() => {});
+		await fetch(`${BASE_URL}/api/session/${sandboxId}/cleanup`, {
+			method: 'POST',
+			body: JSON.stringify({ terminalId }),
+			headers: { 'Content-Type': 'application/json' }
+		}).catch(() => {});
 	}
 
 	console.log(`\n${passed} passed, ${failed} failed`);

@@ -17,17 +17,22 @@ export default function CodeViewerSheet({
   const compilationCode = `// Compile TypeScript with Sandbox SDK
 import { getSandbox } from '@cloudflare/sandbox';
 
-const sandbox = getSandbox(this.env.Sandbox, \`compile-\${sessionId}\`);
+const sandbox = getSandbox(this.env.Sandbox, \`compile-\${workspaceId}\`);
 
 // Write TypeScript schema
 await sandbox.writeFile('/workspace/validator.ts', body.schemaCode);
 
 // Bundle with esbuild
 // NODE_PATH is set to /base/node_modules to use pre-installed dependencies
-const bundleResult = await sandbox.exec(
-  'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js',
+const proc = await sandbox.exec(
+  [
+    '/bin/bash',
+    '-lc',
+    'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js'
+  ],
   { timeout: 60000, cwd: '/workspace' }
 );
+const bundleResult = await proc.output();
 
 // Read bundled code
 const bundleFile = await sandbox.readFile('/workspace/bundle.js');

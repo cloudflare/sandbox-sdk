@@ -71,9 +71,18 @@ export default {
       }
 
       try {
-        // Each room maps to its own sandbox workspace and terminal resource.
-        const sandbox = getSandbox(env.Sandbox, terminalId);
-        return await sandbox.terminal({ id: terminalId }).connect(request);
+        const sandboxId = url.searchParams.get('sandboxId');
+        if (!sandboxId) {
+          return new Response('Sandbox ID required', { status: 400 });
+        }
+        const sandbox = getSandbox(env.Sandbox, sandboxId);
+        const terminal = await sandbox.getTerminal(terminalId);
+        if (!terminal) {
+          return new Response('Terminal not found', { status: 404 });
+        }
+        return await terminal.connect(request, {
+          cursor: url.searchParams.get('cursor') ?? undefined
+        });
       } catch (err) {
         console.error('Terminal connection error:', err);
         return new Response(

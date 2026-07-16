@@ -20,14 +20,14 @@ const DEFAULT_TEST_DATA = {
   email: 'alice@example.com'
 };
 
-// Get or create session ID
-function getSessionId(): string {
-  let sessionId = localStorage.getItem('validator-session-id');
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem('validator-session-id', sessionId);
+// Get or create workspace ID
+function getWorkspaceId(): string {
+  let workspaceId = localStorage.getItem('validator-workspace-id');
+  if (!workspaceId) {
+    workspaceId = crypto.randomUUID();
+    localStorage.setItem('validator-workspace-id', workspaceId);
   }
-  return sessionId;
+  return workspaceId;
 }
 
 export default function App() {
@@ -87,12 +87,12 @@ export default function App() {
     setStatusLines([{ text: 'Validating...', className: 'status-info' }]);
 
     try {
-      const sessionId = getSessionId();
+      const workspaceId = getWorkspaceId();
       const response = await fetch('/validate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Session-ID': sessionId
+          'X-Workspace-ID': workspaceId
         },
         body: JSON.stringify({
           schemaCode: trimmedSchema,

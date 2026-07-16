@@ -40,9 +40,14 @@ RoomRegistry DO                           Tracks active rooms globally
 The Worker routes requests to the appropriate Durable Object:
 
 ```typescript
-// Terminal: proxy WebSocket directly to the room sandbox terminal
+// Room DO: create one generated terminal and share its ID with clients
 const sandbox = getSandbox(env.Sandbox, `room-${roomId}`);
-return sandbox.terminal({ id: `room-${roomId}` }).connect(request);
+const terminal = await sandbox.createTerminal({ command: ['bash'] });
+await ctx.storage.put('terminalId', terminal.id);
+
+// Worker terminal route: reconnect to the retained generated terminal
+const terminal = await sandbox.getTerminal(terminalId);
+return terminal?.connect(request, { cursor });
 ```
 
 Each room maps to a sandbox ID (`room-${roomId}`), so room workspaces do not share a filesystem, processes, or environment variables. In production, derive sandbox IDs from the authenticated user or a user-owned workspace.
@@ -57,8 +62,11 @@ The terminal component uses `SandboxAddon` from `@cloudflare/sandbox/xterm` to h
 import { SandboxAddon } from '@cloudflare/sandbox/xterm';
 
 const sandboxAddon = new SandboxAddon({
-  getWebSocketUrl: ({ origin, terminalId }) =>
-    `${origin}/ws/terminal/${terminalId}`,
+  getWebSocketUrl: ({ origin, sandboxId, terminalId, cursor }) => {
+    const params = new URLSearchParams({ sandboxId });
+    if (cursor) params.set('cursor', cursor);
+    return `${origin}/ws/terminal/${encodeURIComponent(terminalId)}?${params}`;
+  },
   onStateChange: (state) => setState(state)
 });
 

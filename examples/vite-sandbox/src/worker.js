@@ -19,12 +19,16 @@ export default {
 async function handleAPISandboxRoute(env) {
   const sandbox = getSandbox(env.Sandbox, 'vite-sandbox');
 
-  let proc = await sandbox.getProcess('vite-dev-server');
-  if (!proc) {
-    // `processId` makes the background process addressable via
-    // `sandbox.getProcess()` on later requests.
-    proc = await sandbox.exec('npm run dev', {
-      processId: 'vite-dev-server',
+  // Check if the port is already listening before spawning
+  const checkPort = await sandbox.exec([
+    'nc',
+    '-z',
+    '127.0.0.1',
+    `${VITE_PORT}`
+  ]);
+  const checkResult = await checkPort.output();
+  if (checkResult.exitCode !== 0) {
+    const proc = await sandbox.exec(['npm', 'run', 'dev'], {
       cwd: '/app',
       env: {
         VITE_PORT: `${VITE_PORT}`

@@ -10,6 +10,7 @@
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "test:smoke": "./scripts/test"
   },
   "devDependencies": {
@@ -18,6 +19,7 @@
     "aws4fetch": "^1.0.20",
     "hono": "^4.12.26",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
     "wrangler": "^4.102.0"
   },
   "author": "",

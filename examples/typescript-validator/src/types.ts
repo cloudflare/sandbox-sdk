@@ -10,7 +10,7 @@ export interface ValidateRequest {
  * Response from validation
  */
 export interface ValidateResponse {
-  sessionId: string;
+  workspaceId: string;
   compiled: boolean;
   timings: {
     bundle?: number;

@@ -115,7 +115,9 @@ export default createOpenCodeProxy(
 /**
  * Test the programmatic SDK access
  */
-async function handleSDKTest(sandbox: Sandbox): Promise<Response> {
+async function handleSDKTest(
+  sandbox: ReturnType<typeof getSandbox<Sandbox>>
+): Promise<Response> {
   try {
     // Get typed SDK client from the lifecycle handle (ensures the server).
     const client = await createOpenCodeClient<OpencodeClient>(sandbox.opencode);
