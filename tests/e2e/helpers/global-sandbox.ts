@@ -92,39 +92,7 @@ export async function createTestSandbox(
     return h;
   };
 
-  for (let attempt = 1; attempt <= SANDBOX_INIT_ATTEMPTS; attempt += 1) {
-    // Initialize the container with a side-effect-free command. The helper can
-    // retry lifecycle interruptions here because `echo ready` is test-owned and
-    // idempotent; tests that pass a mutating init command should handle their
-    // own retry semantics.
-    const initResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: makeHeaders(),
-      body: JSON.stringify({ command: initCommand }),
-      signal: AbortSignal.timeout(60000)
-    });
-
-    if (initResponse.ok) break;
-
-    const body = await initResponse.text().catch(() => '<unreadable>');
-    if (
-      initCommand[0] === '/bin/bash' &&
-      initCommand[1] === '-lc' &&
-      initCommand[2] === 'echo ready' &&
-      initCommand.length === 3 &&
-      attempt < SANDBOX_INIT_ATTEMPTS &&
-      isRetryableSandboxInitFailure(body)
-    ) {
-      await delay(250 * attempt);
-      continue;
-    }
-
-    throw new Error(
-      `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
-    );
-  }
-
-  return {
+  const sandbox: TestSandbox = {
     workerUrl,
     sandboxId,
     type,
@@ -132,6 +100,45 @@ export async function createTestSandbox(
     uniquePath: (prefix: string) =>
       `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
   };
+
+  try {
+    for (let attempt = 1; attempt <= SANDBOX_INIT_ATTEMPTS; attempt += 1) {
+      // Initialize the container with a side-effect-free command. The helper can
+      // retry lifecycle interruptions here because `echo ready` is test-owned and
+      // idempotent; tests that pass a mutating init command should handle their
+      // own retry semantics.
+      const initResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ command: initCommand }),
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (initResponse.ok) return sandbox;
+
+      const body = await initResponse.text().catch(() => '<unreadable>');
+      if (
+        initCommand[0] === '/bin/bash' &&
+        initCommand[1] === '-lc' &&
+        initCommand[2] === 'echo ready' &&
+        initCommand.length === 3 &&
+        attempt < SANDBOX_INIT_ATTEMPTS &&
+        isRetryableSandboxInitFailure(body)
+      ) {
+        await delay(250 * attempt);
+        continue;
+      }
+
+      throw new Error(
+        `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
+      );
+    }
+  } catch (error) {
+    await cleanupTestSandbox(sandbox);
+    throw error;
+  }
+
+  throw new Error(`Failed to initialize ${type} sandbox`);
 }
 
 /**
