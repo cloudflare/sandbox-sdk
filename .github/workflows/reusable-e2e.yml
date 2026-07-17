@@ -14,10 +14,6 @@ on:
         type: string
         required: true
         description: 'Docker image tag in CF registry'
-      images_changed:
-        type: string
-        default: 'true'
-        description: 'Whether Docker images changed (controls --containers-rollout)'
       deploy_hash:
         type: string
         default: ''
@@ -34,6 +30,10 @@ on:
         type: boolean
         default: false
         description: 'When true, skip cache writes (security: prevents cache poisoning from fork PRs)'
+      pr_number:
+        type: string
+        default: ''
+        description: 'PR number used to reject superseded deployment runs'
 
 env:
   CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
@@ -43,23 +43,34 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
+    timeout-minutes: 20
     outputs:
       worker-url: ${{ steps.urls.outputs.worker_url }}
     steps:
-      - name: Check if deploy can be skipped
+      - name: Verify this run owns the latest PR revision
+        if: ${{ inputs.pr_number != '' }}
+        run: |
+          LATEST_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ inputs.pr_number }}" --jq '.head.sha')
+          if [[ "$LATEST_SHA" != "${{ inputs.checkout_ref }}" ]]; then
+            echo "::error::Run targets ${{ inputs.checkout_ref }}, but PR head is $LATEST_SHA"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check deployed Worker identity
         if: ${{ inputs.deploy_hash != '' }}
         id: deploy-check
         run: |
           EXPECTED="${{ inputs.deploy_hash }}"
           URL="https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
           HASH=$(curl -sf --max-time 10 "$URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           if [[ "$HASH" == "$EXPECTED" ]]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "::notice::Worker reports deploy_hash=$EXPECTED — skipping deploy"
+            echo "::notice::Worker already reports deploy_hash=$EXPECTED; redeploying to fence container state"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
             echo "::notice::Deploy hash mismatch ($HASH vs $EXPECTED) — deploying"
           fi
 
@@ -236,7 +247,7 @@ jobs:
             "registry:${{ inputs.image_tag }}"
           npx wrangler deploy \
             --name "${WORKER}" \
-            ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
+            --containers-rollout immediate
           cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
@@ -260,11 +271,87 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           DEPLOY_HASH: ${{ inputs.deploy_hash }}
 
+      - name: Wait for container rollout readiness
+        run: .github/scripts/wait-for-container-rollout.sh "${{ inputs.worker_name_prefix }}" "${{ inputs.image_tag }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ROLLOUT_TIMEOUT_SECONDS: 600
+          ROLLOUT_DRAIN_GRACE_SECONDS: 180
+
+      - name: Verify Worker identity and container process paths
+        run: |
+          URL="https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev"
+          deadline=$((SECONDS + 300))
+          until [[ $(curl -sf --max-time 10 "$URL/health" | jq -r '.deploy_hash // ""') == "${{ inputs.deploy_hash }}" ]]; do
+            if ((SECONDS >= deadline)); then
+              echo "::error::Worker did not report expected deploy hash"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          smoke_type() {
+            local type=$1
+            local sandbox_id="readiness-${{ github.run_id }}-${{ github.run_attempt }}-$type"
+            local marker="readiness-${{ github.run_id }}-${{ github.run_attempt }}-$type-ok"
+            local headers=(-H 'Content-Type: application/json' -H "X-Sandbox-Id: $sandbox_id")
+            if [[ $type != default ]]; then
+              headers+=(-H "X-Sandbox-Type: $type")
+            fi
+
+            for attempt in {1..12}; do
+              response=$(mktemp)
+              status=$(curl -sS --max-time 30 -o "$response" -w '%{http_code}' \
+                -X POST "${headers[@]}" \
+                --data "{\"command\":[\"/bin/echo\",\"$marker\"]}" \
+                "$URL/api/execute" || true)
+              if [[ $status == 200 ]] && jq -e --arg marker "$marker" \
+                '.success == true and .exitCode == 0 and (.stdout | contains($marker))' \
+                "$response" >/dev/null; then
+                rm -f "$response"
+                return 0
+              fi
+              echo "$type smoke attempt $attempt failed with HTTP $status: $(cat "$response")"
+              rm -f "$response"
+              sleep 5
+            done
+            echo "::error::$type container process smoke probe failed"
+            return 1
+          }
+
+          pids=()
+          for type in default python opencode standalone musl; do
+            smoke_type "$type" &
+            pids+=("$!")
+          done
+          for pid in "${pids[@]}"; do
+            wait "$pid"
+          done
+
+      - name: Reverify deployment ownership
+        run: |
+          URL="https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
+          HASH=$(curl -sf --max-time 10 "$URL" | jq -r '.deploy_hash // ""')
+          if [[ "$HASH" != "${{ inputs.deploy_hash }}" ]]; then
+            echo "::error::Deployment changed during readiness checks ($HASH)"
+            exit 1
+          fi
+          if [[ -n "${{ inputs.pr_number }}" ]]; then
+            LATEST_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ inputs.pr_number }}" --jq '.head.sha')
+            if [[ "$LATEST_SHA" != "${{ inputs.checkout_ref }}" ]]; then
+              echo "::error::PR head changed to $LATEST_SHA during deployment"
+              exit 1
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Always set URL (deterministic, needed by test jobs)
       - name: Set worker URL
         id: urls
         run: |
-          echo "worker_url=https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+          echo "worker_url=https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> "$GITHUB_OUTPUT"
 
   test-vitest:
     permissions:
@@ -273,6 +360,15 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
+      - name: Verify deployment identity before Vitest
+        run: |
+          URL="${{ needs.deploy.outputs.worker-url }}/health"
+          HASH=$(curl -sf --max-time 10 "$URL" | jq -r '.deploy_hash // ""')
+          if [[ "$HASH" != "${{ inputs.deploy_hash }}" ]]; then
+            echo "::error::Expected deploy hash ${{ inputs.deploy_hash }}, got $HASH"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           repository: ${{ inputs.checkout_repo || github.repository }}
@@ -313,7 +409,7 @@ jobs:
         run: npx vitest run --config vitest.e2e.config.ts
         env:
           TEST_WORKER_URL: ${{ needs.deploy.outputs.worker-url }}
-          TEST_SANDBOX_ID: e2e-test-${{ github.run_id }}
+          TEST_SANDBOX_ID: e2e-test-${{ github.run_id }}-${{ github.run_attempt }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -326,6 +422,15 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
+      - name: Verify deployment identity before Playwright
+        run: |
+          URL="${{ needs.deploy.outputs.worker-url }}/health"
+          HASH=$(curl -sf --max-time 10 "$URL" | jq -r '.deploy_hash // ""')
+          if [[ "$HASH" != "${{ inputs.deploy_hash }}" ]]; then
+            echo "::error::Expected deploy hash ${{ inputs.deploy_hash }}, got $HASH"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           repository: ${{ inputs.checkout_repo || github.repository }}
@@ -399,7 +504,7 @@ jobs:
         run: npx playwright test --config tests/e2e/browser/playwright.config.ts
         env:
           TEST_WORKER_URL: ${{ needs.deploy.outputs.worker-url }}
-          TEST_SANDBOX_ID: browser-test-${{ github.run_id }}
+          TEST_SANDBOX_ID: browser-test-${{ github.run_id }}-${{ github.run_attempt }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
