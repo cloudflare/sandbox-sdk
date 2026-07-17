@@ -89,6 +89,7 @@ while ((SECONDS < deadline)); do
     fi
 
     app_id=$(jq -r '.id' <<<"$app")
+    app=$(wrangler containers info "$app_id")
     expected=$(expected_image "$worker" "$image_tag" "$app_name")
     instances=$(wrangler containers instances "$app_id" --json)
     reasons=$(readiness_reasons "$app" "$instances" "$expected")
