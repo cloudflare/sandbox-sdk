@@ -80,11 +80,10 @@ Follow the [7 rules for great commit messages](https://cbea.ms/git-commit/):
 Example:
 
 ```
-Add session isolation for concurrent executions
+Add process log cursors
 
-Previously, multiple concurrent exec() calls would interfere with each
-other's working directories and environment variables. This adds proper
-session management to isolate execution contexts.
+Allow callers to resume process-log streams after a known cursor so
+reconnects do not duplicate retained output.
 ```
 
 ### Creating a Changeset
@@ -165,8 +164,8 @@ Located in `tests/e2e/`:
 
 - Test full workflows against real Workers and containers
 - Require Docker
-- Share a single sandbox container for performance (~30s for full suite)
-- Use sessions for test isolation
+- Reuse containers where a workflow explicitly supports it
+- Use a unique Sandbox ID for each isolated test workflow
 
 Run with: `npm run test:e2e`
 
@@ -191,7 +190,7 @@ npm run test:e2e:browser
 - Add regression tests for bug fixes
 - Ensure tests are deterministic (no flaky tests)
 - Use descriptive test names
-- For E2E tests: use `getSharedSandbox()` and `createUniqueSession()` for isolation
+- For E2E tests: use `createSandboxId()` for isolated Sandbox instances
 
 ## Documentation
 

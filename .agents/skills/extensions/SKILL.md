@@ -1,70 +1,46 @@
 ---
 name: extensions
-description: Use when authoring or reviewing a Cloudflare Sandbox SDK extension — an opt-in capability attached to a Sandbox subclass via `withX(this)` and shipped as a `@cloudflare/sandbox/<name>` subpath. Covers the single `SandboxExtension` base class, the SDK-only vs container-sidecar split (driven by an optional npm-tarball `ExtensionPackage`), the capnweb sidecar host internals, RPC-safety rules, calling extensions from a Worker, streaming via typed callbacks, subpath wiring, and testing. Load it for tasks like "extract X into `withX()`", "add a sidecar extension", or reviewing extension code. (project)
+description: Trigger only when adding or changing Sandbox SDK extensions, custom RPC domains, or optional higher-level APIs built on files, processes, terminals, ports, git, mounts, or tunnels.
 ---
 
-# Sandbox SDK Extensions
+# Extensions
 
-An **extension** adds a capability to a user's `Sandbox` subclass. It is opt-in,
-attached as a class field via a `withX(this)` factory, and talks to the
-container over the **capnweb RPC control channel** — never an exposed port,
-never HTTP.
+Extensions add focused APIs without changing the core Sandbox model. They should compose public primitives and enforce a domain contract rather than forward calls.
 
-There is exactly **one** way to build one: subclass **`SandboxExtension`** from
-`@cloudflare/sandbox/extensions`. Do not hand-roll `RpcTarget` classes, do not
-invent new patterns. Two flavors share that single base:
+## Public shape
 
-- **SDK-only** — orchestrates existing container control sub-APIs
-  (`commands`, `files`, `git`, `processes`, `interpreter`, …). No sidecar.
-- **Sidecar** — ships an npm-style tarball that the container provisions and
-  spawns. The sidecar speaks capnweb back over a unix socket; the SDK
-  obtains a typed remote stub via `this.sidecar<T>()`.
+- Export a class that extends `SandboxExtension` and a `withX(sandbox)` helper from the extension package or subpath.
+- `withX(sandbox)` should accept a `Sandbox` (or the existing extension host type used by nearby code) and return a new extension instance, not mutate or return the original sandbox.
+- In the SDK constructor, call `super(sandbox, pkg)` when the extension owns an installable sidecar package; omit `pkg` for SDK-only extensions.
+- Keep method names domain-specific. Avoid generic command runners or aliases for core `exec()`, terminal, file, or tunnel APIs.
+- If a feature requires installable runtime assets, expose an optional `ExtensionPackage`/sidecar package and document what it installs or starts.
 
-The flavor is decided by **whether you pass an `ExtensionPackage`** —
-nothing else.
+## Runtime model
 
-> **Status (this branch):** the framework itself (`@cloudflare/sandbox/extensions`
->
-> - `@cloudflare/sandbox/sidecar`) is implemented and tested, but **no concrete
->   sidecar extension ships here yet**. The `Interpreter` / `withInterpreter`
->   snippets below are **illustrative** — the interpreter extraction lives on a
->   separate branch and is not present on `feat/extension-framework`. Likewise,
->   npm distribution of third-party extensions is not wired up: today the only
->   producer of tarball bytes is the in-repo build pipeline. The wire shape,
->   capnweb sidecar contract, and host/SDK API are the same ones a future public
->   authoring story will use — what's deferred is concrete extensions and
->   publishing/install tooling, not the architecture.
+- Launch work with `sandbox.exec(argv, options)`. Use explicit shell argv such as `['/bin/bash', '-lc', script]` only when the extension intentionally runs shell syntax.
+- Store `process.id` and log cursors when work must continue across Worker requests while the current runtime is alive.
+- Use `createTerminal()`/`getTerminal(id)` only for interactive PTY state.
+- Select `cwd` per launch. Processes and terminals inherit the complete container environment and apply `env` as an overlay. Do not add durable process or terminal truth outside the runtime.
+- Expose tunnels/ports only after the extension has started or validated the service it owns.
 
-## The golden path
+## Sidecars and RPC safety
 
-Always follow this shape: a class extending `SandboxExtension` and a
-`withX(sandbox)` factory. Worker code can call the extension directly as a
-nested namespace (`sandbox.<field>.<method>(...)`); a delegate method on the
-Sandbox subclass is now optional, not required.
+- Keep sidecar APIs narrow and capability-oriented. Prefer structured request/response objects over arbitrary command strings.
+- Sidecar code should import `SandboxSidecar` and `serveSandboxSidecar` from `@cloudflare/sandbox/sidecar`, extend `SandboxSidecar`, then call `serveSandboxSidecar(new MySidecar())` from the sidecar bin entrypoint.
+- `ExtensionPackage` must provide tarball bytes; set `bin` when the embedded `package.json` has multiple bins, `readinessTimeoutMs` when startup needs a non-default socket wait, and `allowInstallScripts` only when install-time lifecycle scripts are required.
+- The sidecar package metadata should declare the bin and any `sandboxExtension` defaults that the host uses for bin/readiness selection.
+- Capnweb/RPC methods must be safe to serialize: no closures, class instances, or ambient mutable state in request payloads.
+- Stream callback bytes as bytes. Preserve stdout/stderr identity and cursors when bridging process output; do not convert the core to text-first output.
+- Validate callback payload sizes and lifecycle ownership so a dropped Worker request cannot leak an active resource.
 
-```typescript
-import {
-  SandboxExtension,
-  type SandboxLike
-} from '@cloudflare/sandbox/extensions';
-import { shellEscape } from '@repo/shared';
+## Package and subpath wiring
 
-// SDK-only extension: drives existing sub-APIs, no package.
-class ClaudeCode extends SandboxExtension {
-  constructor(sandbox: SandboxLike) {
-    super(sandbox);
-  }
+- Put reusable extension source with the package that owns its public API.
+- Add explicit package `exports` subpaths for new extension entrypoints and keep generated types aligned.
+- Keep bridge or Worker examples thin: import the extension, call `withX()`, and show the smallest Worker route that exercises the extension.
+- Do not add compatibility shims for removed session or string-command APIs.
 
-  async ask(prompt: string, sessionId: string): Promise<string> {
-    const { stdout } = await this.client.commands.execute(
-      `claude -p ${shellEscape(prompt)}`,
-      sessionId
-    );
-    return stdout;
-  }
-}
-export const withClaudeCode = (s: SandboxLike) => new ClaudeCode(s);
-```
+## Tests
 
 ```typescript
 // Sidecar extension: ship a tarball and get a typed capnweb remote main.
@@ -124,8 +100,9 @@ export class Sandbox extends BaseSandbox<Env> {
 
 ## What the base gives you
 
-- `protected get client(): SandboxAPI` — the container control client. Use
-  `this.client.commands`, `this.client.files`, etc.
+- `protected get client(): ExtensionControlClient` — the narrow container
+  control client. Use specialized domains such as `this.client.files`, and use
+  the base extension's `this.exec(argv, options)` helper for process launches.
 - `protected sidecar<T extends object>(): Promise<T>` — provision + spawn
   the sidecar on demand and return its typed capnweb remote main. `T` is
   the sidecar's `SandboxSidecar` subclass shape. Each call reconnects
@@ -450,8 +427,6 @@ Container side — `packages/sandbox-container/src/extensions/`:
 - `control-plane/api.ts` `ExtensionsRPCAPI` — the `client.extensions`
   surface.
 
-Design rationale: `docs/EXTENSION_ARCHITECTURE_V2.md` (context only).
-
 ## Key files
 
 Framework (core SDK):
@@ -477,5 +452,5 @@ Concrete extensions (repo root):
 
 - `extensions/interpreter/` — sidecar extension (SDK class + sidecar
   program + `build.ts` that emits `sidecar-package.tgz`).
-- `extensions/git/` — SDK-only extension driving `git` through
-  `client.commands`.
+- `extensions/git/` — SDK-only extension driving `git` through the unified
+  `exec()` process surface.

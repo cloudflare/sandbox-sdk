@@ -319,5 +319,5 @@ const allResults = [
 ## See Also
 
 - [OpenAI Agents SDK Documentation](https://github.com/openai/openai-agents-js/)
-- [Session Execution Architecture](./SESSION_EXECUTION.md) - Understanding how commands execute in sandboxes
+- [Process Execution](./PROCESS_EXECUTION.md) - Understanding process handles, terminals, and log cursors
 - [Example Implementation](../examples/openai-agents/src/index.ts) - Full working example

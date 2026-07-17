@@ -1,188 +1,137 @@
 ---
 name: sandbox-bridge
-description: Use when you need to exercise a real, running Sandbox deployment via HTTP — for example to validate SDK changes against a live container, reproduce a user-reported issue, or experiment with the API (including FUSE bucket mounts) without spinning up `wrangler dev`. Documents the Sandbox bridge worker reachable via `SANDBOX_WORKER_URL` + `SANDBOX_API_KEY` when the host injects them.
+description: Trigger only when exercising a real running Sandbox deployment over HTTP via SANDBOX_WORKER_URL and SANDBOX_API_KEY, including process, terminal, file, tunnel, mount, pool, or OpenAPI bridge routes.
 ---
 
 # Sandbox Bridge
 
-A hosted Cloudflare Sandbox deployment _may_ be available to agents working in this repo, depending on whether the host injects credentials for it. It exposes the full `@cloudflare/sandbox` SDK over a small HTTP API ("the bridge") so you can drive a real sandbox container from `curl`, scripts, or tests without deploying your own worker.
+A hosted Cloudflare Sandbox deployment may be available when the host injects `SANDBOX_WORKER_URL` and `SANDBOX_API_KEY`. It exposes the current `@cloudflare/sandbox` API over HTTP so agents can validate behavior in a real container without deploying their own Worker.
 
-The source for the bridge lives in the repo:
+Source of truth:
 
-- `bridge/worker/` — the deployed worker entrypoint (thin wrapper).
-- `packages/sandbox/src/bridge/` — the actual bridge implementation: routes, auth, pool management.
-
-If the API behaves unexpectedly, read those before guessing.
+- `bridge/worker/README.md` — deployable worker docs and examples.
+- `packages/sandbox/src/bridge/routes/*.ts` — route behavior.
+- `packages/sandbox/src/bridge/openapi*.ts` — OpenAPI schema served by the bridge.
 
 ## Credentials
 
-When the host provides them, two environment variables are set in your shell:
+```bash
+: "${SANDBOX_WORKER_URL:?missing bridge URL}"
+: "${SANDBOX_API_KEY:?missing bridge token}"
+```
 
-| Variable             | Purpose                                  |
-| -------------------- | ---------------------------------------- |
-| `SANDBOX_WORKER_URL` | Base URL of the bridge worker (https).   |
-| `SANDBOX_API_KEY`    | Bearer token for `Authorization` header. |
+Pass `Authorization: Bearer $SANDBOX_API_KEY` on every `/v1/sandbox/*`, `/v1/pool/*`, and `/v1/openapi.*` request. Never put the token in a query string.
 
-If either is unset, the bridge isn't available for this session — fall back to `wrangler dev` against an example, or ask the user to enable it.
-
-All requests require `Authorization: Bearer $SANDBOX_API_KEY`. Missing/invalid tokens return `401 unauthorized`. **Always pass the token via the header — never via a query string — to keep it out of access logs and shell history.**
-
-## OpenAPI Spec
-
-The full, authoritative spec is served by the bridge itself:
+Inspect the live schema before using unfamiliar routes:
 
 ```bash
 curl -sf -H "Authorization: Bearer $SANDBOX_API_KEY" \
   "$SANDBOX_WORKER_URL/v1/openapi.json" | jq '.paths | keys'
 ```
 
-## Typical Flow
+## Typical process flow
 
-The bridge is stateless from the client's point of view: each sandbox is identified by an opaque ID returned from `POST /v1/sandbox`. Use that ID for every subsequent `/v1/sandbox/{id}/*` call, then `DELETE` it when done.
-
-### 1. Create a sandbox
+Create a sandbox:
 
 ```bash
-SID=$(curl -s -X POST "$SANDBOX_WORKER_URL/v1/sandbox" \
+SID=$(curl -sf -X POST "$SANDBOX_WORKER_URL/v1/sandbox" \
   -H "Authorization: Bearer $SANDBOX_API_KEY" | jq -r .id)
-echo "$SID"   # e.g. nmghbg45psadoawxuazxrfr23e
 ```
 
-### 2. Exec a command (SSE stream)
-
-`POST /v1/sandbox/{id}/exec` streams output as Server-Sent Events. The body takes an `argv` array — already shell-split — so wrap shell snippets in `["sh","-lc", "..."]`.
+Launch argv directly. Use explicit shell argv for shell syntax. Request fields are `argv` (required non-empty string array), optional `timeout` as a remote process lifetime deadline in milliseconds, optional `cwd` under `/workspace`, and optional string-valued `env`.
 
 ```bash
-curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \
+PROC=$(curl -sf -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/processes" \
   -H "Authorization: Bearer $SANDBOX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"argv":["sh","-lc","echo hello; uname -a"]}'
+  -d '{"argv":["/bin/bash","-lc","echo hello; uname -a"],"cwd":"/workspace","timeout":10000}')
+PID=$(printf '%s' "$PROC" | jq -r .id)
 ```
 
-Events emitted:
+Launch, list, and fetch responses are `ProcessStatus` objects with `id`, required numeric `pid`, discriminating `state`, timestamps, and exit/error details when complete.
 
-| Event    | `data` payload                        | Notes                           |
-| -------- | ------------------------------------- | ------------------------------- |
-| `stdout` | base64-encoded chunk of stdout        | May fire many times.            |
-| `stderr` | base64-encoded chunk of stderr        | May fire many times.            |
-| `exit`   | `{"exit_code": N}` (JSON)             | Terminal — stream closes after. |
-| `error`  | `{"error":"...","code":"..."}` (JSON) | Terminal — replaces `exit`.     |
+Final process route semantics:
 
-Decode stdout/stderr with `base64 -d`. Optional request fields: `timeout_ms` (per-call timeout) and `cwd` (must resolve under `/workspace`).
+- `POST /v1/sandbox/{id}/processes` launches argv and is the only process route that allocates or wakes a runtime; launch alone creates the process.
+- The launch `timeout` field is a remote process lifetime deadline. The supervisor may TERM-to-KILL internally, and completion is reported with `timedOut: true`.
+- List, fetch, log, and kill routes are lookup-only and non-waking. With no current runtime, list returns `[]`; fetch, log, and kill return route-appropriate `404` responses.
+- Process IDs are runtime-local. After sleep, restart, or replacement, saved IDs and handles are stale and never target the replacement runtime.
+- Canceling or disconnecting a logs SSE request only cancels that caller's observation subscription; it does not stop the process.
 
-A small helper to print decoded stdout:
-
-```bash
-curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"argv":["sh","-lc","ls /workspace"]}' \
-| awk '/^event: /{ev=$2} /^data: /{sub(/^data: /,""); if(ev=="stdout") print | "base64 -d"; else if(ev=="exit"||ev=="error") print "[" ev "] " $0}'
-```
-
-### 3. Read / write files
-
-Files live under `/workspace` inside the sandbox. The path in the URL is given **without** the leading slash and must resolve within `/workspace`.
+List or fetch process statuses while the runtime is alive:
 
 ```bash
-# Write
-echo 'print("hi")' | curl -s -X PUT \
-  "$SANDBOX_WORKER_URL/v1/sandbox/$SID/file/workspace/main.py" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @-
+curl -sf "$SANDBOX_WORKER_URL/v1/sandbox/$SID/processes" \
+  -H "Authorization: Bearer $SANDBOX_API_KEY"
 
-# Read
-curl -s -X GET \
-  "$SANDBOX_WORKER_URL/v1/sandbox/$SID/file/workspace/main.py" \
+curl -sf "$SANDBOX_WORKER_URL/v1/sandbox/$SID/processes/$PID" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
-### 4. Destroy
-
-Always clean up. Destroying an unknown ID is a no-op (`204`).
+Stream logs with Server-Sent Events:
 
 ```bash
-curl -s -X DELETE "$SANDBOX_WORKER_URL/v1/sandbox/$SID" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" -w "%{http_code}\n"
-```
-
-## Sessions
-
-The bridge supports explicit sessions through the `Session-Id` header. Sessions isolate two things across commands:
-
-- **Working directory** — `cd` in one session exec persists for subsequent execs in the same session.
-- **Environment variables** — `export FOO=bar` likewise persists, and `env` passed at session creation seeds the session.
-
-Use sessions when commands need persistent cwd/env state. When `Session-Id` is omitted, `/exec` uses top-level sandbox process semantics rather than a hidden persistent command session.
-
-### Create a session
-
-```bash
-SESS=$(curl -s -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/session" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"cwd":"/workspace","env":{"NODE_ENV":"test"}}' | jq -r .id)
-```
-
-The body is optional. You can also pass `id` to choose your own (must match `^[a-zA-Z0-9._-]{1,128}$`); otherwise one is generated for you.
-
-### Use a session
-
-Pass the ID via the `Session-Id` header on `exec` or file read/write:
-
-```bash
-curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Session-Id: $SESS" \
-  -H "Content-Type: application/json" \
-  -d '{"argv":["sh","-lc","cd src && pwd && echo $NODE_ENV"]}'
-
-# A second exec in the same session inherits cwd=/workspace/src and NODE_ENV=test:
-curl -sN -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/exec" \
-  -H "Authorization: Bearer $SANDBOX_API_KEY" \
-  -H "Session-Id: $SESS" \
-  -H "Content-Type: application/json" \
-  -d '{"argv":["sh","-lc","pwd"]}'
-```
-
-Invalid session IDs return `400 invalid_request`. Unknown but well-formed IDs are created on first use by some routes — prefer explicit `POST /session` so you control `cwd`/`env`.
-
-### Delete a session
-
-```bash
-curl -s -X DELETE "$SANDBOX_WORKER_URL/v1/sandbox/$SID/session/$SESS" \
+curl -sN "$SANDBOX_WORKER_URL/v1/sandbox/$SID/processes/$PID/logs?replay=true&follow=true" \
   -H "Authorization: Bearer $SANDBOX_API_KEY"
 ```
 
-Sessions disappear when the parent sandbox is destroyed or the container is recreated after sleep.
+Log route query fields:
 
-## Other Endpoints
+| Query               | Meaning                                     |
+| ------------------- | ------------------------------------------- |
+| `replay=true` / `1` | Include retained output.                    |
+| `follow=true` / `1` | Keep the SSE stream open for future output. |
+| `since=<cursor>`    | Resume after a previously returned cursor.  |
 
-These exist on the bridge — consult `/v1/openapi.json` for full schemas before using them:
+Each SSE frame is `data: <json>`. `stdout`/`stderr` objects include `type`, `cursor`, `timestamp`, and base64 `data`. Other lifecycle objects are passed through as JSON. Decode bytes after parsing the JSON, not by treating the whole stream as text output.
 
-| Path                                        | Purpose                                         |
-| ------------------------------------------- | ----------------------------------------------- |
-| `/health`                                   | Liveness probe.                                 |
-| `/v1/pool/{prime,stats,shutdown-prewarmed}` | Pre-warm pool management.                       |
-| `/v1/sandbox/{id}/pty`                      | Interactive PTY stream.                         |
-| `/v1/sandbox/{id}/running`                  | List running processes.                         |
-| `/v1/sandbox/{id}/{mount,unmount}`          | Mount / unmount S3-compatible buckets via FUSE. |
-| `/v1/sandbox/{id}/{hydrate,persist}`        | Workspace persistence ops.                      |
+Kill a process:
 
-## Error Codes
+```bash
+curl -sf -X POST "$SANDBOX_WORKER_URL/v1/sandbox/$SID/processes/$PID/kill" \
+  -H "Authorization: Bearer $SANDBOX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"signal":15}'
+```
 
-Errors return JSON `{ "error": "...", "code": "..." }` with one of:
-`unauthorized`, `invalid_request`, `exec_error`, `exec_transport_error`,
-`workspace_read_not_found`, `workspace_archive_read_error`,
-`workspace_archive_write_error`, `capacity_exceeded`, `pool_error`,
-`mount_error`, `unmount_error`, `session_error`.
+The kill route accepts an optional integer `signal` from 1 through 64, defaults to 15, and returns `204 No Content`.
 
-Once an `exec` SSE stream is open, transport errors arrive as `event: error` instead of an HTTP error.
+## Terminal routes
 
-## When to Use This vs. `wrangler dev`
+Terminals are PTY resources, not process log streams. Create with `argv` plus optional `cwd`, `env`, `cols`, and `rows`; list/fetch snapshots by ID; connect over WebSocket with optional `cursor`, `cols`, and `rows` query parameters.
 
-- **Bridge** — fastest path to "does this command behave correctly inside a real sandbox container?". No local Docker, no build step. Also the only option for features that depend on host-level capabilities the local dev loop doesn't replicate, notably **FUSE-based bucket mounts** (`/v1/sandbox/{id}/mount`) — `wrangler dev` cannot mount s3fs-FUSE filesystems.
-- **`wrangler dev`** (see the `examples` skill) — required when iterating on the container image, the worker code, or anything that isn't already deployed to the bridge.
+| Route                                                    | Purpose                      |
+| -------------------------------------------------------- | ---------------------------- |
+| `POST /v1/sandbox/{id}/terminals`                        | Create a terminal.           |
+| `GET /v1/sandbox/{id}/terminals`                         | List terminal snapshots.     |
+| `GET /v1/sandbox/{id}/terminals/{terminalId}`            | Fetch one snapshot.          |
+| `GET /v1/sandbox/{id}/terminals/{terminalId}/connect`    | WebSocket connect/reconnect. |
+| `POST /v1/sandbox/{id}/terminals/{terminalId}/interrupt` | Send interrupt.              |
+| `POST /v1/sandbox/{id}/terminals/{terminalId}/terminate` | Terminate the terminal.      |
 
-The bridge runs whatever version of `@cloudflare/sandbox` is currently deployed to it; it is **not** automatically updated from your working tree. If you need to test unreleased SDK changes that don't require FUSE, use `wrangler dev` against a local example instead.
+## Files, tunnels, mounts, lifecycle, and pool
+
+Common routes:
+
+| Route                                                            | Purpose                           |
+| ---------------------------------------------------------------- | --------------------------------- |
+| `GET /health`                                                    | Unauthenticated liveness probe.   |
+| `GET /v1/sandbox/{id}/running`                                   | Check sandbox liveness.           |
+| `GET/PUT /v1/sandbox/{id}/file/*`                                | Read/write workspace files.       |
+| `POST/DELETE /v1/sandbox/{id}/tunnel/{port}`                     | Create/reuse/delete tunnels.      |
+| `POST /v1/sandbox/{id}/persist`, `POST /v1/sandbox/{id}/hydrate` | Workspace tar archive operations. |
+| `POST /v1/sandbox/{id}/mount`, `POST /v1/sandbox/{id}/unmount`   | S3-compatible bucket mounts.      |
+| `DELETE /v1/sandbox/{id}`                                        | Destroy a sandbox.                |
+| `POST /v1/pool/prime`                                            | Prime the warm pool.              |
+| `GET /v1/pool/stats`                                             | Read warm pool statistics.        |
+| `POST /v1/pool/shutdown-prewarmed`                               | Shut down prewarmed sandboxes.    |
+
+## Errors
+
+HTTP errors return JSON `{ "error": string, "code": string }`. Common codes include `unauthorized`, `invalid_request`, `not_found`, `process_error`, `exec_transport_error`, `workspace_read_not_found`, `workspace_archive_read_error`, `workspace_archive_write_error`, `capacity_exceeded`, `pool_error`, `mount_error`, `unmount_error`, and `tunnel_error`.
+
+A log SSE stream reports lifecycle/error objects as `data:` JSON frames once the HTTP stream is open.
+
+## Bridge vs wrangler dev
+
+Use the bridge for fast validation against a deployed real container and for host-dependent features such as FUSE mounts. Use `wrangler dev` when changing Worker code, SDK source, the container image, or unreleased behavior not deployed to the bridge.

@@ -25,7 +25,7 @@ plane. The operation did not start in the container.
 Applications may handle this like a service-level 503: retry later, enqueue the
 work, show retry UI, or return a 503 response to their caller. This can happen
 during cold start, after sleep, during deployment or platform churn, or while
-the SDK is preparing a default session for a new container generation.
+the SDK is opening the current container control connection.
 
 Do not apply the same retry rule to execution or transport errors raised after
 an operation was admitted. For example, if a command starts and the WebSocket
@@ -105,7 +105,7 @@ containers — they govern different phases.
 **What happens:** Once the port is up, `@cloudflare/containers` calls
 `this.state.setHealthy()` and then `await this.onStart()` inside
 `blockConcurrencyWhile`. `Sandbox.onStart()` rehydrates exposed-port tokens, restores
-syncs, and primes session state.
+syncs, and initializes runtime-local control resources.
 
 | Failure            | Surfaced as | SDK behavior                                                                    |
 | ------------------ | ----------- | ------------------------------------------------------------------------------- |
@@ -130,13 +130,13 @@ that gets `accept()`ed and handed to capnweb.
 
 ### Where the retries live, by phase
 
-| Phase              | Retried by                                                     |
-| ------------------ | -------------------------------------------------------------- |
-| 1 Instance alloc   | `/rpc` upgrade retry loop when opening the control channel     |
-| 2 Container start  | None — 500 is permanent                                        |
-| 3 Port readiness   | `/rpc` upgrade retry loop when opening the control channel     |
-| 4 onStart          | None — the exception bubbles                                   |
-| 5 Request proxying | WS sessions reconnect on the next call after a transport error |
+| Phase              | Retried by                                                                  |
+| ------------------ | --------------------------------------------------------------------------- |
+| 1 Instance alloc   | `/rpc` upgrade retry loop when opening the control channel                  |
+| 2 Container start  | None — 500 is permanent                                                     |
+| 3 Port readiness   | `/rpc` upgrade retry loop when opening the control channel                  |
+| 4 onStart          | None — the exception bubbles                                                |
+| 5 Request proxying | The control connection is reopened on the next call after a transport error |
 
 ## Capacity Limit Errors (Production Only)
 
