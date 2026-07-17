@@ -12,7 +12,8 @@ import type {
   ExtensionConnectRequest,
   ExtensionHealth,
   ExtensionPackage,
-  SandboxExtensionsAPI
+  SandboxExtensionsAPI,
+  SandboxUtilsAPI
 } from '@repo/shared';
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { Mock } from 'vitest';
@@ -25,21 +26,34 @@ type ExtensionsAPIMock = {
   stop: Mock<SandboxExtensionsAPI['stop']>;
 };
 
+type UtilsAPIMock = {
+  ping: Mock<SandboxUtilsAPI['ping']>;
+  getVersion: Mock<SandboxUtilsAPI['getVersion']>;
+};
+
 function makeSandbox(): {
   sandbox: SandboxLike;
   api: ExtensionsAPIMock;
+  utils: UtilsAPIMock;
 } {
   const api: ExtensionsAPIMock = {
     connect: vi.fn(async () => ({}) as unknown),
     health: vi.fn(async () => ({}) as ExtensionHealth),
     stop: vi.fn(async () => {})
   };
-  // The tests only ever exercise `client.extensions`; widening to SandboxAPI
-  // would force us to stub every sub-API for no benefit.
+  const utils: UtilsAPIMock = {
+    ping: vi.fn(async () => 'pong'),
+    getVersion: vi.fn(async () => '1.0.0')
+  };
+  // The tests only ever exercise `client.extensions` and `client.utils`;
+  // widening to SandboxAPI would force us to stub every sub-API for no benefit.
   const sandbox = {
-    client: { extensions: api as unknown as SandboxExtensionsAPI }
+    client: {
+      extensions: api as unknown as SandboxExtensionsAPI,
+      utils: utils as unknown as SandboxUtilsAPI
+    }
   } as unknown as SandboxLike;
-  return { sandbox, api };
+  return { sandbox, api, utils };
 }
 
 const TARBALL = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]); // gzip magic + flags, plenty enough to hash
@@ -51,36 +65,50 @@ describe('SandboxExtension', () => {
     vi.restoreAllMocks();
   });
 
-  class Commands extends SandboxExtension {
+  class DummyExtension extends SandboxExtension {
     // biome-ignore lint/complexity/noUselessConstructor: widens the protected base constructor
     constructor(sandbox: SandboxLike) {
       super(sandbox);
     }
-    list() {
-      return (
-        this.client as unknown as { commands: { exec: () => unknown } }
-      ).commands.exec();
+    health(packageHash: string) {
+      return this.client.extensions.health(packageHash);
+    }
+
+    ping() {
+      return this.client.utils.ping();
     }
   }
 
   it('captures the sandbox without exposing it as an own property (RPC-safe)', () => {
     const sandbox = { client: {} } as unknown as SandboxLike;
-    const ext = new Commands(sandbox);
+    const ext = new DummyExtension(sandbox);
 
     expect(Object.getOwnPropertyNames(ext)).not.toContain('sandbox');
     expect(Object.getOwnPropertyNames(ext)).not.toContain('client');
     expect(Object.keys(ext)).toHaveLength(0);
   });
 
-  it('exposes the control client to subclasses lazily', () => {
-    const exec = vi.fn(() => 'ok');
-    const sandbox = {
-      client: { commands: { exec } }
-    } as unknown as SandboxLike;
-    const ext = new Commands(sandbox);
+  it('exposes the extension control client to subclasses lazily', async () => {
+    const { sandbox, api, utils } = makeSandbox();
+    api.health.mockResolvedValue({
+      packageHash: 'abc123',
+      id: 'ext',
+      version: '1.0.0',
+      provisioned: true,
+      running: true,
+      pid: 123,
+      responsive: true
+    });
+    const ext = new DummyExtension(sandbox);
 
-    expect(ext.list()).toBe('ok');
-    expect(exec).toHaveBeenCalledTimes(1);
+    await expect(ext.health('abc123')).resolves.toMatchObject({
+      packageHash: 'abc123',
+      running: true,
+      pid: 123
+    });
+    expect(api.health).toHaveBeenCalledWith('abc123');
+    await expect(ext.ping()).resolves.toBe('pong');
+    expect(utils.ping).toHaveBeenCalled();
   });
 
   it('throws a helpful error if sidecar methods are used without a package', async () => {

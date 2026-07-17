@@ -1,6 +1,7 @@
 import path from 'node:path/posix';
 import type { FileWatchSSEEvent, Logger } from '@repo/shared';
 import type { ContainerControlClient } from './container-control';
+import { openRemoteSubscription } from './processes/remote-subscription';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
 
@@ -332,10 +333,16 @@ export class LocalMountSyncManager {
   }
 
   private async runContainerWatchLoop(): Promise<void> {
-    const stream = await this.client.watch.watch({
-      path: this.mountPath,
-      recursive: true
-    });
+    const stream = await openRemoteSubscription(
+      this.client.watch.watch({
+        path: this.mountPath,
+        recursive: true
+      }),
+      {
+        signal: this.watchAbortController?.signal,
+        operation: 'open local mount filesystem watch'
+      }
+    );
 
     for await (const event of parseSSEStream<FileWatchSSEEvent>(
       stream,

@@ -1,4 +1,4 @@
-import type { PtyStatusMessage } from '@repo/shared';
+import type { PtyServerControlMessage } from '@repo/shared';
 import type { IDisposable, ITerminalAddon, Terminal } from '@xterm/xterm';
 import type {
   ConnectionState,
@@ -17,9 +17,11 @@ export class SandboxAddon implements ITerminalAddon {
   private disposables: IDisposable[] = [];
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private hasReceivedBuffer = false;
+  private restoredOutput = false;
   private intentionalDisconnect = false;
   private textEncoder = new TextEncoder();
+  private pendingChunk: { cursor: string; byteLength: number } | null = null;
+  private cursor: string | undefined;
 
   private _state: ConnectionState = 'disconnected';
   private _sandboxId: string | undefined;
@@ -65,6 +67,9 @@ export class SandboxAddon implements ITerminalAddon {
     this.cancelReconnect();
     this.closeSocket();
     this.reconnectAttempts = 0;
+    this.cursor = undefined;
+    this.restoredOutput = false;
+    this.pendingChunk = null;
     this.intentionalDisconnect = false;
 
     if (this._state !== 'disconnected') {
@@ -82,7 +87,7 @@ export class SandboxAddon implements ITerminalAddon {
   }
 
   private setState(state: ConnectionState, error?: Error): void {
-    if (this._state === state) return;
+    if (this._state === state && !error) return;
     this._state = state;
     this.options.onStateChange?.(state, error);
   }
@@ -91,7 +96,6 @@ export class SandboxAddon implements ITerminalAddon {
     if (!this.terminal || !this._sandboxId) return;
 
     this.setState('connecting');
-    this.hasReceivedBuffer = false;
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const origin = `${wsProtocol}//${location.host}`;
@@ -99,6 +103,7 @@ export class SandboxAddon implements ITerminalAddon {
     const url = this.options.getWebSocketUrl({
       sandboxId: this._sandboxId,
       terminalId: this._terminalId,
+      cursor: this.cursor,
       origin
     });
 
@@ -138,26 +143,45 @@ export class SandboxAddon implements ITerminalAddon {
     const { data } = event as MessageEvent;
 
     if (data instanceof ArrayBuffer) {
-      this.hasReceivedBuffer = true;
-      this.terminal.write(new Uint8Array(data));
+      this.consumeBinary(new Uint8Array(data));
       return;
     }
 
     if (typeof data === 'string') {
       try {
-        const msg = JSON.parse(data) as PtyStatusMessage;
-        this.handleControlMessage(msg);
+        this.handleControlMessage(JSON.parse(data) as PtyServerControlMessage);
       } catch {
-        // Non-JSON string messages are silently ignored - protocol expects
-        // binary for terminal data and JSON for control messages only
+        this.setState(this._state, new Error('Invalid terminal control frame'));
+        this.closeSocket();
       }
     }
   }
 
-  private handleControlMessage(msg: PtyStatusMessage): void {
+  private consumeBinary(data: Uint8Array): void {
+    if (!this.pendingChunk) {
+      this.setState(this._state, new Error('Unexpected terminal data frame'));
+      this.closeSocket();
+      return;
+    }
+    if (data.byteLength !== this.pendingChunk.byteLength) {
+      this.setState(
+        this._state,
+        new Error('Terminal data frame length mismatch')
+      );
+      this.closeSocket();
+      return;
+    }
+    this.restoredOutput = true;
+    this.terminal?.write(data);
+    this.cursor = this.pendingChunk.cursor;
+    this.pendingChunk = null;
+  }
+
+  private handleControlMessage(msg: PtyServerControlMessage): void {
     switch (msg.type) {
       case 'ready':
-        if (!this.hasReceivedBuffer) {
+        if (msg.cursor) this.cursor = msg.cursor;
+        if (!this.restoredOutput) {
           this.terminal?.clear();
         }
         this.reconnectAttempts = 0;
@@ -168,20 +192,36 @@ export class SandboxAddon implements ITerminalAddon {
         }
         break;
 
+      case 'chunk':
+        if (this.pendingChunk) {
+          this.setState(this._state, new Error('Terminal data frame missing'));
+          this.closeSocket();
+          return;
+        }
+        this.pendingChunk = { cursor: msg.cursor, byteLength: msg.byteLength };
+        break;
+
+      case 'truncated':
+        this.cursor = msg.cursor;
+        this.terminal?.clear();
+        this.restoredOutput = false;
+        break;
+
       case 'error':
-        this.options.onStateChange?.(
-          this._state,
-          new Error(msg.message ?? 'Unknown error')
-        );
+        this.options.onStateChange?.(this._state, new Error(msg.message));
         break;
 
       case 'exit':
+        this.cursor = msg.cursor;
+        this.intentionalDisconnect = true;
         this.options.onStateChange?.(
           this._state,
           new Error(
-            `Session exited with code ${msg.code}${msg.signal ? ` (${msg.signal})` : ''}`
+            `Session exited with code ${msg.exit.code}${msg.exit.signal ? ` (${msg.exit.signal})` : ''}`
           )
         );
+        this.closeSocket();
+        this.setState('disconnected');
         break;
     }
   }
@@ -226,7 +266,6 @@ export class SandboxAddon implements ITerminalAddon {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectAttempts++;
-      this.terminal?.clear();
       this.doConnect();
     }, delay + jitter);
   }
@@ -243,6 +282,7 @@ export class SandboxAddon implements ITerminalAddon {
       this.socket.close();
       this.socket = null;
     }
+    this.pendingChunk = null;
     for (const d of this.disposables) {
       d.dispose();
     }

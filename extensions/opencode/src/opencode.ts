@@ -1,12 +1,13 @@
-import type { SandboxLike } from '@cloudflare/sandbox/extensions';
+import {
+  createExtensionProcessSandbox,
+  type SandboxLike
+} from '@cloudflare/sandbox/extensions';
 import type { Config } from '@opencode-ai/sdk/v2';
 import {
   createLogger,
   type Logger,
-  type SandboxExecOptions,
-  type SandboxProcess,
-  type SandboxProcessPromise,
-  shellEscape
+  type SandboxCommand,
+  type SandboxProcess
 } from '@repo/shared';
 import type { OpenCodeOptions, OpenCodeServer } from './types';
 import { OpenCodeStartupError } from './types';
@@ -17,52 +18,56 @@ function getLogger(): Logger {
 }
 
 export interface OpenCodeSandboxLike extends SandboxLike {
-  exec(
-    command: string | string[],
-    options?: SandboxExecOptions
-  ): SandboxProcessPromise;
-  getProcess(id: string): Promise<SandboxProcess | null>;
-  listProcesses(): Promise<SandboxProcess[]>;
+  exec: NonNullable<SandboxLike['exec']>;
+  getProcess: NonNullable<SandboxLike['getProcess']>;
+  listProcesses: NonNullable<SandboxLike['listProcesses']>;
   containerFetch(request: Request, port: number): Promise<Response>;
 }
 
 const DEFAULT_PORT = 4096;
 const OPENCODE_STARTUP_TIMEOUT_MS = 180_000;
-const OPENCODE_SERVE = (port: number) =>
-  `opencode serve --port ${port} --hostname 0.0.0.0`;
-
-/**
- * Build the full command, optionally with a directory prefix.
- * If directory is provided, we cd to it first so OpenCode uses it as cwd.
- */
-function buildOpenCodeCommand(port: number, directory?: string): string {
-  const serve = OPENCODE_SERVE(port);
-  return directory ? `cd ${shellEscape(directory)} && ${serve}` : serve;
+function openCodeCommand(port: number): SandboxCommand {
+  return ['opencode', 'serve', '--port', String(port), '--hostname', '0.0.0.0'];
 }
 
-/** Stable process id for the OpenCode server on a given port. */
-function defaultProcessId(port: number): string {
-  return `opencode-${port}`;
+function commandsEqual(a: SandboxCommand, b: SandboxCommand): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-/**
- * Find the OpenCode server by its stable process id. Returns the process if it
- * is still active, null otherwise. A direct lookup avoids scanning every
- * process in the container.
- */
-async function findExistingOpenCodeProcess(
+/** Recover a running OpenCode process from runtime-local process status. */
+export async function findExistingOpenCodeProcess(
   sandbox: OpenCodeSandboxLike,
-  processId: string
+  port: number,
+  directory?: string
 ): Promise<SandboxProcess | null> {
-  const process = await sandbox.getProcess(processId);
-  if (!process) return null;
+  const command = openCodeCommand(port);
+  const processes = createExtensionProcessSandbox(sandbox);
+  const status = (await processes.listProcesses()).find(
+    (candidate) =>
+      candidate.state === 'running' &&
+      candidate.cwd === directory &&
+      commandsEqual(candidate.command, command)
+  );
+  return status ? processes.getProcess(status.id) : null;
+}
 
-  const status = await process.status();
-  if (status === 'starting' || status === 'running') {
-    return process;
+async function collectStderr(process: SandboxProcess): Promise<string> {
+  const stream = await process.logs({ replay: true, follow: false });
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let stderr = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.type === 'stderr') {
+        stderr += decoder.decode(value.data, { stream: true });
+      }
+    }
+    return stderr + decoder.decode();
+  } finally {
+    reader.releaseLock();
   }
-
-  return null;
 }
 
 /**
@@ -74,35 +79,16 @@ async function findExistingOpenCodeProcess(
 async function ensureOpenCodeServer(
   sandbox: OpenCodeSandboxLike,
   port: number,
-  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
 ): Promise<SandboxProcess> {
-  const existingProcess = await findExistingOpenCodeProcess(sandbox, processId);
+  const existingProcess = await findExistingOpenCodeProcess(
+    sandbox,
+    port,
+    directory
+  );
   if (existingProcess) {
-    // Reuse existing process - wait for it to be ready if still starting
-    if ((await existingProcess.status()) === 'starting') {
-      getLogger().debug('Found starting OpenCode process, waiting for ready', {
-        port,
-        processId: existingProcess.id
-      });
-      try {
-        await existingProcess.waitForPort(port, {
-          mode: 'http',
-          path: '/path',
-          status: 200,
-          timeout: OPENCODE_STARTUP_TIMEOUT_MS
-        });
-      } catch (e) {
-        const logs = await existingProcess.getLogs();
-        throw new OpenCodeStartupError(
-          `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
-          { port, stderr: logs.stderr, command: existingProcess.command },
-          { cause: e }
-        );
-      }
-    }
     getLogger().debug('Reusing existing OpenCode process', {
       port,
       processId: existingProcess.id
@@ -115,7 +101,6 @@ async function ensureOpenCodeServer(
     return await startOpenCodeServer(
       sandbox,
       port,
-      processId,
       directory,
       config,
       customEnv
@@ -123,33 +108,16 @@ async function ensureOpenCodeServer(
   } catch (startupError) {
     // Startup failed - check if another concurrent request started the server
     // This handles the race condition where multiple requests try to start simultaneously
-    const retryProcess = await findExistingOpenCodeProcess(sandbox, processId);
+    const retryProcess = await findExistingOpenCodeProcess(
+      sandbox,
+      port,
+      directory
+    );
     if (retryProcess) {
       getLogger().debug(
         'Startup failed but found concurrent process, reusing',
-        {
-          port,
-          processId: retryProcess.id
-        }
+        { port, processId: retryProcess.id }
       );
-      // Wait for the concurrent server to be ready
-      if ((await retryProcess.status()) === 'starting') {
-        try {
-          await retryProcess.waitForPort(port, {
-            mode: 'http',
-            path: '/path',
-            status: 200,
-            timeout: OPENCODE_STARTUP_TIMEOUT_MS
-          });
-        } catch (e) {
-          const logs = await retryProcess.getLogs();
-          throw new OpenCodeStartupError(
-            `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
-            { port, stderr: logs.stderr, command: retryProcess.command },
-            { cause: e }
-          );
-        }
-      }
       return retryProcess;
     }
 
@@ -164,7 +132,6 @@ async function ensureOpenCodeServer(
 async function startOpenCodeServer(
   sandbox: OpenCodeSandboxLike,
   port: number,
-  processId: string,
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
@@ -229,9 +196,9 @@ async function startOpenCodeServer(
     Object.assign(env, customEnv);
   }
 
-  const command = buildOpenCodeCommand(port, directory);
-  const process = await sandbox.exec(command, {
-    processId,
+  const command = openCodeCommand(port);
+  const process = await createExtensionProcessSandbox(sandbox).exec(command, {
+    cwd: directory,
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
@@ -248,15 +215,15 @@ async function startOpenCodeServer(
       processId: process.id
     });
   } catch (e) {
-    const logs = await process.getLogs();
+    const stderr = await collectStderr(process);
     const error = e instanceof Error ? e : undefined;
     getLogger().error('OpenCode server failed to start', error, {
       port,
-      stderr: logs.stderr
+      stderr
     });
     throw new OpenCodeStartupError(
-      `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
-      { port, stderr: logs.stderr, command },
+      `OpenCode server failed to start. Stderr: ${stderr || '(empty)'}`,
+      { port, stderr, command: command.join(' ') },
       { cause: e }
     );
   }
@@ -315,11 +282,9 @@ export async function createOpenCodeServer(
   options?: OpenCodeOptions
 ): Promise<OpenCodeServer> {
   const port = options?.port ?? DEFAULT_PORT;
-  const processId = options?.processId ?? defaultProcessId(port);
   const process = await ensureOpenCodeServer(
     sandbox,
     port,
-    processId,
     options?.directory,
     options?.config,
     options?.env
@@ -329,8 +294,8 @@ export async function createOpenCodeServer(
     port,
     url: `http://localhost:${port}`,
     close: async () => {
-      process.kill('SIGTERM');
-      await process.exitCode.catch(() => {
+      await process.kill(15);
+      await process.waitForExit().catch(() => {
         /* exit observed */
       });
     }

@@ -13,6 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let stats = { imports: 1, exports: 1 };
 let connected = true;
 const disconnects: number[] = [];
+const connectionGenerations: number[] = [];
+const rpcGenerations: number[] = [];
+const processStarts: number[] = [];
+const terminalCreates: number[] = [];
+let nextConnectionGeneration = 0;
 /**
  * onClose callbacks installed by `ContainerControlClient` on the active
  * mock connection. The client's `getConnection()` wires this so the WS
@@ -38,7 +43,12 @@ function triggerPeerClose(): boolean {
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
+    private readonly generation: number;
+
     constructor(options: { onClose?: () => void } = {}) {
+      this.generation = nextConnectionGeneration;
+      nextConnectionGeneration += 1;
+      connectionGenerations.push(this.generation);
       if (options.onClose) onCloseHandlers.push(options.onClose);
     }
     isConnected() {
@@ -49,12 +59,25 @@ vi.mock('../src/container-control/connection', () => ({
     }
     disconnect() {
       connected = false;
-      disconnects.push(Date.now());
+      disconnects.push(this.generation);
     }
     rpc() {
-      // Stub sub-clients so wrapStub() has something to Proxy. Tests in
-      // this file don't actually invoke any RPC method.
-      return new Proxy({}, { get: () => ({}) });
+      rpcGenerations.push(this.generation);
+      return {
+        files: {},
+        processes: {
+          start: async () => {
+            processStarts.push(this.generation);
+            return { id: 'process' };
+          }
+        },
+        terminals: {
+          create: async () => {
+            terminalCreates.push(this.generation);
+            return { id: 'terminal' };
+          }
+        }
+      };
     }
     async connect() {}
   }
@@ -72,13 +95,18 @@ describe('ContainerControlClient busy/idle tracking', () => {
     connected = true;
     disconnects.length = 0;
     onCloseHandlers.length = 0;
+    connectionGenerations.length = 0;
+    rpcGenerations.length = 0;
+    processStarts.length = 0;
+    terminalCreates.length = 0;
+    nextConnectionGeneration = 0;
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('keeps the session marked busy while a stream export is held', () => {
+  it('keeps the session marked busy while a stream export is held', async () => {
     const onActivity = vi.fn();
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
@@ -93,7 +121,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     });
 
     // Touching a sub-client constructs the connection and starts the poller.
-    void client.commands;
+    await client.connect();
 
     // Simulate a control-plane method returning a ReadableStream: capnweb has
     // allocated an export for the pipe, and it stays elevated for the
@@ -127,7 +155,86 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(disconnects).toHaveLength(1);
   });
 
-  it('fires onSessionIdle on explicit disconnect to avoid leaking inflight', () => {
+  it('waits for a committed stop before acquiring fresh RPC stubs', async () => {
+    let releaseStop!: () => void;
+    const stopSettled = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    let stopCommitted = false;
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onOperationStarted: () => ({
+        beforeCall: stopCommitted ? stopSettled : Promise.resolve(),
+        finish: () => undefined
+      }),
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+
+    await client.connect();
+    expect(connectionGenerations).toEqual([0]);
+
+    stopCommitted = true;
+    const start = client.processes.start(['echo', 'ok']);
+    const terminal = client.terminals.create({ command: ['sh'] });
+
+    await Promise.resolve();
+    expect(rpcGenerations).toHaveLength(0);
+    expect(processStarts).toHaveLength(0);
+    expect(terminalCreates).toHaveLength(0);
+
+    client.disconnect();
+    expect(disconnects).toEqual([0]);
+    connected = true;
+    stopCommitted = false;
+    releaseStop();
+    await Promise.all([start, terminal]);
+
+    expect(connectionGenerations).toEqual([0, 1]);
+    expect(rpcGenerations).toEqual([1, 1]);
+    expect(processStarts).toEqual([1]);
+    expect(terminalCreates).toEqual([1]);
+  });
+
+  it('reconnects safely after a committed stop rejects', async () => {
+    let rejectStop!: (error: Error) => void;
+    const stopSettled = new Promise<void>((_resolve, reject) => {
+      rejectStop = reject;
+    });
+    let stopCommitted = false;
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onOperationStarted: () => ({
+        beforeCall: stopCommitted ? stopSettled : Promise.resolve(),
+        finish: () => undefined
+      }),
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 60_000
+    });
+
+    await client.connect();
+    expect(connectionGenerations).toEqual([0]);
+
+    stopCommitted = true;
+    const start = client.processes.start(['echo', 'ok']);
+    await Promise.resolve();
+    expect(processStarts).toHaveLength(0);
+
+    client.disconnect();
+    expect(disconnects).toEqual([0]);
+    connected = true;
+    stopCommitted = false;
+    rejectStop(new Error('stop failed'));
+    await expect(start).rejects.toThrow('stop failed');
+
+    await client.processes.start(['echo', 'again']);
+    expect(connectionGenerations).toEqual([0, 1]);
+    expect(processStarts).toEqual([1]);
+  });
+
+  it('fires onSessionIdle on explicit disconnect to avoid leaking inflight', async () => {
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
 
@@ -138,7 +245,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
       busyPollIntervalMs: 1_000,
       idleDisconnectMs: 60_000
     });
-    void client.commands;
+    await client.connect();
 
     stats = { imports: 1, exports: 2 };
     vi.advanceTimersByTime(1_000);
@@ -151,7 +258,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(onSessionIdle).toHaveBeenCalledTimes(1);
   });
 
-  it('releases inflight when the WebSocket drops while busy', () => {
+  it('releases inflight when the WebSocket drops while busy', async () => {
     const onSessionBusy = vi.fn();
     const onSessionIdle = vi.fn();
 
@@ -162,7 +269,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
       busyPollIntervalMs: 1_000,
       idleDisconnectMs: 60_000
     });
-    void client.commands;
+    await client.connect();
 
     stats = { imports: 1, exports: 2 };
     vi.advanceTimersByTime(1_000);
@@ -186,7 +293,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(disconnects).toHaveLength(1);
   });
 
-  it('does not tear down a connection that has not finished its WebSocket upgrade', () => {
+  it('does not tear down a connection that has not finished its WebSocket upgrade', async () => {
     // Simulate the upgrade still being in flight: isConnected() returns
     // false from the moment the connection is constructed until
     // doConnect() resolves. While in this state the deferred transport
@@ -200,7 +307,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
       busyPollIntervalMs: 1_000,
       idleDisconnectMs: 60_000
     });
-    void client.commands;
+    await client.connect();
 
     // Several poll ticks while the upgrade is still pending. Must not
     // dispose the connection — the deferred transport's queue is the

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BASE, createMockEnv, createMockSandbox, sandboxUrl } from './helpers';
+import { BASE, createMockEnv, createMockProcess, createMockSandbox, sandboxUrl } from './helpers';
 
 // Mock @cloudflare/sandbox before importing app
 const mockSandbox = createMockSandbox();
@@ -20,7 +20,7 @@ describe('Auth middleware — /v1/sandbox/*', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Re-apply sandbox mock defaults
-    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    mockSandbox.exec.mockResolvedValue(createMockProcess());
   });
 
   it('allows requests with a valid Bearer token', async () => {
@@ -55,10 +55,107 @@ describe('Auth middleware — /v1/sandbox/*', () => {
   });
 });
 
+describe('sandbox route pool middleware', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('does not allocate for /running and uses the internal lifecycle query', async () => {
+    const env = createMockEnv();
+    const res = await makeRequest(sandboxUrl('test', 'running'), {}, env);
+
+    expect(await res.json()).toEqual({ running: true });
+    expect(env._poolStub.lookupContainer).toHaveBeenCalledWith('test');
+    expect(env._poolStub.getContainer).not.toHaveBeenCalled();
+    expect(mockSandbox.isRuntimeActive).toHaveBeenCalledOnce();
+    expect(mockSandbox.listProcesses).not.toHaveBeenCalled();
+  });
+
+  it('returns false without allocating when no assignment exists', async () => {
+    const env = createMockEnv();
+    env._poolStub.lookupContainer.mockResolvedValueOnce(null);
+
+    const res = await makeRequest(sandboxUrl('test', 'running'), {}, env);
+
+    expect(await res.json()).toEqual({ running: false });
+    expect(env._poolStub.getContainer).not.toHaveBeenCalled();
+    expect(mockSandbox.isRuntimeActive).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { method: 'GET', action: 'terminals', status: 200, body: [] },
+    {
+      method: 'GET',
+      action: 'terminals/missing',
+      status: 404,
+      body: { code: 'not_found' }
+    },
+    {
+      method: 'GET',
+      action: 'terminals/missing/connect',
+      status: 404,
+      body: { code: 'not_found' },
+      headers: { Upgrade: 'websocket', Connection: 'Upgrade' }
+    },
+    {
+      method: 'POST',
+      action: 'terminals/missing/interrupt',
+      status: 404,
+      body: { code: 'not_found' }
+    },
+    {
+      method: 'POST',
+      action: 'terminals/missing/terminate',
+      status: 404,
+      body: { code: 'not_found' }
+    }
+  ])('uses lookup-only pool access for $method /$action', async ({ method, action, status, body, headers }) => {
+    const env = createMockEnv();
+    env._poolStub.lookupContainer.mockResolvedValueOnce(null);
+
+    const res = await makeRequest(sandboxUrl('test', action), { method, headers }, env);
+
+    expect(res.status).toBe(status);
+    expect(await res.json()).toMatchObject(body);
+    expect(env._poolStub.lookupContainer).toHaveBeenCalledWith('test');
+    expect(env._poolStub.getContainer).not.toHaveBeenCalled();
+  });
+
+  it('allocates a runtime when creating a terminal', async () => {
+    const env = createMockEnv();
+
+    const res = await makeRequest(
+      sandboxUrl('test', 'terminals'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ argv: ['bash'] })
+      },
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(env._poolStub.getContainer).toHaveBeenCalledWith('test');
+  });
+
+  it.each([
+    { method: 'GET', action: 'terminals-extra' },
+    { method: 'GET', action: 'terminals/id/unknown' },
+    { method: 'PUT', action: 'terminals' }
+  ])('does not contact the pool for unmatched $method /$action', async ({ method, action }) => {
+    const env = createMockEnv();
+
+    const res = await makeRequest(sandboxUrl('test', action), { method }, env);
+
+    expect(res.status).toBe(404);
+    expect(env._poolStub.configure).not.toHaveBeenCalled();
+    expect(env._poolStub.lookupContainer).not.toHaveBeenCalled();
+    expect(env._poolStub.getContainer).not.toHaveBeenCalled();
+  });
+});
+
 describe('Sandbox ID validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    mockSandbox.exec.mockResolvedValue(createMockProcess());
   });
 
   it('accepts a valid base32 ID (lowercase + digits 2-7)', async () => {
@@ -140,7 +237,7 @@ describe('Auth middleware — /v1/openapi.*', () => {
 describe('Versioning — old routes return 404', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSandbox.exec.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    mockSandbox.exec.mockResolvedValue(createMockProcess());
   });
 
   it('returns 404 for unversioned /sandbox/:id/running', async () => {

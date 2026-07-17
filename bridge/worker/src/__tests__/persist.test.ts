@@ -1,12 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  asMockExecPromise,
-  createMockEnv,
-  createMockSandbox,
-  createSSEFileStream,
-  makeMockExecProcess,
-  sandboxUrl
-} from './helpers';
+import { createMockEnv, createMockSandbox, createSSEFileStream, sandboxUrl } from './helpers';
 
 const mockSandbox = createMockSandbox();
 vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
@@ -17,93 +10,180 @@ vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
 const { app } = await import('./bridge-app');
 
 const env = createMockEnv();
+const archivePath = '/tmp/sandbox-workspace-test.tar';
 
-describe('POST /v1/sandbox/:id/persist — hardcoded root, exclude validation, quoting', () => {
+function pullDrivenSSEStream(content: string, onPull: () => void): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const data = btoa(content);
+  let sent = false;
+
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        onPull();
+        if (sent) return;
+        sent = true;
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: 'metadata',
+              mimeType: 'application/octet-stream',
+              size: content.length,
+              isBinary: true,
+              encoding: 'base64'
+            })}\n\ndata: ${JSON.stringify({ type: 'chunk', data })}\n\ndata: ${JSON.stringify({ type: 'complete' })}\n\n`
+          )
+        );
+        controller.close();
+      }
+    },
+    { highWaterMark: 0 }
+  );
+}
+
+function openSSEStream(content: string, onCancel: () => void): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let sent = false;
+
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (sent) return;
+        sent = true;
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: 'metadata',
+              mimeType: 'application/octet-stream',
+              size: content.length,
+              isBinary: true,
+              encoding: 'base64'
+            })}\n\ndata: ${JSON.stringify({ type: 'chunk', data: btoa(content) })}\n\n`
+          )
+        );
+      },
+      cancel() {
+        onCancel();
+      }
+    },
+    { highWaterMark: 0 }
+  );
+}
+
+describe('POST /v1/sandbox/:id/persist', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Post-unification: bridge calls `sandbox.exec(cmd).output()`. Mock
-    // returns a `MockExecProcessPromise` whose `.output()` resolves to a
-    // successful exit-0 result.
-    mockSandbox.exec.mockImplementation(() =>
-      asMockExecPromise(Promise.resolve(makeMockExecProcess([], { exitCode: 0 })))
-    );
+    mockSandbox.createWorkspaceArchive.mockResolvedValue(archivePath);
     mockSandbox.readFileStream.mockResolvedValue(createSSEFileStream('tar-data', { isBinary: true }));
   });
 
-  it('uses /workspace as root with no query params', async () => {
-    const res = await app.request(
-      sandboxUrl('test', 'persist'),
-      {
-        method: 'POST'
-      },
-      env
-    );
+  it('cleans the semantic workspace archive after response consumption', async () => {
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+
     expect(res.status).toBe(200);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = mockSandbox.exec.mock.calls[0] as any[];
-    const cmd = call[0] as string;
-    expect(cmd).toContain('-C /workspace');
+    expect(mockSandbox.createWorkspaceArchive).toHaveBeenCalledWith({
+      root: '/workspace',
+      excludes: []
+    });
+    expect(mockSandbox.readFileStream).toHaveBeenCalledWith(archivePath);
+    expect(mockSandbox.cleanupWorkspaceArchive).not.toHaveBeenCalled();
+
+    expect(new TextDecoder().decode(await res.arrayBuffer())).toBe('tar-data');
+    expect(mockSandbox.cleanupWorkspaceArchive).toHaveBeenCalledOnce();
+    expect(mockSandbox.cleanupWorkspaceArchive).toHaveBeenCalledWith(archivePath);
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
-  it('includes shell-quoted excludes in the tar command', async () => {
+  it('does not read archive bytes before response consumption', async () => {
+    const onPull = vi.fn();
+    mockSandbox.readFileStream.mockResolvedValue(pullDrivenSSEStream('tar-data', onPull));
+
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+
+    expect(res.status).toBe(200);
+    expect(onPull).not.toHaveBeenCalled();
+    await res.arrayBuffer();
+    expect(onPull).toHaveBeenCalled();
+  });
+
+  it('cancels the source before cleaning a cancelled response', async () => {
+    const events: string[] = [];
+    mockSandbox.readFileStream.mockResolvedValue(openSSEStream('tar-data', () => events.push('source-cancel')));
+    mockSandbox.cleanupWorkspaceArchive.mockImplementation(async () => {
+      events.push('cleanup');
+    });
+
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+    const reader = res.body!.getReader();
+
+    expect((await reader.read()).value).toEqual(new TextEncoder().encode('tar-data'));
+    await reader.cancel();
+
+    expect(events).toEqual(['source-cancel', 'cleanup']);
+    expect(mockSandbox.cleanupWorkspaceArchive).toHaveBeenCalledOnce();
+  });
+
+  it('cleans the created archive when stream acquisition fails', async () => {
+    mockSandbox.readFileStream.mockRejectedValue(new Error('read failed'));
+
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain('read failed');
+    expect(mockSandbox.cleanupWorkspaceArchive).toHaveBeenCalledOnce();
+    expect(mockSandbox.cleanupWorkspaceArchive).toHaveBeenCalledWith(archivePath);
+  });
+
+  it('preserves acquisition errors when cleanup also fails', async () => {
+    mockSandbox.readFileStream.mockRejectedValue(new Error('read failed'));
+    mockSandbox.cleanupWorkspaceArchive.mockRejectedValue(new Error('cleanup failed'));
+
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain('read failed');
+  });
+
+  it('does not clean when archive creation fails', async () => {
+    mockSandbox.createWorkspaceArchive.mockRejectedValue(new Error('create failed'));
+
+    const res = await app.request(sandboxUrl('test', 'persist'), { method: 'POST' }, env);
+
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain('create failed');
+    expect(mockSandbox.cleanupWorkspaceArchive).not.toHaveBeenCalled();
+  });
+
+  it('passes validated excludes to workspace archive creation', async () => {
     const res = await app.request(sandboxUrl('test', 'persist', 'excludes=__pycache__,.venv'), { method: 'POST' }, env);
+
     expect(res.status).toBe(200);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = mockSandbox.exec.mock.calls[0] as any[];
-    const cmd = call[0] as string;
-    // shellQuote wraps values that contain underscores (not in the safe-char set) in $'...'
-    expect(cmd).toContain("--exclude $'./__pycache__'");
-    expect(cmd).toContain('--exclude ./.venv');
+    expect(mockSandbox.createWorkspaceArchive).toHaveBeenCalledWith({
+      root: '/workspace',
+      excludes: ['__pycache__', '.venv']
+    });
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
+    await res.body?.cancel();
   });
 
-  it('rejects excludes containing ".."', async () => {
+  it('rejects excludes containing ".." before SDK calls', async () => {
     const res = await app.request(sandboxUrl('test', 'persist', 'excludes=../../etc'), { method: 'POST' }, env);
+
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; code: string };
     expect(body.error).toContain('exclude paths must not contain ".."');
+    expect(mockSandbox.createWorkspaceArchive).not.toHaveBeenCalled();
+    expect(mockSandbox.exec).not.toHaveBeenCalled();
   });
 
-  it('shell-quotes excludes with shell metacharacters', async () => {
-    const res = await app.request(sandboxUrl('test', 'persist', 'excludes=foo;rm -rf /'), { method: 'POST' }, env);
-    expect(res.status).toBe(200);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = mockSandbox.exec.mock.calls[0] as any[];
-    const cmd = call[0] as string;
-    // The dangerous value should be wrapped in $'...' quoting, preventing
-    // the shell from interpreting the semicolon as a command separator.
-    expect(cmd).toContain("--exclude $'./foo;rm -rf /'");
-    // The tar command itself should not have a bare semicolon outside quotes
-    // that would act as a command separator for the shell.
-    expect(cmd).not.toMatch(/'\s*;\s*rm/);
-  });
-
-  it('ignores a root query parameter (always uses /workspace)', async () => {
+  it('ignores a root query parameter', async () => {
     const res = await app.request(sandboxUrl('test', 'persist', 'root=/etc'), { method: 'POST' }, env);
-    expect(res.status).toBe(200);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = mockSandbox.exec.mock.calls[0] as any[];
-    const cmd = call[0] as string;
-    expect(cmd).toContain('-C /workspace');
-    expect(cmd).not.toContain('-C /etc');
-  });
 
-  it('shell-quotes tmpPath in cleanup command', async () => {
-    const res = await app.request(
-      sandboxUrl('test', 'persist'),
-      {
-        method: 'POST'
-      },
-      env
-    );
     expect(res.status).toBe(200);
-    // The second exec call should be the cleanup rm -f
-    // It's called via .catch() so may be the second call or async
-    const calls = mockSandbox.exec.mock.calls;
-    // At least the first call (tar) should exist
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-    // Cleanup is fire-and-forget; verify the main tar command has shell-quoted tmp path
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tarCmd = (calls[0] as any[])[0] as string;
-    expect(tarCmd).toMatch(/^tar cf \/tmp\/sandbox-persist-\d+\.tar/);
+    expect(mockSandbox.createWorkspaceArchive).toHaveBeenCalledWith({
+      root: '/workspace',
+      excludes: []
+    });
+    await res.body?.cancel();
   });
 });

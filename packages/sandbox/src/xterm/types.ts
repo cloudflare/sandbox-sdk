@@ -28,6 +28,7 @@ export interface SandboxAddonOptions {
   getWebSocketUrl: (params: {
     sandboxId: string;
     terminalId?: string;
+    cursor?: string;
     /** WebSocket origin derived from `window.location` (e.g. `wss://example.com`). */
     origin: string;
   }) => string;

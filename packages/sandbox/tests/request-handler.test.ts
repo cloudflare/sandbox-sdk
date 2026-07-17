@@ -28,7 +28,9 @@ describe('proxyToSandbox - preview URL routing', () => {
       Sandbox: {} as DurableObjectNamespace<Sandbox>
     };
 
-    vi.mocked(getSandbox).mockReturnValue(mockSandbox as Sandbox);
+    vi.mocked(getSandbox).mockReturnValue(
+      mockSandbox as unknown as ReturnType<typeof getSandbox>
+    );
   });
 
   function getForwardedRequest(): Request {

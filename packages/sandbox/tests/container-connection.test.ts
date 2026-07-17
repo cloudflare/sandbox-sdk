@@ -5,6 +5,14 @@ import {
 } from '../src/container-control/connection';
 import { ContainerUnavailableError, ErrorCode } from '../src/errors';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 /**
  * Tests for ContainerControlConnection — the capnweb RPC connection manager.
  *
@@ -45,6 +53,75 @@ describe('ContainerControlConnection', () => {
       conn.disconnect();
       conn.disconnect();
       expect(conn.isConnected()).toBe(false);
+    });
+
+    it('terminally rejects queued calls when a late upgrade ignores abort', async () => {
+      const upgrade = deferred<Response>();
+      let request: Request | undefined;
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn(async (nextRequest: Request) => {
+            request = nextRequest;
+            return upgrade.promise;
+          })
+        }
+      });
+      const internals = conn as unknown as { transport: DeferredTransport };
+      const activate = vi.spyOn(internals.transport, 'activate');
+      const connecting = conn.connect();
+      const connectRejected = vi.fn();
+      const connectOutcome = connecting.then(
+        () => 'resolved',
+        (error: unknown) => {
+          connectRejected(error);
+          return 'rejected';
+        }
+      );
+      const rpc = conn.rpc();
+      const callRejected = [vi.fn(), vi.fn()];
+      const calls = [rpc.utils.ping(), rpc.utils.ping()].map((call, index) =>
+        Promise.resolve(call).then(
+          () => 'resolved',
+          (error: unknown) => {
+            callRejected[index](error);
+            return 'rejected';
+          }
+        )
+      );
+
+      conn.disconnect();
+
+      expect(request?.signal.aborted).toBe(true);
+      await expect(Promise.all(calls)).resolves.toEqual([
+        'rejected',
+        'rejected'
+      ]);
+      expect(callRejected[0]).toHaveBeenCalledTimes(1);
+      expect(callRejected[1]).toHaveBeenCalledTimes(1);
+
+      const target = new EventTarget();
+      const sent: string[] = [];
+      const accept = vi.fn();
+      const close = vi.fn();
+      const ws = Object.assign(target, {
+        send: (message: string) => sent.push(message),
+        accept,
+        close
+      }) as unknown as WebSocket;
+      upgrade.resolve({
+        status: 101,
+        statusText: 'Switching Protocols',
+        webSocket: ws
+      } as unknown as Response);
+
+      await expect(connectOutcome).resolves.toBe('rejected');
+      expect(connectRejected).toHaveBeenCalledTimes(1);
+      expect(activate).not.toHaveBeenCalled();
+      expect(accept).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(conn.isConnected()).toBe(false);
+      await expect(conn.connect()).rejects.toThrow(/disconnected/i);
     });
   });
 
@@ -160,7 +237,7 @@ describe('ContainerControlConnection', () => {
       expect(stubAfter).toBe(stubBefore);
     });
 
-    it('should disconnect and reconnect', async () => {
+    it('should permanently revoke an explicitly disconnected connection', async () => {
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
@@ -183,8 +260,8 @@ describe('ContainerControlConnection', () => {
       conn.disconnect();
       expect(conn.isConnected()).toBe(false);
 
-      await conn.connect();
-      expect(doConnect).toHaveBeenCalledTimes(2);
+      await expect(conn.connect()).rejects.toThrow(/disconnected/i);
+      expect(doConnect).toHaveBeenCalledTimes(1);
     });
 
     it('should share connection across concurrent connect() calls', async () => {

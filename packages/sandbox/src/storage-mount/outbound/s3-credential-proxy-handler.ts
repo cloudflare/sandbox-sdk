@@ -160,7 +160,7 @@ function isValidContentSHA256(value: string): boolean {
 function getCredentialProxyDebugConfig(
   env: Cloudflare.Env
 ): CredentialProxyDebugConfig {
-  const envRecord = env as Record<string, unknown>;
+  const envRecord = env as unknown as Record<string, unknown>;
   const enabled = envRecord.SANDBOX_CREDENTIAL_PROXY_DEBUG === 'true';
   const diagnosticsEndpointEnabled =
     envRecord.SANDBOX_CREDENTIAL_PROXY_DIAGNOSTICS_ENDPOINT === 'true';

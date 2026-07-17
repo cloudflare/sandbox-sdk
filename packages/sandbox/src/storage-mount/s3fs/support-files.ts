@@ -1,5 +1,4 @@
 import type { BucketCredentials } from '@repo/shared';
-import { shellEscape } from '@repo/shared';
 import type { S3FSHost } from './host';
 
 const S3FS_DISABLE_EXPECT_HEADER_CONFIG = ' Expect:\n';
@@ -20,7 +19,7 @@ export async function createDisableExpectHeaderFile(
     headerFilePath,
     S3FS_DISABLE_EXPECT_HEADER_CONFIG
   );
-  await host.execInternal(`chmod 0600 ${shellEscape(headerFilePath)}`);
+  await host.client.mounts.chmodOwnerOnly(headerFilePath);
 }
 
 export async function createPasswordFile(
@@ -31,7 +30,7 @@ export async function createPasswordFile(
 ): Promise<void> {
   const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
   await host.client.files.writeFile(passwordFilePath, content);
-  await host.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+  await host.client.mounts.chmodOwnerOnly(passwordFilePath);
 }
 
 export async function deletePasswordFile(
@@ -39,7 +38,7 @@ export async function deletePasswordFile(
   passwordFilePath: string
 ): Promise<void> {
   try {
-    await host.execInternal(`rm -f ${shellEscape(passwordFilePath)}`);
+    await host.client.mounts.deleteFile(passwordFilePath);
   } catch (error) {
     host.logger.warn('password file cleanup failed', {
       passwordFilePath,
@@ -53,7 +52,7 @@ export async function deleteAdditionalHeaderFile(
   headerFilePath: string
 ): Promise<void> {
   try {
-    await host.execInternal(`rm -f ${shellEscape(headerFilePath)}`);
+    await host.client.mounts.deleteFile(headerFilePath);
   } catch (error) {
     host.logger.warn('s3fs additional header file cleanup failed', {
       headerFilePath,

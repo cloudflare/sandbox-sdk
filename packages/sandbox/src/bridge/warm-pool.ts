@@ -1,12 +1,9 @@
 /**
  * WarmPool — Durable Object that maintains a pool of pre-started sandbox containers.
  *
- * Adapted from https://github.com/mikenomitch/cf-container-warm-pool
- * Inlined and tailored for the @cloudflare/sandbox SDK.
- *
- * The pool keeps N idle containers standing by so new sandbox sessions boot
- * instantly.  Once a container is assigned to a sandbox ID it is consumed and
- * never returned to the pool.
+ * The pool keeps N idle containers standing by so new sandboxes boot instantly.
+ * Once a container is assigned to a sandbox ID, it is consumed and never returned
+ * to the pool.
  *
  * Configuration is pushed in via `configure()` on every request (idempotent)
  * so changes to wrangler vars take effect without manual intervention.

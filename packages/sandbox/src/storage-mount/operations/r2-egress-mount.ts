@@ -1,5 +1,5 @@
 import type { R2BindingMountBucketOptions } from '@repo/shared';
-import { logCanonicalEvent, shellEscape } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import { InvalidMountConfigError } from '../errors';
 import type { MountLifecycle } from '../lifecycle';
 import { configureR2EgressOutbound } from '../outbound';
@@ -100,7 +100,7 @@ export async function mountR2EgressBucket(
       }
     });
 
-    await context.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
+    await context.getMounts().ensureDirectory(mountPath);
 
     s3fsStarted = true;
     await executeS3FSMount(context.getS3FSHost(), {

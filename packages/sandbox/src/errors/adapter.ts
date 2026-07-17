@@ -28,16 +28,24 @@ import type {
   InterpreterNotReadyContext,
   InvalidBackupConfigContext,
   InvalidPortContext,
+  InvalidProcessCursorContext,
+  InvalidProcessCwdContext,
+  InvalidProcessEnvironmentContext,
+  InvalidTerminalCursorContext,
+  InvalidTerminalCwdContext,
   OperationInterruptedContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
+  ProcessAbortedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
+  ProcessSpawnFailedContext,
+  ProcessWaitTimeoutContext,
   RPCTransportContext,
-  SessionAlreadyExistsContext,
-  SessionDestroyedContext,
-  SessionTerminatedContext,
+  StaleProcessHandleContext,
+  TerminalControlErrorContext,
+  TerminalNotFoundContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
@@ -68,29 +76,100 @@ import {
   InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
+  InvalidProcessCursorError,
+  InvalidProcessCwdError,
+  InvalidProcessEnvironmentError,
+  InvalidTerminalCursorError,
+  InvalidTerminalCwdError,
   OperationInterruptedError,
   PermissionDeniedError,
   PortAlreadyExposedError,
   PortError,
   PortInUseError,
   PortNotExposedError,
+  ProcessAbortedError,
   ProcessError,
   ProcessNotFoundError,
+  ProcessSpawnFailedError,
+  ProcessWaitTimeoutError,
   RPCTransportError,
   SandboxError,
   ServiceNotRespondingError,
-  SessionAlreadyExistsError,
-  SessionDestroyedError,
-  SessionTerminatedError,
+  StaleProcessHandleError,
+  TerminalControlError,
+  TerminalNotFoundError,
   ValidationFailedError
 } from './classes';
+
+type StaleProcessHandleResponse = ErrorResponse<StaleProcessHandleContext> & {
+  code: typeof ErrorCode.STALE_PROCESS_HANDLE;
+};
+
+type ProcessWaitTimeoutResponse = ErrorResponse<ProcessWaitTimeoutContext> & {
+  code: typeof ErrorCode.PROCESS_WAIT_TIMEOUT;
+};
+
+type ProcessAbortedResponse = ErrorResponse<ProcessAbortedContext> & {
+  code: typeof ErrorCode.PROCESS_ABORTED;
+};
+
+type ProcessLifecycleResponse =
+  | ErrorResponse
+  | StaleProcessHandleResponse
+  | ProcessWaitTimeoutResponse
+  | ProcessAbortedResponse;
+
+function isStaleProcessHandleResponse(
+  errorResponse: ProcessLifecycleResponse
+): errorResponse is StaleProcessHandleResponse {
+  const { context } = errorResponse;
+  return (
+    errorResponse.code === ErrorCode.STALE_PROCESS_HANDLE &&
+    'processId' in context &&
+    typeof context.processId === 'string' &&
+    'pid' in context &&
+    typeof context.pid === 'number' &&
+    'operation' in context &&
+    typeof context.operation === 'string'
+  );
+}
+
+function isProcessWaitTimeoutResponse(
+  errorResponse: ProcessLifecycleResponse
+): errorResponse is ProcessWaitTimeoutResponse {
+  const { context } = errorResponse;
+  return (
+    errorResponse.code === ErrorCode.PROCESS_WAIT_TIMEOUT &&
+    'processId' in context &&
+    typeof context.processId === 'string' &&
+    'operation' in context &&
+    (context.operation === 'output' ||
+      context.operation === 'waitForExit' ||
+      context.operation === 'waitForLog') &&
+    'timeout' in context &&
+    typeof context.timeout === 'number'
+  );
+}
+
+function isProcessAbortedResponse(
+  errorResponse: ProcessLifecycleResponse
+): errorResponse is ProcessAbortedResponse {
+  const { context } = errorResponse;
+  return (
+    errorResponse.code === ErrorCode.PROCESS_ABORTED &&
+    'processId' in context &&
+    typeof context.processId === 'string' &&
+    'operation' in context &&
+    typeof context.operation === 'string'
+  );
+}
 
 /**
  * Convert ErrorResponse to appropriate Error class
  * Simple switch statement - we trust the container sends correct context
  */
-export function createErrorFromResponse(
-  errorResponse: ErrorResponse,
+export function createErrorFromResponse<TContext>(
+  errorResponse: ErrorResponse<TContext>,
   options?: { cause?: unknown }
 ): Error {
   // We trust the container sends correct context, use type assertions
@@ -144,9 +223,86 @@ export function createErrorFromResponse(
       );
 
     // Process Errors
+    case ErrorCode.INVALID_PROCESS_CWD:
+      return new InvalidProcessCwdError(
+        errorResponse as unknown as ErrorResponse<InvalidProcessCwdContext>
+      );
+
+    case ErrorCode.INVALID_PROCESS_ENVIRONMENT:
+      return new InvalidProcessEnvironmentError(
+        errorResponse as unknown as ErrorResponse<InvalidProcessEnvironmentContext>
+      );
+
+    case ErrorCode.INVALID_PROCESS_CURSOR:
+      return new InvalidProcessCursorError(
+        errorResponse as unknown as ErrorResponse<InvalidProcessCursorContext>
+      );
+
+    case ErrorCode.PROCESS_SPAWN_FAILED:
+      return new ProcessSpawnFailedError(
+        errorResponse as unknown as ErrorResponse<ProcessSpawnFailedContext>
+      );
+
     case ErrorCode.PROCESS_NOT_FOUND:
       return new ProcessNotFoundError(
         errorResponse as unknown as ErrorResponse<ProcessNotFoundContext>
+      );
+
+    case ErrorCode.STALE_PROCESS_HANDLE:
+      if (
+        isStaleProcessHandleResponse(
+          errorResponse as unknown as ProcessLifecycleResponse
+        )
+      ) {
+        return new StaleProcessHandleError(
+          errorResponse as unknown as StaleProcessHandleResponse
+        );
+      }
+      return new SandboxError(errorResponse);
+
+    case ErrorCode.PROCESS_WAIT_TIMEOUT:
+      if (
+        isProcessWaitTimeoutResponse(
+          errorResponse as unknown as ProcessLifecycleResponse
+        )
+      ) {
+        return new ProcessWaitTimeoutError(
+          errorResponse as unknown as ProcessWaitTimeoutResponse
+        );
+      }
+      return new SandboxError(errorResponse);
+
+    case ErrorCode.PROCESS_ABORTED:
+      if (
+        isProcessAbortedResponse(
+          errorResponse as unknown as ProcessLifecycleResponse
+        )
+      ) {
+        return new ProcessAbortedError(
+          errorResponse as unknown as ProcessAbortedResponse
+        );
+      }
+      return new SandboxError(errorResponse);
+
+    // Terminal Errors
+    case ErrorCode.TERMINAL_NOT_FOUND:
+      return new TerminalNotFoundError(
+        errorResponse as unknown as ErrorResponse<TerminalNotFoundContext>
+      );
+
+    case ErrorCode.INVALID_TERMINAL_CWD:
+      return new InvalidTerminalCwdError(
+        errorResponse as unknown as ErrorResponse<InvalidTerminalCwdContext>
+      );
+
+    case ErrorCode.INVALID_TERMINAL_CURSOR:
+      return new InvalidTerminalCursorError(
+        errorResponse as unknown as ErrorResponse<InvalidTerminalCursorContext>
+      );
+
+    case ErrorCode.TERMINAL_CONTROL_ERROR:
+      return new TerminalControlError(
+        errorResponse as unknown as ErrorResponse<TerminalControlErrorContext>
       );
 
     case ErrorCode.PROCESS_PERMISSION_DENIED:
@@ -155,23 +311,6 @@ export function createErrorFromResponse(
         errorResponse as unknown as ErrorResponse<ProcessErrorContext>
       );
 
-    // Session Errors
-    case ErrorCode.SESSION_ALREADY_EXISTS:
-      return new SessionAlreadyExistsError(
-        errorResponse as unknown as ErrorResponse<SessionAlreadyExistsContext>
-      );
-
-    case ErrorCode.SESSION_DESTROYED:
-      return new SessionDestroyedError(
-        errorResponse as unknown as ErrorResponse<SessionDestroyedContext>
-      );
-
-    case ErrorCode.SESSION_TERMINATED:
-      return new SessionTerminatedError(
-        errorResponse as unknown as ErrorResponse<SessionTerminatedContext>
-      );
-
-    // Port Errors
     case ErrorCode.PORT_ALREADY_EXPOSED:
       return new PortAlreadyExposedError(
         errorResponse as unknown as ErrorResponse<PortAlreadyExposedContext>

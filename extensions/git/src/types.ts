@@ -32,21 +32,8 @@ export interface GitExtensionOptions {
   auth?: GitAuthConfig;
 }
 
-/** Options shared by every git extension method. */
-export interface GitSessionOptions {
-  /**
-   * Session to run the git command in. Omit to run sessionless (the command
-   * runs in a fresh, non-persistent shell). Sessionless commands still inherit
-   * the sandbox-level environment variables (e.g. tokens, proxy settings), so
-   * auth and egress configured on the sandbox keep working. Pass a session id
-   * to run inside an existing session so its working directory and environment
-   * carry over instead.
-   */
-  sessionId?: string;
-}
-
 /** Options for cloning a repository. */
-export interface GitCheckoutOptions extends GitSessionOptions {
+export interface GitCheckoutOptions {
   /** Branch (or tag) to check out after cloning. */
   branch?: string;
   /** Directory to clone into. Defaults to `/workspace/<repoName>`. */

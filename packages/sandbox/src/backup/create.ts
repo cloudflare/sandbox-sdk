@@ -1,14 +1,5 @@
-import type {
-  BackupOptions,
-  DirectoryBackup,
-  ExecOptions,
-  ExecResult
-} from '@repo/shared';
-import {
-  type createLogger,
-  logCanonicalEvent,
-  shellEscape
-} from '@repo/shared';
+import type { BackupOptions, DirectoryBackup } from '@repo/shared';
+import { type createLogger, logCanonicalEvent } from '@repo/shared';
 import type { ContainerControlClient } from '../container-control';
 import {
   BackupCreateError,
@@ -38,12 +29,6 @@ type BackupCreatorDeps = {
   getClient: () => ContainerControlClient;
   logger: ReturnType<typeof createLogger>;
   transfer: BackupTransfer;
-  ensureBackupSession: () => Promise<string>;
-  execWithSession: (
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ) => Promise<ExecResult>;
 };
 
 export class BackupCreator {
@@ -63,18 +48,6 @@ export class BackupCreator {
 
   private get transfer(): BackupTransfer {
     return this.deps.transfer;
-  }
-
-  private ensureBackupSession(): Promise<string> {
-    return this.deps.ensureBackupSession();
-  }
-
-  private execWithSession(
-    command: string,
-    sessionId: string,
-    options?: ExecOptions
-  ): Promise<ExecResult> {
-    return this.deps.execWithSession(command, sessionId, options);
   }
 
   async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
@@ -105,7 +78,6 @@ export class BackupCreator {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
-    let backupSession: string | undefined;
 
     try {
       validateBackupDir(dir, 'BackupOptions.dir');
@@ -121,7 +93,6 @@ export class BackupCreator {
             timestamp: new Date().toISOString()
           });
         }
-        // Reject control characters (could cause issues in R2 metadata or downstream systems)
         // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
         if (/[\u0000-\u001f\u007f]/.test(name)) {
           throw new InvalidBackupConfigError({
@@ -142,7 +113,6 @@ export class BackupCreator {
           timestamp: new Date().toISOString()
         });
       }
-
       if (typeof gitignore !== 'boolean') {
         throw new InvalidBackupConfigError({
           message: 'BackupOptions.gitignore must be a boolean',
@@ -152,7 +122,6 @@ export class BackupCreator {
           timestamp: new Date().toISOString()
         });
       }
-
       if (
         !Array.isArray(excludes) ||
         !excludes.every((e: unknown) => typeof e === 'string')
@@ -167,10 +136,7 @@ export class BackupCreator {
       }
 
       const resolvedCompression = resolveBackupCompression(compression);
-
       const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
-
-      backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
 
@@ -178,7 +144,6 @@ export class BackupCreator {
         dir,
         archivePath,
         {
-          sessionId: backupSession,
           gitignore,
           excludes: normalizedExcludes,
           compression: resolvedCompression
@@ -199,15 +164,13 @@ export class BackupCreator {
       const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
       const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      // Step 2: Upload archive to R2
       if (multipart && createResult.sizeBytes >= BACKUP_MULTIPART_MIN_SIZE) {
         await this.transfer.uploadBackupMultipart(
           archivePath,
           r2Key,
           createResult.sizeBytes,
           backupId,
-          dir,
-          backupSession
+          dir
         );
       } else {
         await this.transfer.uploadBackupPresigned(
@@ -215,12 +178,10 @@ export class BackupCreator {
           r2Key,
           createResult.sizeBytes,
           backupId,
-          dir,
-          backupSession
+          dir
         );
       }
 
-      // Step 3: Write metadata alongside the archive
       const metadata = {
         id: backupId,
         dir,
@@ -232,35 +193,20 @@ export class BackupCreator {
       await bucket.put(metaKey, JSON.stringify(metadata));
 
       outcome = 'success';
-
-      // Clean up the local archive in the container
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
-
+      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
       return { id: backupId, dir };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      // Clean up local archive and any partially-uploaded R2 objects
-      if (backupId && backupSession) {
+      if (backupId) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(archivePath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
+        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
       throw error;
     } finally {
-      if (backupSession) {
-        await this.client.utils.deleteSession(backupSession).catch(() => {});
-      }
       logCanonicalEvent(this.logger, {
         event: 'backup.create',
         outcome,
@@ -296,7 +242,6 @@ export class BackupCreator {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
-    let backupSession: string | undefined;
 
     // Resolve backup bucket from env as an R2 binding
     const envObj = this.env as Record<string, unknown>;
@@ -373,7 +318,6 @@ export class BackupCreator {
 
       const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
 
-      backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
 
@@ -382,7 +326,6 @@ export class BackupCreator {
         dir,
         archivePath,
         {
-          sessionId: backupSession,
           gitignore,
           excludes: normalizedExcludes,
           compression: resolvedCompression
@@ -410,7 +353,7 @@ export class BackupCreator {
       // buffering the whole archive in Worker memory.
       const archiveStream = await this.client.files.readFileStream(
         archivePath,
-        { sessionId: backupSession }
+        {}
       );
       const sseDecoded = new ReadableStream<Uint8Array>({
         async start(controller) {
@@ -456,32 +399,21 @@ export class BackupCreator {
       outcome = 'success';
 
       // Clean up local archive
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession,
-        { origin: 'internal' }
-      ).catch(() => {});
+      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
 
       return { id: backupId, dir, localBucket: true };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      if (backupId && backupSession) {
+      if (backupId) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.execWithSession(
-          `rm -f ${shellEscape(archivePath)}`,
-          backupSession,
-          { origin: 'internal' }
-        ).catch(() => {});
+        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
       throw error;
     } finally {
-      if (backupSession) {
-        await this.client.utils.deleteSession(backupSession).catch(() => {});
-      }
       logCanonicalEvent(this.logger, {
         event: 'backup.create',
         outcome,

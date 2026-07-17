@@ -31,7 +31,7 @@ import {
   SandboxExtension,
   type SandboxLike
 } from '@cloudflare/sandbox/extensions';
-import { redactCommand } from '@repo/shared';
+import { redactCommand, type SandboxCommand } from '@repo/shared';
 import {
   ErrorCode,
   type ErrorResponse,
@@ -55,8 +55,7 @@ import type {
   GitCheckoutOptions,
   GitCheckoutResult,
   GitExtensionOptions,
-  GitHostAuth,
-  GitSessionOptions
+  GitHostAuth
 } from './types.js';
 
 export type {
@@ -64,8 +63,7 @@ export type {
   GitCheckoutOptions,
   GitCheckoutResult,
   GitExtensionOptions,
-  GitHostAuth,
-  GitSessionOptions
+  GitHostAuth
 } from './types.js';
 export { withGit as default };
 
@@ -131,10 +129,8 @@ export class Git extends SandboxExtension {
 
     await this.#configureAuth(repoUrl, options.auth);
 
-    const sessionId = this.#sessionId(options);
     const cloneResult = await this.#exec(
       buildCloneArgs(repoUrl, targetDir, options),
-      sessionId,
       undefined,
       cloneTimeoutMs + CLONE_PROCESS_TIMEOUT_BUFFER_MS
     );
@@ -178,7 +174,6 @@ export class Git extends SandboxExtension {
     // Query the branch actually checked out rather than assuming.
     const branchResult = await this.#exec(
       buildGetCurrentBranchArgs(),
-      sessionId,
       targetDir
     );
     const branch =
@@ -196,11 +191,7 @@ export class Git extends SandboxExtension {
   }
 
   /** Check out an existing branch in a cloned repository. */
-  async checkoutBranch(
-    repoPath: string,
-    branch: string,
-    options: GitSessionOptions = {}
-  ): Promise<void> {
+  async checkoutBranch(repoPath: string, branch: string): Promise<void> {
     const pathValidation = validatePath(repoPath);
     if (!pathValidation.isValid) {
       this.#throwValidation('repoPath', pathValidation.errors, 'INVALID_PATH');
@@ -223,11 +214,7 @@ export class Git extends SandboxExtension {
       );
     }
 
-    const result = await this.#exec(
-      buildCheckoutArgs(branch),
-      this.#sessionId(options),
-      repoPath
-    );
+    const result = await this.#exec(buildCheckoutArgs(branch), repoPath);
 
     if (result.exitCode !== 0) {
       const code = determineErrorCode(
@@ -251,20 +238,13 @@ export class Git extends SandboxExtension {
   }
 
   /** Return the current branch of a cloned repository. */
-  async getCurrentBranch(
-    repoPath: string,
-    options: GitSessionOptions = {}
-  ): Promise<string> {
+  async getCurrentBranch(repoPath: string): Promise<string> {
     const pathValidation = validatePath(repoPath);
     if (!pathValidation.isValid) {
       this.#throwValidation('repoPath', pathValidation.errors, 'INVALID_PATH');
     }
 
-    const result = await this.#exec(
-      buildGetCurrentBranchArgs(),
-      this.#sessionId(options),
-      repoPath
-    );
+    const result = await this.#exec(buildGetCurrentBranchArgs(), repoPath);
 
     if (result.exitCode !== 0) {
       this.#throwError(
@@ -288,20 +268,13 @@ export class Git extends SandboxExtension {
   }
 
   /** List local and remote branches of a cloned repository. */
-  async listBranches(
-    repoPath: string,
-    options: GitSessionOptions = {}
-  ): Promise<string[]> {
+  async listBranches(repoPath: string): Promise<string[]> {
     const pathValidation = validatePath(repoPath);
     if (!pathValidation.isValid) {
       this.#throwValidation('repoPath', pathValidation.errors, 'INVALID_PATH');
     }
 
-    const result = await this.#exec(
-      buildListBranchesArgs(),
-      this.#sessionId(options),
-      repoPath
-    );
+    const result = await this.#exec(buildListBranchesArgs(), repoPath);
 
     if (result.exitCode !== 0) {
       this.#throwError(
@@ -386,23 +359,16 @@ export class Git extends SandboxExtension {
     return hosts;
   }
 
-  #sessionId(options: GitSessionOptions): string | undefined {
-    return options.sessionId;
-  }
-
   async #exec(
-    command: string[],
-    sessionId: string | undefined,
+    command: SandboxCommand,
     cwd?: string,
     timeout?: number
   ): Promise<ExecOutcome> {
-    const result = await this.exec(command, {
-      ...(sessionId !== undefined && { sessionId }),
+    const process = await this.exec(command, {
       ...(cwd !== undefined && { cwd }),
-      ...(timeout !== undefined && { timeout }),
-      stdout: 'pipe',
-      stderr: 'pipe'
-    }).output({ encoding: 'utf8' });
+      ...(timeout !== undefined && { timeout })
+    });
+    const result = await process.output({ encoding: 'utf8' });
     return {
       stdout: result.stdout,
       stderr: result.stderr,

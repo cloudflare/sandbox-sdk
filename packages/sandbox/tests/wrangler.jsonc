@@ -1,9 +1,8 @@
 {
   "name": "sandbox-test",
-  // Entry is the eviction-test worker: it re-exports the SDK worker surface
-  // (so the Sandbox container binding resolves) plus the OpenCodeFixture DO that
-  // the DO-eviction test drives via its namespace binding.
-  "main": "../../../extensions/opencode/tests/eviction-worker.ts",
+  // Re-exports the SDK worker surface and the Durable Object fixtures used by
+  // process-capability and OpenCode eviction tests.
+  "main": "src/index.ts",
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
 
@@ -29,6 +28,10 @@
       {
         "class_name": "OpenCodeFixture",
         "name": "OpenCodeFixture"
+      },
+      {
+        "class_name": "ProcessCapabilityRPCTestDO",
+        "name": "ProcessCapabilityTest"
       }
     ]
   },
@@ -39,7 +42,10 @@
       "tag": "v1"
     },
     {
-      "new_sqlite_classes": ["OpenCodeFixture"],
+      "new_sqlite_classes": [
+        "OpenCodeFixture",
+        "ProcessCapabilityRPCTestDO"
+      ],
       "tag": "v2"
     }
   ]

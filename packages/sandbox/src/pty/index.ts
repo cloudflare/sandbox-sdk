@@ -1,1 +1,7 @@
-export { createSandboxTerminal, proxyTerminal } from './proxy';
+export {
+  createTerminalHandle,
+  getTerminalHandle,
+  listTerminalHandles,
+  proxyTerminal,
+  terminalHandle
+} from './proxy';

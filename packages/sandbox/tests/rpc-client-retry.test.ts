@@ -53,7 +53,7 @@ describe('translateRPCError operation interruption mapping', () => {
         error: unknown,
         context: { operation: string }
       ) => never
-    )(error, { operation: 'commands.execute' });
+    )(error, { operation: 'processes.start' });
   }
 
   it.each([
@@ -66,19 +66,26 @@ describe('translateRPCError operation interruption mapping', () => {
   ])(
     'maps in-flight transport loss %s to OPERATION_INTERRUPTED',
     (message, reason) => {
-      expect(() => translateWithOperation(new Error(message))).toThrowError(
-        expect.objectContaining({
-          name: 'OperationInterruptedError',
-          code: 'OPERATION_INTERRUPTED',
-          context: expect.objectContaining({
-            reason,
-            operation: 'commands.execute',
-            phase: 'rpc_call',
-            admitted: 'unknown',
-            retryable: false
-          })
+      let thrown: unknown;
+      try {
+        translateWithOperation(new Error(message));
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toMatchObject({
+        name: 'OperationInterruptedError',
+        code: 'OPERATION_INTERRUPTED',
+        context: expect.objectContaining({
+          reason,
+          operation: 'processes.start',
+          admitted: 'unknown',
+          retryable: false
         })
-      );
+      });
+      expect(
+        (thrown as { context: Record<string, unknown> }).context
+      ).not.toHaveProperty('phase');
     }
   );
 });
@@ -94,44 +101,43 @@ describe('ContainerControlClient retry timeout wiring', () => {
     vi.useRealTimers();
   });
 
-  it('passes retryTimeoutMs through to ContainerControlConnection', () => {
+  it('passes retryTimeoutMs through to ContainerControlConnection', async () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       retryTimeoutMs: 75_000
     });
 
-    // Force connection construction by touching a sub-client.
-    void client.commands;
+    await client.connect();
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBe(75_000);
   });
 
-  it('omits retryTimeoutMs when not configured (lets the connection apply its default)', () => {
+  it('omits retryTimeoutMs when not configured (lets the connection apply its default)', async () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() }
     });
 
-    void client.commands;
+    await client.connect();
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBeUndefined();
   });
 
-  it('forwards setRetryTimeoutMs() to the active connection', () => {
+  it('forwards setRetryTimeoutMs() to the active connection', async () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
       retryTimeoutMs: 60_000
     });
 
-    void client.commands;
+    await client.connect();
 
     client.setRetryTimeoutMs(45_000);
 
     expect(captured.setRetryTimeoutCalls).toEqual([45_000]);
   });
 
-  it('caches setRetryTimeoutMs() calls made before any connection is created', () => {
+  it('caches setRetryTimeoutMs() calls made before any connection is created', async () => {
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() }
     });
@@ -141,7 +147,7 @@ describe('ContainerControlClient retry timeout wiring', () => {
     // construction, or by applying it immediately if a connection is present.
     client.setRetryTimeoutMs(15_000);
 
-    void client.commands;
+    await client.connect();
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBe(15_000);

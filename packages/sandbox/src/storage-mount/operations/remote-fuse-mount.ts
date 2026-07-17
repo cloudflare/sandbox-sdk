@@ -1,5 +1,5 @@
 import type { BucketProvider, RemoteMountBucketOptions } from '@repo/shared';
-import { getEnvString, logCanonicalEvent, shellEscape } from '@repo/shared';
+import { getEnvString, logCanonicalEvent } from '@repo/shared';
 import type { MountLifecycle } from '../lifecycle';
 import { configureS3CredentialProxyOutbound } from '../outbound';
 import { S3_CREDENTIAL_PROXY_HOST } from '../outbound/container-proxy';
@@ -146,10 +146,8 @@ export async function mountRemoteFuseBucket(
       );
     }
 
-    dirExisted =
-      (await context.execInternal(`test -d ${shellEscape(mountPath)}`))
-        .exitCode === 0;
-    await context.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
+    dirExisted = await context.getMounts().pathExists(mountPath);
+    await context.getMounts().ensureDirectory(mountPath);
 
     const effectiveOptions: RemoteMountBucketOptions = credentialProxyEnabled
       ? {
@@ -209,9 +207,10 @@ export async function mountRemoteFuseBucket(
 
     if (!dirExisted) {
       try {
-        await context.execInternal(
-          `rmdir ${shellEscape(mountPath)} 2>/dev/null`
-        );
+        await context.getMounts().removeMountDirectory({
+          path: mountPath,
+          onlyIfNotMountpoint: false
+        });
       } catch {
         // best-effort cleanup
       }

@@ -1,17 +1,28 @@
 import { Container, getContainer } from '@cloudflare/containers';
-import type { ExecResult, ISandbox, Process } from '@repo/shared';
+import type * as SharedRoot from '@repo/shared';
+import type { ISandbox, ProcessLogEvent, ProcessStatus } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
   ContainerUnavailableError,
   ErrorCode,
   InvalidBackupConfigError,
-  PortNotExposedError,
-  ProcessNotFoundError
+  PortNotExposedError
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
 import { connect, getSandbox, Sandbox } from '../src/sandbox';
 import { createMockControlClient } from './helpers/mock-control-client';
+
+function processLogStream(
+  events: ProcessLogEvent[]
+): ReadableStream<ProcessLogEvent> {
+  return new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(event);
+      controller.close();
+    }
+  });
+}
 
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
@@ -103,16 +114,13 @@ interface MockCtx {
     running: boolean;
     getTcpPort?: ReturnType<typeof vi.fn>;
     start?: ReturnType<typeof vi.fn>;
+    exec?: ReturnType<typeof vi.fn>;
   };
   id: {
     toString: () => string;
     equals: ReturnType<typeof vi.fn>;
     name: string;
   };
-}
-
-interface SandboxInternalExec {
-  execInternal(command: string): Promise<ExecResult>;
 }
 
 interface SandboxRuntimeStart {
@@ -189,7 +197,70 @@ function createPreviewWebSocketRequest(): Request {
   );
 }
 
-describe('Sandbox - Automatic Session Management', () => {
+function textStream(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    }
+  });
+}
+
+function mockNativeProcess(stdout: string, stderr: string, exitCode: number) {
+  return {
+    stdin: null,
+    stdout: textStream(stdout),
+    stderr: textStream(stderr),
+    pid: 123,
+    exitCode: Promise.resolve(exitCode),
+    output: async () => ({
+      stdout: await new Response(textStream(stdout)).arrayBuffer(),
+      stderr: await new Response(textStream(stderr)).arrayBuffer(),
+      exitCode
+    }),
+    kill: vi.fn()
+  };
+}
+
+function processOutputStream(result: {
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+}): ReadableStream {
+  return new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      if (result.stdout) {
+        controller.enqueue({
+          type: 'stdout',
+          processId: 'mock-process-id',
+          cursor: '1',
+          timestamp: new Date().toISOString(),
+          data: encoder.encode(result.stdout)
+        });
+      }
+      if (result.stderr) {
+        controller.enqueue({
+          type: 'stderr',
+          processId: 'mock-process-id',
+          cursor: '2',
+          timestamp: new Date().toISOString(),
+          data: encoder.encode(result.stderr)
+        });
+      }
+      controller.enqueue({
+        type: 'terminal',
+        processId: 'mock-process-id',
+        cursor: '3',
+        timestamp: new Date().toISOString(),
+        exit: { code: result.exitCode, timedOut: false }
+      });
+      controller.close();
+    }
+  });
+}
+
+describe('Sandbox durable object behavior', () => {
   let sandbox: Sandbox;
   let mockCtx: MockCtx;
   let mockEnv: Record<string, unknown>;
@@ -197,7 +268,9 @@ describe('Sandbox - Automatic Session Management', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    const storageState = new Map<string, unknown>();
+    const storageState = new Map<string, unknown>([
+      ['currentRuntimeIdentity', { id: 'runtime-a' }]
+    ]);
 
     const storage = {
       get: vi.fn(async (key: string) => storageState.get(key) ?? null),
@@ -220,7 +293,26 @@ describe('Sandbox - Automatic Session Management', () => {
           <T>(callback: () => Promise<T>): Promise<T> => callback()
         ),
       waitUntil: vi.fn(),
-      container: { running: true, start: vi.fn() },
+      container: {
+        running: true,
+        start: vi.fn(),
+        exec: vi.fn().mockImplementation(async () => {
+          return {
+            pid: 123,
+            stdin: null,
+            stdout: null,
+            stderr: null,
+            exitCode: Promise.resolve(0),
+            output: () =>
+              Promise.resolve({
+                exitCode: 0,
+                stdout: new TextEncoder().encode(''),
+                stderr: new TextEncoder().encode('')
+              }),
+            kill: () => Promise.resolve()
+          };
+        })
+      },
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -253,20 +345,6 @@ describe('Sandbox - Automatic Session Management', () => {
     sandbox.client = createMockControlClient();
 
     // Now spy on the client methods that we need for testing
-    vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
-      success: true,
-      id: 'sandbox-default',
-      message: 'Created'
-    } as any);
-
-    vi.spyOn(sandbox.client.commands, 'execute').mockResolvedValue({
-      success: true,
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-      command: '',
-      timestamp: new Date().toISOString()
-    } as any);
 
     vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
       success: true,
@@ -367,94 +445,202 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('sessionless routing', () => {
-    it('does not expose execStream', () => {
-      expect('execStream' in sandbox).toBe(false);
-    });
-
-    it('ignores legacy streaming exec options at runtime', async () => {
-      await sandbox.exec('echo test', {
-        stream: true,
-        onOutput: vi.fn()
-      } as unknown as Parameters<typeof sandbox.exec>[1]);
-
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'echo test'
-      );
-    });
-
-    it('runs implicit exec without creating a default session', async () => {
-      const result = await sandbox.exec('echo test');
-
-      expect(result.sessionId).toBeUndefined();
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'echo test'
-      );
-    });
-
-    it('passes non-default output modes to process start', async () => {
-      await sandbox.exec('echo test', {
-        stdout: 'ignore',
-        stderr: 'combined'
+  describe('RPC routing', () => {
+    it('launches and returns a private process descriptor', async () => {
+      const descriptor = await sandbox.exec(['echo', 'hello'], {
+        cwd: '/workspace'
       });
 
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'echo test',
-        expect.objectContaining({
-          stdout: 'ignore',
-          stderr: 'combined'
-        }),
-        undefined
+      expect(sandbox.client.processes.start).toHaveBeenCalledWith(
+        ['echo', 'hello'],
+        { cwd: '/workspace' }
       );
+      expect(descriptor).toMatchObject({
+        id: 'mock-process-id',
+        pid: 123
+      });
+      expect(descriptor.capability.status).toBeTypeOf('function');
     });
 
-    it('forwards kill signals through process handles', async () => {
-      const proc = await sandbox.exec('sleep 10');
-
-      proc.kill('SIGKILL');
-      await vi.waitFor(() =>
-        expect(sandbox.client.processes.killProcess).toHaveBeenCalledWith(
-          proc.id,
-          9
-        )
-      );
-    });
-
-    it('runs infrastructure exec without creating a default session', async () => {
-      await sandbox.setEnvVars({ INFRA_TOKEN: 'secret' });
-      vi.mocked(sandbox.client.utils.createSession).mockClear();
-      vi.mocked(sandbox.client.commands.execute).mockClear();
-      vi.mocked(sandbox.client.commands.execute).mockResolvedValueOnce({
-        success: true,
-        stdout: 'infra',
-        stderr: '',
-        exitCode: 0,
-        command: 'printf infra',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      const result = await (
-        sandbox as unknown as SandboxInternalExec
-      ).execInternal('printf infra');
-
-      expect(result.sessionId).toBeUndefined();
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
-        'printf infra',
-        {
-          env: { INFRA_TOKEN: 'secret' },
-          origin: 'internal'
+    it('wakes, captures, and pre-validates before launch, then post-fences', async () => {
+      const order: string[] = [];
+      mockCtx.storage.get.mockImplementation(async (key: string) => {
+        if (key === 'currentRuntimeIdentity') {
+          order.push('runtime');
+          return { id: 'runtime-a' };
+        }
+        return null;
+      });
+      Object.assign(sandbox, {
+        ensureContainerRunning: vi.fn(async () => {
+          order.push('wake');
+        })
+      });
+      vi.spyOn(sandbox.client.processes, 'start').mockImplementation(
+        async (command) => {
+          order.push('start');
+          return {
+            id: 'p1',
+            pid: 123,
+            command,
+            state: 'running',
+            startedAt: new Date().toISOString()
+          };
         }
       );
+
+      await sandbox.exec(['echo', 'ordered']);
+
+      expect(order).toEqual(['wake', 'runtime', 'runtime', 'start', 'runtime']);
     });
 
-    it('runs direct file operations without creating a default session', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockClear();
+    it('rejects a runtime replacement while launch RPC is pending', async () => {
+      let resolveStart!: (status: ProcessStatus) => void;
+      const pendingStart = new Promise<ProcessStatus>((resolve) => {
+        resolveStart = resolve;
+      });
+      vi.spyOn(sandbox.client.processes, 'start').mockReturnValueOnce(
+        pendingStart
+      );
+      let activeRuntime = { id: 'runtime-a' };
+      Object.assign(sandbox, {
+        currentRuntime: {
+          get: vi.fn(async () => activeRuntime),
+          assertActive: vi.fn(async (expected: { id: string }) => {
+            if (expected.id !== activeRuntime.id) throw new Error('inactive');
+          })
+        }
+      });
 
+      const launch = sandbox.exec(['sleep', '1']);
+      await vi.waitFor(() =>
+        expect(sandbox.client.processes.start).toHaveBeenCalledOnce()
+      );
+      activeRuntime = { id: 'runtime-b' };
+      resolveStart({
+        id: 'p1',
+        pid: 123,
+        command: ['sleep', '1'],
+        state: 'running',
+        startedAt: new Date().toISOString()
+      });
+
+      await expect(launch).rejects.toMatchObject({
+        code: 'OPERATION_INTERRUPTED',
+        context: { operation: 'process.start', effect: 'unknown' }
+      });
+    });
+
+    it('returns a descriptor for a retained terminal process', async () => {
+      const status: ProcessStatus = {
+        id: 'p1',
+        pid: 123,
+        command: ['/bin/true'],
+        state: 'exited',
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        exit: { code: 0, timedOut: false }
+      };
+      Object.assign(sandbox, {
+        processLifecycle: {
+          captureCurrent: vi.fn(async () => ({ id: 'runtime-a' })),
+          runRead: vi.fn(async () => status)
+        }
+      });
+
+      await expect(sandbox.getProcess('p1')).resolves.toMatchObject({
+        id: 'p1',
+        pid: 123
+      });
+    });
+
+    it('returns process listings as data without N+1 status calls', async () => {
+      const status: ProcessStatus = {
+        id: 'p1',
+        pid: 123,
+        command: ['/bin/true'],
+        state: 'running',
+        startedAt: new Date().toISOString()
+      };
+      const runRead = vi.fn(async () => [status]);
+      Object.assign(sandbox, {
+        processLifecycle: {
+          captureCurrent: vi.fn(async () => ({ id: 'runtime-a' })),
+          runRead
+        }
+      });
+
+      await expect(sandbox.listProcesses()).resolves.toEqual([status]);
+      expect(runRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects malformed JavaScript argv before process control', async () => {
+      await expect(
+        Reflect.apply(sandbox.exec, sandbox, ['echo hello'])
+      ).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
+      await expect(
+        Reflect.apply(sandbox.exec, sandbox, [[]])
+      ).rejects.toMatchObject({
+        code: 'INVALID_COMMAND'
+      });
+      await expect(sandbox.exec([''])).rejects.toMatchObject({
+        code: 'INVALID_COMMAND'
+      });
+      await expect(
+        Reflect.apply(sandbox.exec, sandbox, [[123]])
+      ).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
+      expect(sandbox.client.processes.start).not.toHaveBeenCalled();
+    });
+
+    it('logs launch identity without an exit code', async () => {
+      const infoSpy = vi.spyOn((sandbox as any).logger, 'info');
+      vi.spyOn(sandbox.client.processes, 'start').mockResolvedValueOnce({
+        id: 'logged-process',
+        pid: 456,
+        command: ['echo', 'test_logging'],
+        state: 'exited',
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        exit: { code: 42, timedOut: false }
+      });
+
+      const descriptor = await sandbox.exec(['echo', 'test_logging']);
+
+      expect(descriptor.id).toBe('logged-process');
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.stringContaining('sandbox.exec'),
+        expect.not.objectContaining({ exitCode: expect.anything() })
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          event: 'sandbox.exec',
+          outcome: 'success',
+          command: 'echo test_logging',
+          processId: 'logged-process',
+          pid: 456
+        })
+      );
+
+      infoSpy.mockRestore();
+    });
+
+    it('returns null for inactive discovery without starting the runtime', async () => {
+      Object.assign(sandbox, {
+        processLifecycle: {
+          captureCurrent: vi.fn(async () => null)
+        }
+      });
+      mockCtx.container.running = false;
+
+      await expect(sandbox.getProcess('p1')).resolves.toBeNull();
+
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
+      expect(sandbox.client.processes.get).not.toHaveBeenCalled();
+    });
+
+    it('runs direct file operations through file RPC', async () => {
       await sandbox.writeFile('/test.txt', 'content');
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
         '/test.txt',
         'content',
@@ -462,22 +648,35 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should forward exec options to the command client', async () => {
-      await sandbox.exec('echo $OPTION', {
-        env: { OPTION: 'value' },
-        cwd: '/workspace/project',
-        timeout: 5000
+    it('owns public watch subscriptions after consuming data', async () => {
+      const chunk = new TextEncoder().encode(
+        'data: {"type":"watching","path":"/workspace/test","watchId":"watch-1"}\n\n'
+      );
+      const cancel = vi.fn(async () => undefined);
+      const dispose = vi.fn();
+      vi.mocked(sandbox.client.watch.watch).mockResolvedValue({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(chunk);
+              }
+            })
+        ),
+        cancel,
+        [Symbol.dispose]: dispose
       });
 
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'echo $OPTION',
-        {
-          timeoutMs: 5000,
-          env: { OPTION: 'value' },
-          cwd: '/workspace/project'
-        },
-        undefined
-      );
+      const stream = await sandbox.watch('/workspace/test');
+      const reader = stream.getReader();
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: chunk
+      });
+      await reader.cancel();
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(dispose).toHaveBeenCalledTimes(1);
     });
 
     it('should forward checkChanges options to the watch client', async () => {
@@ -485,688 +684,12 @@ describe('Sandbox - Automatic Session Management', () => {
         since: 'watch-1:0',
         recursive: false
       });
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(sandbox.client.watch.checkChanges).toHaveBeenCalledWith({
         path: '/workspace/test',
         recursive: false,
         include: undefined,
         exclude: undefined,
-        since: 'watch-1:0',
-        sessionId: undefined
-      });
-    });
-
-    it('should allow explicit session IDs on top-level methods', async () => {
-      vi.spyOn(sandbox.client.files, 'listFiles').mockResolvedValue({
-        success: true,
-        path: '/workspace',
-        files: [],
-        count: 0,
-        timestamp: new Date().toISOString()
-      });
-      vi.mocked(sandbox.client.utils.createSession).mockClear();
-
-      await sandbox.listFiles('/workspace', {
-        includeHidden: true,
-        sessionId: 'explicit-session'
-      });
-
-      expect(sandbox.client.files.listFiles).toHaveBeenCalledWith(
-        '/workspace',
-        {
-          includeHidden: true,
-          sessionId: 'explicit-session'
-        }
-      );
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-    });
-
-    it('should reject empty explicit session IDs', async () => {
-      await expect(
-        sandbox.listFiles('/workspace', { sessionId: '' })
-      ).rejects.toThrow('sessionId must not be empty or whitespace');
-
-      await expect(sandbox.listProcesses({ sessionId: '' })).rejects.toThrow(
-        'sessionId must not be empty or whitespace'
-      );
-    });
-
-    it('should not expose session IDs on sessionless exec results', async () => {
-      const result = await sandbox.exec('printf sessionless');
-
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'printf sessionless'
-      );
-      expect(result.sessionId).toBeUndefined();
-      expect('execWithSessionToken' in sandbox).toBe(false);
-    });
-
-    it('runs implicit exec and file operations sessionlessly', async () => {
-      await sandbox.exec('echo test1');
-      await sandbox.writeFile('/test.txt', 'content');
-      await sandbox.exec('echo test2');
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-
-      const firstExecOptions = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[0][1];
-      const fileOptions = vi.mocked(sandbox.client.files.writeFile).mock
-        .calls[0][2];
-      const secondExecOptions = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[1][1];
-
-      expect(firstExecOptions).toBe(undefined);
-      expect(secondExecOptions).toBe(undefined);
-      expect(fileOptions).toEqual({ encoding: undefined });
-    });
-
-    it('starts implicit processes without creating a default session', async () => {
-      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
-        success: true,
-        processId: 'proc-1',
-        pid: 1234,
-        command: 'sleep 10',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [
-          {
-            id: 'proc-1',
-            pid: 1234,
-            command: 'sleep 10',
-            status: 'running',
-            startTime: new Date().toISOString()
-          }
-        ],
-        timestamp: new Date().toISOString()
-      } as any);
-
-      const process = await sandbox.exec('sleep 10');
-      const processes = await sandbox.listProcesses();
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-
-      expect(
-        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10']);
-
-      // listProcesses is sandbox-scoped - no sessionId parameter
-      const listProcessesCall = vi.mocked(
-        sandbox.client.processes.listProcesses
-      ).mock.calls[0];
-      expect(listProcessesCall).toEqual([]);
-
-      expect(process.id).toBe('proc-1');
-      expect(process.sessionId).toBeUndefined();
-      expect(processes).toHaveLength(1);
-      expect(processes[0].id).toBe('proc-1');
-      expect(processes[0].sessionId).toBeUndefined();
-    });
-
-    it('uses process read options for session annotations', async () => {
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [
-          {
-            id: 'proc-session',
-            pid: 1234,
-            command: 'sleep 10',
-            status: 'running',
-            startTime: new Date().toISOString()
-          }
-        ],
-        timestamp: new Date().toISOString()
-      } as any);
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-session',
-          pid: 1234,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
-
-      const listed = await sandbox.listProcesses({
-        sessionId: 'process-session'
-      });
-      const fetched = await sandbox.getProcess('proc-session', {
-        sessionId: 'process-session'
-      });
-
-      expect(sandbox.client.processes.listProcesses).toHaveBeenCalledWith();
-      expect(sandbox.client.processes.getProcess).toHaveBeenCalledWith(
-        'proc-session'
-      );
-      expect(listed[0].sessionId).toBe('process-session');
-      expect(fetched?.sessionId).toBe('process-session');
-    });
-
-    it('forwards process options in one request object', async () => {
-      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
-        success: true,
-        processId: 'proc-options',
-        pid: 1234,
-        command: 'sleep 10',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      await sandbox.exec('sleep 10', {
-        processId: 'proc-options',
-        env: { TEST_ENV: '1' },
-        cwd: '/workspace/app',
-        timeout: 1000,
-        autoCleanup: false
-      });
-
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'sleep 10',
-        {
-          processId: 'proc-options',
-          env: { TEST_ENV: '1' },
-          cwd: '/workspace/app',
-          timeoutMs: 1000,
-          autoCleanup: false
-        },
-        undefined
-      );
-    });
-
-    it('does not annotate process reads with an existing default session', async () => {
-      await sandbox.writeFile('/test.txt', 'content');
-
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [
-          {
-            id: 'proc-existing-default',
-            pid: 4321,
-            command: 'sleep 10',
-            status: 'running',
-            startTime: new Date().toISOString()
-          }
-        ],
-        timestamp: new Date().toISOString()
-      } as any);
-
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-existing-default',
-          pid: 4321,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
-
-      vi.mocked(sandbox.client.utils.createSession).mockClear();
-
-      const listed = await sandbox.listProcesses();
-      const fetched = await sandbox.getProcess('proc-existing-default');
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(listed[0].sessionId).toBeUndefined();
-      expect(fetched?.sessionId).toBeUndefined();
-    });
-
-    it('does not annotate implicit process objects with a default session', async () => {
-      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
-        success: true,
-        processId: 'proc-none',
-        pid: 4321,
-        command: 'sleep 10',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [
-          {
-            id: 'proc-none',
-            pid: 4321,
-            command: 'sleep 10',
-            status: 'running',
-            startTime: new Date().toISOString()
-          }
-        ],
-        timestamp: new Date().toISOString()
-      } as any);
-
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-none',
-          pid: 4321,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
-
-      const started = await sandbox.exec('sleep 10');
-      const listed = await sandbox.listProcesses();
-      const fetched = await sandbox.getProcess('proc-none');
-
-      expect(
-        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10']);
-      expect(
-        vi.mocked(sandbox.client.processes.listProcesses).mock.calls[0]
-      ).toEqual([]);
-      expect(
-        vi.mocked(sandbox.client.processes.getProcess).mock.calls[0]
-      ).toEqual(['proc-none']);
-      expect(started.sessionId).toBeUndefined();
-      expect(listed).toHaveLength(1);
-      expect(listed[0].sessionId).toBeUndefined();
-      expect(fetched?.sessionId).toBeUndefined();
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-    });
-
-    it('should not expose session IDs on process objects', async () => {
-      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
-        success: true,
-        processId: 'proc-sessionless',
-        pid: 4321,
-        command: 'sleep 10',
-        timestamp: new Date().toISOString()
-      } as any);
-      vi.spyOn(sandbox.client.processes, 'listProcesses').mockResolvedValue({
-        success: true,
-        processes: [
-          {
-            id: 'proc-sessionless',
-            pid: 4321,
-            command: 'sleep 10',
-            status: 'running',
-            startTime: new Date().toISOString()
-          }
-        ],
-        timestamp: new Date().toISOString()
-      } as any);
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-sessionless',
-          pid: 4321,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
-
-      const process = await sandbox.exec('sleep 10');
-      const processes = await sandbox.listProcesses();
-      const fetched = await sandbox.getProcess('proc-sessionless');
-
-      expect(
-        vi.mocked(sandbox.client.processes.startProcess).mock.calls[0]
-      ).toEqual(['sleep 10']);
-      expect(process.sessionId).toBeUndefined();
-      expect(processes[0].sessionId).toBeUndefined();
-      expect(fetched?.sessionId).toBeUndefined();
-    });
-
-    it('does not touch default-session storage for implicit file operations', async () => {
-      vi.mocked(mockCtx.storage.put).mockImplementation(async (key) => {
-        if (key === 'defaultSession') throw new Error('storage down');
-      });
-
-      await sandbox.writeFile('/one.txt', 'one');
-      await sandbox.writeFile('/two.txt', 'two');
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
-        1,
-        '/one.txt',
-        'one',
-        { encoding: undefined }
-      );
-      expect(sandbox.client.files.writeFile).toHaveBeenNthCalledWith(
-        2,
-        '/two.txt',
-        'two',
-        { encoding: undefined }
-      );
-    });
-
-    it('does not update legacy default shell state from setEnvVars', async () => {
-      (sandbox as unknown as { defaultSession: string }).defaultSession =
-        'sandbox-default';
-      vi.mocked(sandbox.client.commands.execute).mockClear();
-
-      await sandbox.setEnvVars({ INFRA_TOKEN: 'secret' });
-
-      expect(sandbox.client.commands.execute).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('getProcess', () => {
-    it('returns null when the process does not exist', async () => {
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockRejectedValue(
-        new ProcessNotFoundError({
-          error: 'Process nonexistent-process-id-12345 not found',
-          code: 'PROCESS_NOT_FOUND',
-          details: { processId: 'nonexistent-process-id-12345' }
-        } as any)
-      );
-
-      const process = await sandbox.getProcess('nonexistent-process-id-12345');
-
-      expect(process).toBeNull();
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('explicit session creation', () => {
-    it('should create isolated execution session', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'custom-session-123',
-        message: 'Created'
-      } as any);
-
-      const session = await sandbox.createSession({
-        id: 'custom-session-123',
-        env: { NODE_ENV: 'test' },
-        cwd: '/test'
-      });
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: 'custom-session-123',
-        env: { NODE_ENV: 'test' },
-        cwd: '/test'
-      });
-
-      expect(session.id).toBe('custom-session-123');
-      expect(session.exec).toBeInstanceOf(Function);
-      expect(session.exec).toBeInstanceOf(Function);
-      expect(session.writeFile).toBeInstanceOf(Function);
-    });
-
-    it('should execute operations in specific session context', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'isolated-session',
-        message: 'Created'
-      } as any);
-
-      const session = await sandbox.createSession({ id: 'isolated-session' });
-
-      await session.exec('echo test');
-
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'echo test',
-        { sessionId: 'isolated-session' },
-        undefined
-      );
-    });
-
-    it('should isolate multiple explicit sessions', async () => {
-      vi.mocked(sandbox.client.utils.createSession)
-        .mockResolvedValueOnce({
-          success: true,
-          id: 'session-1',
-          message: 'Created'
-        } as any)
-        .mockResolvedValueOnce({
-          success: true,
-          id: 'session-2',
-          message: 'Created'
-        } as any);
-
-      const session1 = await sandbox.createSession({ id: 'session-1' });
-      const session2 = await sandbox.createSession({ id: 'session-2' });
-
-      await session1.exec('echo build');
-      await session2.exec('echo test');
-
-      const session1Options = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[0][1];
-      const session2Options = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[1][1];
-
-      expect(session1Options?.sessionId).toBe('session-1');
-      expect(session2Options?.sessionId).toBe('session-2');
-      expect(session1Options?.sessionId).not.toBe(session2Options?.sessionId);
-    });
-
-    it('keeps explicit sessions separate from implicit exec', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'explicit-session',
-        message: 'Created'
-      } as any);
-
-      await sandbox.exec('echo implicit');
-
-      const explicitSession = await sandbox.createSession({
-        id: 'explicit-session'
-      });
-      await explicitSession.exec('echo explicit');
-
-      await sandbox.exec('echo implicit-again');
-
-      const implicitOptions1 = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[0][1];
-      const explicitOptions = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[1][1];
-      const implicitOptions2 = vi.mocked(sandbox.client.processes.startProcess)
-        .mock.calls[2][1];
-
-      expect(implicitOptions1).toBe(undefined);
-      expect(explicitOptions?.sessionId).toBe('explicit-session');
-      expect(implicitOptions2).toBe(undefined);
-    });
-
-    it('should generate session ID if not provided', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'session-generated-123',
-        message: 'Created'
-      } as any);
-
-      await sandbox.createSession();
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: expect.stringMatching(/^session-/)
-        })
-      );
-    });
-
-    it('forwards per-session command timeout to the runtime', async () => {
-      await sandbox.createSession({
-        id: 'timeout-session',
-        commandTimeoutMs: 12_345
-      });
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'timeout-session',
-          commandTimeoutMs: 12_345
-        })
-      );
-    });
-  });
-
-  describe('placement id capture', () => {
-    it('should store containerPlacementId from session-create response', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'explicit-session',
-        message: 'Created',
-        containerPlacementId: 'placement-abc-123'
-      } as any);
-
-      await sandbox.createSession({ id: 'explicit-session' });
-
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'containerPlacementId',
-        'placement-abc-123'
-      );
-    });
-
-    it('should store null when container reports containerPlacementId as null', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'explicit-session',
-        message: 'Created',
-        containerPlacementId: null
-      } as any);
-
-      await sandbox.createSession({ id: 'explicit-session' });
-
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'containerPlacementId',
-        null
-      );
-    });
-
-    it('should not touch containerPlacementId storage when response omits the field', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'explicit-session',
-        message: 'Created'
-      } as any);
-
-      await sandbox.createSession({ id: 'explicit-session' });
-
-      const placementCalls = mockCtx.storage.put.mock.calls.filter(
-        (call: unknown[]) => call[0] === 'containerPlacementId'
-      );
-      expect(placementCalls).toHaveLength(0);
-    });
-
-    it('getContainerPlacementId returns stored value', async () => {
-      mockCtx.storage.get.mockImplementation(async (key: string) => {
-        if (key === 'containerPlacementId') return 'placement-stored-xyz';
-        return null;
-      });
-
-      await expect(sandbox.getContainerPlacementId()).resolves.toBe(
-        'placement-stored-xyz'
-      );
-    });
-
-    it('getContainerPlacementId returns undefined when no handshake has occurred', async () => {
-      mockCtx.storage.get.mockResolvedValue(undefined);
-
-      await expect(sandbox.getContainerPlacementId()).resolves.toBeUndefined();
-    });
-  });
-
-  describe('ExecutionSession operations', () => {
-    let session: any;
-
-    beforeEach(async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockResolvedValueOnce({
-        success: true,
-        id: 'test-session',
-        message: 'Created'
-      } as any);
-
-      session = await sandbox.createSession({ id: 'test-session' });
-    });
-
-    it('should execute command with session context', async () => {
-      await session.exec('pwd');
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'pwd',
-        { sessionId: 'test-session' },
-        undefined
-      );
-    });
-
-    it('should start process with session context', async () => {
-      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-1',
-          pid: 1234,
-          command: 'sleep 10',
-          status: 'running',
-          startTime: new Date().toISOString()
-        }
-      } as any);
-
-      await session.exec('sleep 10', {
-        env: { TEST_ENV: '1' },
-        cwd: '/workspace/app',
-        timeout: 1000,
-        autoCleanup: false
-      });
-
-      expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
-        'sleep 10',
-        {
-          sessionId: 'test-session',
-          env: { TEST_ENV: '1' },
-          cwd: '/workspace/app',
-          timeoutMs: 1000,
-          autoCleanup: false
-        },
-        undefined
-      );
-    });
-
-    it('should write file with session context', async () => {
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
-        success: true,
-        path: '/test.txt',
-        timestamp: new Date().toISOString()
-      } as any);
-
-      await session.writeFile('/test.txt', 'content');
-
-      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
-        '/test.txt',
-        'content',
-        { sessionId: 'test-session', encoding: undefined }
-      );
-    });
-  });
-
-  describe('edge cases and error handling', () => {
-    it('should handle explicit session creation errors gracefully', async () => {
-      vi.mocked(sandbox.client.utils.createSession).mockRejectedValueOnce(
-        new Error('Session creation failed')
-      );
-
-      await expect(
-        sandbox.createSession({ id: 'failing-session' })
-      ).rejects.toThrow('Session creation failed');
-    });
-
-    it('should not create sessions for implicit file operations when environment is empty', async () => {
-      await sandbox.writeFile('/test.txt', 'content');
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
-      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
-        '/test.txt',
-        'content',
-        { encoding: undefined }
-      );
-    });
-
-    it('should use updated environment when creating explicit sessions', async () => {
-      await sandbox.setEnvVars({ NODE_ENV: 'production', DEBUG: 'true' });
-
-      await sandbox.createSession({ id: 'env-session' });
-
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: 'env-session',
-        env: { NODE_ENV: 'production', DEBUG: 'true' }
+        since: 'watch-1:0'
       });
     });
   });
@@ -1219,7 +742,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toContain('localhost');
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -1596,55 +1118,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('terminal lifecycle', () => {
-    it('destroys terminals through the container control API', async () => {
-      vi.mocked(sandbox.client.terminals.destroyTerminal).mockResolvedValue({
-        success: true,
-        id: 'terminal-a'
-      });
-
-      await sandbox.destroyTerminal('terminal-a');
-
-      expect(sandbox.client.terminals.destroyTerminal).toHaveBeenCalledWith(
-        'terminal-a'
-      );
-    });
-  });
-
-  describe('deleteSession', () => {
-    it('does not create a protected default session through implicit file operations', async () => {
-      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        sessionId: 'sandbox-default',
-        timestamp: new Date().toISOString()
-      });
-
-      await sandbox.writeFile('/test.txt', 'content');
-      const result = await sandbox.deleteSession('sandbox-default');
-
-      expect(result.success).toBe(true);
-      expect(sandbox.client.utils.deleteSession).toHaveBeenCalledWith(
-        'sandbox-default'
-      );
-    });
-
-    it('should allow deletion of explicit sessions', async () => {
-      // Mock the deleteSession API response
-      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        sessionId: 'custom-session',
-        timestamp: new Date().toISOString()
-      });
-
-      // Create a custom session
-      await sandbox.createSession({ id: 'custom-session' });
-
-      const result = await sandbox.deleteSession('custom-session');
-      expect(result.success).toBe(true);
-      expect(result.sessionId).toBe('custom-session');
-    });
-  });
-
   describe('constructPreviewUrl validation', () => {
     it('should throw clear error for ID with uppercase letters without normalizeId', async () => {
       await sandbox.setSandboxName('MyProject-123', false);
@@ -1817,7 +1290,6 @@ describe('Sandbox - Automatic Session Management', () => {
           id: expect.any(String)
         })
       );
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('onStop() preserves durable auth and clears runtime-scoped preview state', async () => {
@@ -1829,7 +1301,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(deletedKeys).not.toContain('portTokens');
       expect(deletedKeys).toContain('activePreviewPorts');
       expect(deletedKeys).toContain('currentRuntimeIdentity');
-      expect(deletedKeys).not.toContain('defaultSession');
     });
 
     it('stop() clears runtime-scoped preview state before signaling the container', async () => {
@@ -1877,7 +1348,7 @@ describe('Sandbox - Automatic Session Management', () => {
       }
     });
 
-    it('exposePort() persists durable auth and current-runtime activation without creating a session', async () => {
+    it('exposePort() persists durable auth and current-runtime activation', async () => {
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         if (key === 'portTokens') {
           return {};
@@ -1897,8 +1368,6 @@ describe('Sandbox - Automatic Session Management', () => {
         token: 'friendlytok',
         name: 'my-api'
       });
-
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
       expect(putSpy).toHaveBeenCalledWith('portTokens', {
         '8080': { token: 'friendlytok', name: 'my-api' }
       });
@@ -2350,7 +1819,6 @@ describe('Sandbox - Automatic Session Management', () => {
           status: 'active'
         }
       ]);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('returns an empty list when durable auth exists without a current runtime', async () => {
@@ -2370,7 +1838,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       await expect(sandbox.getExposedPorts('example.com')).resolves.toEqual([]);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('omits durable auth without matching current-runtime activation', async () => {
@@ -2388,7 +1855,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       await expect(sandbox.getExposedPorts('example.com')).resolves.toEqual([]);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -2415,7 +1881,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       await expect(sandbox.isPortExposed(8080)).resolves.toBe(true);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('returns false for durable auth without activation', async () => {
@@ -2433,7 +1898,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       await expect(sandbox.isPortExposed(8080)).resolves.toBe(false);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('returns false for activation from an old runtime', async () => {
@@ -2456,7 +1920,6 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       await expect(sandbox.isPortExposed(8080)).resolves.toBe(false);
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -2483,7 +1946,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(mockCtx.storage.put).toHaveBeenCalledWith('portTokens', {});
       expect(mockCtx.storage.delete).toHaveBeenCalledWith('activePreviewPorts');
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
 
     it('revokes auth and activation without touching the container registry when runtime is active', async () => {
@@ -2509,7 +1971,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(mockCtx.storage.put).toHaveBeenCalledWith('portTokens', {});
       expect(mockCtx.storage.delete).toHaveBeenCalledWith('activePreviewPorts');
-      expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
     });
   });
 
@@ -2894,17 +2355,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should allow creating a backup from /app', async () => {
       const { backupSandbox, bucket } = await createBackupSandbox();
-
-      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Created'
-      } as any);
-      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Deleted'
-      } as any);
       const createArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'createArchive')
         .mockResolvedValue({
@@ -2916,11 +2366,6 @@ describe('Sandbox - Automatic Session Management', () => {
         (backupSandbox as any).backupService.transfer,
         'uploadBackupPresigned'
       ).mockResolvedValue(undefined);
-      vi.spyOn(backupSandbox as any, 'executeCommand').mockResolvedValue({
-        stdout: '',
-        stderr: '',
-        exitCode: 0
-      });
 
       const backup = await backupSandbox.createBackup({ dir: '/app/project' });
 
@@ -2929,7 +2374,6 @@ describe('Sandbox - Automatic Session Management', () => {
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         {
-          sessionId: expect.stringMatching(/^__sandbox_backup_/),
           gitignore: false,
           excludes: [],
           compression: {
@@ -2943,17 +2387,6 @@ describe('Sandbox - Automatic Session Management', () => {
 
     it('should normalize globstar excludes before calling createArchive', async () => {
       const { backupSandbox } = await createBackupSandbox();
-
-      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Created'
-      } as any);
-      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Deleted'
-      } as any);
       const createArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'createArchive')
         .mockResolvedValue({
@@ -2965,11 +2398,6 @@ describe('Sandbox - Automatic Session Management', () => {
         (backupSandbox as any).backupService.transfer,
         'uploadBackupPresigned'
       ).mockResolvedValue(undefined);
-      vi.spyOn(backupSandbox as any, 'executeCommand').mockResolvedValue({
-        stdout: '',
-        stderr: '',
-        exitCode: 0
-      });
 
       await backupSandbox.createBackup({
         dir: '/app/project',
@@ -2980,7 +2408,6 @@ describe('Sandbox - Automatic Session Management', () => {
         '/app/project',
         expect.stringMatching(/^\/var\/backups\/.+\.sqsh$/),
         {
-          sessionId: expect.stringMatching(/^__sandbox_backup_/),
           gitignore: false,
           excludes: ['node_modules/.cache', '.next/cache', 'dist'],
           compression: {
@@ -3045,17 +2472,6 @@ describe('Sandbox - Automatic Session Management', () => {
         })
       });
       bucket.head.mockResolvedValue({ size: 42 });
-
-      vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Created'
-      } as any);
-      vi.spyOn(backupSandbox.client.utils, 'deleteSession').mockResolvedValue({
-        success: true,
-        id: 'backup-session',
-        message: 'Deleted'
-      } as any);
       const restoreArchiveSpy = vi
         .spyOn(backupSandbox.client.backup, 'restoreArchive')
         .mockResolvedValue({ success: true, dir: '/app/project' });
@@ -3065,11 +2481,6 @@ describe('Sandbox - Automatic Session Management', () => {
           'downloadBackupParallel'
         )
         .mockResolvedValue(undefined);
-      vi.spyOn(backupSandbox as any, 'executeCommand').mockResolvedValue({
-        stdout: '0',
-        stderr: '',
-        exitCode: 0
-      });
 
       const result = await backupSandbox.restoreBackup({
         id: backupId,
@@ -3083,32 +2494,24 @@ describe('Sandbox - Automatic Session Management', () => {
       });
       expect(restoreArchiveSpy).toHaveBeenCalledWith(
         '/app/project',
-        `/var/backups/${backupId}.sqsh`,
-        { sessionId: expect.stringMatching(/^__sandbox_backup_/) }
+        `/var/backups/${backupId}.sqsh`
       );
       expect(downloadBackupParallelSpy).toHaveBeenCalledWith(
         `/var/backups/${backupId}.sqsh`,
         `backups/${backupId}/data.sqsh`,
         42,
         backupId,
-        '/app/project',
-        expect.stringMatching(/^__sandbox_backup_/)
+        '/app/project'
       );
     });
 
     it('should write parallel restore ranges directly into the temp archive', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const expectedSize = 16 * 1024 * 1024;
-      const executeCommandSpy = vi
-        .spyOn(backupSandbox as any, 'executeCommand')
-        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
-        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
-        .mockResolvedValueOnce({
-          stdout: String(expectedSize),
-          stderr: '',
-          exitCode: 0
-        })
-        .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 });
+      const downloadArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'downloadArchive'
+      );
       vi.spyOn(
         (backupSandbox as any).backupService.transfer,
         'generatePresignedGetURL'
@@ -3121,20 +2524,21 @@ describe('Sandbox - Automatic Session Management', () => {
         'backups/test/data.sqsh',
         expectedSize,
         'test-backup-id',
-        '/app/project',
-        'backup-session'
+        '/app/project'
       );
 
-      const downloadCommand = executeCommandSpy.mock.calls[1][0] as string;
-      expect(downloadCommand).toContain(
-        "truncate -s 16777216 '/var/backups/test.sqsh.tmp'"
-      );
-      expect(downloadCommand).toContain("of='/var/backups/test.sqsh.tmp'");
-      expect(downloadCommand).toContain('oflag=seek_bytes');
-      expect(downloadCommand).toContain('conv=notrunc');
-      expect(downloadCommand).toContain('(set -o pipefail; curl -sSf');
-      expect(downloadCommand).not.toContain('cat ');
-      expect(downloadCommand).not.toContain('.part0.tmp');
+      expect(downloadArchiveSpy).toHaveBeenCalledWith({
+        archivePath: '/var/backups/test.sqsh',
+        expectedSize,
+        parts: expect.arrayContaining([
+          expect.objectContaining({
+            url: 'https://example.com/archive',
+            offset: 0,
+            range: expect.stringMatching(/^bytes=0-/)
+          })
+        ]),
+        timeoutMs: 1_810_000
+      });
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {
@@ -3249,40 +2653,17 @@ describe('Sandbox - Automatic Session Management', () => {
       }
     };
 
-    /**
-     * The mount + verification flow runs as a single in-container script.
-     * Match it by the `s3fs ` prefix inside the script body and return the
-     * exit code the caller would see for each scenario.
-     */
-    function commandResult(
-      command: string,
-      overrides: Partial<ExecResult> = {}
-    ): ExecResult {
-      return {
-        success: overrides.exitCode === undefined || overrides.exitCode === 0,
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-        command,
-        duration: 0,
-        timestamp: new Date().toISOString(),
-        ...overrides
-      };
-    }
-
     function mockMountScript(result: {
       exitCode: number;
       stdout?: string;
       stderr?: string;
     }) {
-      vi.mocked(sandbox.client.commands.execute).mockImplementation(
-        async (command: string) => {
-          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
-            return commandResult(command, result);
-          }
-          return commandResult(command);
-        }
-      );
+      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+        success: result.exitCode === 0,
+        exitCode: result.exitCode,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? ''
+      });
     }
 
     it('succeeds when the mount script reports the mount is live', async () => {
@@ -3324,60 +2705,41 @@ describe('Sandbox - Automatic Session Management', () => {
       // succeed, but s3fs is daemonised and can complete the mount between
       // the last poll and our cleanup. The failure path must unmount that
       // mount instead of leaking it.
-      const issuedCommands: string[] = [];
-      vi.mocked(sandbox.client.commands.execute).mockImplementation(
-        async (command: string) => {
-          issuedCommands.push(command);
-          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
-            return commandResult(command, {
-              exitCode: 3,
-              stdout: 'mount took too long'
-            });
-          }
-          return commandResult(command);
-        }
-      );
+
+      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+        success: false,
+        exitCode: 3,
+        stdout: 'mount took too long',
+        stderr: ''
+      });
 
       const err = await sandbox
         .mountBucket('my-bucket', '/mnt/late', mountOptions)
         .catch((e: Error) => e);
 
       expect(err).toBeInstanceOf(Error);
-      await expect(sandbox.unmountBucket('/mnt/late')).rejects.toThrow(
-        'No active mount found at path: /mnt/late'
+      expect(sandbox.client.mounts.isMountpoint).toHaveBeenCalledWith(
+        '/mnt/late'
       );
-      // The cleanup path must issue an unmount conditional on `mountpoint -q`,
-      // so a late-arriving FUSE mount is torn down before we drop the entry.
-      expect(
-        issuedCommands.some(
-          (c) =>
-            c.includes('mountpoint -q') &&
-            c.includes('fusermount -u') &&
-            c.includes('/mnt/late')
-        )
-      ).toBe(true);
+      expect(sandbox.client.mounts.unmountFuse).toHaveBeenCalledWith(
+        '/mnt/late'
+      );
     });
 
     it('keeps support files when failure cleanup cannot unmount FUSE', async () => {
-      const issuedCommands: string[] = [];
-      vi.mocked(sandbox.client.commands.execute).mockImplementation(
-        async (command: string) => {
-          issuedCommands.push(command);
-          if (command.includes('s3fs ') && command.includes('mountpoint -q')) {
-            return commandResult(command, {
-              exitCode: 3,
-              stdout: 'mount took too long'
-            });
-          }
-          if (command.includes('fusermount -u')) {
-            return commandResult(command, {
-              exitCode: 1,
-              stderr: 'device is busy'
-            });
-          }
-          return commandResult(command);
-        }
-      );
+      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+        success: false,
+        exitCode: 3,
+        stdout: 'mount took too long',
+        stderr: ''
+      });
+      vi.mocked(sandbox.client.mounts.isMountpoint).mockResolvedValue(true);
+      vi.mocked(sandbox.client.mounts.unmountFuse).mockResolvedValue({
+        success: false,
+        exitCode: 1,
+        stdout: '',
+        stderr: 'device is busy'
+      });
 
       await expect(
         sandbox.mountBucket('my-bucket', '/mnt/busy', mountOptions)
@@ -3386,9 +2748,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await expect(sandbox.unmountBucket('/mnt/busy')).rejects.toThrow(
         'No active mount found at path: /mnt/busy'
       );
-      expect(
-        issuedCommands.some((c) => c.includes('rm -f /tmp/.passwd-s3fs-'))
-      ).toBe(false);
+      expect(sandbox.client.mounts.deleteFile).not.toHaveBeenCalled();
     });
   });
 });
@@ -3396,78 +2756,3 @@ describe('Sandbox - Automatic Session Management', () => {
 // ---------------------------------------------------------------------------
 // Sandbox.getProcess()
 // ---------------------------------------------------------------------------
-
-describe('Sandbox.getProcess()', () => {
-  async function makeSandbox() {
-    const ctx = {
-      storage: {
-        get: vi.fn().mockResolvedValue(null),
-        put: vi.fn().mockResolvedValue(undefined),
-        delete: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue(new Map())
-      } as any,
-      blockConcurrencyWhile: vi
-        .fn()
-        .mockImplementation(<T>(cb: () => Promise<T>) => cb()),
-      waitUntil: vi.fn(),
-      id: { toString: () => 'test-id', equals: vi.fn(), name: 'test' } as any
-    };
-    const sb = new Sandbox(ctx as any, {});
-    await vi.waitFor(() =>
-      expect(ctx.blockConcurrencyWhile).toHaveBeenCalled()
-    );
-    sb.client = createMockControlClient();
-    vi.spyOn(sb.client.utils, 'createSession').mockResolvedValue({
-      success: true,
-      id: 'default',
-      message: 'ok'
-    } as any);
-    return sb;
-  }
-
-  it('response with no process field returns null', async () => {
-    const sb = await makeSandbox();
-    vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
-      success: true,
-      process: undefined,
-      timestamp: ''
-    } as any);
-    expect(await sb.getProcess('x')).toBeNull();
-  });
-
-  it('thrown ProcessNotFoundError returns null', async () => {
-    const sb = await makeSandbox();
-    vi.spyOn(sb.client.processes, 'getProcess').mockRejectedValue(
-      new ProcessNotFoundError({
-        code: 'PROCESS_NOT_FOUND',
-        message: 'Process x not found',
-        context: { processId: 'x' },
-        httpStatus: 404,
-        timestamp: ''
-      } as any)
-    );
-    expect(await sb.getProcess('x')).toBeNull();
-  });
-
-  it('re-attaches with persisted output modes', async () => {
-    const sb = await makeSandbox();
-    vi.spyOn(sb.client.processes, 'getProcess').mockResolvedValue({
-      success: true,
-      process: {
-        id: 'x',
-        pid: 123,
-        command: 'echo test',
-        status: 'running',
-        startTime: new Date().toISOString(),
-        stdout: 'ignore',
-        stderr: 'combined'
-      },
-      timestamp: ''
-    } as any);
-
-    const proc = await sb.getProcess('x');
-
-    expect(proc?.stdout).toBeNull();
-    expect(proc?.stderr).toBeNull();
-  });
-});

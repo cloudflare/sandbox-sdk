@@ -77,9 +77,9 @@ export interface SandboxProcess {
 export interface WaitForPortOptions {
   /**
    * Check mode
-   * - 'http': Make an HTTP request and check for success status (default)
-   * - 'tcp': Just check if TCP connection succeeds
-   * @default 'http'
+   * - 'http': Make an HTTP request and check for success status
+   * - 'tcp': Just check if TCP connection succeeds (default)
+   * @default 'tcp'
    */
   mode?: 'http' | 'tcp';
 

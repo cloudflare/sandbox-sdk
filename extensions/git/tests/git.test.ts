@@ -1,7 +1,8 @@
 import type {
-  SandboxExecOptions,
-  SandboxExecStringOutput,
-  SandboxProcessPromise
+  ExecOptions,
+  ProcessOutput,
+  SandboxCommand,
+  SandboxProcess
 } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -23,32 +24,39 @@ import {
 
 type ExecResult = { stdout: string; stderr: string; exitCode: number };
 
-type GitCommand = string | string[];
-
-function outputFor(
-  command: GitCommand,
-  result: ExecResult
-): SandboxExecStringOutput {
+function outputFor(result: ExecResult): ProcessOutput<string> {
   return {
-    ...result,
-    success: result.exitCode === 0,
-    duration: 1,
-    command: Array.isArray(command) ? command.join(' ') : command,
-    timestamp: new Date().toISOString()
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    timedOut: false,
+    truncated: false
   };
 }
 
+function processFor(result: ExecResult): SandboxProcess {
+  return {
+    id: 'git-test-process',
+    pid: 1234,
+    exitCode: Promise.resolve(result.exitCode),
+    status: vi.fn(),
+    logs: vi.fn(),
+    waitForLog: vi.fn(),
+    waitForExit: vi.fn(),
+    output: vi.fn(async () => outputFor(result)),
+    waitForPort: vi.fn(),
+    kill: vi.fn()
+  } as unknown as SandboxProcess;
+}
+
 function createGit(
-  execImpl: (command: GitCommand, options?: SandboxExecOptions) => ExecResult,
+  execImpl: (command: SandboxCommand, options?: ExecOptions) => ExecResult,
   envVars?: Record<string, string>,
   registerGitAuthInterceptor?: SandboxLike['registerGitAuthInterceptor']
 ) {
-  const exec = vi.fn((command: GitCommand, options?: SandboxExecOptions) => {
-    const result = execImpl(command, options);
-    return {
-      output: vi.fn(async () => outputFor(command, result))
-    } as unknown as SandboxProcessPromise;
-  });
+  const exec = vi.fn(async (command: SandboxCommand, options?: ExecOptions) =>
+    processFor(execImpl(command, options))
+  );
   const sandbox = {
     client: { commands: { execute: vi.fn() } },
     exec,
@@ -151,11 +159,11 @@ describe('Git extension', () => {
       expect.arrayContaining(['git', 'clone'])
     );
     expect(exec.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ stdout: 'pipe', stderr: 'pipe' })
+      expect.objectContaining({ timeout: 610_000 })
     );
   });
 
-  it('runs in the provided session and target dir', async () => {
+  it('runs branch detection in the provided target dir', async () => {
     const { git, exec } = createGit(() => ({
       stdout: 'main\n',
       stderr: '',
@@ -163,19 +171,11 @@ describe('Git extension', () => {
     }));
 
     await git.checkout('https://github.com/owner/repo.git', {
-      targetDir: '/work/app',
-      sessionId: 'sess-1'
+      targetDir: '/work/app'
     });
 
-    expect(exec.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ sessionId: 'sess-1' })
-    );
-    // Branch query runs with cwd set to the target dir.
     expect(exec.mock.calls[1][1]).toEqual({
-      cwd: '/work/app',
-      sessionId: 'sess-1',
-      stdout: 'pipe',
-      stderr: 'pipe'
+      cwd: '/work/app'
     });
   });
 
@@ -251,12 +251,9 @@ describe('Git extension', () => {
 
   it('registers git auth interception when auth matches the checkout host', async () => {
     const registerGitAuthInterceptor = vi.fn(async () => {});
-    const exec = vi.fn((command: GitCommand) => {
-      const result = { stdout: 'main\n', stderr: '', exitCode: 0 };
-      return {
-        output: vi.fn(async () => outputFor(command, result))
-      } as unknown as SandboxProcessPromise;
-    });
+    const exec = vi.fn(async () =>
+      processFor({ stdout: 'main\n', stderr: '', exitCode: 0 })
+    );
     const sandbox = {
       client: { commands: { execute: vi.fn() } },
       exec,
@@ -319,12 +316,9 @@ describe('Git extension', () => {
     const configuredGit = withGit(
       {
         client: { commands: { execute: vi.fn() } },
-        exec: vi.fn((command: GitCommand) => {
-          const result = { stdout: 'main\n', stderr: '', exitCode: 0 };
-          return {
-            output: vi.fn(async () => outputFor(command, result))
-          } as unknown as SandboxProcessPromise;
-        }),
+        exec: vi.fn(async () =>
+          processFor({ stdout: 'main\n', stderr: '', exitCode: 0 })
+        ),
         registerGitAuthInterceptor
       } as unknown as SandboxLike,
       { auth: { github: { token: 'secret-token' } } }
@@ -351,21 +345,5 @@ describe('Git extension', () => {
       })
     ).rejects.toThrow(/exporting ContainerProxy/);
     expect(exec).not.toHaveBeenCalled();
-  });
-
-  it('does not inject sandbox env vars when a session is provided', async () => {
-    const { git, exec } = createGit(
-      () => ({ stdout: 'main\n', stderr: '', exitCode: 0 }),
-      { GITHUB_TOKEN: 'tok' }
-    );
-
-    await git.checkout('https://github.com/owner/repo.git', {
-      sessionId: 'sess-1'
-    });
-
-    for (const call of exec.mock.calls) {
-      expect((call[1] as { sessionId?: string }).sessionId).toBe('sess-1');
-      expect((call[1] as { env?: Record<string, string> }).env).toBeUndefined();
-    }
   });
 });

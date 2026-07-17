@@ -1,3 +1,4 @@
+import type { ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Sandbox } from '../../../packages/sandbox/src/sandbox';
 import { type OpenCodeStateStorage, withOpenCode } from '../src/lifecycle';
@@ -5,17 +6,27 @@ import { type OpenCodeStateStorage, withOpenCode } from '../src/lifecycle';
 // SandboxExtension stores the sandbox via a private field reached through a
 // prototype getter, so the cast to Sandbox is sufficient for these unit tests.
 
+function createProcessStatus(): ProcessStatus {
+  return {
+    id: 'proc-1',
+    pid: 123,
+    command: ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
+    state: 'running',
+    startedAt: new Date().toISOString()
+  };
+}
+
 function createMockSandbox() {
   return {
     exec: vi.fn().mockResolvedValue({
       id: 'proc-1',
-      command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+      command: ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
       startTime: new Date(),
       exitCode: Promise.resolve(0),
       waitForPort: vi.fn().mockResolvedValue(undefined),
-      kill: vi.fn(),
+      kill: vi.fn().mockResolvedValue(undefined),
       getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
-      status: vi.fn().mockResolvedValue('running')
+      status: vi.fn().mockResolvedValue(createProcessStatus())
     }),
     listProcesses: vi.fn().mockResolvedValue([]),
     getProcess: vi.fn().mockResolvedValue(null),
@@ -74,8 +85,8 @@ describe('OpenCode desired-state persistence', () => {
     await revived.start();
 
     expect(second.exec).toHaveBeenCalledWith(
-      "cd '/agents' && opencode serve --port 8080 --hostname 0.0.0.0",
-      expect.any(Object)
+      ['opencode', 'serve', '--port', '8080', '--hostname', '0.0.0.0'],
+      expect.objectContaining({ cwd: '/agents' })
     );
   });
 
@@ -86,8 +97,8 @@ describe('OpenCode desired-state persistence', () => {
     await handle.start();
 
     expect(sandbox.exec).toHaveBeenCalledWith(
-      "cd '/defaults' && opencode serve --port 4096 --hostname 0.0.0.0",
-      expect.any(Object)
+      ['opencode', 'serve', '--port', '4096', '--hostname', '0.0.0.0'],
+      expect.objectContaining({ cwd: '/defaults' })
     );
   });
 
@@ -153,7 +164,21 @@ describe('OpenCode desired-state persistence', () => {
     const commands = (second.exec as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0]
     );
-    expect(commands).toContain('opencode serve --port 4096 --hostname 0.0.0.0');
-    expect(commands).toContain('opencode serve --port 5000 --hostname 0.0.0.0');
+    expect(commands).toContainEqual([
+      'opencode',
+      'serve',
+      '--port',
+      '4096',
+      '--hostname',
+      '0.0.0.0'
+    ]);
+    expect(commands).toContainEqual([
+      'opencode',
+      'serve',
+      '--port',
+      '5000',
+      '--hostname',
+      '0.0.0.0'
+    ]);
   });
 });
