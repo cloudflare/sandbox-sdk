@@ -135,13 +135,13 @@ async def _print_stream(result) -> None:  # noqa: ANN001
 # ---------------------------------------------------------------------------
 
 
-async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
+async def _copy_sandbox_output(sandbox_session, output_dir: Path) -> list[Path]:
     """Read files from /workspace/output/ in the sandbox and write them locally."""
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
 
     # List files via exec since the SandboxSession wrapper doesn't expose ls().
-    ls_result = await session.exec(
+    ls_result = await sandbox_session.exec(
         "find",
         "/workspace/output",
         "-maxdepth",
@@ -163,7 +163,7 @@ async def _copy_sandbox_output(session, output_dir: Path) -> list[Path]:
     ]
 
     for filepath in filenames:
-        handle = await session.read(Path(filepath))
+        handle = await sandbox_session.read(Path(filepath))
         try:
             payload = handle.read()
         finally:
@@ -200,16 +200,18 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
         capabilities=[Shell(), Filesystem()],
     )
 
-    client = CloudflareSandboxClient()
+    sandbox_client = CloudflareSandboxClient()
     options = CloudflareSandboxClientOptions(worker_url=worker_url)
-    session = await client.create(manifest=agent.default_manifest, options=options)
+    sandbox_session = await sandbox_client.create(
+        manifest=agent.default_manifest, options=options
+    )
 
     try:
-        async with session:
+        async with sandbox_session:
             # Copy the image into the sandbox so the agent can inspect it.
             if image is not None:
                 sandbox_image_path = f"/workspace/{image.name}"
-                await session.write(
+                await sandbox_session.write(
                     Path(sandbox_image_path),
                     io.BytesIO(image.read_bytes()),
                 )
@@ -220,7 +222,7 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
                 )
 
             run_config = RunConfig(
-                sandbox=SandboxRunConfig(session=session),
+                sandbox=SandboxRunConfig(session=sandbox_session),
                 workflow_name="basic-js-sandbox",
                 tracing_disabled=True,
             )
@@ -230,7 +232,7 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
             await _print_stream(result)
 
             # --- extract output files ---
-            copied = await _copy_sandbox_output(session, output_dir)
+            copied = await _copy_sandbox_output(sandbox_session, output_dir)
             if copied:
                 print(f"\n\u2705 Copied {len(copied)} file(s) to {output_dir}:")
                 for path in copied:
@@ -238,7 +240,7 @@ async def run(prompt: str, output_dir: Path, image: Path | None = None) -> None:
             else:
                 print("\n\u26a0  Agent did not produce any output files.")
     finally:
-        await client.delete(session)
+        await sandbox_client.delete(sandbox_session)
 
 
 def main() -> None:

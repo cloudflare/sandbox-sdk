@@ -3,8 +3,9 @@ import { BASE, createMockEnv, createMockProcess, createMockSandbox, sandboxUrl }
 
 // Mock @cloudflare/sandbox before importing app
 const mockSandbox = createMockSandbox();
+const getSandboxMock = vi.fn(() => mockSandbox);
 vi.mock('../../../../packages/sandbox/src/sandbox', () => ({
-  getSandbox: vi.fn(() => mockSandbox),
+  getSandbox: getSandboxMock,
   Sandbox: class {}
 }));
 
@@ -150,6 +151,22 @@ describe('sandbox route pool middleware', () => {
     expect(env._poolStub.lookupContainer).not.toHaveBeenCalled();
     expect(env._poolStub.getContainer).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { method: 'POST', action: 'exec' },
+    { method: 'GET', action: 'pty' },
+    { method: 'POST', action: 'session' }
+  ])('returns a non-waking 404 for removed $method /$action', async ({ method, action }) => {
+    const env = createMockEnv();
+
+    const res = await makeRequest(sandboxUrl('test', action), { method }, env);
+
+    expect(res.status).toBe(404);
+    expect(env._poolStub.configure).not.toHaveBeenCalled();
+    expect(env._poolStub.lookupContainer).not.toHaveBeenCalled();
+    expect(env._poolStub.getContainer).not.toHaveBeenCalled();
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('Sandbox ID validation', () => {
@@ -197,41 +214,33 @@ describe('Auth middleware — /v1/openapi.*', () => {
     vi.clearAllMocks();
   });
 
-  // Hono matches the app.use('/v1/openapi.*') pattern.
-  // Use the full path that Hono's router resolves.
-  const openapiUrl = `${BASE}/v1/openapi.json`;
+  it.each(['/v1/openapi.json', '/v1/openapi.html', '/v1/openapi'])(
+    'enforces configured authentication for %s',
+    async (path) => {
+      const authEnv = createMockEnv({
+        SANDBOX_API_KEY: 'expected-token'
+      });
 
-  it('allows /openapi.json with a valid Bearer token', async () => {
-    const res = await app.request(
-      openapiUrl,
-      { headers: { Authorization: 'Bearer secret' } },
-      createMockEnv({ SANDBOX_API_KEY: 'secret' }) as Record<string, unknown>
-    );
-    expect(res.status).toBe(200);
-  });
+      expect((await makeRequest(`${BASE}${path}`, {}, authEnv)).status).toBe(401);
+      expect(
+        (await makeRequest(`${BASE}${path}`, { headers: { Authorization: 'Bearer wrong-token' } }, authEnv)).status
+      ).toBe(401);
+      expect(
+        (await makeRequest(`${BASE}${path}`, { headers: { Authorization: 'Bearer expected-token' } }, authEnv)).status
+      ).toBe(200);
+      expect((await makeRequest(`${BASE}${path}?token=expected-token`, {}, authEnv)).status).toBe(200);
+    }
+  );
 
-  it('rejects /openapi.json with a wrong token', async () => {
-    const res = await app.request(
-      openapiUrl,
-      { headers: { Authorization: 'Bearer wrong' } },
-      createMockEnv({ SANDBOX_API_KEY: 'secret' }) as Record<string, unknown>
-    );
-    // If Hono's pattern matching doesn't apply the middleware, fall back to
-    // testing the route still returns the schema (200). Either the middleware
-    // rejects (401) or it isn't matched and we get 200. Both are acceptable
-    // since the middleware code IS tested via the /sandbox/* path above.
-    expect([200, 401]).toContain(res.status);
-  });
+  it.each(['/v1/openapi.json', '/v1/openapi.html', '/v1/openapi'])(
+    'allows %s when authentication is disabled',
+    async (path) => {
+      const authDisabledEnv = createMockEnv();
+      Reflect.deleteProperty(authDisabledEnv, 'SANDBOX_API_KEY');
 
-  it('returns 200 for /openapi.json when SANDBOX_API_KEY is not set', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const res = await app.request(openapiUrl, {}, createMockEnv() as Record<string, unknown>);
-    expect(res.status).toBe(200);
-    // The warning may or may not fire depending on Hono's middleware matching
-    // for the `/openapi.*` pattern under `app.request()`. The core auth-warning
-    // logic is validated via the /sandbox/* tests above.
-    warnSpy.mockRestore();
-  });
+      expect((await makeRequest(`${BASE}${path}`, {}, authDisabledEnv)).status).toBe(200);
+    }
+  );
 });
 
 describe('Versioning — old routes return 404', () => {

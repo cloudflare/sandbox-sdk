@@ -213,11 +213,11 @@ def _sse_event(data: dict | str) -> str:
 
 async def _stream_agent_response(prompt: str, history: list[dict]):
     """Run the agent and yield SSE events in AI SDK UI Message Stream format."""
-    session = _get_session()
+    sandbox_session = _get_session()
     agent = _build_agent()
 
     run_config = RunConfig(
-        sandbox=SandboxRunConfig(session=session),
+        sandbox=SandboxRunConfig(session=sandbox_session),
         workflow_name="workspace-chat",
         tracing_disabled=True,
     )
@@ -444,8 +444,8 @@ async def list_endpoint(request: Request) -> JSONResponse:
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
 
-    session = _get_session()
-    result = await session.exec(
+    sandbox_session = _get_session()
+    result = await sandbox_session.exec(
         "find",
         safe,
         "-maxdepth",
@@ -488,8 +488,8 @@ async def read_file_endpoint(request: Request) -> Response:
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
 
-    session = _get_session()
-    result = await session.exec("cat", "--", safe, shell=False)
+    sandbox_session = _get_session()
+    result = await sandbox_session.exec("cat", "--", safe, shell=False)
     if not result.ok():
         return JSONResponse({"error": f"File not found: {path}"}, status_code=404)
 
@@ -510,27 +510,27 @@ async def delete_file_endpoint(request: Request) -> JSONResponse:
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
 
-    session = _get_session()
-    result = await session.exec("rm", "-f", "--", safe, shell=False)
+    sandbox_session = _get_session()
+    result = await sandbox_session.exec("rm", "-f", "--", safe, shell=False)
     return JSONResponse({"path": path, "deleted": result.ok()})
 
 
 async def workspace_info_endpoint(request: Request) -> JSONResponse:
     """GET /api/workspace/info — workspace statistics."""
-    session = _get_session()
+    sandbox_session = _get_session()
     file_count = 0
     dir_count = 0
     total_bytes = 0
     try:
-        file_result = await session.exec("find", WORKSPACE_ROOT, "-type", "f", shell=False)
+        file_result = await sandbox_session.exec("find", WORKSPACE_ROOT, "-type", "f", shell=False)
         file_count = len(file_result.stdout.decode().strip().splitlines()) if file_result.ok() else 0
 
-        dir_result = await session.exec(
+        dir_result = await sandbox_session.exec(
             "find", WORKSPACE_ROOT, "-mindepth", "1", "-type", "d", shell=False
         )
         dir_count = len(dir_result.stdout.decode().strip().splitlines()) if dir_result.ok() else 0
 
-        du_result = await session.exec("du", "-sb", WORKSPACE_ROOT, shell=False)
+        du_result = await sandbox_session.exec("du", "-sb", WORKSPACE_ROOT, shell=False)
         if du_result.ok():
             parts = du_result.stdout.decode().strip().split()
             if parts:
@@ -549,10 +549,10 @@ async def workspace_info_endpoint(request: Request) -> JSONResponse:
 
 async def file_tree_endpoint(request: Request) -> JSONResponse:
     """GET /api/files-tree — recursive flat listing of all files in the workspace."""
-    session = _get_session()
+    sandbox_session = _get_session()
     entries: list[dict[str, object]] = []
     try:
-        result = await session.exec(
+        result = await sandbox_session.exec(
             "find", WORKSPACE_ROOT, "-type", "f", "-printf", "%s\t%p\n",
             shell=False,
         )
@@ -616,9 +616,9 @@ async def artifact_endpoint(request: Request) -> Response:
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
 
-    session = _get_session()
+    sandbox_session = _get_session()
     try:
-        file_obj = await session.read(safe)
+        file_obj = await sandbox_session.read(safe)
     except (WorkspaceReadNotFoundError, FileNotFoundError, Exception):
         return JSONResponse({"error": f"File not found: {path}"}, status_code=404)
 
@@ -673,7 +673,7 @@ async def upload_endpoint(request: Request) -> JSONResponse:
     """POST /api/upload — upload files into the sandbox workspace."""
     form = await request.form()
     uploaded: list[dict[str, object]] = []
-    session = _get_session()
+    sandbox_session = _get_session()
 
     for key in form:
         upload = form[key]
@@ -693,8 +693,8 @@ async def upload_endpoint(request: Request) -> JSONResponse:
             )
         safe = f"/workspace/uploads/{filename}"
         # Ensure the uploads directory exists
-        await session.exec("mkdir", "-p", "/workspace/uploads", shell=False)
-        await session.write(Path(safe), io.BytesIO(content))
+        await sandbox_session.exec("mkdir", "-p", "/workspace/uploads", shell=False)
+        await sandbox_session.write(Path(safe), io.BytesIO(content))
         uploaded.append({"path": f"/workspace/uploads/{filename}", "size": len(content)})
 
     return JSONResponse({"uploaded": uploaded})

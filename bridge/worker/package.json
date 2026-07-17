@@ -12,7 +12,7 @@
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "bun script/integration"
+    "test:integration": "bun ../script/integration"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.7",
