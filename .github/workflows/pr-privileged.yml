@@ -258,6 +258,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     if: |
       needs.policy.outputs.run_privileged == 'true' &&
       needs.detect-changes.outputs.needs-e2e == 'true' &&
@@ -266,11 +267,11 @@ jobs:
     with:
       worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
       image_tag: ci-${{ needs.detect-changes.outputs.docker-hash }}
-      images_changed: ${{ needs.detect-changes.outputs.docker-changed }}
       deploy_hash: ${{ needs.detect-changes.outputs.deploy-hash }}
       checkout_ref: ${{ github.event.pull_request.head.sha }}
       checkout_repo: ${{ github.event.pull_request.head.repo.full_name }}
       cache_readonly: true
+      pr_number: ${{ github.event.pull_request.number }}
     secrets: inherit
 
   # --- Bridge E2E tests (authorized + 'run-e2e-bridge' label) ---

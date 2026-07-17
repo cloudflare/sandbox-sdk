@@ -144,7 +144,6 @@ jobs:
     with:
       worker_name_prefix: ${{ inputs.worker_name_prefix }}
       image_tag: ${{ needs.version.outputs.image_tag }}
-      images_changed: ${{ needs.build.outputs.images_changed }}
       deploy_hash: ${{ needs.hashes.outputs.deploy }}
     secrets: inherit
 
