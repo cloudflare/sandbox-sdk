@@ -131,6 +131,8 @@ export class ContainerControlClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
+  private connectionRetainers = 0;
+  private connectionGeneration = 0;
 
   constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
@@ -230,7 +232,9 @@ export class ContainerControlClient {
 
     const { imports, exports } = conn.getStats();
     const isBusy =
-      imports > IDLE_IMPORT_THRESHOLD || exports > IDLE_EXPORT_THRESHOLD;
+      this.connectionRetainers > 0 ||
+      imports > IDLE_IMPORT_THRESHOLD ||
+      exports > IDLE_EXPORT_THRESHOLD;
 
     if (isBusy) {
       if (!this.busy) {
@@ -278,6 +282,7 @@ export class ContainerControlClient {
       // Re-check before disconnecting — a new call may have started.
       const { imports, exports } = conn.getStats();
       if (
+        this.connectionRetainers === 0 &&
         imports <= IDLE_IMPORT_THRESHOLD &&
         exports <= IDLE_EXPORT_THRESHOLD
       ) {
@@ -297,6 +302,8 @@ export class ContainerControlClient {
   private destroyConnection(): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
+    this.connectionRetainers = 0;
+    this.connectionGeneration += 1;
     // If we tear down while still believing the session is busy, fire the
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
@@ -442,6 +449,23 @@ export class ContainerControlClient {
     } finally {
       activity.finish();
     }
+  }
+
+  retainConnection(): () => void {
+    this.getConnection();
+    const generation = this.connectionGeneration;
+    this.connectionRetainers += 1;
+    this.clearIdleTimer();
+    let released = false;
+
+    return () => {
+      if (released || generation !== this.connectionGeneration) return;
+      released = true;
+      this.connectionRetainers -= 1;
+      if (this.connectionRetainers === 0 && !this.busy) {
+        this.scheduleIdleDisconnect();
+      }
+    };
   }
 
   disconnect(): void {

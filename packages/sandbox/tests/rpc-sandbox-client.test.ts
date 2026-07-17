@@ -106,6 +106,34 @@ describe('ContainerControlClient busy/idle tracking', () => {
     vi.useRealTimers();
   });
 
+  it('keeps the session marked busy while explicitly retained', async () => {
+    const onActivity = vi.fn();
+    const onSessionBusy = vi.fn();
+    const onSessionIdle = vi.fn();
+
+    const client = new ContainerControlClient({
+      stub: { fetch: vi.fn() },
+      onActivity,
+      onSessionBusy,
+      onSessionIdle,
+      busyPollIntervalMs: 1_000,
+      idleDisconnectMs: 1_000
+    });
+
+    await client.connect();
+    const release = client.retainConnection();
+
+    vi.advanceTimersByTime(3_000);
+    expect(disconnects).toHaveLength(0);
+    expect(onSessionBusy).toHaveBeenCalledTimes(1);
+    expect(onActivity).toHaveBeenCalledTimes(3);
+
+    release();
+    vi.advanceTimersByTime(2_000);
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+    expect(disconnects).toHaveLength(1);
+  });
+
   it('keeps the session marked busy while a stream export is held', async () => {
     const onActivity = vi.fn();
     const onSessionBusy = vi.fn();

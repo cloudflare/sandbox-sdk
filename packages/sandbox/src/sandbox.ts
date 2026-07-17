@@ -158,6 +158,7 @@ function processCapabilityControl(
 ): ProcessCapabilityControl {
   const processes = client.processesWithoutActivity();
   return {
+    retainConnection: () => client.retainConnection(),
     getProcess: (id) => processes.get(id),
     openLogs: (id, options) => processes.openLogs(id, options),
     openPortWatch: (port, options) => client.ports.openWatch(port, options),

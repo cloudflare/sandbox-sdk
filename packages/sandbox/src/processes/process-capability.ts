@@ -1,7 +1,9 @@
 import { RpcTarget } from 'cloudflare:workers';
 import type {
+  PortWatchEvent,
   PortWatchRPCOptions,
   PortWatchSubscriptionAPI,
+  ProcessLogEvent,
   ProcessLogSubscriptionAPI,
   ProcessLogsRPCOptions,
   ProcessStatus
@@ -12,6 +14,7 @@ import { ProcessNotFoundError, StaleProcessHandleError } from '../errors';
 import type {
   ProcessLogSubscriptionRPC,
   ProcessPortSubscriptionRPC,
+  ProcessPullSubscriptionRPC,
   ProcessSubscriptionRPC
 } from './rpc-types';
 
@@ -20,6 +23,7 @@ export interface ProcessCapabilityRuntime {
 }
 
 export interface ProcessCapabilityControl {
+  retainConnection(): () => void;
   getProcess(id: string): Promise<ProcessStatus | null>;
   openLogs(
     id: string,
@@ -77,43 +81,63 @@ export class ProcessCapabilityTarget extends RpcTarget {
 
   async openLogs(
     options?: ProcessLogsRPCOptions
-  ): Promise<ProcessLogSubscriptionRPC> {
-    const subscription = await this.#lifecycle.runRead(
+  ): Promise<ProcessPullSubscriptionRPC<ProcessLogEvent>> {
+    const retained = await this.#lifecycle.runRead(
       this.#runtime,
       'process.logs.open',
       async (control) => {
-        this.#verifiedStatus(await control.getProcess(this.#id));
-        return control.openLogs(this.#id, options);
+        const releaseConnection = control.retainConnection();
+        try {
+          this.#verifiedStatus(await control.getProcess(this.#id));
+          return {
+            subscription: await control.openLogs(this.#id, options),
+            releaseConnection
+          };
+        } catch (error) {
+          releaseConnection();
+          throw error;
+        }
       }
     );
     return new FencedSubscriptionTarget({
-      subscription,
+      subscription: retained.subscription,
       runtime: this.#runtime,
       lifecycle: this.#lifecycle,
       operation: 'process.logs.forward',
       isTerminal: (event) => event.type === 'terminal',
-      allowCleanClose: true
+      allowCleanClose: true,
+      releaseConnection: retained.releaseConnection
     });
   }
 
   async openPortWatch(
     port: number,
     options?: PortWatchRPCOptions
-  ): Promise<ProcessPortSubscriptionRPC> {
-    const subscription = await this.#lifecycle.runRead(
+  ): Promise<ProcessPullSubscriptionRPC<PortWatchEvent>> {
+    const retained = await this.#lifecycle.runRead(
       this.#runtime,
       'process.port.open',
       async (control) => {
-        this.#verifiedStatus(await control.getProcess(this.#id));
-        return control.openPortWatch(port, options);
+        const releaseConnection = control.retainConnection();
+        try {
+          this.#verifiedStatus(await control.getProcess(this.#id));
+          return {
+            subscription: await control.openPortWatch(port, options),
+            releaseConnection
+          };
+        } catch (error) {
+          releaseConnection();
+          throw error;
+        }
       }
     );
     return new FencedSubscriptionTarget({
-      subscription,
+      subscription: retained.subscription,
       runtime: this.#runtime,
       lifecycle: this.#lifecycle,
       operation: 'process.port.forward',
-      isTerminal: (event) => event.type === 'ready' || event.type === 'error'
+      isTerminal: (event) => event.type === 'ready' || event.type === 'error',
+      releaseConnection: retained.releaseConnection
     });
   }
 
@@ -152,11 +176,12 @@ type FencedSubscriptionOptions<T> = {
   operation: string;
   isTerminal: (event: T) => boolean;
   allowCleanClose?: boolean;
+  releaseConnection?: () => void;
 };
 
 class FencedSubscriptionTarget<T>
   extends RpcTarget
-  implements ProcessSubscriptionRPC<T>
+  implements ProcessPullSubscriptionRPC<T>
 {
   readonly #subscription: ProcessSubscriptionRPC<T>;
   readonly #runtime: ProcessCapabilityRuntime;
@@ -164,7 +189,8 @@ class FencedSubscriptionTarget<T>
   readonly #operation: string;
   readonly #isTerminal: (event: T) => boolean;
   readonly #allowCleanClose: boolean;
-  #opened = false;
+  readonly #releaseConnection: (() => void) | undefined;
+  #reader: ReadableStreamDefaultReader<T> | undefined;
   #released = false;
 
   constructor(options: FencedSubscriptionOptions<T>) {
@@ -175,73 +201,55 @@ class FencedSubscriptionTarget<T>
     this.#operation = options.operation;
     this.#isTerminal = options.isTerminal;
     this.#allowCleanClose = options.allowCleanClose ?? false;
+    this.#releaseConnection = options.releaseConnection;
   }
 
-  async stream(): Promise<ReadableStream<T>> {
-    if (this.#opened) throw new Error('Subscription stream already opened');
-    this.#opened = true;
+  async next(): Promise<ReadableStreamReadResult<T>> {
+    if (this.#released) return { done: true, value: undefined };
 
-    let source: ReadableStream<T>;
+    if (!this.#reader) {
+      try {
+        const source = await this.#lifecycle.runRead(
+          this.#runtime,
+          this.#operation,
+          () => this.#subscription.stream()
+        );
+        this.#reader = source.getReader();
+      } catch (error) {
+        this.#release();
+        throw error;
+      }
+    }
+
+    let result: ReadableStreamReadResult<T>;
     try {
-      source = await this.#lifecycle.runRead(
+      result = await this.#lifecycle.runRead(
         this.#runtime,
         this.#operation,
-        () => this.#subscription.stream()
+        () => this.#reader!.read()
       );
     } catch (error) {
       this.#release();
-      throw error;
+      translateRPCError(error, {
+        operation: this.#operation,
+        translateTransportErrorsAsInterruptions: false
+      });
     }
-    let reader: ReadableStreamDefaultReader<T>;
-    try {
-      reader = source.getReader();
-    } catch (error) {
+
+    if (result.done) {
       this.#release();
-      throw error;
+      if (this.#allowCleanClose) return result;
+      translateRPCError(
+        new Error('Process subscription closed before a terminal event'),
+        {
+          operation: this.#operation,
+          translateTransportErrorsAsInterruptions: false
+        }
+      );
     }
 
-    return new ReadableStream<T>({
-      pull: async (controller) => {
-        let result: ReadableStreamReadResult<T>;
-        try {
-          result = await this.#lifecycle.runRead(
-            this.#runtime,
-            this.#operation,
-            () => reader.read()
-          );
-        } catch (error) {
-          this.#release();
-          translateRPCError(error, {
-            operation: this.#operation,
-            translateTransportErrorsAsInterruptions: false
-          });
-        }
-
-        if (result.done) {
-          this.#release();
-          if (this.#allowCleanClose) {
-            controller.close();
-            return;
-          }
-          translateRPCError(
-            new Error('Process subscription closed before a terminal event'),
-            {
-              operation: this.#operation,
-              translateTransportErrorsAsInterruptions: false
-            }
-          );
-        }
-
-        controller.enqueue(result.value);
-        if (this.#isTerminal(result.value)) {
-          this.#release();
-          controller.close();
-        }
-      },
-      cancel: () => {
-        this.#release();
-      }
-    });
+    if (this.#isTerminal(result.value)) this.#release();
+    return result;
   }
 
   async cancel(): Promise<void> {
@@ -255,6 +263,12 @@ class FencedSubscriptionTarget<T>
   #release(): void {
     if (this.#released) return;
     this.#released = true;
+    this.#releaseConnection?.();
+    try {
+      void this.#reader?.cancel().catch(() => undefined);
+    } catch {
+      // Remote subscription cleanup below remains authoritative.
+    }
     try {
       void this.#subscription.cancel().catch(() => undefined);
     } catch {

@@ -1,5 +1,8 @@
 import { translateRPCError } from '../container-control/rpc-error';
-import type { ProcessSubscriptionRPC } from './rpc-types';
+import type {
+  ProcessPullSubscriptionRPC,
+  ProcessSubscriptionRPC
+} from './rpc-types';
 
 interface RemoteSubscriptionOptions {
   signal?: AbortSignal;
@@ -9,10 +12,15 @@ interface RemoteSubscriptionOptions {
 
 /** Exposes a remote Workers RPC subscription as a caller-owned local stream. */
 export async function openRemoteSubscription<T>(
-  subscriptionPromise: Promise<ProcessSubscriptionRPC<T>>,
+  subscriptionPromise: Promise<
+    ProcessSubscriptionRPC<T> | ProcessPullSubscriptionRPC<T>
+  >,
   options: RemoteSubscriptionOptions = {}
 ): Promise<ReadableStream<T>> {
-  let subscription: ProcessSubscriptionRPC<T> | undefined;
+  let subscription:
+    | ProcessSubscriptionRPC<T>
+    | ProcessPullSubscriptionRPC<T>
+    | undefined;
   let releaseRequested = false;
   let cleanupStarted = false;
   const release = (): void => {
@@ -76,25 +84,41 @@ export async function openRemoteSubscription<T>(
   if (subscription === undefined)
     throw new Error('Process subscription acquisition did not complete');
 
-  let source: ReadableStream<T>;
-  try {
-    source = await raceSetup(subscription.stream());
-  } catch (error) {
-    release();
-    if (signal?.aborted) throw error;
-    translateRPCError(error, {
-      operation: options.operation ?? 'open process subscription'
-    });
-  }
+  let read: () => Promise<ReadableStreamReadResult<T>>;
+  let cancelReader: () => void;
+  if ('next' in subscription) {
+    const pullSubscription = subscription;
+    read = () => pullSubscription.next();
+    cancelReader = () => undefined;
+  } else {
+    let source: ReadableStream<T>;
+    try {
+      source = await raceSetup(subscription.stream());
+    } catch (error) {
+      release();
+      if (signal?.aborted) throw error;
+      translateRPCError(error, {
+        operation: options.operation ?? 'open process subscription'
+      });
+    }
 
-  let reader: ReadableStreamDefaultReader<T>;
-  try {
-    reader = source.getReader();
-  } catch (error) {
-    release();
-    translateRPCError(error, {
-      operation: options.operation ?? 'read process subscription'
-    });
+    let reader: ReadableStreamDefaultReader<T>;
+    try {
+      reader = source.getReader();
+    } catch (error) {
+      release();
+      translateRPCError(error, {
+        operation: options.operation ?? 'read process subscription'
+      });
+    }
+    read = () => reader.read();
+    cancelReader = () => {
+      try {
+        void reader.cancel().catch(() => undefined);
+      } catch {
+        // Remote subscription release below remains authoritative.
+      }
+    };
   }
 
   let stopped = false;
@@ -103,11 +127,7 @@ export async function openRemoteSubscription<T>(
     if (stopped) return;
     stopped = true;
     signal?.removeEventListener('abort', onAbort);
-    try {
-      void reader.cancel().catch(() => undefined);
-    } catch {
-      // Remote subscription release below remains authoritative.
-    }
+    cancelReader();
     release();
     if (error !== undefined) controller?.error(error);
   };
@@ -122,7 +142,7 @@ export async function openRemoteSubscription<T>(
     async pull(localController) {
       if (stopped) return;
       try {
-        const result = await reader.read();
+        const result = await read();
         if (stopped) return;
         if (result.done) {
           stopped = true;

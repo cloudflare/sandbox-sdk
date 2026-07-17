@@ -44,6 +44,10 @@ class CleanLogSubscription
 }
 
 class CapabilityControl implements ProcessCapabilityControl {
+  retainConnection(): () => void {
+    return () => undefined;
+  }
+
   getProcess(): Promise<ProcessStatus> {
     return Promise.resolve(status);
   }
