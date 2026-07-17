@@ -310,12 +310,17 @@ jobs:
                 '.success == true and .exitCode == 0 and (.stdout | contains($marker))' \
                 "$response" >/dev/null; then
                 rm -f "$response"
+                curl -sS --max-time 15 -X POST "${headers[@]}" \
+                  "$URL/cleanup" >/dev/null || \
+                  echo "::warning::Failed to clean up $type readiness sandbox"
                 return 0
               fi
               echo "$type smoke attempt $attempt failed with HTTP $status: $(cat "$response")"
               rm -f "$response"
               sleep 5
             done
+            curl -sS --max-time 15 -X POST "${headers[@]}" \
+              "$URL/cleanup" >/dev/null || true
             echo "::error::$type container process smoke probe failed"
             return 1
           }
