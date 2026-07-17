@@ -9,6 +9,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.FILE_NOT_FOUND]: 404,
   [ErrorCode.COMMAND_NOT_FOUND]: 404,
   [ErrorCode.PROCESS_NOT_FOUND]: 404,
+  [ErrorCode.TERMINAL_NOT_FOUND]: 404,
   [ErrorCode.PORT_NOT_EXPOSED]: 404,
   [ErrorCode.GIT_REPOSITORY_NOT_FOUND]: 404,
   [ErrorCode.GIT_BRANCH_NOT_FOUND]: 404,
@@ -19,6 +20,11 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.IS_DIRECTORY]: 400,
   [ErrorCode.NOT_DIRECTORY]: 400,
   [ErrorCode.INVALID_COMMAND]: 400,
+  [ErrorCode.INVALID_PROCESS_CWD]: 400,
+  [ErrorCode.INVALID_PROCESS_ENVIRONMENT]: 400,
+  [ErrorCode.INVALID_PROCESS_CURSOR]: 400,
+  [ErrorCode.INVALID_TERMINAL_CWD]: 400,
+  [ErrorCode.INVALID_TERMINAL_CURSOR]: 400,
   [ErrorCode.INVALID_PORT_NUMBER]: 400,
   [ErrorCode.INVALID_PORT]: 400,
   [ErrorCode.INVALID_GIT_URL]: 400,
@@ -43,12 +49,11 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PORT_ALREADY_EXPOSED]: 409,
   [ErrorCode.PORT_IN_USE]: 409,
   [ErrorCode.RESOURCE_BUSY]: 409,
-  [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
   [ErrorCode.OPERATION_INTERRUPTED]: 409,
+  [ErrorCode.STALE_PROCESS_HANDLE]: 409,
+  [ErrorCode.PROCESS_EXITED_BEFORE_LOG]: 409,
 
   // 410 Gone
-  [ErrorCode.SESSION_DESTROYED]: 410,
-  [ErrorCode.SESSION_TERMINATED]: 410,
 
   // 413 Content Too Large
   [ErrorCode.FILE_TOO_LARGE]: 413,
@@ -76,6 +81,10 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
 
   // 408 Request Timeout
   [ErrorCode.PROCESS_READY_TIMEOUT]: 408,
+  [ErrorCode.PROCESS_WAIT_TIMEOUT]: 408,
+
+  // 499 Client Closed Request
+  [ErrorCode.PROCESS_ABORTED]: 499,
 
   // 500 Internal Server Error
   [ErrorCode.PROCESS_EXITED_BEFORE_READY]: 500,
@@ -86,6 +95,8 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.COMMAND_EXECUTION_ERROR]: 500,
   [ErrorCode.STREAM_START_ERROR]: 500,
   [ErrorCode.PROCESS_ERROR]: 500,
+  [ErrorCode.PROCESS_SPAWN_FAILED]: 500,
+  [ErrorCode.TERMINAL_CONTROL_ERROR]: 500,
   [ErrorCode.PORT_OPERATION_ERROR]: 500,
   [ErrorCode.GIT_CLONE_FAILED]: 500,
   [ErrorCode.GIT_CHECKOUT_FAILED]: 500,

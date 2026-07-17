@@ -189,7 +189,6 @@ export class CloudflareLogger implements Logger {
       traceId,
       component,
       sandboxId,
-      sessionId,
       processId,
       commandId,
       durationMs,
@@ -214,7 +213,6 @@ export class CloudflareLogger implements Logger {
     if (traceId) pairs.push(`trace=${String(traceId).substring(0, 12)}`);
     if (commandId) pairs.push(`cmd=${String(commandId).substring(0, 12)}`);
     if (sandboxId) pairs.push(`sandbox=${sandboxId}`);
-    if (sessionId) pairs.push(`session=${String(sessionId).substring(0, 12)}`);
     if (processId) pairs.push(`proc=${processId}`);
     if (durationMs !== undefined) pairs.push(`dur=${durationMs}ms`);
 

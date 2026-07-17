@@ -5,7 +5,8 @@
  * control-plane API. The current wire implementation uses capnweb RPC.
  */
 
-import type { TerminalCreateOptions } from './pty-types.js';
+import type { SandboxProcessesAPI } from './process-types.js';
+import type { SandboxTerminalsAPI } from './pty-types.js';
 import type {
   CreateBackupResponse,
   RestoreBackupResponse,
@@ -23,13 +24,8 @@ import type {
   ListFilesResult,
   MkdirResult,
   MoveFileResult,
-  PortWatchRequest,
-  ProcessCleanupResult,
-  ProcessInfoResult,
-  ProcessKillResult,
-  ProcessListResult,
-  ProcessLogsResult,
-  ProcessStartResult,
+  PortWatchRPCOptions,
+  PortWatchSubscriptionAPI,
   ReadFileResult,
   ReadFileStreamResult,
   RenameFileResult,
@@ -37,61 +33,56 @@ import type {
   WriteFileResult
 } from './types.js';
 
+export type S3FSOptionValue = string | boolean;
+
+export interface MountCommandResult {
+  success: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MountS3FSRequest {
+  source: string;
+  mountPath: string;
+  options: Record<string, S3FSOptionValue>;
+}
+
+export interface RemoveMountDirectoryRequest {
+  path: string;
+  onlyIfNotMountpoint: boolean;
+}
+
 export interface SandboxAPI {
-  commands: SandboxCommandsAPI;
   files: SandboxFilesAPI;
-  processes: SandboxProcessesAPI;
   ports: SandboxPortsAPI;
   utils: SandboxUtilsAPI;
   backup: SandboxBackupAPI;
   watch: SandboxWatchAPI;
   tunnels: SandboxTunnelsAPI;
   terminals: SandboxTerminalsAPI;
+  processes: SandboxProcessesAPI;
+  mounts: SandboxMountsAPI;
+  workspace: SandboxWorkspaceAPI;
   extensions: SandboxExtensionsAPI;
 }
 
-export interface CommandExecuteOptions {
-  sessionId?: string;
-  timeoutMs?: number;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-  origin?: 'user' | 'internal';
-}
+export type ReadFileStreamOptions = object;
 
-export interface SandboxCommandsAPI {
-  execute(
-    command: string,
-    options?: CommandExecuteOptions
-  ): Promise<{
-    success: boolean;
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-    command: string;
-    timestamp: string;
-  }>;
-}
-
-export interface FileSessionOptions {
-  sessionId?: string;
-}
-
-export interface ReadFileStreamOptions extends FileSessionOptions {}
-
-export interface ReadFileBinaryOptions extends FileSessionOptions {
+export interface ReadFileBinaryOptions {
   encoding: 'none';
 }
 
-export interface ReadFileOptions extends FileSessionOptions {
+export interface ReadFileOptions {
   encoding?: Exclude<FileEncoding, 'none'>;
 }
 
-export interface WriteFileOptions extends FileSessionOptions {
+export interface WriteFileOptions {
   encoding?: string;
   permissions?: string;
 }
 
-export interface MkdirOptions extends FileSessionOptions {
+export interface MkdirOptions {
   recursive?: boolean;
 }
 
@@ -113,7 +104,7 @@ export interface SandboxFilesAPI {
   writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    options?: FileSessionOptions
+    options?: Record<string, never>
   ): Promise<{
     success: boolean;
     path: string;
@@ -122,87 +113,112 @@ export interface SandboxFilesAPI {
   }>;
   deleteFile(
     path: string,
-    options?: FileSessionOptions
+    options?: Record<string, never>
   ): Promise<DeleteFileResult>;
   renameFile(
     oldPath: string,
     newPath: string,
-    options?: FileSessionOptions
+    options?: Record<string, never>
   ): Promise<RenameFileResult>;
   moveFile(
     sourcePath: string,
     destinationPath: string,
-    options?: FileSessionOptions
+    options?: Record<string, never>
   ): Promise<MoveFileResult>;
   mkdir(path: string, options?: MkdirOptions): Promise<MkdirResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
-  exists(path: string, options?: FileSessionOptions): Promise<FileExistsResult>;
-}
-
-export interface ProcessStartOptions {
-  sessionId?: string;
-  processId?: string;
-  timeoutMs?: number;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-  encoding?: string;
-  autoCleanup?: boolean;
-  origin?: 'user' | 'internal';
-  stdout?: 'pipe' | 'ignore';
-  stderr?: 'pipe' | 'ignore' | 'combined';
-}
-
-export interface SandboxProcessesAPI {
-  startProcess(
-    command: string,
-    options?: ProcessStartOptions,
-    stdin?: ReadableStream<Uint8Array>
-  ): Promise<ProcessStartResult>;
-  listProcesses(): Promise<ProcessListResult>;
-  getProcess(id: string): Promise<ProcessInfoResult>;
-  killProcess(id: string, signal?: number): Promise<ProcessKillResult>;
-  killAllProcesses(): Promise<ProcessCleanupResult>;
-  getProcessLogs(id: string): Promise<ProcessLogsResult>;
-  streamProcessLogs(id: string): Promise<ReadableStream<Uint8Array>>;
+  exists(
+    path: string,
+    options?: Record<string, never>
+  ): Promise<FileExistsResult>;
 }
 
 export interface SandboxPortsAPI {
-  watchPort(request: PortWatchRequest): Promise<ReadableStream<Uint8Array>>;
-}
-
-export interface SessionCreateOptions {
-  id: string;
-  env?: Record<string, string | undefined>;
-  cwd?: string;
-  commandTimeoutMs?: number;
+  openWatch(
+    port: number,
+    options?: PortWatchRPCOptions
+  ): Promise<PortWatchSubscriptionAPI>;
 }
 
 export interface SandboxUtilsAPI {
   ping(): Promise<string>;
   getVersion(): Promise<string>;
-  getCommands(): Promise<string[]>;
-  createSession(options: SessionCreateOptions): Promise<{
-    success: boolean;
-    id: string;
-    message: string;
-    timestamp: string;
-    containerPlacementId?: string | null;
+}
+
+export interface CreateWorkspaceArchiveRequest {
+  root: string;
+  excludes: readonly string[];
+}
+
+export interface CreateWorkspaceArchiveResult {
+  archivePath: string;
+}
+
+export interface ExtractWorkspaceArchiveRequest {
+  root: string;
+  archivePath: string;
+}
+
+export interface SandboxWorkspaceAPI {
+  createArchive(
+    request: CreateWorkspaceArchiveRequest
+  ): Promise<CreateWorkspaceArchiveResult>;
+  extractArchive(request: ExtractWorkspaceArchiveRequest): Promise<void>;
+  cleanupArchive(archivePath: string): Promise<void>;
+}
+
+export interface SandboxMountsAPI {
+  pathExists(path: string): Promise<boolean>;
+  ensureDirectory(path: string): Promise<void>;
+  chmodOwnerOnly(path: string): Promise<void>;
+  deleteFile(path: string): Promise<void>;
+  mountS3FS(request: MountS3FSRequest): Promise<MountCommandResult>;
+  mountS3FSAndVerify(request: MountS3FSRequest): Promise<MountCommandResult>;
+  isMountpoint(path: string): Promise<boolean>;
+  unmountFuse(path: string): Promise<MountCommandResult>;
+  unmountFuseIfMounted(path: string): Promise<void>;
+  removeMountDirectory(
+    request: RemoveMountDirectoryRequest
+  ): Promise<MountCommandResult>;
+}
+
+export interface BackupUploadArchiveRequest {
+  archivePath: string;
+  url: string;
+  timeoutMs: number;
+}
+
+export interface BackupDownloadArchiveRequest {
+  archivePath: string;
+  expectedSize: number;
+  parts: Array<{
+    url: string;
+    offset: number;
+    range?: string;
   }>;
-  deleteSession(
-    sessionId: string
-  ): Promise<{ success: boolean; sessionId: string; timestamp: string }>;
-  listSessions(): Promise<{ sessions: string[] }>;
+  timeoutMs: number;
+}
+
+export interface BackupPrepareRestoreRequest {
+  dir: string;
+  backupId: string;
+  archivePath: string;
+}
+
+export interface BackupUploadPartsRequest {
+  archivePath: string;
+  parts: Array<{
+    partNumber: number;
+    url: string;
+    offset: number;
+    size: number;
+  }>;
 }
 
 export interface BackupCreateArchiveOptions {
-  sessionId?: string;
   excludes?: string[];
   gitignore?: boolean;
   compression?: BackupCompressionOptions;
-}
-
-export interface BackupRestoreArchiveOptions {
-  sessionId?: string;
 }
 
 export interface SandboxBackupAPI {
@@ -213,25 +229,28 @@ export interface SandboxBackupAPI {
   ): Promise<CreateBackupResponse>;
   restoreArchive(
     dir: string,
-    archivePath: string,
-    options?: BackupRestoreArchiveOptions
+    archivePath: string
   ): Promise<RestoreBackupResponse>;
-  uploadParts(request: {
-    archivePath: string;
-    parts: Array<{
-      partNumber: number;
-      url: string;
-      offset: number;
-      size: number;
-    }>;
-    sessionId?: string;
-  }): Promise<UploadPartsResponse>;
+  uploadArchive(request: BackupUploadArchiveRequest): Promise<void>;
+  uploadParts(request: BackupUploadPartsRequest): Promise<UploadPartsResponse>;
+  prepareRestore(
+    request: BackupPrepareRestoreRequest
+  ): Promise<{ existingSize: number }>;
+  downloadArchive(request: BackupDownloadArchiveRequest): Promise<void>;
+  extractArchive(dir: string, archivePath: string): Promise<void>;
+  cleanupArchive(archivePath: string): Promise<void>;
 }
 
 export type { UploadedPart, UploadPartsResponse };
 
+export interface WatchSubscriptionAPI {
+  stream(): Promise<ReadableStream<Uint8Array>>;
+  cancel(): Promise<void>;
+  [Symbol.dispose](): void;
+}
+
 export interface SandboxWatchAPI {
-  watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>>;
+  watch(request: WatchRequest): Promise<WatchSubscriptionAPI>;
   checkChanges(request: CheckChangesRequest): Promise<CheckChangesResult>;
 }
 
@@ -339,13 +358,6 @@ export interface TunnelRunExitEvent extends TunnelRunIdentity {
   mode: TunnelRunMode;
   port: number;
   exitCode: number | null;
-}
-
-export interface SandboxTerminalsAPI {
-  createTerminal(
-    options: TerminalCreateOptions
-  ): Promise<{ success: true; id: string }>;
-  destroyTerminal(id: string): Promise<{ success: true; id: string }>;
 }
 
 export interface SandboxTunnelsAPI {

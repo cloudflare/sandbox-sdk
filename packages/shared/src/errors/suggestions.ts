@@ -21,6 +21,39 @@ export function getSuggestion(
     case ErrorCode.PROCESS_NOT_FOUND:
       return 'Verify the process ID is correct and the process has not already exited';
 
+    case ErrorCode.INVALID_PROCESS_CWD:
+      return `Verify the process working directory exists and is accessible: ${context.cwd}`;
+
+    case ErrorCode.INVALID_PROCESS_ENVIRONMENT:
+      return 'Verify process environment variable names and values are valid strings without NUL bytes';
+
+    case ErrorCode.PROCESS_SPAWN_FAILED:
+      return `Check that "${context.command}" exists, is executable, and can be started in the requested working directory`;
+
+    case ErrorCode.INVALID_PROCESS_CURSOR:
+      return 'Use a log cursor previously returned by this process log stream';
+
+    case ErrorCode.STALE_PROCESS_HANDLE:
+      return 'The process handle refers to an older runtime process. Reacquire the process by ID before retrying the operation';
+
+    case ErrorCode.PROCESS_WAIT_TIMEOUT:
+      return 'The process did not complete before the timeout. Continue streaming logs or kill the process if it is no longer needed';
+
+    case ErrorCode.PROCESS_ABORTED:
+      return 'The process operation was aborted by the caller. Retry with a new AbortSignal if needed';
+
+    case ErrorCode.TERMINAL_NOT_FOUND:
+      return `Verify terminal "${context.terminalId}" exists and has not been evicted`;
+
+    case ErrorCode.INVALID_TERMINAL_CWD:
+      return `Verify the terminal working directory exists and is accessible: ${context.cwd}`;
+
+    case ErrorCode.INVALID_TERMINAL_CURSOR:
+      return 'Use a cursor previously returned by this terminal stream';
+
+    case ErrorCode.TERMINAL_CONTROL_ERROR:
+      return `Terminal control operation failed for terminal "${context.terminalId}"`;
+
     case ErrorCode.PORT_NOT_EXPOSED:
       return `Port ${context.port} is not currently available for this operation`;
 
@@ -29,15 +62,6 @@ export function getSuggestion(
 
     case ErrorCode.PORT_IN_USE:
       return `Port ${context.port} is already in use by another service. Choose a different port`;
-
-    case ErrorCode.SESSION_ALREADY_EXISTS:
-      return `Session "${context.sessionId}" already exists. Use a different session ID or reuse the existing session`;
-
-    case ErrorCode.SESSION_DESTROYED:
-      return `Session "${context.sessionId}" was destroyed. Create a new session to continue executing commands`;
-
-    case ErrorCode.SESSION_TERMINATED:
-      return `Session "${context.sessionId}" ended because its shell exited (exit code: ${context.exitCode ?? 'unknown'}). Session-local state (env vars, cwd, shell functions) has been lost. Retry the call to start a fresh session, or call createSession() with the same id to recreate it explicitly`;
 
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;

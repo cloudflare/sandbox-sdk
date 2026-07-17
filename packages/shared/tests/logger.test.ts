@@ -220,7 +220,7 @@ describe('Logger Module', () => {
         'json-line'
       );
 
-      const child1 = logger.child({ sessionId: 'session-1' });
+      const child1 = logger.child({ processId: 'process-1' });
       const child2 = child1.child({ commandId: 'cmd-456' });
 
       child2.info('Nested child log');
@@ -229,7 +229,7 @@ describe('Logger Module', () => {
       expect(logOutput).toMatchObject({
         component: 'container',
         traceId: 'tr_nest',
-        sessionId: 'session-1',
+        processId: 'process-1',
         commandId: 'cmd-456'
       });
     });

@@ -19,7 +19,6 @@ export interface CanonicalEventPayload {
   // Common fields used across multiple event types
   command?: string;
   path?: string;
-  sessionId?: string;
   port?: number;
   repoUrl?: string;
   branch?: string;

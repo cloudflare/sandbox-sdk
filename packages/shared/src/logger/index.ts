@@ -89,7 +89,7 @@ export function createNoOpLogger(): Logger {
  * const logger = createLogger({
  *   component: 'container',
  *   traceId: TraceContext.fromHeaders(request.headers)!,
- *   sessionId: this.id
+ *   sandboxId: this.id
  * });
  * ```
  */

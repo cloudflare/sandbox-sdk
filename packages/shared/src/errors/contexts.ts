@@ -1,3 +1,4 @@
+import type { ProcessExit } from '../process-types';
 import type { OperationType } from './types';
 
 /**
@@ -55,24 +56,72 @@ export interface ProcessErrorContext {
   stderr?: string;
 }
 
-export interface SessionAlreadyExistsContext {
-  sessionId: string;
-  /**
-   * `CLOUDFLARE_PLACEMENT_ID` captured from the container at the moment the
-   * duplicate create was detected. Included so a restarted DO can learn the
-   * container's placement ID from an idempotent session-create. `null` when
-   * the env var is not set (for example, in local development).
-   */
-  containerPlacementId?: string | null;
+export interface InvalidProcessCwdContext {
+  processId?: string;
+  cwd: string;
+  reason: string;
 }
 
-export interface SessionDestroyedContext {
-  sessionId: string;
+export interface InvalidProcessEnvironmentContext {
+  processId?: string;
+  name?: string;
+  reason: string;
 }
 
-export interface SessionTerminatedContext {
-  sessionId: string;
-  exitCode: number | null;
+export interface ProcessSpawnFailedContext {
+  processId: string;
+  command: string;
+  cwd?: string;
+  stderr?: string;
+}
+
+export interface InvalidProcessCursorContext {
+  processId: string;
+  cursor?: string;
+  reason: string;
+}
+
+export interface StaleProcessHandleContext {
+  processId: string;
+  pid: number;
+  operation: string;
+}
+
+export interface ProcessWaitTimeoutContext {
+  processId: string;
+  operation: 'output' | 'waitForExit' | 'waitForLog';
+  timeout: number;
+}
+
+export interface ProcessAbortedContext {
+  processId: string;
+  operation: string;
+}
+
+export interface TerminalNotFoundContext {
+  terminalId: string;
+}
+
+export interface InvalidTerminalCwdContext {
+  terminalId: string;
+  cwd: string;
+  reason: string;
+}
+
+export interface InvalidTerminalCursorContext {
+  terminalId: string;
+  cursor?: string;
+  reason: string;
+}
+
+export interface TerminalControlErrorContext {
+  terminalId: string;
+  operation: string;
+  reason?: string;
+  failure?: {
+    code: string;
+    message: string;
+  };
 }
 
 /**
@@ -90,6 +139,12 @@ export interface ProcessExitedBeforeReadyContext {
   command: string;
   condition: string;
   exitCode: number;
+}
+
+export interface ProcessExitedBeforeLogContext {
+  processId: string;
+  pid: number;
+  exit: ProcessExit;
 }
 
 /**
@@ -280,6 +335,7 @@ export interface OperationInterruptedContext {
   phase?: string;
   admitted: true | 'unknown';
   retryable: boolean;
+  effect?: 'none' | 'unknown';
   operationId?: string;
   operationKey?: string;
   idempotencyKey?: string;
@@ -305,7 +361,6 @@ export type RPCTransportErrorKind =
   | 'invalid_frame'
   /** Peer sent a frame the wire-format parser rejected (capnweb readLoop SyntaxError). */
   | 'protocol_error'
-  /** Session was disposed (locally or remotely) while a call was pending. */
   | 'session_disposed'
   /** Anything else that bubbled up from the transport with no recognisable shape. */
   | 'unknown';
