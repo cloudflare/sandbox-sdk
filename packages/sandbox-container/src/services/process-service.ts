@@ -1,545 +1,446 @@
-import { type Logger, logCanonicalEvent } from '@repo/shared';
-import type {
-  CommandErrorContext,
-  ProcessErrorContext,
-  ProcessNotFoundContext
-} from '@repo/shared/errors';
-import { ErrorCode } from '@repo/shared/errors';
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
 import {
-  type CommandResult,
-  type ExecutionTarget,
-  getExecutionTargetDisplayName,
-  type ProcessCommandHandle,
-  type ProcessOptions,
-  type ProcessRecord,
+  ManagedProcessSupervisor,
+  type RuntimeManagedProcess,
+  type RuntimeProcessLogEvent,
+  type RuntimeProcessStatus
+} from '@repo/sandbox-execution';
+import {
+  ErrorCode,
+  type Logger,
+  logCanonicalEvent,
+  type ProcessLogEvent,
+  type ProcessLogsRPCOptions,
+  type ProcessStartOptions,
   type ProcessStatus,
-  resolveExecutionTarget,
-  type ServiceResult
-} from '../core/types';
-import { ProcessManager } from '../managers/process-manager';
-import type { ExecutionService } from './execution-service';
-import type { ProcessStore } from './process-store';
+  type SandboxCommand
+} from '@repo/shared';
 
-// Re-export types for use by ProcessStore implementations
-export type { ProcessRecord, ProcessStatus } from '../core/types';
-export type { ProcessStore } from './process-store';
+export const MAX_RETAINED_TERMINAL_PROCESSES = 64;
 
-export interface ProcessFilters {
-  status?: ProcessStatus;
+interface ProcessSupervisor {
+  start(options: {
+    runId: string;
+    command: SandboxCommand;
+    cwd?: string;
+    env?: Record<string, string>;
+    timeoutMs?: number;
+    onTerminal?: (status: RuntimeProcessStatus) => void | Promise<void>;
+  }): Promise<RuntimeManagedProcess>;
+  get(runId: string): RuntimeManagedProcess | undefined;
+  list(): RuntimeProcessStatus[];
+  removeTerminal(runId: string): boolean;
+  hasActive(): boolean;
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+interface ProcessServiceOptions {
+  supervisor?: ProcessSupervisor;
+  logger: Logger;
+}
+
+interface ProcessServiceError extends Error {
+  code: string;
+  details?: Record<string, string | number | boolean | undefined>;
+}
+
+interface SystemError extends Error {
+  code?: string;
+  path?: string;
 }
 
 export class ProcessService {
-  private manager: ProcessManager;
+  readonly #supervisor: ProcessSupervisor;
+  readonly #logger: Logger;
+  readonly #processes = new Map<string, RuntimeManagedProcess>();
+  readonly #completed = new Set<string>();
 
-  constructor(
-    private store: ProcessStore,
-    private logger: Logger,
-    private executionService: ExecutionService
-  ) {
-    this.manager = new ProcessManager();
+  constructor(options: ProcessServiceOptions) {
+    this.#supervisor = options.supervisor ?? new ManagedProcessSupervisor();
+    this.#logger = options.logger.child({ service: 'process' });
   }
 
-  async startProcess(
-    command: string,
-    options: ProcessOptions = {}
-  ): Promise<ServiceResult<ProcessRecord>> {
-    return this.startProcessRecord(command, options);
-  }
-
-  async executeCommand(
-    command: string,
-    options: ProcessOptions = {}
-  ): Promise<ServiceResult<CommandResult>> {
+  async start(
+    command: SandboxCommand,
+    options: ProcessStartOptions = {}
+  ): Promise<ProcessStatus> {
+    validateCommand(command);
+    await validateOptions(options);
+    const id = crypto.randomUUID();
     try {
-      // Always use ExecutionService for command execution
-      const target = resolveExecutionTarget(options.sessionId);
-      const result = await this.executionService.execute(command, {
-        target,
+      const process = await this.#supervisor.start({
+        runId: id,
+        command,
         cwd: options.cwd,
-        timeoutMs: options.timeoutMs,
         env: options.env,
-        origin: options.origin
+        timeoutMs: options.timeout,
+        onTerminal: (status) => this.onTerminal(id, status)
       });
-
-      if (!result.success) {
-        return result as ServiceResult<CommandResult>;
-      }
-
-      // Convert RawExecResult to CommandResult
-      const commandResult: CommandResult = {
-        success: result.data.exitCode === 0,
-        exitCode: result.data.exitCode,
-        stdout: result.data.stdout,
-        stderr: result.data.stderr
-      };
-
-      return {
-        success: true,
-        data: commandResult
-      };
+      this.#processes.set(id, process);
+      await this.enforceTerminalRetention();
+      return statusToPublic(id, process.snapshot());
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to execute command '${command}': ${errorMessage}`,
-          code: ErrorCode.COMMAND_EXECUTION_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    }
-  }
-
-  private async startProcessRecord(
-    command: string,
-    options: ProcessOptions = {}
-  ): Promise<ServiceResult<ProcessRecord>> {
-    const startTime = Date.now();
-    let processRecord: ProcessRecord | undefined;
-    let storedProcessRecord = false;
-
-    try {
-      // 1. Validate command (business logic via manager)
-      const validation = this.manager.validateCommand(command);
-      if (!validation.valid) {
-        return {
-          success: false,
-          error: {
-            message: validation.error || 'Invalid command',
-            code: validation.code || 'INVALID_COMMAND'
-          }
-        };
-      }
-
-      // 2. Create process record (without subprocess)
-      const processRecordData = this.manager.createProcessRecord(
-        command,
-        undefined,
-        options
-      );
-      const target = resolveExecutionTarget(options.sessionId);
-      const commandHandle: ProcessCommandHandle = {
-        target,
-        commandId: processRecordData.id
-      };
-
-      processRecord = {
-        ...processRecordData,
-        commandHandle
-      };
-      const storedRecord = processRecord;
-      let executionSessionId = this.getLogSessionId(commandHandle.target);
-
-      // 4. Store record (data layer)
-      await this.store.create(storedRecord);
-      storedProcessRecord = true;
-
-      // 5. Start process lifecycle streaming and bind it to the process record.
-      // Pass process ID as commandId for tracking and killing.
-      const streamResult = await this.executionService.startProcessStream(
-        command,
-        {
-          target,
+      const message =
+        error instanceof Error ? error.message : 'Failed to spawn process';
+      if (options.cwd !== undefined && isCwdSpawnFailure(error, options.cwd)) {
+        throw serviceError(ErrorCode.INVALID_PROCESS_CWD, message, {
+          processId: id,
           cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          origin: options.origin,
-          stdin: options.stdin,
-          commandId: processRecordData.id,
-          onEvent: async (event) => {
-            // Route events to process record listeners.
-            if (event.type === 'start' && event.pid !== undefined) {
-              storedRecord.pid = event.pid;
-              await this.store.update(storedRecord.id, { pid: event.pid });
-              logCanonicalEvent(this.logger, {
-                event: 'process.start',
-                outcome: 'success',
-                command,
-                pid: event.pid,
-                durationMs: Date.now() - startTime,
-                processId: storedRecord.id,
-                sessionId: executionSessionId,
-                origin: options.origin
-              });
-            } else if (event.type === 'stdout' && event.data) {
-              if (storedRecord.stdoutMode === 'pipe') {
-                storedRecord.stdout += event.data;
-                storedRecord.outputListeners.forEach((listener) => {
-                  listener('stdout', event.data!);
-                });
-              }
-            } else if (event.type === 'stderr' && event.data) {
-              if (storedRecord.stderrMode === 'combined') {
-                if (storedRecord.stdoutMode === 'pipe') {
-                  storedRecord.stdout += event.data;
-                  storedRecord.outputListeners.forEach((listener) => {
-                    listener('stdout', event.data!);
-                  });
-                }
-              } else if (storedRecord.stderrMode === 'pipe') {
-                storedRecord.stderr += event.data;
-                storedRecord.outputListeners.forEach((listener) => {
-                  listener('stderr', event.data!);
-                });
-              }
-            } else if (event.type === 'complete') {
-              const exitCode = event.exitCode ?? 0;
-              const status = this.manager.interpretExitCode(exitCode);
-              const endTime = new Date();
-
-              storedRecord.status = status;
-              storedRecord.endTime = endTime;
-              storedRecord.exitCode = exitCode;
-
-              logCanonicalEvent(this.logger, {
-                event: 'process.exit',
-                outcome: 'success',
-                command,
-                pid: storedRecord.pid,
-                exitCode,
-                durationMs:
-                  storedRecord.startTime instanceof Date
-                    ? endTime.getTime() - storedRecord.startTime.getTime()
-                    : Date.now() - startTime,
-                processId: storedRecord.id,
-                sessionId: executionSessionId,
-                origin: options.origin
-              });
-
-              storedRecord.statusListeners.forEach((listener) => {
-                listener(status);
-              });
-
-              // Await store update to ensure consistency before next event.
-              try {
-                await this.store.update(storedRecord.id, {
-                  status,
-                  endTime,
-                  exitCode
-                });
-              } catch (error) {
-                this.logger.error(
-                  'Failed to update process status',
-                  error instanceof Error ? error : undefined,
-                  {
-                    processId: storedRecord.id
-                  }
-                );
-              }
-            } else if (event.type === 'error') {
-              storedRecord.status = 'error';
-              storedRecord.endTime = new Date();
-              storedRecord.statusListeners.forEach((listener) => {
-                listener('error');
-              });
-
-              logCanonicalEvent(this.logger, {
-                event: 'process.error',
-                outcome: 'error',
-                command,
-                processId: storedRecord.id,
-                sessionId: executionSessionId,
-                durationMs: Date.now() - startTime,
-                errorMessage: event.error,
-                error: new Error(event.error),
-                origin: options.origin
-              });
-            }
-          }
-        }
-      );
-
-      if (!streamResult.success) {
-        await this.markStartupFailed(processRecord, streamResult.error.message);
-        return streamResult as ServiceResult<ProcessRecord>;
-      }
-
-      executionSessionId = this.getLogSessionId(
-        streamResult.data.commandHandle.target
-      );
-      processRecord.commandHandle = streamResult.data.commandHandle;
-      await this.store.update(processRecord.id, {
-        commandHandle: streamResult.data.commandHandle
-      });
-
-      // Store streaming promise so getLogs() can await it for completed processes
-      // This ensures all output is captured before returning logs
-      const activeProcessRecord = processRecord;
-      activeProcessRecord.streamingComplete =
-        streamResult.data.continueStreaming.catch((error) => {
-          this.logger.debug('process.streamComplete', {
-            processId: activeProcessRecord.id,
-            outcome: 'error',
-            errorMessage: error instanceof Error ? error.message : String(error)
-          });
+          reason: message
         });
-
-      return {
-        success: true,
-        data: processRecord
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      if (storedProcessRecord && processRecord) {
-        await this.markStartupFailed(processRecord, errorMessage);
       }
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to start process stream '${command}': ${errorMessage}`,
-          code: ErrorCode.STREAM_START_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    }
-  }
-
-  private getLogSessionId(target: ExecutionTarget): string {
-    return getExecutionTargetDisplayName(target);
-  }
-
-  private async markStartupFailed(
-    processRecord: ProcessRecord,
-    errorMessage?: string
-  ): Promise<void> {
-    const stderr =
-      errorMessage === undefined
-        ? processRecord.stderr
-        : processRecord.stderr
-          ? `${processRecord.stderr}\n${errorMessage}`
-          : errorMessage;
-
-    processRecord.status = 'error';
-    processRecord.endTime = new Date();
-    processRecord.stderr = stderr;
-    processRecord.statusListeners.forEach((listener) => {
-      listener('error');
-    });
-
-    try {
-      await this.store.update(processRecord.id, {
-        status: 'error',
-        endTime: processRecord.endTime,
-        stderr
+      throw serviceError(ErrorCode.PROCESS_SPAWN_FAILED, message, {
+        processId: id,
+        command: command.join(' '),
+        cwd: options.cwd,
+        stderr: message
       });
-    } catch (error) {
-      this.logger.error(
-        'Failed to mark process startup failure',
-        error instanceof Error ? error : undefined,
-        {
-          processId: processRecord.id
-        }
-      );
     }
   }
 
-  async getProcess(id: string): Promise<ServiceResult<ProcessRecord>> {
-    try {
-      const processRecord = await this.store.get(id);
-
-      if (!processRecord) {
-        return {
-          success: false,
-          error: {
-            message: `Process ${id} not found`,
-            code: ErrorCode.PROCESS_NOT_FOUND,
-            details: {
-              processId: id
-            } satisfies ProcessNotFoundContext
-          }
-        };
-      }
-
-      // Wait for streaming to finish to ensure all output is captured
-      // We use three indicators to decide whether to wait:
-      // 1. Terminal status: command has finished, wait for streaming callbacks
-      // 2. PID check: if process is no longer alive, command finished, wait for streaming
-      // 3. No streamingComplete: process was read from disk, output is complete
-      //
-      // For long-running processes (servers), PID is alive and status is 'running',
-      // so we return current output without blocking.
-      if (processRecord.streamingComplete) {
-        const isTerminal = ['completed', 'failed', 'killed', 'error'].includes(
-          processRecord.status
-        );
-
-        // Check if the subprocess is still alive (deterministic check for fast commands)
-        // If PID is set and subprocess is dead, the command has finished
-        let commandFinished = false;
-        if (processRecord.pid !== undefined) {
-          try {
-            // Signal 0 doesn't actually send a signal, just checks if process exists
-            process.kill(processRecord.pid, 0);
-            // Subprocess is still running
-          } catch {
-            // Subprocess is not running (either finished or doesn't exist)
-            commandFinished = true;
-          }
-        }
-
-        // Wait if status is terminal OR command has finished (for fast commands)
-        if (isTerminal || commandFinished) {
-          await processRecord.streamingComplete;
-        }
-      }
-
-      return {
-        success: true,
-        data: processRecord
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to get process '${id}': ${errorMessage}`,
-          code: ErrorCode.PROCESS_ERROR,
-          details: {
-            processId: id,
-            stderr: errorMessage
-          } satisfies ProcessErrorContext
-        }
-      };
-    }
+  async get(id: string): Promise<ProcessStatus | null> {
+    const process = this.#supervisor.get(id) ?? this.#processes.get(id);
+    if (!process) return null;
+    this.#processes.set(id, process);
+    return statusToPublic(id, process.snapshot());
   }
 
-  async killProcess(
+  async list(): Promise<ProcessStatus[]> {
+    return [...this.#processes.entries()].map(([id, process]) =>
+      statusToPublic(id, process.snapshot())
+    );
+  }
+
+  async openLogs(
     id: string,
-    signal?: NodeJS.Signals
-  ): Promise<ServiceResult<void>> {
+    options: ProcessLogsRPCOptions = {}
+  ): Promise<ReadableStream<ProcessLogEvent>> {
+    validateCursor(options.since, id);
+    const process = this.#supervisor.get(id) ?? this.#processes.get(id);
+    if (!process) {
+      throw serviceError(ErrorCode.PROCESS_NOT_FOUND, 'Process not found', {
+        processId: id
+      });
+    }
+    this.#processes.set(id, process);
+    let stream: ReadableStream<RuntimeProcessLogEvent>;
     try {
-      const process = await this.store.get(id);
+      stream = process.logs({
+        after: options.since,
+        replay: options.replay,
+        follow: options.follow
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Process log cursor is invalid';
+      throw serviceError(ErrorCode.INVALID_PROCESS_CURSOR, message, {
+        processId: id,
+        cursor: options.since,
+        reason: message
+      });
+    }
+    return stream.pipeThrough(
+      new TransformStream<RuntimeProcessLogEvent, ProcessLogEvent>({
+        transform(event, controller) {
+          controller.enqueue(logEventToPublic(event));
+        }
+      })
+    );
+  }
 
-      if (!process) {
-        return {
-          success: false,
-          error: {
-            message: `Process ${id} not found`,
-            code: ErrorCode.PROCESS_NOT_FOUND,
-            details: {
-              processId: id
-            } satisfies ProcessNotFoundContext
-          }
-        };
-      }
+  async kill(id: string, signal?: number): Promise<void> {
+    const process = this.#supervisor.get(id) ?? this.#processes.get(id);
+    if (!process) {
+      throw serviceError(ErrorCode.PROCESS_NOT_FOUND, 'Process not found', {
+        processId: id
+      });
+    }
+    this.#processes.set(id, process);
+    const status = process.snapshot();
+    if (status.state === 'exited') return;
+    if (status.state === 'error') {
+      throw serviceError(ErrorCode.PROCESS_ERROR, status.error.message, {
+        processId: id
+      });
+    }
+    try {
+      await process.kill(signal);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to kill process';
+      throw serviceError(ErrorCode.PROCESS_ERROR, message, {
+        processId: id
+      });
+    }
+  }
 
-      // All processes use ExecutionService for the unified execution model
-      if (!process.commandHandle) {
-        // Process has no commandHandle - likely already completed or malformed
-        return {
-          success: true
-        };
-      }
+  async hasActive(): Promise<boolean> {
+    return this.#supervisor.hasActive();
+  }
 
-      const result = await this.executionService.kill(
-        process.commandHandle,
-        signal
+  async enforceTerminalRetention(): Promise<void> {
+    const terminal = [...this.#processes.entries()]
+      .map(([id, process]) => ({ id, status: process.snapshot() }))
+      .filter(({ status }) => status.state !== 'running')
+      .sort((left, right) =>
+        terminalTime(left.status).localeCompare(terminalTime(right.status))
       );
-
-      if (result.success) {
-        await this.store.update(id, {
-          status: 'killed',
-          endTime: new Date()
-        });
+    for (const { id } of terminal.slice(
+      0,
+      Math.max(0, terminal.length - MAX_RETAINED_TERMINAL_PROCESSES)
+    )) {
+      if (this.#supervisor.removeTerminal(id)) {
+        this.#processes.delete(id);
+        this.#completed.delete(id);
       }
-
-      return result;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to kill process '${id}': ${errorMessage}`,
-          code: ErrorCode.PROCESS_ERROR,
-          details: {
-            processId: id,
-            stderr: errorMessage
-          } satisfies ProcessErrorContext
-        }
-      };
     }
   }
 
-  async listProcesses(
-    filters?: ProcessFilters
-  ): Promise<ServiceResult<ProcessRecord[]>> {
-    try {
-      const processes = await this.store.list(filters);
-
-      return {
-        success: true,
-        data: processes
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to list processes: ${errorMessage}`,
-          code: ErrorCode.PROCESS_ERROR,
-          details: {
-            processId: 'list', // Meta operation
-            stderr: errorMessage
-          } satisfies ProcessErrorContext
-        }
-      };
-    }
+  async shutdown(): Promise<void> {
+    this.#logger.debug('Shutting down process service');
+    await this.#supervisor[Symbol.asyncDispose]();
   }
 
-  async killAllProcesses(): Promise<ServiceResult<number>> {
-    try {
-      const processes = await this.store.list({ status: 'running' });
-      let killed = 0;
+  async onTerminal(id: string, status: RuntimeProcessStatus): Promise<void> {
+    if (this.#completed.has(id)) return;
+    this.#completed.add(id);
+    await this.enforceTerminalRetention();
+    const publicStatus = statusToPublic(id, status);
+    const durationMs = durationBetween(
+      status.startedAt,
+      status.state === 'running' ? undefined : status.endedAt
+    );
+    logCanonicalEvent(this.#logger, {
+      event: 'process.complete',
+      outcome: publicStatus.state === 'error' ? 'error' : 'success',
+      processId: publicStatus.id,
+      pid: publicStatus.pid,
+      durationMs,
+      processOutcome:
+        publicStatus.state === 'error'
+          ? 'supervisor_error'
+          : publicStatus.state === 'exited' &&
+              publicStatus.exit.signal !== undefined
+            ? 'signal'
+            : 'exit',
+      exitCode:
+        publicStatus.state === 'exited' ? publicStatus.exit.code : undefined,
+      signal:
+        publicStatus.state === 'exited' ? publicStatus.exit.signal : undefined,
+      timedOut:
+        publicStatus.state === 'exited'
+          ? publicStatus.exit.timedOut
+          : undefined,
+      failureCode:
+        publicStatus.state === 'error' ? publicStatus.error.code : undefined
+    });
+  }
+}
 
-      for (const process of processes) {
-        const result = await this.killProcess(process.id);
-        if (result.success) {
-          killed++;
-        }
+function validateCommand(command: SandboxCommand): void {
+  if (!Array.isArray(command) || command.length === 0) {
+    throw serviceError(
+      ErrorCode.INVALID_COMMAND,
+      'Process command must include an executable'
+    );
+  }
+  for (const [index, argument] of command.entries()) {
+    if (
+      typeof argument !== 'string' ||
+      (index === 0 && argument.length === 0)
+    ) {
+      throw serviceError(
+        ErrorCode.INVALID_COMMAND,
+        index === 0
+          ? 'Process executable must be a non-empty string'
+          : 'Process argv members must be strings'
+      );
+    }
+  }
+}
+
+async function validateOptions(options: ProcessStartOptions): Promise<void> {
+  if (!isPlainObject(options)) {
+    throw serviceError(
+      ErrorCode.INVALID_COMMAND,
+      'Process options are invalid'
+    );
+  }
+  if (options.cwd !== undefined) {
+    if (typeof options.cwd !== 'string' || options.cwd.length === 0) {
+      throw invalidCwd(options.cwd, 'cwd must be a non-empty string');
+    }
+    try {
+      const cwdStat = await stat(options.cwd);
+      if (!cwdStat.isDirectory()) throw new Error('cwd is not a directory');
+      await access(options.cwd, constants.X_OK);
+    } catch (error) {
+      throw invalidCwd(
+        options.cwd,
+        error instanceof Error ? error.message : 'cwd is not accessible'
+      );
+    }
+  }
+  if (options.env !== undefined) {
+    if (!isPlainObject(options.env)) {
+      throw invalidEnvironment(undefined, 'env must be a plain object');
+    }
+    for (const [name, value] of Object.entries(options.env)) {
+      if (name.length === 0 || name.includes('=') || name.includes('\0')) {
+        throw invalidEnvironment(name, 'environment name is invalid');
       }
-
-      return {
-        success: true,
-        data: killed
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to kill all processes: ${errorMessage}`,
-          code: ErrorCode.PROCESS_ERROR,
-          details: {
-            processId: 'killAll', // Meta operation
-            stderr: errorMessage
-          } satisfies ProcessErrorContext
-        }
-      };
+      if (typeof value !== 'string') {
+        throw invalidEnvironment(name, 'environment value must be a string');
+      }
+      if (value.includes('\0')) {
+        throw invalidEnvironment(name, 'environment value contains a NUL byte');
+      }
     }
   }
-
-  // Cleanup method for graceful shutdown
-  async destroy(): Promise<void> {
-    // Kill all running processes
-    await this.killAllProcesses();
+  if (
+    options.timeout !== undefined &&
+    (typeof options.timeout !== 'number' ||
+      !Number.isFinite(options.timeout) ||
+      options.timeout < 1)
+  ) {
+    throw serviceError(
+      ErrorCode.INVALID_COMMAND,
+      'Process timeout must be a positive finite number'
+    );
   }
+}
+
+function validateCursor(cursor: string | undefined, processId: string): void {
+  if (
+    cursor !== undefined &&
+    (typeof cursor !== 'string' || cursor.length === 0)
+  ) {
+    throw serviceError(
+      ErrorCode.INVALID_PROCESS_CURSOR,
+      'Process log cursor is invalid',
+      { processId, cursor, reason: 'cursor must be a non-empty string' }
+    );
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function invalidCwd(value: unknown, reason: string): ProcessServiceError {
+  return serviceError(ErrorCode.INVALID_PROCESS_CWD, reason, {
+    cwd: typeof value === 'string' ? value : String(value),
+    reason
+  });
+}
+
+function invalidEnvironment(
+  name: string | undefined,
+  reason: string
+): ProcessServiceError {
+  return serviceError(ErrorCode.INVALID_PROCESS_ENVIRONMENT, reason, {
+    name,
+    reason
+  });
+}
+
+function isCwdSpawnFailure(error: unknown, cwd: string): boolean {
+  if (!(error instanceof Error)) return false;
+  const systemError: SystemError = error;
+  return (
+    systemError.path === cwd &&
+    systemError.code !== undefined &&
+    ['ENOENT', 'EACCES', 'ENOTDIR', 'EPERM'].includes(systemError.code)
+  );
+}
+
+function statusToPublic(
+  id: string,
+  status: RuntimeProcessStatus
+): ProcessStatus {
+  const base = {
+    id,
+    pid: status.pid,
+    command: status.command,
+    cwd: status.cwd,
+    startedAt: status.startedAt
+  };
+  if (status.state === 'running') return { ...base, state: 'running' };
+  if (status.state === 'exited') {
+    return {
+      ...base,
+      state: 'exited',
+      exit: { ...status.exit },
+      endedAt: status.endedAt
+    };
+  }
+  return {
+    ...base,
+    state: 'error',
+    error: { ...status.error },
+    endedAt: status.endedAt
+  };
+}
+
+function terminalTime(status: RuntimeProcessStatus): string {
+  return status.state === 'running' ? status.startedAt : status.endedAt;
+}
+
+function durationBetween(
+  startedAt: string,
+  endedAt: string | undefined
+): number {
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt ?? new Date().toISOString());
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, end - start);
+}
+
+function logEventToPublic(event: RuntimeProcessLogEvent): ProcessLogEvent {
+  if (event.type === 'truncated') {
+    return {
+      type: 'truncated',
+      cursor: event.cursor,
+      timestamp: event.timestamp
+    };
+  }
+  if (event.state === 'exited') {
+    return {
+      type: 'terminal',
+      state: 'exited',
+      cursor: event.cursor,
+      timestamp: event.timestamp,
+      exit: { ...event.exit }
+    };
+  }
+  if (event.state === 'error') {
+    return {
+      type: 'terminal',
+      state: 'error',
+      cursor: event.cursor,
+      timestamp: event.timestamp,
+      error: { ...event.error }
+    };
+  }
+  return {
+    type: event.type,
+    cursor: event.cursor,
+    timestamp: event.timestamp,
+    data: event.data
+  };
+}
+
+function serviceError(
+  code: string,
+  message: string,
+  details?: Record<string, string | number | boolean | undefined>
+): ProcessServiceError {
+  return Object.assign(new Error(message), { code, details });
 }

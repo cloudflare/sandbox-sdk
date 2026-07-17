@@ -20,7 +20,7 @@ const COMMAND_TIMEOUT_MS = (() => {
 const STREAM_CHUNK_DELAY_MS = 100;
 
 /**
- * Default working directory for sessions.
+ * Default working directory for container processes and terminals.
  *
  * Default: /workspace
  */

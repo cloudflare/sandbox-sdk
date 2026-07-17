@@ -1,59 +1,65 @@
 import type {
   BackupCreateArchiveOptions,
-  BackupRestoreArchiveOptions,
   CheckChangesRequest,
   CheckChangesResult,
-  CommandExecuteOptions,
   EnsureTunnelRunRequest,
   EnsureTunnelRunResult,
   ExtensionConnectRequest,
   ExtensionHealth,
   FileEncoding,
   FileInfo,
-  FileSessionOptions,
   ListFilesOptions,
   Logger,
   MkdirOptions,
-  ProcessStartOptions,
+  PortWatchEvent,
+  PortWatchRPCOptions,
+  PortWatchSubscriptionAPI,
   ReadFileBinaryOptions,
   ReadFileOptions,
   ReadFileStreamOptions,
   SandboxAPI,
-  SessionCreateOptions,
+  SandboxPortsAPI,
   StopTunnelRunRequest,
   StopTunnelRunResult,
   TunnelInfo,
   WatchRequest,
   WriteFileOptions
 } from '@repo/shared';
-import { ErrorCode } from '@repo/shared/errors';
 import { RpcTarget } from 'capnweb';
-import type {
-  CommandResult,
-  ProcessRecord,
-  ServiceError,
-  ServiceResult
-} from '../core/types';
+
+type InternalReadFileBinaryOptions = ReadFileBinaryOptions;
+type InternalReadFileOptions = ReadFileOptions;
+type InternalWriteFileOptions = WriteFileOptions;
+type InternalMkdirOptions = MkdirOptions;
+
+import type { ServiceError, ServiceResult } from '../core/types';
 import type { ExtensionHost } from '../extensions';
 import type { BackupService } from '../services/backup-service';
+import type { CommandContextService } from '../services/command-context-service';
 import type { FileService } from '../services/file-service';
+import { MountService } from '../services/mount-service';
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
-import type { SessionManager } from '../services/session-manager';
 import type { TerminalManager } from '../services/terminal-manager';
 import type { TunnelService } from '../services/tunnel-service';
 import type { WatchService } from '../services/watch-service';
+import { WorkspaceArchiveService } from '../services/workspace-archive-service';
+import { MountsRPCAPI } from './mounts-rpc';
+import { ProcessesRPCAPI } from './processes-rpc';
+import { StreamSubscriptionRPC } from './subscription-rpc';
+import { TerminalsRPCAPI } from './terminals-rpc';
+import { WorkspaceRPCAPI } from './workspace-rpc';
 
 export interface SandboxAPIDeps {
-  processService: ProcessService;
   fileService: FileService;
   portService: PortService;
+  processService: ProcessService;
   backupService: BackupService;
   watchService: WatchService;
   tunnelService: TunnelService;
   terminalManager: TerminalManager;
   extensionHost: ExtensionHost;
-  sessionManager: SessionManager;
+  commandContextService: CommandContextService;
   logger: Logger;
 }
 
@@ -61,51 +67,58 @@ export interface SandboxAPIDeps {
 // RPC error helpers
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any ServiceResult variant
-function throwIfError(result: ServiceResult<any, any>): void {
-  if (!result.success) {
+interface ServiceResultLike {
+  success: boolean;
+  error?: ServiceError;
+}
+
+function throwIfError(result: ServiceResultLike): void {
+  if (!result.success && result.error) {
     const { code, message, details } = result.error;
     throw Object.assign(new Error(message), { code, details });
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any ServiceResult variant
-function extractData<T>(result: ServiceResult<any, any>): T {
+function extractData<T>(
+  result: { success: true; data: T } | { success: false; error: ServiceError }
+): T {
   throwIfError(result);
-  return (result as { data: T }).data;
+  return (result as { success: true; data: T }).data;
 }
 
 /**
  * Container control-plane API exposed over capnweb.
  *
  * Each domain is exposed as a nested RpcTarget so the client can access
- * them directly as `commands`, `files`, etc. Top-level methods handle
- * utility and session management.
+ * them directly as `files`, `ports`, etc.
  */
 export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   #deps: SandboxAPIDeps;
-
   constructor(deps: SandboxAPIDeps) {
     super();
     this.#deps = deps;
   }
 
-  // --- Domain sub-stubs (nested RpcTargets) --------------------------------
-
-  get commands() {
-    return new CommandsRPCAPI(this.#deps.processService);
-  }
   get files() {
     return new FilesRPCAPI(this.#deps.fileService);
+  }
+  get ports() {
+    return new PortsRPCAPI(this.#deps.portService);
   }
   get processes() {
     return new ProcessesRPCAPI(this.#deps.processService);
   }
-  get ports() {
-    return new PortsRPCAPI(this.#deps.portService, this.#deps.processService);
+  get mounts() {
+    return new MountsRPCAPI(new MountService(this.#deps.commandContextService));
+  }
+  get workspace() {
+    const service = new WorkspaceArchiveService(
+      this.#deps.commandContextService
+    );
+    return new WorkspaceRPCAPI(service);
   }
   get utils() {
-    return new UtilsRPCAPI(this.#deps.sessionManager);
+    return new UtilsRPCAPI();
   }
   get backup() {
     return new BackupRPCAPI(this.#deps.backupService);
@@ -125,80 +138,6 @@ export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
 }
 
 // ===========================================================================
-// Terminals
-// ===========================================================================
-
-class TerminalsRPCAPI extends RpcTarget {
-  #terminalManager: TerminalManager;
-
-  constructor(terminalManager: TerminalManager) {
-    super();
-    this.#terminalManager = terminalManager;
-  }
-
-  async createTerminal(options: {
-    id: string;
-    cwd?: string;
-    shell?: string;
-    cols?: number;
-    rows?: number;
-  }): Promise<{ success: true; id: string }> {
-    await this.#terminalManager.getOrCreateTerminal({
-      id: options.id,
-      cwd: options.cwd,
-      pty: { shell: options.shell, cols: options.cols, rows: options.rows }
-    });
-    return { success: true, id: options.id };
-  }
-
-  async destroyTerminal(id: string): Promise<{ success: true; id: string }> {
-    await this.#terminalManager.destroyTerminal(id);
-    return { success: true, id };
-  }
-}
-
-// ===========================================================================
-// Commands
-// ===========================================================================
-
-class CommandsRPCAPI extends RpcTarget {
-  #svc: ProcessService;
-  constructor(svc: ProcessService) {
-    super();
-    this.#svc = svc;
-  }
-
-  async execute(
-    command: string,
-    options?: CommandExecuteOptions
-  ): Promise<{
-    success: boolean;
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-    command: string;
-    timestamp: string;
-  }> {
-    const result = await this.#svc.executeCommand(command, {
-      sessionId: options?.sessionId,
-      timeoutMs: options?.timeoutMs,
-      env: options?.env,
-      cwd: options?.cwd,
-      origin: options?.origin
-    });
-    const data = extractData<CommandResult>(result);
-    return {
-      success: data.success,
-      exitCode: data.exitCode,
-      stdout: data.stdout,
-      stderr: data.stderr,
-      command,
-      timestamp: new Date().toISOString()
-    };
-  }
-}
-
-// ===========================================================================
 // Files
 // ===========================================================================
 
@@ -211,7 +150,7 @@ class FilesRPCAPI extends RpcTarget {
 
   async readFile(
     path: string,
-    options: ReadFileBinaryOptions
+    options: InternalReadFileBinaryOptions
   ): Promise<{
     success: true;
     content: ReadableStream<Uint8Array>;
@@ -222,7 +161,7 @@ class FilesRPCAPI extends RpcTarget {
   }>;
   async readFile(
     path: string,
-    options?: ReadFileOptions
+    options?: InternalReadFileOptions
   ): Promise<{
     success: true;
     content: string;
@@ -233,14 +172,9 @@ class FilesRPCAPI extends RpcTarget {
     mimeType: string;
     timestamp: string;
   }>;
-  async readFile(
-    path: string,
-    options: { encoding?: FileEncoding; sessionId?: string } = {}
-  ) {
-    const { sessionId, ...readOptions } = options;
-
+  async readFile(path: string, options: { encoding?: FileEncoding } = {}) {
     if (options.encoding === 'none') {
-      const result = await this.#svc.readFileBinaryStream(path, sessionId);
+      const result = await this.#svc.readFileBinaryStream(path);
       const { content, size, mimeType } = extractData<{
         content: ReadableStream<Uint8Array>;
         size: number;
@@ -255,7 +189,7 @@ class FilesRPCAPI extends RpcTarget {
         timestamp: new Date().toISOString()
       };
     }
-    const result = await this.#svc.readFile(path, readOptions, sessionId);
+    const result = await this.#svc.readFile(path, options);
     const content = extractData<string>(result);
     const metadata = (
       result as {
@@ -283,23 +217,18 @@ class FilesRPCAPI extends RpcTarget {
 
   async readFileStream(
     path: string,
-    options: ReadFileStreamOptions = {}
+    options: Record<string, never> = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.#svc.readFileStreamOperation(path, options.sessionId);
+    void options;
+    return this.#svc.readFileStreamOperation(path);
   }
 
   async writeFile(
     path: string,
     content: string,
-    options: WriteFileOptions = {}
+    options: InternalWriteFileOptions = {}
   ) {
-    const { sessionId, ...writeOptions } = options;
-    const result = await this.#svc.writeFile(
-      path,
-      content,
-      writeOptions,
-      sessionId
-    );
+    const result = await this.#svc.writeFile(path, content, options);
     throwIfError(result);
     return {
       success: true,
@@ -312,13 +241,10 @@ class FilesRPCAPI extends RpcTarget {
   async writeFileStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
-    options: FileSessionOptions = {}
+    options: Record<string, never> = {}
   ) {
-    const result = await this.#svc.writeFileStream(
-      path,
-      stream,
-      options.sessionId
-    );
+    void options;
+    const result = await this.#svc.writeFileStream(path, stream);
     throwIfError(result);
     const data = (result as { data?: { bytesWritten: number } }).data;
     return {
@@ -329,8 +255,9 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async deleteFile(path: string, options: FileSessionOptions = {}) {
-    const result = await this.#svc.deleteFile(path, options.sessionId);
+  async deleteFile(path: string, options: Record<string, never> = {}) {
+    void options;
+    const result = await this.#svc.deleteFile(path);
     throwIfError(result);
     return { success: true, path, timestamp: new Date().toISOString() };
   }
@@ -338,13 +265,10 @@ class FilesRPCAPI extends RpcTarget {
   async renameFile(
     oldPath: string,
     newPath: string,
-    options: FileSessionOptions = {}
+    options: Record<string, never> = {}
   ) {
-    const result = await this.#svc.renameFile(
-      oldPath,
-      newPath,
-      options.sessionId
-    );
+    void options;
+    const result = await this.#svc.renameFile(oldPath, newPath);
     throwIfError(result);
     return {
       success: true,
@@ -358,13 +282,10 @@ class FilesRPCAPI extends RpcTarget {
   async moveFile(
     sourcePath: string,
     destinationPath: string,
-    options: FileSessionOptions = {}
+    options: Record<string, never> = {}
   ) {
-    const result = await this.#svc.moveFile(
-      sourcePath,
-      destinationPath,
-      options.sessionId
-    );
+    void options;
+    const result = await this.#svc.moveFile(sourcePath, destinationPath);
     throwIfError(result);
     return {
       success: true,
@@ -374,13 +295,8 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async mkdir(path: string, options: MkdirOptions = {}) {
-    const { sessionId, ...mkdirOptions } = options;
-    const result = await this.#svc.createDirectory(
-      path,
-      mkdirOptions,
-      sessionId
-    );
+  async mkdir(path: string, options: InternalMkdirOptions = {}) {
+    const result = await this.#svc.createDirectory(path, options);
     throwIfError(result);
     return {
       success: true,
@@ -400,8 +316,7 @@ class FilesRPCAPI extends RpcTarget {
     path: string;
     timestamp: string;
   }> {
-    const { sessionId, ...listOptions } = options;
-    const result = await this.#svc.listFiles(path, listOptions, sessionId);
+    const result = await this.#svc.listFiles(path, options);
     const files = extractData<FileInfo[]>(result);
     return {
       success: true,
@@ -412,196 +327,11 @@ class FilesRPCAPI extends RpcTarget {
     };
   }
 
-  async exists(path: string, options: FileSessionOptions = {}) {
-    const result = await this.#svc.exists(path, options.sessionId);
+  async exists(path: string, options: Record<string, never> = {}) {
+    void options;
+    const result = await this.#svc.exists(path);
     const exists = extractData<boolean>(result);
     return { success: true, exists, path, timestamp: new Date().toISOString() };
-  }
-}
-
-const SIGNAL_NAMES: Record<number, NodeJS.Signals> = {
-  1: 'SIGHUP',
-  2: 'SIGINT',
-  3: 'SIGQUIT',
-  9: 'SIGKILL',
-  10: 'SIGUSR1',
-  12: 'SIGUSR2',
-  15: 'SIGTERM',
-  18: 'SIGCONT',
-  19: 'SIGSTOP'
-};
-
-function signalNumberToNodeSignal(signal?: number): NodeJS.Signals | undefined {
-  if (signal === undefined) return undefined;
-  return SIGNAL_NAMES[signal] ?? 'SIGTERM';
-}
-
-// ===========================================================================
-// Processes
-// ===========================================================================
-
-class ProcessesRPCAPI extends RpcTarget {
-  #svc: ProcessService;
-  constructor(svc: ProcessService) {
-    super();
-    this.#svc = svc;
-  }
-
-  async startProcess(
-    command: string,
-    options: ProcessStartOptions = {},
-    stdin?: ReadableStream<Uint8Array>
-  ) {
-    const result = await this.#svc.startProcess(command, {
-      ...options,
-      ...(stdin !== undefined && { stdin })
-    });
-    const proc = extractData<ProcessRecord>(result);
-    return {
-      success: true,
-      processId: proc.id,
-      pid: proc.pid,
-      command: proc.command,
-      timestamp: proc.startTime.toISOString()
-    };
-  }
-
-  async listProcesses() {
-    const result = await this.#svc.listProcesses();
-    const procs = extractData<ProcessRecord[]>(result);
-    return {
-      success: true,
-      processes: procs.map((p) => ({
-        id: p.id,
-        pid: p.pid,
-        command: p.command,
-        status: p.status,
-        startTime: p.startTime.toISOString(),
-        exitCode: p.exitCode,
-        stdout: p.stdoutMode,
-        stderr: p.stderrMode
-      })),
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async getProcess(id: string) {
-    const result = await this.#svc.getProcess(id);
-    const proc = extractData<ProcessRecord>(result);
-    return {
-      success: true,
-      process: {
-        id: proc.id,
-        pid: proc.pid,
-        command: proc.command,
-        status: proc.status,
-        startTime: proc.startTime.toISOString(),
-        exitCode: proc.exitCode,
-        stdout: proc.stdoutMode,
-        stderr: proc.stderrMode
-      },
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async killProcess(id: string, signal?: number) {
-    const result = await this.#svc.killProcess(
-      id,
-      signalNumberToNodeSignal(signal)
-    );
-    throwIfError(result);
-    return {
-      success: true,
-      processId: id,
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async killAllProcesses() {
-    const result = await this.#svc.killAllProcesses();
-    const count = extractData<number>(result);
-    return {
-      success: true,
-      cleanedCount: count,
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async getProcessLogs(id: string) {
-    const result = await this.#svc.getProcess(id);
-    const proc = extractData<ProcessRecord>(result);
-    return {
-      success: true,
-      processId: id,
-      stdout: proc.stdout,
-      stderr: proc.stderr,
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  async streamProcessLogs(id: string): Promise<ReadableStream<Uint8Array>> {
-    const encoder = new TextEncoder();
-    const result = await this.#svc.getProcess(id);
-    const proc = extractData<ProcessRecord>(result);
-
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (proc.stdout) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: 'stdout', data: proc.stdout, processId: id, timestamp: new Date().toISOString() })}\n\n`
-            )
-          );
-        }
-        if (proc.stderr) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: 'stderr', data: proc.stderr, processId: id, timestamp: new Date().toISOString() })}\n\n`
-            )
-          );
-        }
-        if (proc.status !== 'running') {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: 'exit', exitCode: proc.exitCode, processId: id, timestamp: new Date().toISOString() })}\n\n`
-            )
-          );
-          controller.close();
-          return;
-        }
-
-        const listener = (type: 'stdout' | 'stderr', data: string) => {
-          try {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type, data, processId: id, timestamp: new Date().toISOString() })}\n\n`
-              )
-            );
-          } catch {
-            /* Stream closed */
-          }
-        };
-        proc.outputListeners.add(listener);
-
-        const statusListener = (status: string) => {
-          if (['completed', 'failed', 'killed', 'error'].includes(status)) {
-            try {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: 'exit', exitCode: proc.exitCode, processId: id, timestamp: new Date().toISOString() })}\n\n`
-                )
-              );
-              controller.close();
-            } catch {
-              /* Stream closed */
-            }
-            proc.outputListeners.delete(listener);
-            proc.statusListeners.delete(statusListener);
-          }
-        };
-        proc.statusListeners.add(statusListener);
-      }
-    });
   }
 }
 
@@ -609,96 +339,20 @@ class ProcessesRPCAPI extends RpcTarget {
 // Ports
 // ===========================================================================
 
-class PortsRPCAPI extends RpcTarget {
+class PortsRPCAPI extends RpcTarget implements SandboxPortsAPI {
   #portSvc: PortService;
-  #procSvc: ProcessService;
-  constructor(portSvc: PortService, procSvc: ProcessService) {
+  constructor(portSvc: PortService) {
     super();
     this.#portSvc = portSvc;
-    this.#procSvc = procSvc;
   }
 
-  async watchPort(request: {
-    port: number;
-    mode: 'http' | 'tcp';
-    path?: string;
-    statusMin?: number;
-    statusMax?: number;
-    processId?: string;
-    interval?: number;
-  }): Promise<ReadableStream<Uint8Array>> {
-    const encoder = new TextEncoder();
-    const {
-      port,
-      mode,
-      path,
-      statusMin,
-      statusMax,
-      processId,
-      interval = 500
-    } = request;
-    const portSvc = this.#portSvc;
-    const procSvc = this.#procSvc;
-    let cancelled = false;
-    const clampedInterval = Math.max(100, Math.min(interval, 10000));
-
-    return new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const emit = (event: Record<string, unknown>) => {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-          );
-        };
-        emit({ type: 'watching', port });
-        try {
-          while (!cancelled) {
-            if (processId) {
-              const processResult = await procSvc.getProcess(processId);
-              if (!processResult.success) {
-                emit({ type: 'error', port, error: 'Process not found' });
-                return;
-              }
-              const proc = processResult.data;
-              if (
-                ['completed', 'failed', 'killed', 'error'].includes(proc.status)
-              ) {
-                emit({
-                  type: 'process_exited',
-                  port,
-                  exitCode: proc.exitCode ?? undefined
-                });
-                return;
-              }
-            }
-            const result = await portSvc.checkPortReady({
-              port,
-              mode,
-              path,
-              statusMin,
-              statusMax
-            });
-            if (result.ready) {
-              emit({ type: 'ready', port, statusCode: result.statusCode });
-              return;
-            }
-            await new Promise((resolve) =>
-              setTimeout(resolve, clampedInterval)
-            );
-          }
-        } catch (error) {
-          emit({
-            type: 'error',
-            port,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-        } finally {
-          controller.close();
-        }
-      },
-      cancel() {
-        cancelled = true;
-      }
-    });
+  async openWatch(
+    port: number,
+    options?: PortWatchRPCOptions
+  ): Promise<PortWatchSubscriptionAPI> {
+    return new StreamSubscriptionRPC<PortWatchEvent>(
+      this.#portSvc.openWatch(port, options)
+    );
   }
 }
 
@@ -707,12 +361,6 @@ class PortsRPCAPI extends RpcTarget {
 // ===========================================================================
 
 class UtilsRPCAPI extends RpcTarget {
-  #mgr: SessionManager;
-  constructor(mgr: SessionManager) {
-    super();
-    this.#mgr = mgr;
-  }
-
   async ping(): Promise<string> {
     return 'healthy';
   }
@@ -724,55 +372,7 @@ class UtilsRPCAPI extends RpcTarget {
       return 'unknown';
     }
   }
-
-  /** Currently empty — the container does not maintain a command registry. */
-  async getCommands(): Promise<string[]> {
-    return [];
-  }
-
-  async createSession(options: SessionCreateOptions) {
-    const result = await this.#mgr.createSession(options);
-    if (
-      !result.success &&
-      result.error.code === ErrorCode.SESSION_ALREADY_EXISTS
-    ) {
-      // Mirror the HTTP handler: surface placement ID on the duplicate-create
-      // path so a restarted DO can capture it from the idempotent retry.
-      const { code, message, details } = result.error;
-      throw Object.assign(new Error(message), {
-        code,
-        details: {
-          ...details,
-          containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
-        }
-      });
-    }
-    throwIfError(result);
-    return {
-      success: true,
-      id: options.id,
-      message: `Session ${options.id} created`,
-      timestamp: new Date().toISOString(),
-      containerPlacementId: process.env.CLOUDFLARE_PLACEMENT_ID ?? null
-    };
-  }
-
-  async deleteSession(sessionId: string) {
-    const result = await this.#mgr.deleteSession(sessionId);
-    throwIfError(result);
-    return { success: true, sessionId, timestamp: new Date().toISOString() };
-  }
-
-  async listSessions() {
-    const result = await this.#mgr.listSessions();
-    const sessions = extractData<string[]>(result);
-    return { sessions };
-  }
 }
-
-// ===========================================================================
-// Backup
-// ===========================================================================
 
 class BackupRPCAPI extends RpcTarget {
   #svc: BackupService;
@@ -789,7 +389,6 @@ class BackupRPCAPI extends RpcTarget {
     const result = await this.#svc.createArchive(
       dir,
       archivePath,
-      options?.sessionId,
       options?.gitignore ?? false,
       options?.excludes ?? [],
       options?.compression
@@ -804,18 +403,19 @@ class BackupRPCAPI extends RpcTarget {
     };
   }
 
-  async restoreArchive(
-    dir: string,
-    archivePath: string,
-    options?: BackupRestoreArchiveOptions
-  ) {
-    const result = await this.#svc.restoreArchive(
-      dir,
-      archivePath,
-      options?.sessionId
-    );
+  async restoreArchive(dir: string, archivePath: string) {
+    const result = await this.#svc.restoreArchive(dir, archivePath);
     throwIfError(result);
     return { success: true, dir };
+  }
+
+  async uploadArchive(request: {
+    archivePath: string;
+    url: string;
+    timeoutMs: number;
+  }) {
+    const result = await this.#svc.uploadArchive(request);
+    throwIfError(result);
   }
 
   async uploadParts(request: {
@@ -826,17 +426,44 @@ class BackupRPCAPI extends RpcTarget {
       offset: number;
       size: number;
     }>;
-    sessionId?: string;
   }) {
     const result = await this.#svc.uploadParts(
       request.archivePath,
-      request.parts,
-      request.sessionId ?? 'default'
+      request.parts
     );
     const data = extractData<{
       parts: Array<{ partNumber: number; etag: string }>;
     }>(result);
     return { success: true, parts: data.parts };
+  }
+
+  async prepareRestore(request: {
+    dir: string;
+    backupId: string;
+    archivePath: string;
+  }) {
+    const result = await this.#svc.prepareRestore(request);
+    return extractData<{ existingSize: number }>(result);
+  }
+
+  async downloadArchive(request: {
+    archivePath: string;
+    expectedSize: number;
+    parts: Array<{ url: string; offset: number; range?: string }>;
+    timeoutMs: number;
+  }) {
+    const result = await this.#svc.downloadArchive(request);
+    throwIfError(result);
+  }
+
+  async extractArchive(dir: string, archivePath: string) {
+    const result = await this.#svc.extractArchive(dir, archivePath);
+    throwIfError(result);
+  }
+
+  async cleanupArchive(archivePath: string) {
+    const result = await this.#svc.cleanupArchive(archivePath);
+    throwIfError(result);
   }
 }
 
@@ -851,15 +478,16 @@ class WatchRPCAPI extends RpcTarget {
     this.#svc = svc;
   }
 
-  async watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>> {
+  async watch(request: WatchRequest) {
     const result = await this.#svc.watchDirectory(request.path, {
       path: request.path,
-      sessionId: request.sessionId ?? 'default',
       recursive: request.recursive,
       include: request.include,
       exclude: request.exclude
     });
-    return extractData<ReadableStream<Uint8Array>>(result);
+    return new StreamSubscriptionRPC(
+      extractData<ReadableStream<Uint8Array>>(result)
+    );
   }
 
   async checkChanges(
@@ -867,7 +495,6 @@ class WatchRPCAPI extends RpcTarget {
   ): Promise<CheckChangesResult> {
     const result = await this.#svc.checkChanges(request.path, {
       path: request.path,
-      sessionId: request.sessionId ?? 'default',
       recursive: request.recursive,
       include: request.include,
       exclude: request.exclude,

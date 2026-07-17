@@ -1,6 +1,11 @@
 // Port readiness service
 
-import type { PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import type {
+  PortCheckRequest,
+  PortCheckResponse,
+  PortWatchEvent,
+  PortWatchRPCOptions
+} from '@repo/shared';
 
 export class PortService {
   /**
@@ -21,6 +26,64 @@ export class PortService {
     }
 
     return this.checkHttpReady(port, path, statusMin, statusMax);
+  }
+
+  openWatch(
+    port: number,
+    options: PortWatchRPCOptions = {}
+  ): ReadableStream<PortWatchEvent> {
+    const mode = options.mode ?? 'tcp';
+    const path = options.path;
+    const { statusMin, statusMax } = statusRange(options.status);
+    const clampedInterval = Math.max(
+      100,
+      Math.min(options.interval ?? 500, 10000)
+    );
+    let cancelled = false;
+    let pollingSleep: PollingSleep | undefined;
+
+    return new ReadableStream<PortWatchEvent>({
+      start: async (controller) => {
+        controller.enqueue({ type: 'watching', port });
+        try {
+          while (!cancelled) {
+            const result = await this.checkPortReady({
+              port,
+              mode,
+              path,
+              statusMin,
+              statusMax
+            });
+            if (cancelled) return;
+            if (result.ready) {
+              controller.enqueue({
+                type: 'ready',
+                port,
+                statusCode: result.statusCode
+              });
+              return;
+            }
+            pollingSleep = createPollingSleep(clampedInterval);
+            await pollingSleep.promise;
+            pollingSleep = undefined;
+          }
+        } catch (error) {
+          if (!cancelled) {
+            controller.enqueue({
+              type: 'error',
+              port,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            });
+          }
+        } finally {
+          closeController(controller);
+        }
+      },
+      cancel() {
+        cancelled = true;
+        pollingSleep?.cancel();
+      }
+    });
   }
 
   private async checkTcpReady(port: number): Promise<PortCheckResponse> {
@@ -91,5 +154,54 @@ export class PortService {
 
   destroy(): void {
     // No persistent resources to release.
+  }
+}
+
+function statusRange(status: PortWatchRPCOptions['status']): {
+  statusMin: number;
+  statusMax: number;
+} {
+  if (typeof status === 'number')
+    return { statusMin: status, statusMax: status };
+  return {
+    statusMin: status?.min ?? 200,
+    statusMax: status?.max ?? 399
+  };
+}
+
+interface PollingSleep {
+  promise: Promise<void>;
+  cancel(): void;
+}
+
+function createPollingSleep(ms: number): PollingSleep {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let resolveSleep = () => {};
+  const promise = new Promise<void>((resolve) => {
+    resolveSleep = resolve;
+    timeout = setTimeout(() => {
+      timeout = undefined;
+      resolve();
+    }, ms);
+  });
+  return {
+    promise,
+    cancel() {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+      resolveSleep();
+    }
+  };
+}
+
+function closeController<T>(
+  controller: ReadableStreamDefaultController<T>
+): void {
+  try {
+    controller.close();
+  } catch {
+    // The stream may already be closed by consumer cancellation.
   }
 }

@@ -169,15 +169,6 @@ describe('SecurityService - Simplified Security Model', () => {
   });
 
   describe('Helper methods', () => {
-    test('generateSecureSessionId should create unique session IDs', () => {
-      const id1 = service.generateSecureSessionId();
-      const id2 = service.generateSecureSessionId();
-
-      expect(id1).toMatch(/^session_\d+_[0-9a-f]{32}$/);
-      expect(id2).toMatch(/^session_\d+_[0-9a-f]{32}$/);
-      expect(id1).not.toBe(id2);
-    });
-
     test('logSecurityEvent should log events', () => {
       const logs: any[] = [];
       const testLogger: Logger = {
