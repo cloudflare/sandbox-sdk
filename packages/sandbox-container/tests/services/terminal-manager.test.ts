@@ -22,22 +22,26 @@ describe('TerminalManager', () => {
     return terminalManager;
   }
 
-  async function nextData(
+  async function readUntilData(
     stream: ReadableStream<
       Awaited<ReturnType<TerminalManager['output']>> extends ReadableStream<
         infer T
       >
         ? T
         : never
-    >
+    >,
+    expected: string
   ): Promise<string> {
     const reader = stream.getReader();
+    let output = '';
     try {
       while (true) {
         const result = await reader.read();
-        if (result.done) return '';
-        if (result.value.type === 'data')
-          return Buffer.from(result.value.data).toString('utf8');
+        if (result.done) return output;
+        if (result.value.type === 'data') {
+          output += Buffer.from(result.value.data).toString('utf8');
+          if (output.includes(expected)) return output;
+        }
       }
     } finally {
       await reader.cancel().catch(() => undefined);
@@ -106,8 +110,9 @@ describe('TerminalManager', () => {
       manager.write(snapshot.id, new TextEncoder().encode('printf ok\\n\n'))
     ).resolves.toBeUndefined();
     expect(
-      await nextData(
-        await manager.output(snapshot.id, { replay: false, follow: true })
+      await readUntilData(
+        await manager.output(snapshot.id, { replay: false, follow: true }),
+        'ok'
       )
     ).toContain('ok');
     await expect(manager.interrupt(snapshot.id)).resolves.toBeUndefined();
