@@ -1,20 +1,58 @@
-import type {
-  ExecResult,
-  SessionCreateResult,
-  SessionDeleteResult
-} from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 import { createTestHeaders } from './helpers/test-fixtures';
-import type { ErrorResponse } from './test-worker/types';
 
-// Diagnostic instrumentation for #482 flake investigation.
-// Remove once root cause is confirmed.
+interface ProcessStatus {
+  id: string;
+  state: 'running' | 'exited' | 'error';
+  exit?: { code: number; timedOut: boolean; signal?: number };
+}
+
+interface ProcessExit {
+  code: number;
+  timedOut: boolean;
+  signal?: number;
+}
+
+interface ProcessLogEvent {
+  type: 'stdout' | 'stderr' | 'terminal' | 'truncated';
+  exit?: ProcessExit;
+}
+
+async function waitForChildMarker(
+  workerUrl: string,
+  sandboxId: string,
+  marker: string,
+  timeoutMs = 5000
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId),
+      body: JSON.stringify({
+        command: [
+          '/bin/bash',
+          '-lc',
+          `pid=$(cat ${marker} 2>/dev/null || true); case "$pid" in ''|*[!0-9]*) exit 1;; *) printf '%s' "$pid";; esac`
+        ]
+      })
+    });
+    if (response.ok) {
+      const result = (await response.json()) as { stdout: string };
+      const pid = Number(result.stdout.trim());
+      if (Number.isSafeInteger(pid) && pid > 0) return pid;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for child PID marker ${marker}`);
+}
+
 async function timedFetch(
   label: string,
   ...args: Parameters<typeof fetch>
@@ -27,9 +65,6 @@ async function timedFetch(
   return response;
 }
 
-/**
- * Command Timeout Tests
- */
 describe('Command Timeout', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
@@ -46,280 +81,93 @@ describe('Command Timeout', () => {
     sandbox = null;
   }, 120000);
 
-  test('sandbox.run should respect per-command timeout', async () => {
-    const sessionId = createUniqueSession();
+  test('process timeout kills leader and descendants with stable terminal exit', async () => {
+    const marker = `/tmp/task11-timeout-${Date.now()}`;
+    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId),
+      body: JSON.stringify({
+        command: ['/bin/bash', '-lc', `sleep 30 & echo $! > ${marker}; wait`],
+        timeout: 1000
+      })
+    });
+    expect(startResponse.status).toBe(200);
+    const started = (await startResponse.json()) as ProcessStatus;
+    const childPid = await waitForChildMarker(workerUrl, sandboxId, marker);
+    expect(childPid).toBeGreaterThan(0);
 
+    const exitResponse = await timedFetch(
+      'process wait timeout',
+      `${workerUrl}/api/process/${started.id}/wait`,
+      {
+        method: 'POST',
+        headers: createTestHeaders(sandboxId),
+        body: JSON.stringify({ timeout: 15000 })
+      }
+    );
+    expect(exitResponse.status).toBe(200);
+    const exit = (await exitResponse.json()) as ProcessExit;
+    expect(exit.timedOut).toBe(true);
+    expect(exit.code).not.toBe(0);
+
+    const laterResponse = await fetch(
+      `${workerUrl}/api/process/${started.id}`,
+      {
+        headers: createTestHeaders(sandboxId)
+      }
+    );
+    expect(laterResponse.status).toBe(200);
+    const later = (await laterResponse.json()) as ProcessStatus;
+    expect(later.state).toBe('exited');
+    expect(later.exit?.timedOut).toBe(true);
+
+    const logsResponse = await fetch(
+      `${workerUrl}/api/process/${started.id}/logs`,
+      { headers: createTestHeaders(sandboxId) }
+    );
+    expect(logsResponse.status).toBe(200);
+    const logs = (await logsResponse.json()) as { events: ProcessLogEvent[] };
+    expect(logs.events.at(-1)?.type).toBe('terminal');
+    expect(logs.events.at(-1)?.exit?.timedOut).toBe(true);
+
+    const childResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: createTestHeaders(sandboxId),
+      body: JSON.stringify({
+        command: [
+          '/bin/bash',
+          '-lc',
+          `pid=$(cat ${marker}); if [ "$pid" = "${childPid}" ] && kill -0 "$pid" 2>/dev/null; then echo alive; fi`
+        ]
+      })
+    });
+    expect(childResponse.status).toBe(200);
+    const child = (await childResponse.json()) as { stdout: string };
+    expect(child.stdout.trim()).toBe('');
+  }, 60000);
+
+  test('sandbox.exec should respect per-command timeout', async () => {
     const startTime = Date.now();
     const response = await timedFetch(
       'test1 exec',
       `${workerUrl}/api/execute`,
       {
         method: 'POST',
-        headers: createTestHeaders(sandboxId, sessionId),
+        headers: createTestHeaders(sandboxId),
         body: JSON.stringify({
-          command: 'sleep 30',
+          command: ['/bin/bash', '-lc', 'sleep 30'],
           timeout: 1000
         })
       }
     );
     const elapsed = Date.now() - startTime;
 
-    expect(response.status).toBe(410);
-    const data = (await response.json()) as ErrorResponse;
-    expect(data.error).toBeDefined();
-    expect(data.error).toMatch(/timeout|terminated|shell exited/i);
-
-    // Command timeout is 1s — elapsed should be well under 15s even with CI latency
+    expect(response.status).toBe(200);
+    const data = (await response.json()) as CommandResponse;
+    expect(data.success).toBe(false);
+    expect(data.exitCode).not.toBe(0);
+    expect(data.signal).toBeGreaterThan(0);
+    expect(data.timedOut).toBe(true);
     expect(elapsed).toBeLessThan(15000);
-  }, 60000);
-
-  test('session.run should respect per-command timeout', async () => {
-    // Create a session without a session-level timeout
-    const createStart = Date.now();
-    const createResponse = await timedFetch(
-      'test2 session/create',
-      `${workerUrl}/api/session/create`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({})
-      }
-    );
-    expect(Date.now() - createStart).toBeLessThan(15000);
-
-    expect(createResponse.status).toBe(200);
-    const createData = (await createResponse.json()) as SessionCreateResult;
-    const sessionId = createData.sessionId;
-
-    // Execute a long-running command with a short per-command timeout
-    const startTime = Date.now();
-    const execResponse = await timedFetch(
-      'test2 exec',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId, sessionId),
-        body: JSON.stringify({
-          command: 'sleep 30',
-          timeout: 1000
-        })
-      }
-    );
-    const elapsed = Date.now() - startTime;
-
-    expect(execResponse.status).toBe(410);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
-
-    // Command timeout is 1s — elapsed should be well under 15s even with CI latency
-    expect(elapsed).toBeLessThan(15000);
-  }, 60000);
-
-  test('session.run should respect session-level commandTimeoutMs', async () => {
-    // Create a session WITH a session-level timeout
-    const createStart = Date.now();
-    const createResponse = await timedFetch(
-      'test3 session/create',
-      `${workerUrl}/api/session/create`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({
-          commandTimeoutMs: 1000
-        })
-      }
-    );
-    expect(Date.now() - createStart).toBeLessThan(15000);
-
-    expect(createResponse.status).toBe(200);
-    const createData = (await createResponse.json()) as SessionCreateResult;
-    const sessionId = createData.sessionId;
-
-    // Execute a long-running command WITHOUT per-command timeout
-    // The session-level timeout should apply
-    const startTime = Date.now();
-    const execResponse = await timedFetch(
-      'test3 exec',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId, sessionId),
-        body: JSON.stringify({
-          command: 'sleep 30'
-        })
-      }
-    );
-    const elapsed = Date.now() - startTime;
-
-    expect(execResponse.status).toBe(410);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toBeDefined();
-    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
-
-    // Session-level timeout is 1s — elapsed should be well under 15s even with CI latency
-    expect(elapsed).toBeLessThan(15000);
-  }, 60000);
-
-  test('per-command timeout should take precedence over session-level commandTimeoutMs', async () => {
-    // Create a session with a LONG session-level timeout (30s)
-    const createStart = Date.now();
-    const createResponse = await timedFetch(
-      'test4 session/create',
-      `${workerUrl}/api/session/create`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({
-          commandTimeoutMs: 30000
-        })
-      }
-    );
-    expect(Date.now() - createStart).toBeLessThan(15000);
-
-    expect(createResponse.status).toBe(200);
-    const createData = (await createResponse.json()) as SessionCreateResult;
-    const sessionId = createData.sessionId;
-
-    // Execute with a SHORT per-command timeout (1s)
-    // The per-command timeout should win over the 30s session timeout
-    const startTime = Date.now();
-
-    const execResponse = await timedFetch(
-      'test4 exec',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId, sessionId),
-        body: JSON.stringify({
-          command: 'sleep 30',
-          timeout: 1000
-        })
-      }
-    );
-
-    const elapsed = Date.now() - startTime;
-
-    expect(execResponse.status).toBe(410);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
-
-    // Should have timed out in ~1s, not ~30s
-    expect(elapsed).toBeLessThan(10000);
-  }, 60000);
-
-  test('timed-out command starts and the terminated session is cleaned up', async () => {
-    // Create a session
-    const createStart = Date.now();
-    const createResponse = await timedFetch(
-      'test5 session/create',
-      `${workerUrl}/api/session/create`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({})
-      }
-    );
-    expect(Date.now() - createStart).toBeLessThan(15000);
-
-    expect(createResponse.status).toBe(200);
-    const createData = (await createResponse.json()) as SessionCreateResult;
-    const sessionId = createData.sessionId;
-
-    // Start a long-running command with a marker file, using a short timeout.
-    // The command writes a file, sleeps, then writes another file.
-    // After timeout, the first file should exist (command started),
-    // and we should be able to delete the terminated session.
-    const startTime = Date.now();
-    const execResponse = await timedFetch(
-      'test5 exec',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId, sessionId),
-        body: JSON.stringify({
-          command:
-            'touch /tmp/timeout-test-started && sleep 120 && touch /tmp/timeout-test-finished',
-          timeout: 1000
-        })
-      }
-    );
-    const elapsed = Date.now() - startTime;
-
-    expect(execResponse.status).toBe(410);
-    const execData = (await execResponse.json()) as ErrorResponse;
-    expect(execData.error).toMatch(/timeout|terminated|shell exited/i);
-
-    // Command timeout is 1s — elapsed should be well under 15s even with CI latency
-    expect(elapsed).toBeLessThan(15000);
-
-    // Verify the command did start (marker file exists)
-    const checkStarted = await timedFetch(
-      'test5 check-started',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({
-          command: 'test -f /tmp/timeout-test-started && echo "exists"'
-        })
-      }
-    );
-
-    expect(checkStarted.status).toBe(200);
-    const checkData = (await checkStarted.json()) as ExecResult;
-    expect(checkData.stdout.trim()).toBe('exists');
-
-    // The timed-out command terminates and evicts the shell session. Explicit
-    // deletion may either succeed or report that the session is already gone.
-    const deleteResponse = await timedFetch(
-      'test5 session/delete',
-      `${workerUrl}/api/session/delete`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({ sessionId })
-      }
-    );
-
-    expect([200, 404, 500]).toContain(deleteResponse.status);
-    const deleteData = (await deleteResponse.json()) as
-      | SessionDeleteResult
-      | ErrorResponse;
-    if (deleteResponse.status === 200) {
-      expect((deleteData as SessionDeleteResult).success).toBe(true);
-    } else {
-      expect((deleteData as ErrorResponse).error).toMatch(/not found/i);
-    }
-
-    // Wait briefly for process cleanup after session destruction
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Verify the finished marker does NOT exist (command was killed with session)
-    const checkFinished = await timedFetch(
-      'test5 check-finished',
-      `${workerUrl}/api/execute`,
-      {
-        method: 'POST',
-        headers: createTestHeaders(sandboxId),
-        body: JSON.stringify({
-          command:
-            'test -f /tmp/timeout-test-finished && echo "exists" || echo "not-exists"'
-        })
-      }
-    );
-
-    expect(checkFinished.status).toBe(200);
-    const finishData = (await checkFinished.json()) as ExecResult;
-    expect(finishData.stdout.trim()).toBe('not-exists');
-
-    // Cleanup marker files
-    await timedFetch('test5 cleanup', `${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: createTestHeaders(sandboxId),
-      body: JSON.stringify({
-        command: 'rm -f /tmp/timeout-test-started /tmp/timeout-test-finished'
-      })
-    });
   }, 60000);
 });

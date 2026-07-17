@@ -12,7 +12,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -24,7 +23,7 @@ describe('Parallel Context Creation (issue #276)', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox({ type: 'python' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {

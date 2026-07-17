@@ -5,7 +5,7 @@
  * or provide test-specific features (health checks, R2 operations, WebSocket init).
  *
  * For SDK operations (exec, file ops, process management), the test worker passes through
- * SDK types directly (ExecResult, ProcessStartResult, etc.) - those should be imported
+ * SDK types directly (process handles, process statuses, etc.) - those should be imported
  * from @repo/shared in test files.
  */
 
@@ -13,12 +13,6 @@
 export interface HealthResponse {
   status: string;
   deploy_hash?: string;
-}
-
-// Session management wrapper responses
-export interface SessionCreateResponse {
-  success: boolean;
-  sessionId: string;
 }
 
 // Simple success responses (used by multiple endpoints)

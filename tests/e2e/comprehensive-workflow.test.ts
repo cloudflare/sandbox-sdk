@@ -19,27 +19,14 @@
  */
 
 import type { GitCheckoutResult } from '@cloudflare/sandbox/git';
-import type {
-  ExecResult,
-  FileInfo,
-  ListFilesResult,
-  Process,
-  ProcessLogsResult,
-  ReadFileResult
-} from '@repo/shared';
+import type { FileInfo, ListFilesResult, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-import {
-  collectProcessStdout,
-  collectProcessStreamEvents,
-  startProcessViaTestWorker,
-  streamProcessViaTestWorker
-} from './helpers/process-stream';
 
 describe('Comprehensive Workflow', () => {
   let sandbox: TestSandbox | null = null;
@@ -50,7 +37,7 @@ describe('Comprehensive Workflow', () => {
     // Create isolated sandbox for this test file
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
 
     // Env vars live here (not in test 1) so tests 2-3 pass even if the clone fails.
     const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
@@ -214,13 +201,17 @@ export function greet(name) {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`,
+          command: [
+            '/bin/bash',
+            '-lc',
+            `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`
+          ],
           cwd: testDir
         })
       });
 
       expect(buildResponse.status).toBe(200);
-      const buildData = (await buildResponse.json()) as ExecResult;
+      const buildData = (await buildResponse.json()) as CommandResponse;
       expect(buildData.stdout).toContain('Building hello-world in test mode');
       expect(buildData.stdout).toContain('utils');
 
@@ -229,36 +220,28 @@ export function greet(name) {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'git status --porcelain',
+          command: ['/bin/bash', '-lc', 'git status --porcelain'],
           cwd: testDir
         })
       });
 
       expect(gitStatusResponse.status).toBe(200);
-      const gitStatusData = (await gitStatusResponse.json()) as ExecResult;
+      const gitStatusData = (await gitStatusResponse.json()) as CommandResponse;
       // Should show our new files as untracked
       expect(gitStatusData.stdout).toContain('config.json');
       expect(gitStatusData.stdout).toContain('src/');
 
-      // Phase 4: Background process with streaming
+      // Phase 4: Background process and Port readiness
 
       // Write a simple server script that uses env vars
       const serverScript = `
-const port = 8888;
-console.log(\`[Server] Starting on port \${port}\`);
-console.log(\`[Server] PROJECT_NAME = \${process.env.PROJECT_NAME}\`);
-console.log(\`[Server] BUILD_ENV = \${process.env.BUILD_ENV}\`);
-
-let counter = 0;
-const interval = setInterval(() => {
-  counter++;
-  console.log(\`[Server] Heartbeat \${counter}\`);
-  if (counter >= 3) {
-    clearInterval(interval);
-    console.log('[Server] Done');
-    process.exit(0);
-  }
-}, 500);
+const server = Bun.serve({
+  port: 8888,
+  fetch(req) {
+    return new Response(\`PROJECT_NAME=\${process.env.PROJECT_NAME} BUILD_ENV=\${process.env.BUILD_ENV}\`);
+  },
+});
+console.log("Server listening");
 `.trim();
 
       await fetch(`${workerUrl}/api/file/write`, {
@@ -270,52 +253,34 @@ const interval = setInterval(() => {
         })
       });
 
-      // Start the background process
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `bun run ${testDir}/server.js`
-        })
-      });
-
-      expect(startResponse.status).toBe(200);
-      const processData = (await startResponse.json()) as Process;
-      expect(processData.id).toBeTruthy();
-      const processId = processData.id;
-
-      // Wait for process to complete using waitForLog instead of fixed sleep
-      // This is more reliable under load as it waits for actual output
-      const waitResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitForLog`,
+      // Start the background process and wait for port
+      const startResponse = await fetch(
+        `${workerUrl}/api/exec-and-wait-for-port`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            pattern: 'Done',
-            timeout: 10000
+            command: ['/bin/bash', '-lc', `bun run ${testDir}/server.js`],
+            port: 8888
           })
         }
       );
-      expect(waitResponse.status).toBe(200);
 
-      // Get process logs
-      const logsResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/logs`,
-        {
-          method: 'GET',
-          headers
-        }
-      );
+      expect(startResponse.status).toBe(200);
 
-      expect(logsResponse.status).toBe(200);
-      const logsData = (await logsResponse.json()) as ProcessLogsResult;
+      // Verify server is responding with correct env vars
+      const queryResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', 'curl -s http://localhost:8888']
+        })
+      });
 
-      // Verify env vars were available to the process
-      expect(logsData.stdout).toContain('PROJECT_NAME = hello-world');
-      expect(logsData.stdout).toContain('BUILD_ENV = test');
-      expect(logsData.stdout).toContain('Heartbeat 3');
-      expect(logsData.stdout).toContain('Done');
+      expect(queryResponse.status).toBe(200);
+      const queryResult = (await queryResponse.json()) as CommandResponse;
+      expect(queryResult.stdout).toContain('PROJECT_NAME=hello-world');
+      expect(queryResult.stdout).toContain('BUILD_ENV=test');
 
       // Phase 5: Cleanup - move and delete files
 
@@ -375,57 +340,13 @@ const interval = setInterval(() => {
   );
 
   /**
-   * Test 2: Process streaming with real-time output
-   *
-   * Tests process log streaming within the same sandbox context.
-   */
-  test(
-    'should stream command output in real-time',
-    { retry: 2, timeout: 60000 },
-    async () => {
-      // Stream a process that outputs multiple lines with timestamps.
-      const process = await startProcessViaTestWorker(
-        workerUrl,
-        headers,
-        'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
-      );
-      const streamResponse = await streamProcessViaTestWorker(
-        workerUrl,
-        headers,
-        process.id
-      );
-
-      expect(streamResponse.status).toBe(200);
-      expect(streamResponse.headers.get('content-type')).toBe(
-        'text/event-stream'
-      );
-
-      const events = await collectProcessStreamEvents(streamResponse);
-
-      const eventTypes = new Set(events.map((event) => event.type));
-      expect(eventTypes.has('stdout')).toBe(true);
-      expect(eventTypes.has('exit')).toBe(true);
-
-      // Verify output includes env var from earlier phase
-      const output = collectProcessStdout(events);
-      expect(output).toContain('[hello-world]');
-      expect(output).toContain('Step 1');
-      expect(output).toContain('Step 3');
-
-      // Verify successful completion
-      const exitEvent = events.find((event) => event.type === 'exit');
-      expect(exitEvent?.exitCode).toBe(0);
-    }
-  );
-
-  /**
-   * Test 3: Per-command env and cwd without mutating session
+   * Test 3: Per-command env and cwd without mutating sandbox state
    *
    * Verifies that per-command options work correctly and
-   * don't affect the session state.
+   * don't affect sandbox state.
    */
   test(
-    'should support per-command env and cwd without affecting session',
+    'should support per-command env and cwd without affecting sandbox state',
     { retry: 2, timeout: 60000 },
     async () => {
       // Execute with per-command env
@@ -433,28 +354,32 @@ const interval = setInterval(() => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "TEMP=$TEMP_VAR, PROJECT=$PROJECT_NAME"',
+          command: [
+            '/bin/bash',
+            '-lc',
+            'echo "TEMP=$TEMP_VAR, PROJECT=$PROJECT_NAME"'
+          ],
           env: { TEMP_VAR: 'temporary-value' }
         })
       });
 
       expect(cmdEnvResponse.status).toBe(200);
-      const cmdEnvData = (await cmdEnvResponse.json()) as ExecResult;
-      // Should have both per-command env AND session env
+      const cmdEnvData = (await cmdEnvResponse.json()) as CommandResponse;
+      // Should have both per-command env AND sandbox env
       expect(cmdEnvData.stdout.trim()).toBe(
         'TEMP=temporary-value, PROJECT=hello-world'
       );
 
-      // Verify TEMP_VAR didn't persist to session
+      // Verify TEMP_VAR didn't persist to sandbox state
       const verifyEnvResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "TEMP=$TEMP_VAR"'
+          command: ['/bin/bash', '-lc', 'echo "TEMP=$TEMP_VAR"']
         })
       });
 
-      const verifyEnvData = (await verifyEnvResponse.json()) as ExecResult;
+      const verifyEnvData = (await verifyEnvResponse.json()) as CommandResponse;
       expect(verifyEnvData.stdout.trim()).toBe('TEMP=');
 
       // Execute with per-command cwd
@@ -462,25 +387,25 @@ const interval = setInterval(() => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'pwd',
+          command: ['/bin/bash', '-lc', 'pwd'],
           cwd: '/tmp'
         })
       });
 
       expect(cmdCwdResponse.status).toBe(200);
-      const cmdCwdData = (await cmdCwdResponse.json()) as ExecResult;
+      const cmdCwdData = (await cmdCwdResponse.json()) as CommandResponse;
       expect(cmdCwdData.stdout.trim()).toBe('/tmp');
 
-      // Verify session cwd wasn't changed
+      // Verify sandbox cwd wasn't changed
       const verifyCwdResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'pwd'
+          command: ['/bin/bash', '-lc', 'pwd']
         })
       });
 
-      const verifyCwdData = (await verifyCwdResponse.json()) as ExecResult;
+      const verifyCwdData = (await verifyCwdResponse.json()) as CommandResponse;
       expect(verifyCwdData.stdout.trim()).toBe('/workspace');
     }
   );
@@ -502,7 +427,11 @@ const interval = setInterval(() => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `echo '${pngBase64}' | base64 -d > /workspace/test-image.png`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `echo '${pngBase64}' | base64 -d > /workspace/test-image.png`
+          ]
         })
       });
 
@@ -529,68 +458,6 @@ const interval = setInterval(() => {
         headers,
         body: JSON.stringify({ path: '/workspace/test-image.png' })
       });
-    }
-  );
-
-  /**
-   * Test 5: Process list and management
-   *
-   * Tests starting multiple processes and listing them.
-   */
-  test(
-    'should manage multiple background processes',
-    { retry: 2, timeout: 60000 },
-    async () => {
-      // Start two background processes
-      const process1Response = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ command: 'sleep 30' })
-      });
-      const process1 = (await process1Response.json()) as Process;
-
-      const process2Response = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ command: 'sleep 30' })
-      });
-      const process2 = (await process2Response.json()) as Process;
-
-      // List processes - startProcess returns after registration, so they're immediately visible
-      const listResponse = await fetch(`${workerUrl}/api/process/list`, {
-        method: 'GET',
-        headers
-      });
-      expect(listResponse.status).toBe(200);
-      const processList = (await listResponse.json()) as Process[];
-
-      expect(processList.length).toBeGreaterThanOrEqual(2);
-      const ids = processList.map((p) => p.id);
-      expect(ids).toContain(process1.id);
-      expect(ids).toContain(process2.id);
-
-      // Kill all processes
-      const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({})
-      });
-
-      expect(killAllResponse.status).toBe(200);
-
-      // Poll until no running processes remain (up to 5 seconds)
-      let running: Process[] = [];
-      for (let i = 0; i < 10; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
-          method: 'GET',
-          headers
-        });
-        const processesAfter = (await listAfterResponse.json()) as Process[];
-        running = processesAfter.filter((p) => p.status === 'running');
-        if (running.length === 0) break;
-      }
-      expect(running.length).toBe(0);
     }
   );
 });

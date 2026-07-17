@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 
@@ -40,7 +39,11 @@ async function cleanupDir(
     method: 'POST',
     headers,
     body: JSON.stringify({
-      command: `fusermount3 -u ${dir} 2>/dev/null || true; rm -rf ${dir}`
+      command: [
+        '/bin/bash',
+        '-lc',
+        `fusermount3 -u ${dir} 2>/dev/null || true; rm -rf ${dir}`
+      ]
     })
   });
 }
@@ -76,7 +79,7 @@ describe('Backup Workflow E2E', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
 
     // Probe for BACKUP_BUCKET availability once at suite level
     const probeResponse = await fetch(`${workerUrl}/api/backup/create`, {
@@ -115,7 +118,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${TEST_DIR} && echo "${TEST_CONTENT}" > ${TEST_DIR}/${TEST_FILE}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR} && echo "${TEST_CONTENT}" > ${TEST_DIR}/${TEST_FILE}`
+          ]
         })
       });
       expect(mkdirResponse.ok).toBe(true);
@@ -145,7 +152,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR}/*`
+          command: ['/bin/bash', '-lc', `rm -rf ${TEST_DIR}/*`]
         })
       });
       expect(deleteResponse.ok).toBe(true);
@@ -155,7 +162,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `test -f ${TEST_DIR}/${TEST_FILE} && echo "exists" || echo "deleted"`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `test -f ${TEST_DIR}/${TEST_FILE} && echo "exists" || echo "deleted"`
+          ]
         })
       });
       const checkDeletedResult =
@@ -181,7 +192,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cat ${TEST_DIR}/${TEST_FILE}`
+          command: ['/bin/bash', '-lc', `cat ${TEST_DIR}/${TEST_FILE}`]
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -203,7 +214,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${faultDir} && printf %s ${JSON.stringify(faultContent)} > ${faultDir}/${faultFile}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${faultDir} && printf %s ${JSON.stringify(faultContent)} > ${faultDir}/${faultFile}`
+          ]
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -255,7 +270,9 @@ describe('Backup Workflow E2E', () => {
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${faultDir}/${faultFile}` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `cat ${faultDir}/${faultFile}`]
+        })
       });
       expect(verifyResponse.ok).toBe(true);
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -301,7 +318,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          ]
         })
       });
 
@@ -366,7 +387,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          ]
         })
       });
 
@@ -425,7 +450,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          ]
         })
       });
 
@@ -489,7 +518,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+          ]
         })
       });
 
@@ -547,7 +580,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
+          ]
         })
       });
       const checksumBeforeResult =
@@ -579,7 +616,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${PROJECT_DIR}/*`
+          command: ['/bin/bash', '-lc', `rm -rf ${PROJECT_DIR}/*`]
         })
       });
       expect(deleteResponse.ok).toBe(true);
@@ -589,7 +626,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `find ${PROJECT_DIR} -type f | wc -l`
+          command: ['/bin/bash', '-lc', `find ${PROJECT_DIR} -type f | wc -l`]
         })
       });
       const verifyDeletedResult =
@@ -612,7 +649,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `find ${PROJECT_DIR} -type f | sort | xargs md5sum`
+          ]
         })
       });
       const checksumAfterResult =
@@ -635,7 +676,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `mkdir -p ${EMPTY_DIR}` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `mkdir -p ${EMPTY_DIR}`]
+        })
       });
 
       // Create backup
@@ -652,7 +695,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${EMPTY_DIR}` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf ${EMPTY_DIR}`]
+        })
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
@@ -667,7 +712,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `test -d ${EMPTY_DIR} && echo "exists" || echo "missing"`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `test -d ${EMPTY_DIR} && echo "exists" || echo "missing"`
+          ]
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -689,7 +738,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
+          ]
         })
       });
 
@@ -809,7 +862,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${DIR_A} ${DIR_B} && echo "content-a" > ${DIR_A}/file.txt && echo "content-b" > ${DIR_B}/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${DIR_A} ${DIR_B} && echo "content-a" > ${DIR_A}/file.txt && echo "content-b" > ${DIR_B}/file.txt`
+          ]
         })
       });
 
@@ -841,7 +898,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `rm -rf ${DIR_A}/* ${DIR_B}/*`
+          command: ['/bin/bash', '-lc', `rm -rf ${DIR_A}/* ${DIR_B}/*`]
         })
       });
 
@@ -867,7 +924,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cat ${DIR_A}/file.txt && echo "---" && cat ${DIR_B}/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cat ${DIR_A}/file.txt && echo "---" && cat ${DIR_B}/file.txt`
+          ]
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -919,7 +980,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf "${TEST_DIR}"/*` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf "${TEST_DIR}"/*`]
+        })
       });
 
       // Restore
@@ -935,7 +998,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cat "${TEST_DIR}/file with spaces.txt" && cat "${TEST_DIR}/emoji-🎉-file.txt" && cat "${TEST_DIR}/日本語ファイル.txt"`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cat "${TEST_DIR}/file with spaces.txt" && cat "${TEST_DIR}/emoji-🎉-file.txt" && cat "${TEST_DIR}/日本語ファイル.txt"`
+          ]
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -961,7 +1028,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${ORIGINAL_DIR}/subdir && echo "original" > ${ORIGINAL_DIR}/file.txt && echo "nested" > ${ORIGINAL_DIR}/subdir/nested.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${ORIGINAL_DIR}/subdir && echo "original" > ${ORIGINAL_DIR}/file.txt && echo "nested" > ${ORIGINAL_DIR}/subdir/nested.txt`
+          ]
         })
       });
 
@@ -988,7 +1059,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cat ${RESTORE_DIR}/file.txt && cat ${RESTORE_DIR}/subdir/nested.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cat ${RESTORE_DIR}/file.txt && cat ${RESTORE_DIR}/subdir/nested.txt`
+          ]
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -1000,7 +1075,9 @@ describe('Backup Workflow E2E', () => {
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${ORIGINAL_DIR}/file.txt` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `cat ${ORIGINAL_DIR}/file.txt`]
+        })
       });
       const originalResult = (await originalCheck.json()) as ExecuteResponse;
       expect(originalResult.stdout?.trim()).toBe('original');
@@ -1015,16 +1092,18 @@ describe('Backup Workflow E2E', () => {
     test('should allow writes after restore without affecting backup', async () => {
       if (!backupBucketAvailable) return;
 
-      const token = crypto.randomUUID().slice(0, 8);
-      const TEST_DIR = `/workspace/cow-test-${token}`;
-      const VERIFY_DIR = `/workspace/cow-verify-${token}`;
+      const TEST_DIR = `/workspace/cow-test-${crypto.randomUUID().slice(0, 8)}`;
 
       // Create original content
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${TEST_DIR} && echo "original" > ${TEST_DIR}/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR} && echo "original" > ${TEST_DIR}/file.txt`
+          ]
         })
       });
 
@@ -1041,7 +1120,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}/*` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf ${TEST_DIR}/*`]
+        })
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
@@ -1056,7 +1137,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `echo "modified" > ${TEST_DIR}/file.txt && echo "new file" > ${TEST_DIR}/new.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `echo "modified" > ${TEST_DIR}/file.txt && echo "new file" > ${TEST_DIR}/new.txt`
+          ]
         })
       });
 
@@ -1065,32 +1150,36 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cat ${TEST_DIR}/file.txt && cat ${TEST_DIR}/new.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cat ${TEST_DIR}/file.txt && cat ${TEST_DIR}/new.txt`
+          ]
         })
       });
       const modifiedResult = (await modifiedCheck.json()) as ExecuteResponse;
       expect(modifiedResult.stdout).toContain('modified');
       expect(modifiedResult.stdout).toContain('new file');
 
-      // Restore the same backup to a fresh directory. A successful restore to
-      // the same backup ID + dir is intentionally idempotent and may return a
-      // stored result, so use a separate path to verify backup immutability.
+      // Cleanup and restore again - should get ORIGINAL content (not modified)
+      await cleanupDir(workerUrl, headers, TEST_DIR);
+
       const restore2Response = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ id: backup.id, dir: VERIFY_DIR })
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
       expect(restore2Response.ok).toBe(true);
 
-      // Verify original content is restored from the backup, not the modified tree
+      // Verify original content is back
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${VERIFY_DIR}/file.txt` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `cat ${TEST_DIR}/file.txt`]
+        })
       });
-      expect(originalCheck.ok).toBe(true);
       const originalResult = (await originalCheck.json()) as ExecuteResponse;
-      expect(originalResult.exitCode).toBe(0);
       expect(originalResult.stdout?.trim()).toBe('original');
 
       // Verify new.txt doesn't exist (wasn't in backup)
@@ -1098,7 +1187,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `test -f ${VERIFY_DIR}/new.txt && echo "exists" || echo "missing"`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `test -f ${TEST_DIR}/new.txt && echo "exists" || echo "missing"`
+          ]
         })
       });
       const newFileResult = (await newFileCheck.json()) as ExecuteResponse;
@@ -1106,7 +1199,6 @@ describe('Backup Workflow E2E', () => {
 
       // Cleanup
       await cleanupDir(workerUrl, headers, TEST_DIR);
-      await cleanupDir(workerUrl, headers, VERIFY_DIR);
     }, 90000);
   });
 
@@ -1121,7 +1213,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR} && echo "test" > ${TEST_DIR}/file.txt`
+          ]
         })
       });
 
@@ -1137,7 +1233,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf ${TEST_DIR}`]
+        })
       });
 
       // Try to restore to an invalid path (should fail)
@@ -1158,7 +1256,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mount | grep -c "overlay.*${backup.id}" 2>/dev/null || true`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mount | grep -c "overlay.*${backup.id}" 2>/dev/null || true`
+          ]
         })
       });
       const mountResult = (await mountCheck.json()) as ExecuteResponse;
@@ -1169,7 +1271,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `mkdir -p ${TEST_DIR}` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `mkdir -p ${TEST_DIR}`]
+        })
       });
 
       const validRestoreResponse = await fetch(
@@ -1186,7 +1290,9 @@ describe('Backup Workflow E2E', () => {
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `cat ${TEST_DIR}/file.txt` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `cat ${TEST_DIR}/file.txt`]
+        })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.stdout?.trim()).toBe('test');
@@ -1206,7 +1312,7 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
 
     // Probe for BACKUP_BUCKET — Miniflare R2 is always available locally
     const probe = await fetch(`${workerUrl}/api/backup/create`, {

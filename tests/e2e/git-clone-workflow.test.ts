@@ -1,10 +1,9 @@
 import type { GitCheckoutResult } from '@cloudflare/sandbox/git';
-import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
@@ -26,7 +25,7 @@ describe('Git Clone Error Handling', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -107,7 +106,7 @@ describe('Git Shallow Clone', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -142,12 +141,16 @@ describe('Git Shallow Clone', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cd ${testDir} && git rev-list --count HEAD`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cd ${testDir} && git rev-list --count HEAD`
+          ]
         })
       });
 
       expect(countResponse.status).toBe(200);
-      const countData = (await countResponse.json()) as ExecResult;
+      const countData = (await countResponse.json()) as CommandResponse;
       expect(countData.exitCode).toBe(0);
 
       const commitCount = parseInt(countData.stdout.trim(), 10);
@@ -158,12 +161,16 @@ describe('Git Shallow Clone', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cd ${testDir} && git rev-parse --is-shallow-repository`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cd ${testDir} && git rev-parse --is-shallow-repository`
+          ]
         })
       });
 
       expect(shallowResponse.status).toBe(200);
-      const shallowData = (await shallowResponse.json()) as ExecResult;
+      const shallowData = (await shallowResponse.json()) as CommandResponse;
       expect(shallowData.exitCode).toBe(0);
       expect(shallowData.stdout.trim()).toBe('true');
     }
@@ -196,12 +203,16 @@ describe('Git Shallow Clone', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cd ${testDir} && git rev-parse --is-shallow-repository`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cd ${testDir} && git rev-parse --is-shallow-repository`
+          ]
         })
       });
 
       expect(shallowResponse.status).toBe(200);
-      const shallowData = (await shallowResponse.json()) as ExecResult;
+      const shallowData = (await shallowResponse.json()) as CommandResponse;
       expect(shallowData.stdout.trim()).toBe('true');
 
       // Verify we're on the correct branch
@@ -209,12 +220,16 @@ describe('Git Shallow Clone', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cd ${testDir} && git branch --show-current`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cd ${testDir} && git branch --show-current`
+          ]
         })
       });
 
       expect(branchResponse.status).toBe(200);
-      const branchData = (await branchResponse.json()) as ExecResult;
+      const branchData = (await branchResponse.json()) as CommandResponse;
       expect(branchData.stdout.trim()).toBe('main');
 
       // Verify commit count is 1
@@ -222,12 +237,16 @@ describe('Git Shallow Clone', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `cd ${testDir} && git rev-list --count HEAD`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `cd ${testDir} && git rev-list --count HEAD`
+          ]
         })
       });
 
       expect(countResponse.status).toBe(200);
-      const countData = (await countResponse.json()) as ExecResult;
+      const countData = (await countResponse.json()) as CommandResponse;
       expect(parseInt(countData.stdout.trim(), 10)).toBe(1);
     }
   );

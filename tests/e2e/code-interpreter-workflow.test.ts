@@ -23,7 +23,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
@@ -36,7 +35,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
   beforeAll(async () => {
     sandbox = await createTestSandbox({ type: 'python' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -540,7 +539,7 @@ describe('Code Interpreter Workflow (E2E) - base image', () => {
       `${sandbox.workerUrl}/api/code/context/create`,
       {
         method: 'POST',
-        headers: sandbox.headers(createUniqueSession()),
+        headers: sandbox.headers(),
         body: JSON.stringify({ language: 'python' }),
         signal: AbortSignal.timeout(10000)
       }

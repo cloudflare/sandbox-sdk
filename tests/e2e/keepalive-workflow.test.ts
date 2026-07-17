@@ -1,11 +1,13 @@
-import type { ExecResult, Process, ReadFileResult } from '@repo/shared';
+import type { ProcessStatus, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
+import { waitForContainerStopped } from './helpers/container-lifecycle';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { sleep } from './helpers/test-fixtures';
 
 /**
  * KeepAlive Feature Tests
@@ -25,9 +27,9 @@ describe('KeepAlive Feature', () => {
   let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    sandbox = await createTestSandbox();
+    sandbox = await createTestSandbox({ sleepAfter: '3s' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.headers(createUniqueSession());
+    headers = sandbox.headers();
   }, 120000);
 
   afterAll(async () => {
@@ -40,50 +42,101 @@ describe('KeepAlive Feature', () => {
     const response1 = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 1"' })
+      body: JSON.stringify({
+        command: ['/bin/bash', '-lc', 'echo "keepAlive command 1"']
+      })
     });
     expect(response1.status).toBe(200);
-    const data1 = (await response1.json()) as ExecResult;
+    const data1 = (await response1.json()) as CommandResponse;
     expect(data1.stdout).toContain('keepAlive command 1');
 
     // Second command immediately after
     const response2 = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 2"' })
+      body: JSON.stringify({
+        command: ['/bin/bash', '-lc', 'echo "keepAlive command 2"']
+      })
     });
     expect(response2.status).toBe(200);
-    const data2 = (await response2.json()) as ExecResult;
+    const data2 = (await response2.json()) as CommandResponse;
     expect(data2.stdout).toContain('keepAlive command 2');
   }, 30000);
 
   test('should support background processes with keepAlive', async () => {
     const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
 
-    // Start a background process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+    const response = await fetch(`${workerUrl}/api/kill-running-exec`, {
       method: 'POST',
       headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'sleep 10' })
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'sleep 30'] })
     });
-    expect(startResponse.status).toBe(200);
-    const processData = (await startResponse.json()) as Process;
-    expect(processData.id).toBeTruthy();
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as { exitCode: number };
+    expect(result.exitCode).not.toBe(0);
+  }, 30000);
 
-    // Verify process is running
-    const statusResponse = await fetch(
+  test('sleepAfter 3s keeps active process and terminal alive, then idles', async () => {
+    const processResponse = await fetch(`${workerUrl}/api/process/start`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/bash', '-lc', 'sleep 8'] })
+    });
+    expect(processResponse.status).toBe(200);
+    const processData = (await processResponse.json()) as { id: string };
+
+    const terminalResponse = await fetch(`${workerUrl}/api/terminal/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/bash'], cols: 80, rows: 24 })
+    });
+    expect(terminalResponse.status).toBe(200);
+    const terminalData = (await terminalResponse.json()) as { id: string };
+
+    await sleep(4500);
+
+    const processStatusResponse = await fetch(
       `${workerUrl}/api/process/${processData.id}`,
-      { method: 'GET', headers: keepAliveHeaders }
+      { headers }
     );
-    expect(statusResponse.status).toBe(200);
-    const statusData = (await statusResponse.json()) as Process;
-    expect(statusData.status).toBe('running');
+    expect(processStatusResponse.status).toBe(200);
+    const processStatus = (await processStatusResponse.json()) as ProcessStatus;
+    expect(processStatus.state).toBe('running');
 
-    // Cleanup
-    await fetch(`${workerUrl}/api/process/${processData.id}`, {
-      method: 'DELETE',
-      headers: keepAliveHeaders
-    });
+    const terminalSnapshotResponse = await fetch(
+      `${workerUrl}/api/terminal/${terminalData.id}`,
+      { headers }
+    );
+    expect(terminalSnapshotResponse.status).toBe(200);
+    const terminalSnapshot = (await terminalSnapshotResponse.json()) as {
+      status: string;
+    };
+    expect(terminalSnapshot.status).toBe('running');
+
+    const terminalTerminateResponse = await fetch(
+      `${workerUrl}/api/terminal/${terminalData.id}/terminate`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      }
+    );
+    expect(terminalTerminateResponse.status).toBe(200);
+    const processWaitResponse = await fetch(
+      `${workerUrl}/api/process/${processData.id}/wait`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ timeout: 10000 })
+      }
+    );
+    expect(processWaitResponse.status).toBe(200);
+    const processExit = (await processWaitResponse.json()) as {
+      code: number;
+    };
+    expect(processExit.code).toBe(0);
+
+    await waitForContainerStopped(workerUrl, headers, { timeoutMs: 15000 });
   }, 30000);
 
   test('should work with file operations and keepAlive', async () => {

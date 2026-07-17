@@ -10,6 +10,7 @@ import {
   isDurableObjectCodeUpdateReset,
   isPlatformTransientError
 } from '../../../packages/sandbox/src/platform-errors';
+import type { SandboxCommand } from '../../../packages/shared/src/process-types';
 import { createSandboxId, createTestHeaders } from './test-fixtures';
 
 export type SandboxType =
@@ -24,8 +25,8 @@ export interface TestSandbox {
   sandboxId: string;
   /** Sandbox image type used for routing. */
   type: SandboxType;
-  /** Create headers with optional session ID. Includes sandbox type. */
-  headers: (sessionId?: string) => Record<string, string>;
+  /** Create headers with sandbox type. */
+  headers: () => Record<string, string>;
   /** Generate a unique path for test isolation within this sandbox. */
   uniquePath: (prefix: string) => string;
 }
@@ -33,8 +34,8 @@ export interface TestSandbox {
 export interface CreateTestSandboxOptions {
   /** Container image type. Defaults to 'default' (base image). */
   type?: SandboxType;
-  /** Command to run for initialization. Defaults to 'echo ready'. */
-  initCommand?: string;
+  /** Command to run for initialization. Defaults to bash echo ready. */
+  initCommand?: SandboxCommand;
   /** sleepAfter value applied to the sandbox for every request in this helper. */
   sleepAfter?: string | number;
 }
@@ -70,13 +71,17 @@ async function delay(ms: number): Promise<void> {
 export async function createTestSandbox(
   options: CreateTestSandboxOptions = {}
 ): Promise<TestSandbox> {
-  const { type = 'default', initCommand = 'echo ready', sleepAfter } = options;
+  const {
+    type = 'default',
+    initCommand = ['/bin/bash', '-lc', 'echo ready'],
+    sleepAfter
+  } = options;
   const workerUrl = await getWorkerUrl();
   const sandboxId = createSandboxId();
 
-  const makeHeaders = (sessionId?: string): Record<string, string> => {
+  const makeHeaders = (): Record<string, string> => {
     const h: Record<string, string> = {
-      ...createTestHeaders(sandboxId, sessionId)
+      ...createTestHeaders(sandboxId)
     };
     if (type !== 'default') {
       h['X-Sandbox-Type'] = type;
@@ -95,14 +100,18 @@ export async function createTestSandbox(
     const initResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: makeHeaders(),
-      body: JSON.stringify({ command: initCommand })
+      body: JSON.stringify({ command: initCommand }),
+      signal: AbortSignal.timeout(60000)
     });
 
     if (initResponse.ok) break;
 
     const body = await initResponse.text().catch(() => '<unreadable>');
     if (
-      initCommand === 'echo ready' &&
+      initCommand[0] === '/bin/bash' &&
+      initCommand[1] === '-lc' &&
+      initCommand[2] === 'echo ready' &&
+      initCommand.length === 3 &&
       attempt < SANDBOX_INIT_ATTEMPTS &&
       isRetryableSandboxInitFailure(body)
     ) {
@@ -149,13 +158,6 @@ export async function cleanupTestSandbox(
   } catch (error) {
     console.warn(`Error cleaning up sandbox ${sandbox.sandboxId}:`, error);
   }
-}
-
-/**
- * Create a unique session ID for test isolation within a sandbox.
- */
-export function createUniqueSession(): string {
-  return `session-${randomUUID()}`;
 }
 
 // -- Internal --

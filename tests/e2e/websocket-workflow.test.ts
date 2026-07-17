@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PortExposeResult, Process } from '@repo/shared';
+import type { PortExposeResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import {
@@ -17,7 +17,7 @@ const WEBSOCKET_TEST_PORT = 9999;
 /**
  * WebSocket Port Exposure Tests
  *
- * Tests WebSocket via exposed ports. Uses isolated sandbox with unique session.
+ * Tests WebSocket via exposed ports using an isolated sandbox.
  */
 describe('WebSocket Port Exposure', () => {
   let sandbox: TestSandbox | null = null;
@@ -29,7 +29,7 @@ describe('WebSocket Port Exposure', () => {
     sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
     sandboxId = sandbox.sandboxId;
-    // Port exposure requires sandbox headers, not session headers
+    // Port exposure requires sandbox headers
     headers = {
       'X-Sandbox-Id': sandboxId,
       'Content-Type': 'application/json'
@@ -58,32 +58,24 @@ describe('WebSocket Port Exposure', () => {
         })
       });
 
-      // Start server on dedicated port
+      // Start server on dedicated port and wait for port
       const port = WEBSOCKET_TEST_PORT;
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `bun run /workspace/ws-server.ts ${port}`
-        })
-      });
-      expect(startResponse.status).toBe(200);
-      const processData = (await startResponse.json()) as Process;
-
-      // Wait for server to be listening on the port (instead of arbitrary setTimeout)
-      const waitPortResponse = await fetch(
-        `${workerUrl}/api/process/${processData.id}/waitForPort`,
+      const startResponse = await fetch(
+        `${workerUrl}/api/exec-and-wait-for-port`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            port,
-            mode: 'tcp',
-            timeout: 10000
+            command: [
+              '/bin/bash',
+              '-lc',
+              `bun run /workspace/ws-server.ts ${port}`
+            ],
+            port
           })
         }
       );
-      expect(waitPortResponse.status).toBe(200);
+      expect(startResponse.status).toBe(200);
 
       // Expose port
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
@@ -115,10 +107,6 @@ describe('WebSocket Port Exposure', () => {
 
       // Cleanup
       ws.close();
-      await fetch(`${workerUrl}/api/process/${processData.id}`, {
-        method: 'DELETE',
-        headers
-      });
       await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
         method: 'DELETE',
         headers

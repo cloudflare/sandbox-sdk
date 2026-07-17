@@ -2,7 +2,6 @@
  * Minimal test worker for integration tests
  *
  * Exposes SDK methods via HTTP endpoints for E2E testing.
- * Supports sessionless top-level calls and explicit sessions via X-Session-Id header.
  *
  * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
@@ -14,16 +13,17 @@
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
+import type { ProcessLogEvent, TerminalOutputEvent } from '@cloudflare/sandbox';
 import {
   Sandbox as BaseSandbox,
   ContainerProxy,
   getSandbox,
   isPlatformTransientError,
-  proxyToSandbox,
-  type SandboxProcess
+  proxyToSandbox
 } from '@cloudflare/sandbox';
 import { type GitCheckoutOptions, withGit } from '@cloudflare/sandbox/git';
 import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+
 import { withOpenCode } from '@cloudflare/sandbox/opencode';
 import type {
   BucketDeleteResponse,
@@ -34,145 +34,12 @@ import type {
   ErrorResponse,
   HealthResponse,
   PortUnexposeResponse,
-  SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
   WebSocketInitResponse
 } from './types';
 
-// ---------------------------------------------------------------------------
-// SSE adapters for endpoints that expose process output as framed events.
-//
-// The HTTP test worker's streaming endpoints return frames shaped like
-// `{ type: 'stdout' | 'stderr' | 'exit' | 'complete' | 'error', data?,
-// exitCode?, processId? }`. These adapters encode a `SandboxProcess` handle's
-// stdout/stderr byte streams and exit status into that endpoint contract.
-// ---------------------------------------------------------------------------
-
-function legacyExecStreamShim(
-  proc: SandboxProcess
-): ReadableStream<Uint8Array> {
-  return legacyStreamFromProcess(proc, 'complete');
-}
-
-function legacyProcessLogShim(
-  proc: SandboxProcess
-): ReadableStream<Uint8Array> {
-  return legacyStreamFromProcess(proc, 'exit');
-}
-
-/**
- * Marshal a `SandboxProcess` into the JSON shape returned by the worker's
- * process endpoints: `{ id, pid, command, status, startTime, sessionId }`.
- * `status()` is async, so resolve it before serialising.
- */
-async function toLegacyProcessJson(proc: SandboxProcess): Promise<{
-  id: string;
-  pid: number | undefined;
-  command: string;
-  status: string;
-  startTime: Date;
-  sessionId: string | undefined;
-  exitCode?: number;
-}> {
-  const status = await proc.status();
-  let exitCode: number | undefined;
-  if (['completed', 'failed', 'killed', 'error'].includes(status)) {
-    try {
-      exitCode = (await proc.waitForExit(1000)).exitCode;
-    } catch {
-      // Exit code recovery is best-effort for process records whose terminal
-      // state cannot be observed quickly.
-    }
-  }
-  const serializedStatus =
-    exitCode === 137 || exitCode === 143 ? 'killed' : status;
-  return {
-    id: proc.id,
-    pid: proc.pid >= 0 ? proc.pid : undefined,
-    command: proc.command,
-    status: serializedStatus,
-    startTime: proc.startTime,
-    sessionId: proc.sessionId,
-    ...(exitCode !== undefined && { exitCode })
-  };
-}
-
-function legacyStreamFromProcess(
-  proc: SandboxProcess,
-  exitEventName: 'exit' | 'complete'
-): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const writeFrame = (frame: Record<string, unknown>) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`)
-        );
-      };
-
-      // The streaming endpoint emits a start frame before stdout/stderr data.
-      writeFrame({
-        type: 'start',
-        pid: proc.pid,
-        command: proc.command,
-        processId: proc.id,
-        timestamp: new Date().toISOString()
-      });
-
-      const pump = async (
-        stream: ReadableStream<Uint8Array> | null,
-        name: 'stdout' | 'stderr'
-      ) => {
-        if (!stream) return;
-        const reader = stream.getReader();
-        try {
-          for (;;) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (value && value.byteLength > 0) {
-              writeFrame({
-                type: name,
-                data: decoder.decode(value),
-                processId: proc.id,
-                timestamp: new Date().toISOString()
-              });
-            }
-          }
-        } finally {
-          reader.releaseLock();
-        }
-      };
-
-      try {
-        await Promise.all([
-          pump(proc.stdout, 'stdout'),
-          pump(proc.stderr, 'stderr')
-        ]);
-        const exitCode = await proc.exitCode;
-        writeFrame({
-          type: exitEventName,
-          exitCode,
-          processId: proc.id,
-          timestamp: new Date().toISOString()
-        });
-      } catch (err) {
-        writeFrame({
-          type: 'error',
-          data: err instanceof Error ? err.message : String(err),
-          processId: proc.id,
-          timestamp: new Date().toISOString()
-        });
-      } finally {
-        controller.close();
-      }
-    }
-  });
-}
-
-// Sandbox subclass wiring the code interpreter and OpenCode extensions.
+// Sandbox subclass wiring the code interpreter extension.
 export class Sandbox extends BaseSandbox<Env> {
   git = withGit(this);
 
@@ -295,10 +162,6 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   ContainerUnavailableError: { status: 503, code: 'CONTAINER_UNAVAILABLE' },
   ContextNotFoundError: { status: 404, code: 'CONTEXT_NOT_FOUND' },
   CodeExecutionError: { status: 500, code: 'CODE_EXECUTION_ERROR' },
-  // Session errors
-  SessionAlreadyExistsError: { status: 409, code: 'SESSION_ALREADY_EXISTS' },
-  SessionTerminatedError: { status: 410, code: 'SESSION_TERMINATED' },
-  SessionDestroyedError: { status: 410, code: 'SESSION_DESTROYED' },
   // Port errors (generic)
   PortError: { status: 500, code: 'PORT_OPERATION_ERROR' },
   // Git errors (generic)
@@ -315,7 +178,17 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   MissingCredentialsError: { status: 400, code: 'MISSING_CREDENTIALS' }
 };
 
-async function parseBody(request: Request): Promise<any> {
+type CommandArgv = [string, ...string[]];
+
+function isCommandArgv(value: unknown): value is CommandArgv {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((arg) => typeof arg === 'string')
+  );
+}
+
+async function parseBody(request: Request): Promise<unknown> {
   try {
     return await request.json();
   } catch {
@@ -323,22 +196,98 @@ async function parseBody(request: Request): Promise<any> {
   }
 }
 
+type RequestBodyValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, string>
+  | Record<string, unknown>
+  | undefined;
+
+type RequestBody = Record<string, RequestBodyValue>;
+
+function asRecord(value: unknown): RequestBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    return {};
+  const record: RequestBody = {};
+  for (const [key, val] of Object.entries(value))
+    record[key] = val as RequestBodyValue;
+  return record;
+}
+
+function optionalStringRecord(
+  value: unknown
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    return undefined;
+  const entries = Object.entries(value);
+  if (!entries.every(([, val]) => typeof val === 'string')) return undefined;
+  const record: Record<string, string> = {};
+  for (const [key, val] of entries) record[key] = val;
+  return record;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+async function readStream<T>(stream: ReadableStream<T>): Promise<T[]> {
+  const reader = stream.getReader();
+  const events: T[] = [];
+  try {
+    for (;;) {
+      const result = await reader.read();
+      if (result.done) return events;
+      events.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function serializeBytes(data: Uint8Array): number[] {
+  return Array.from(data);
+}
+
+function serializeProcessLogEvent(event: ProcessLogEvent) {
+  if (event.type === 'stdout' || event.type === 'stderr') {
+    return { ...event, data: serializeBytes(event.data) };
+  }
+  return event;
+}
+
+function serializeTerminalOutputEvent(event: TerminalOutputEvent) {
+  if (event.type === 'data') {
+    return { ...event, data: serializeBytes(event.data) };
+  }
+  return event;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Route requests to exposed container ports via their preview URLs.
-    // Cast: the Sandbox subclass widens the namespace type beyond the base
-    // `proxyToSandbox` signature (DurableObjectNamespace is invariant).
-    const proxyResponse = await proxyToSandbox(
-      request,
-      env as unknown as Parameters<typeof proxyToSandbox>[1]
-    );
-    if (proxyResponse) return proxyResponse;
-
     const url = new URL(request.url);
+    // Route requests to exposed container ports via their preview URLs, but do
+    // not let preview proxy detection consume test-worker control routes.
+    if (!url.pathname.startsWith('/api/') && url.pathname !== '/cleanup') {
+      // Cast: the Sandbox subclass widens the namespace type beyond the base
+      // `proxyToSandbox` signature (DurableObjectNamespace is invariant).
+      const proxyResponse = await proxyToSandbox(
+        request,
+        env as unknown as Parameters<typeof proxyToSandbox>[1]
+      );
+      if (proxyResponse) return proxyResponse;
+    }
+
     // Skip JSON body parsing for streaming endpoints to preserve request.body
     const isStreamingUpload =
       url.pathname === '/api/file/write-stream' && request.method === 'PUT';
-    const body = isStreamingUpload ? {} : await parseBody(request);
+    const body = asRecord(isStreamingUpload ? {} : await parseBody(request));
 
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
@@ -373,38 +322,10 @@ export default {
       ...(sleepAfter !== null && { sleepAfter })
     });
 
-    // Get session ID from header (optional)
-    // If provided, retrieve the session fresh from the Sandbox DO on each request
-    const sessionId = request.headers.get('X-Session-Id');
-
-    // Executor pattern: retrieve session fresh if specified, otherwise use sandbox
-    // Important: We get the session fresh on EVERY request to respect RPC lifecycle
-    // The ExecutionSession stub is only valid during this request's execution context
-    const executor = sessionId ? await sandbox.getSession(sessionId) : sandbox;
-
     try {
       // WebSocket init endpoint - starts all WebSocket servers
       if (url.pathname === '/api/init' && request.method === 'POST') {
-        const processes = await sandbox.listProcesses();
-        const isServerRunning = async (
-          commandFragment: string
-        ): Promise<boolean> => {
-          for (const p of processes) {
-            if (!p.command.includes(commandFragment)) continue;
-            if ((await p.status()) === 'running') return true;
-          }
-          return false;
-        };
-
-        const serversToStart: Array<{
-          name: string;
-          port: number;
-          start: Promise<SandboxProcess>;
-        }> = [];
-
-        // Echo server
-        if (!(await isServerRunning('/tmp/ws-echo.ts'))) {
-          const echoScript = `
+        const echoScript = `
 const port = 8080;
 Bun.serve({
   port,
@@ -420,54 +341,32 @@ Bun.serve({
 });
 console.log('Echo server on port ' + port);
 `;
-          await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
-          serversToStart.push({
-            name: 'echo',
-            port: 8080,
-            // Materialize to a Promise<SandboxProcess> so the call site can
-            // await it inside `Promise.allSettled` below.
-            start: Promise.resolve(sandbox.exec('bun run /tmp/ws-echo.ts'))
+        await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
+        const proc = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'bun run /tmp/ws-echo.ts'
+        ]);
+        let error: string | undefined;
+        try {
+          await proc.waitForPort(8080, {
+            mode: 'tcp',
+            timeout: 30000,
+            interval: 250
           });
+        } catch (e: unknown) {
+          error = e instanceof Error ? e.message : String(e);
         }
 
-        // Start the echo server and wait until its target port accepts connections.
-        const results = await Promise.allSettled(
-          serversToStart.map(async (server) => {
-            const process = await server.start;
-            await process.waitForPort(server.port, {
-              mode: 'tcp',
-              timeout: 30000,
-              interval: 250
-            });
-            return server.name;
-          })
-        );
-
-        const failedCount = results.filter(
-          (r) => r.status === 'rejected'
-        ).length;
-        const succeededCount = results.filter(
-          (r) => r.status === 'fulfilled'
-        ).length;
-
         const response: WebSocketInitResponse = {
-          success: failedCount === 0,
-          serversStarted: succeededCount,
-          serversFailed: failedCount,
-          errors:
-            failedCount > 0
-              ? results
-                  .filter((r) => r.status === 'rejected')
-                  .map(
-                    (r) =>
-                      (r as PromiseRejectedResult).reason?.message ||
-                      String((r as PromiseRejectedResult).reason)
-                  )
-              : undefined
+          success: !error,
+          serversStarted: error ? 0 : 1,
+          serversFailed: error ? 1 : 0,
+          errors: error ? [error] : undefined
         };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' },
-          status: failedCount > 0 ? 500 : 200
+          status: error ? 500 : 200
         });
       }
 
@@ -514,26 +413,6 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      // Session management
-      if (url.pathname === '/api/session/create' && request.method === 'POST') {
-        const session = await sandbox.createSession(body);
-        // Note: We don't store the session - it will be retrieved fresh via getSession() on each request
-        const response: SessionCreateResponse = {
-          success: true,
-          sessionId: session.id
-        };
-        return new Response(JSON.stringify(response), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (url.pathname === '/api/session/delete' && request.method === 'POST') {
-        const result = await sandbox.deleteSession(body.sessionId);
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
       if (url.pathname === '/api/state' && request.method === 'GET') {
         const result = await sandbox.getState();
         return new Response(JSON.stringify(result), {
@@ -541,69 +420,404 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      if (url.pathname === '/api/placement-id' && request.method === 'GET') {
-        const placementId = await sandbox.getContainerPlacementId();
-        return new Response(JSON.stringify({ placementId }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Buffered command execution. Without stdin this intentionally uses
-      // `run()` (the foreground session-shell path) so legacy E2E coverage
-      // still validates persistent session behaviour like `cd`, aliases,
-      // functions, session-level timeouts, and shell termination recovery.
-      // When a `stdin` string or `mode: 'exec'` is supplied, use the unified
-      // `exec()` path so tests can exercise `SandboxExecOptions` end-to-end.
+      // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
-        const result =
-          typeof body.stdin === 'string' || body.mode === 'exec'
-            ? await (
-                await executor.exec(body.command, {
-                  env: body.env,
-                  cwd: body.cwd,
-                  timeout: body.timeout,
-                  ...(typeof body.stdin === 'string' && { stdin: body.stdin })
-                })
-              ).output({ encoding: 'utf8' })
-            : await executor.run(body.command, {
-                env: body.env,
-                cwd: body.cwd,
-                timeout: body.timeout
-              });
-        return new Response(JSON.stringify(result), {
+        const { command, timeout, env, cwd } = body;
+        if (!isCommandArgv(command)) {
+          return new Response(
+            JSON.stringify({ error: 'command must be a non-empty argv array' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (timeout !== undefined && typeof timeout !== 'number') {
+          return new Response(
+            JSON.stringify({ error: 'timeout must be a number' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const proc = await sandbox.exec(command, {
+          timeout,
+          env,
+          cwd
+        });
+        const output = await proc.output();
+        const exitCode = output.exitCode;
+        const jsonResponse = {
+          success: exitCode === 0,
+          exitCode,
+          signal: output.signal,
+          timedOut: output.timedOut,
+          stdout: new TextDecoder().decode(output.stdout),
+          stderr: new TextDecoder().decode(output.stderr),
+          command,
+          duration: 0,
+          timestamp: new Date().toISOString()
+        };
+        return new Response(JSON.stringify(jsonResponse), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Command execution with streaming. Replaces the legacy `execStream`
-      // SSE endpoint with a stdout/stderr multiplex over SSE, sourced from
-      // the unified `SandboxProcess.stdout` / `.stderr` byte streams.
-      if (url.pathname === '/api/execStream' && request.method === 'POST') {
-        console.log(
-          '[TestWorker] execStream called for command:',
-          body.command
+      if (
+        url.pathname === '/api/process/log-follow-cancel-regression' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec(
+          ['/bin/bash', '-lc', 'sleep 1; printf follow-ready; sleep 30'],
+          { timeout: 10000 }
         );
-        const startTime = Date.now();
-        const proc = await executor.exec(body.command, {
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout
-        });
-        const stream = legacyExecStreamShim(proc);
-        console.log(
-          '[TestWorker] Stream received in',
-          Date.now() - startTime,
-          'ms'
-        );
-
-        // Return SSE stream directly
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive'
+        let output = '';
+        let stateAfterCancel = '';
+        let exitCode = 0;
+        try {
+          const stream = await proc.logs({ replay: false, follow: true });
+          const reader = stream.getReader();
+          try {
+            for (;;) {
+              const result = await reader.read();
+              if (result.done) break;
+              if (result.value.type === 'stdout') {
+                output += new TextDecoder().decode(result.value.data);
+                if (output.includes('follow-ready')) break;
+              }
+            }
+          } finally {
+            try {
+              await reader.cancel();
+            } finally {
+              reader.releaseLock();
+            }
           }
+          stateAfterCancel = (await proc.status()).state;
+        } finally {
+          await proc.kill();
+          exitCode = (await proc.waitForExit()).code;
+        }
+        return new Response(
+          JSON.stringify({
+            output,
+            stateAfterCancel,
+            exitCode
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Issue #764: AbortSignal must stay caller-local rather than crossing Worker→DO RPC.
+      if (
+        url.pathname === '/api/process/abort-wait-regression' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec(['/bin/bash', '-lc', 'sleep 30']);
+        const controller = new AbortController();
+        const wait = proc.waitForExit({ signal: controller.signal });
+        controller.abort();
+        let waitError = '';
+        try {
+          await wait;
+        } catch (error) {
+          waitError = error instanceof Error ? error.name : String(error);
+        }
+        const statusAfterAbort = await proc.status();
+        await proc.kill();
+        const exit = await proc.waitForExit();
+        return new Response(
+          JSON.stringify({
+            waitRejected: waitError.length > 0,
+            dataCloneError: waitError === 'DataCloneError',
+            stateAfterAbort: statusAfterAbort.state,
+            exitCode: exit.code
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (
+        url.pathname === '/api/process/runtime-fencing-regression' &&
+        request.method === 'POST'
+      ) {
+        const oldProcess = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'echo admitted; sleep 30'
+        ]);
+        await oldProcess.waitForLog('admitted');
+        const racingWait = oldProcess.waitForExit().then(
+          () => '',
+          (error: unknown) =>
+            error instanceof Error ? error.name : String(error)
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await sandbox.destroy();
+
+        const stoppedList = await sandbox.listProcesses();
+        const stoppedGet = await sandbox.getProcess(oldProcess.id);
+        const replacement = await sandbox.exec(['printf', 'replacement']);
+        await replacement.waitForExit();
+
+        let staleError = '';
+        try {
+          await oldProcess.status();
+        } catch (error) {
+          staleError = error instanceof Error ? error.name : String(error);
+        }
+        const racingError = await racingWait;
+
+        const live = await sandbox.exec(['/bin/bash', '-lc', 'sleep 30']);
+        const recovered = await sandbox.getProcess(live.id);
+        const recoveredStatus = await recovered?.status();
+        await recovered?.kill();
+        await recovered?.waitForExit();
+
+        return new Response(
+          JSON.stringify({
+            stoppedListCount: stoppedList.length,
+            stoppedGetFound: stoppedGet !== null,
+            staleError,
+            racingError,
+            recoveredState: recoveredStatus?.state
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Process lifecycle routes for coding-agent-shaped E2E workflows.
+      if (url.pathname === '/api/process/start' && request.method === 'POST') {
+        const command = body.command;
+        if (!isCommandArgv(command)) {
+          return new Response(
+            JSON.stringify({ error: 'command must be a non-empty argv array' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const proc = await sandbox.exec(command, {
+          timeout: optionalNumber(body.timeout),
+          env: optionalStringRecord(body.env),
+          cwd: optionalString(body.cwd)
         });
+        const status = await proc.status();
+        return new Response(JSON.stringify(status), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/process/list' && request.method === 'GET') {
+        const statuses = await sandbox.listProcesses();
+        return new Response(JSON.stringify(statuses), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        request.method === 'GET'
+      ) {
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const processId = pathParts[2];
+        const action = pathParts[3] ?? 'status';
+        const proc = await sandbox.getProcess(processId);
+        if (!proc) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'logs') {
+          const stream = await proc.logs({
+            since: optionalString(url.searchParams.get('since') ?? undefined),
+            replay: url.searchParams.get('replay') !== 'false',
+            follow: url.searchParams.get('follow') === 'true'
+          });
+          const events = (await readStream(stream)).map(
+            serializeProcessLogEvent
+          );
+          return new Response(JSON.stringify({ events }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const status = await proc.status();
+        return new Response(JSON.stringify(status), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const processId = pathParts[2];
+        const action = pathParts[3];
+        const proc = await sandbox.getProcess(processId);
+        if (!proc) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'wait') {
+          const exit = await proc.waitForExit({
+            timeout: optionalNumber(body.timeout)
+          });
+          return new Response(JSON.stringify(exit), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'wait-for-log') {
+          const pattern = optionalString(body.pattern);
+          if (!pattern) {
+            return new Response(
+              JSON.stringify({ error: 'pattern is required' }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' }
+              }
+            );
+          }
+          const result = await proc.waitForLog(pattern, {
+            timeout: optionalNumber(body.timeout)
+          });
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'wait-for-port') {
+          const port = optionalNumber(body.port);
+          if (port === undefined) {
+            return new Response(JSON.stringify({ error: 'port is required' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          await proc.waitForPort(port, {
+            timeout: optionalNumber(body.timeout),
+            mode: body.mode === 'tcp' ? 'tcp' : 'http'
+          });
+          return new Response(JSON.stringify({ ready: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'kill') {
+          await proc.kill(optionalNumber(body.signal) ?? 15);
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
+      if (
+        url.pathname === '/api/terminal/create' &&
+        request.method === 'POST'
+      ) {
+        const command = body.command;
+        if (!isCommandArgv(command)) {
+          return new Response(
+            JSON.stringify({ error: 'command must be a non-empty argv array' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const terminal = await sandbox.createTerminal({
+          command,
+          cwd: optionalString(body.cwd),
+          env: optionalStringRecord(body.env),
+          cols: optionalNumber(body.cols),
+          rows: optionalNumber(body.rows),
+          bufferSize: optionalNumber(body.bufferSize)
+        });
+        return new Response(JSON.stringify(terminal), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/terminal/') &&
+        request.method === 'GET'
+      ) {
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const terminalId = pathParts[2];
+        const action = pathParts[3] ?? 'snapshot';
+        const terminal = await sandbox.getTerminal(terminalId);
+        if (!terminal) {
+          return new Response(JSON.stringify({ error: 'Terminal not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'output') {
+          const stream = await terminal.output({
+            since: optionalString(url.searchParams.get('since') ?? undefined),
+            replay: url.searchParams.get('replay') !== 'false',
+            follow: url.searchParams.get('follow') === 'true'
+          });
+          const events = (await readStream(stream)).map(
+            serializeTerminalOutputEvent
+          );
+          return new Response(JSON.stringify({ events }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const snapshot = await terminal.getSnapshot();
+        return new Response(JSON.stringify(snapshot), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/terminal/') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const terminalId = pathParts[2];
+        const action = pathParts[3];
+        const terminal = await sandbox.getTerminal(terminalId);
+        if (!terminal) {
+          return new Response(JSON.stringify({ error: 'Terminal not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'write') {
+          const data = optionalString(body.data);
+          if (data === undefined) {
+            return new Response(JSON.stringify({ error: 'data is required' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          await terminal.write(new TextEncoder().encode(data));
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'resize') {
+          const cols = optionalNumber(body.cols);
+          const rows = optionalNumber(body.rows);
+          if (cols === undefined || rows === undefined) {
+            return new Response(
+              JSON.stringify({ error: 'cols and rows are required' }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' }
+              }
+            );
+          }
+          await terminal.resize(cols, rows);
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'interrupt') {
+          await terminal.interrupt();
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        if (action === 'terminate') {
+          await terminal.terminate();
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       }
 
       // Git clone
@@ -612,8 +826,7 @@ console.log('Echo server on port ' + port);
           branch: body.branch,
           targetDir: body.targetDir,
           depth: body.depth,
-          cloneTimeoutMs: body.cloneTimeoutMs,
-          ...(sessionId ? { sessionId } : {})
+          cloneTimeoutMs: body.cloneTimeoutMs
         });
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
@@ -694,7 +907,7 @@ console.log('Echo server on port ' + port);
 
       // File read
       if (url.pathname === '/api/file/read' && request.method === 'POST') {
-        const file = await executor.readFile(body.path);
+        const file = await sandbox.readFile(body.path);
         return new Response(JSON.stringify(file), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -702,7 +915,7 @@ console.log('Echo server on port ' + port);
 
       // File read stream
       if (url.pathname === '/api/read/stream' && request.method === 'POST') {
-        const stream = await executor.readFileStream(body.path);
+        const stream = await sandbox.readFileStream(body.path);
         return new Response(stream, {
           headers: {
             'Content-Type': 'text/event-stream',
@@ -714,7 +927,7 @@ console.log('Echo server on port ' + port);
 
       // File write
       if (url.pathname === '/api/file/write' && request.method === 'POST') {
-        await executor.writeFile(body.path, body.content);
+        await sandbox.writeFile(body.path, body.content);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -732,7 +945,7 @@ console.log('Echo server on port ' + port);
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        const result = await executor.writeFile(filePath, request.body);
+        const result = await sandbox.writeFile(filePath, request.body);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -744,7 +957,7 @@ console.log('Echo server on port ' + port);
         url.pathname === '/api/file/read-binary' &&
         request.method === 'POST'
       ) {
-        const result = await executor.readFile(body.path, { encoding: 'none' });
+        const result = await sandbox.readFile(body.path, { encoding: 'none' });
         return new Response(result.content, {
           headers: { 'Content-Type': result.mimeType }
         });
@@ -752,7 +965,7 @@ console.log('Echo server on port ' + port);
 
       // File mkdir
       if (url.pathname === '/api/file/mkdir' && request.method === 'POST') {
-        await executor.mkdir(body.path, { recursive: body.recursive });
+        await sandbox.mkdir(body.path, { recursive: body.recursive });
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -760,7 +973,7 @@ console.log('Echo server on port ' + port);
 
       // File delete
       if (url.pathname === '/api/file/delete' && request.method === 'DELETE') {
-        await executor.deleteFile(body.path);
+        await sandbox.deleteFile(body.path);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -768,7 +981,7 @@ console.log('Echo server on port ' + port);
 
       // File rename
       if (url.pathname === '/api/file/rename' && request.method === 'POST') {
-        await executor.renameFile(body.oldPath, body.newPath);
+        await sandbox.renameFile(body.oldPath, body.newPath);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -776,7 +989,7 @@ console.log('Echo server on port ' + port);
 
       // File move
       if (url.pathname === '/api/file/move' && request.method === 'POST') {
-        await executor.moveFile(body.sourcePath, body.destinationPath);
+        await sandbox.moveFile(body.sourcePath, body.destinationPath);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -784,7 +997,7 @@ console.log('Echo server on port ' + port);
 
       // List files
       if (url.pathname === '/api/list-files' && request.method === 'POST') {
-        const result = await executor.listFiles(body.path, body.options);
+        const result = await sandbox.listFiles(body.path, body.options);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -792,228 +1005,57 @@ console.log('Echo server on port ' + port);
 
       // File exists
       if (url.pathname === '/api/file/exists' && request.method === 'POST') {
-        const result = await executor.exists(body.path);
+        const result = await sandbox.exists(body.path);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Process start
-      if (url.pathname === '/api/process/start' && request.method === 'POST') {
-        const process = await executor.exec(body.command, {
-          processId: body.processId,
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout,
-          autoCleanup: body.autoCleanup
-        });
+      // Exec and wait for port
+      if (
+        url.pathname === '/api/exec-and-wait-for-port' &&
+        request.method === 'POST'
+      ) {
+        const { command, port } = body;
+        if (!isCommandArgv(command)) {
+          return new Response(
+            JSON.stringify({ error: 'command must be a non-empty argv array' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const proc = await sandbox.exec(command);
+        await proc.waitForPort(port, { timeout: 30000 });
+        const status = await proc.status();
         return new Response(
-          JSON.stringify(await toLegacyProcessJson(process)),
+          JSON.stringify({ id: proc.id, state: status.state, ready: true }),
           { headers: { 'Content-Type': 'application/json' } }
         );
       }
 
-      // Process waitForLog - waits for a log pattern
+      // Kill running exec
       if (
-        url.pathname.startsWith('/api/process/') &&
-        url.pathname.endsWith('/waitForLog') &&
+        url.pathname === '/api/kill-running-exec' &&
         request.method === 'POST'
       ) {
-        const pathParts = url.pathname.split('/');
-        const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
-        if (!process) {
-          return new Response(JSON.stringify({ error: 'Process not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          });
+        const { command } = body;
+        if (!isCommandArgv(command)) {
+          return new Response(
+            JSON.stringify({ error: 'command must be a non-empty argv array' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
         }
-        // pattern can be string or regex pattern (as string starting with /)
-        let pattern = body.pattern;
-        if (
-          typeof pattern === 'string' &&
-          pattern.startsWith('/') &&
-          pattern.endsWith('/')
-        ) {
-          // Convert regex string to RegExp
-          pattern = new RegExp(pattern.slice(1, -1));
-        }
-        const result = await process.waitForLog(pattern, body.timeout);
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Process waitForPort - waits for a port to be available
-      if (
-        url.pathname.startsWith('/api/process/') &&
-        url.pathname.endsWith('/waitForPort') &&
-        request.method === 'POST'
-      ) {
-        const pathParts = url.pathname.split('/');
-        const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
-        if (!process) {
-          return new Response(JSON.stringify({ error: 'Process not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-        // Build WaitForPortOptions from request body.
-        // Accept both flat fields and nested `options` payloads.
-        const waitOptions =
-          body.options && typeof body.options === 'object'
-            ? body.options
-            : body;
-        await process.waitForPort(body.port, {
-          mode: waitOptions.mode,
-          path: waitOptions.path,
-          status: waitOptions.status,
-          timeout: waitOptions.timeout,
-          interval: waitOptions.interval
-        });
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Process waitForExit - waits for process to exit
-      if (
-        url.pathname.startsWith('/api/process/') &&
-        url.pathname.endsWith('/waitForExit') &&
-        request.method === 'POST'
-      ) {
-        const pathParts = url.pathname.split('/');
-        const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
-        if (!process) {
-          return new Response(JSON.stringify({ error: 'Process not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-        const result = await process.waitForExit(body.timeout);
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Process list
-      if (url.pathname === '/api/process/list' && request.method === 'GET') {
-        const processes = await executor.listProcesses();
-        const serialised = await Promise.all(
-          processes.map((p) => toLegacyProcessJson(p))
+        const proc = await sandbox.exec(command);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await proc.kill();
+        const exit = await proc.waitForExit();
+        return new Response(
+          JSON.stringify({ id: proc.id, exitCode: exit.code }),
+          { headers: { 'Content-Type': 'application/json' } }
         );
-        return new Response(JSON.stringify(serialised), {
-          headers: { 'Content-Type': 'application/json' }
-        });
       }
 
-      // Process get by ID
-      if (
-        url.pathname.startsWith('/api/process/') &&
-        request.method === 'GET'
-      ) {
-        const pathParts = url.pathname.split('/');
-        const processId = pathParts[3];
-
-        // Handle /api/process/:id/logs
-        if (pathParts[4] === 'logs') {
-          const proc = await executor.getProcess(processId);
-          if (!proc) {
-            return new Response(
-              JSON.stringify({ error: 'Process not found' }),
-              { status: 404, headers: { 'Content-Type': 'application/json' } }
-            );
-          }
-          const logs = await proc.getLogs();
-          return new Response(JSON.stringify({ ...logs, processId }), {
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-
-        // Handle /api/process/:id/stream (SSE) — emits the legacy SSE log
-        // event shape `{ type, data | exitCode, processId }` for the
-        // benefit of existing E2E test consumers.
-        if (pathParts[4] === 'stream') {
-          const proc = await executor.getProcess(processId);
-          if (!proc) {
-            return new Response(
-              JSON.stringify({ error: 'Process not found' }),
-              { status: 404, headers: { 'Content-Type': 'application/json' } }
-            );
-          }
-          return new Response(legacyProcessLogShim(proc), {
-            headers: {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive'
-            }
-          });
-        }
-
-        // Handle /api/process/:id (get single process)
-        if (!pathParts[4]) {
-          const process = await executor.getProcess(processId);
-          if (!process) {
-            return new Response(
-              JSON.stringify({ error: 'Process not found' }),
-              { status: 404, headers: { 'Content-Type': 'application/json' } }
-            );
-          }
-          return new Response(
-            JSON.stringify(await toLegacyProcessJson(process)),
-            { headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-      }
-
-      // Process kill by ID. Returns 404 when the process record doesn't
-      // exist (was the legacy behaviour) so error-handling tests can
-      // distinguish missing-process from successful kill.
-      if (
-        url.pathname.startsWith('/api/process/') &&
-        request.method === 'DELETE'
-      ) {
-        const processId = url.pathname.split('/')[3];
-        const proc = await executor.getProcess(processId);
-        if (!proc) {
-          return new Response(JSON.stringify({ error: 'Process not found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-        proc.kill();
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Kill all processes
-      if (
-        url.pathname === '/api/process/kill-all' &&
-        request.method === 'POST'
-      ) {
-        await executor.killAllProcesses();
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Port exposure (ONLY works with sandbox - sessions don't expose ports)
+      // Port exposure
       if (url.pathname === '/api/port/expose' && request.method === 'POST') {
-        if (sessionId) {
-          return new Response(
-            JSON.stringify({
-              error:
-                'Port exposure not supported for explicit sessions. Use default sandbox.'
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
-        }
         const hostname = url.hostname + (url.port ? `:${url.port}` : '');
         const preview = await sandbox.exposePort(body.port, {
           name: body.name,
@@ -1025,20 +1067,8 @@ console.log('Echo server on port ' + port);
         });
       }
 
-      // Port exposure status (ONLY works with sandbox - sessions don't expose ports)
+      // Port exposure status
       if (url.pathname === '/api/exposed-ports' && request.method === 'GET') {
-        if (sessionId) {
-          return new Response(
-            JSON.stringify({
-              error:
-                'Port exposure not supported for explicit sessions. Use default sandbox.'
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
-        }
         const hostname = url.hostname + (url.port ? `:${url.port}` : '');
         const ports = await sandbox.getExposedPorts(hostname);
         return new Response(JSON.stringify(ports), {
@@ -1050,18 +1080,6 @@ console.log('Echo server on port ' + port);
         url.pathname.startsWith('/api/exposed-ports/') &&
         request.method === 'GET'
       ) {
-        if (sessionId) {
-          return new Response(
-            JSON.stringify({
-              error:
-                'Port exposure not supported for explicit sessions. Use default sandbox.'
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
-        }
         const pathParts = url.pathname.split('/');
         const port = parseInt(pathParts[3], 10);
         if (!Number.isNaN(port)) {
@@ -1072,23 +1090,11 @@ console.log('Echo server on port ' + port);
         }
       }
 
-      // Port unexpose (ONLY works with sandbox - sessions don't expose ports)
+      // Port unexpose
       if (
         url.pathname.startsWith('/api/exposed-ports/') &&
         request.method === 'DELETE'
       ) {
-        if (sessionId) {
-          return new Response(
-            JSON.stringify({
-              error:
-                'Port exposure not supported for explicit sessions. Use default sandbox.'
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
-        }
         const pathParts = url.pathname.split('/');
         const port = parseInt(pathParts[3], 10);
         if (!Number.isNaN(port)) {
@@ -1134,7 +1140,7 @@ console.log('Echo server on port ' + port);
 
       // Environment variables
       if (url.pathname === '/api/env/set' && request.method === 'POST') {
-        await executor.setEnvVars(body.envVars);
+        await sandbox.setEnvVars(body.envVars);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1279,8 +1285,7 @@ console.log('Echo server on port ' + port);
         const stream = await sandbox.watch(body.path, {
           recursive: body.recursive,
           include: body.include,
-          exclude: body.exclude,
-          sessionId: sessionId ?? undefined
+          exclude: body.exclude
         });
 
         return new Response(stream, {
@@ -1298,8 +1303,7 @@ console.log('Echo server on port ' + port);
           recursive: body.recursive,
           include: body.include,
           exclude: body.exclude,
-          since: body.since,
-          sessionId: sessionId ?? undefined
+          since: body.since
         });
 
         return new Response(JSON.stringify(result), {
@@ -1357,13 +1361,20 @@ console.log('Echo server on port ' + port);
         const pathParts = url.pathname.split('/').filter(Boolean);
 
         const terminalId = pathParts[1];
-        if (!terminalId) {
-          return new Response('Terminal ID required', { status: 400 });
+        const cols = parseInt(url.searchParams.get('cols') || '80', 10);
+        const rows = parseInt(url.searchParams.get('rows') || '24', 10);
+        if (terminalId) {
+          const terminal = await sandbox.getTerminal(terminalId);
+          if (!terminal)
+            return new Response('Terminal not found', { status: 404 });
+          return terminal.connect(request, { cols, rows });
         }
-        return sandbox.terminal({ id: terminalId }).connect(request, {
-          cols: parseInt(url.searchParams.get('cols') || '80', 10),
-          rows: parseInt(url.searchParams.get('rows') || '24', 10)
+        const terminal = await sandbox.createTerminal({
+          command: ['bash'],
+          cols,
+          rows
         });
+        return terminal.connect(request, { cols, rows });
       }
 
       return new Response('Not found', { status: 404 });

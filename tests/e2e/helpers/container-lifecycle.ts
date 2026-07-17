@@ -86,6 +86,21 @@ export async function getContainerStatus(
  * This intentionally uses the test-worker's stop endpoint to force the same
  * stop/replacement boundary users can observe after sleep or runtime exit.
  */
+export async function waitForContainerStopped(
+  workerUrl: string,
+  headers: Record<string, string>,
+  options: WaitForContainerOptions = {}
+): Promise<void> {
+  await waitForContainerStatus(
+    workerUrl,
+    headers,
+    isStoppedContainerStatus,
+    (timeoutMs, lastStatus) =>
+      `Timed out waiting ${timeoutMs}ms for container to stop; last status: ${lastStatus}`,
+    options
+  );
+}
+
 export async function stopContainerAndWait(
   workerUrl: string,
   headers: Record<string, string>,
@@ -106,14 +121,7 @@ export async function stopContainerAndWait(
     );
   }
 
-  await waitForContainerStatus(
-    workerUrl,
-    headers,
-    isStoppedContainerStatus,
-    (timeoutMs, lastStatus) =>
-      `Timed out waiting ${timeoutMs}ms for container to stop; last status: ${lastStatus}`,
-    options
-  );
+  await waitForContainerStopped(workerUrl, headers, options);
 }
 
 export async function waitForContainerHealthy(

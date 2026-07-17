@@ -1,9 +1,8 @@
-import type { ExecResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { CommandResponse } from './command-response';
 import {
   cleanupTestSandbox,
   createTestSandbox,
-  createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
 import type {
@@ -46,7 +45,7 @@ describe('Bucket Mounting E2E', () => {
     beforeAll(async () => {
       sandbox = await createTestSandbox();
       workerUrl = sandbox.workerUrl;
-      headers = sandbox.headers(createUniqueSession());
+      headers = sandbox.headers();
     }, 120000);
 
     test('should mount bucket and perform bidirectional file operations', async () => {
@@ -104,12 +103,16 @@ describe('Bucket Mounting E2E', () => {
             method: 'POST',
             headers,
             body: JSON.stringify({
-              command: `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
+              command: [
+                '/bin/bash',
+                '-lc',
+                `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
+              ]
             })
           }
         );
         const readPreExistingResult =
-          (await readPreExistingResponse.json()) as ExecResult;
+          (await readPreExistingResponse.json()) as CommandResponse;
         expect(readPreExistingResult.exitCode).toBe(0);
         expect(readPreExistingResult.stdout?.trim()).toBe(PRE_EXISTING_CONTENT);
 
@@ -118,10 +121,14 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            command: `echo "${TEST_CONTENT}" > ${MOUNT_PATH}/${TEST_FILE}`
+            command: [
+              '/bin/bash',
+              '-lc',
+              `echo "${TEST_CONTENT}" > ${MOUNT_PATH}/${TEST_FILE}`
+            ]
           })
         });
-        const writeResult = (await writeResponse.json()) as ExecResult;
+        const writeResult = (await writeResponse.json()) as CommandResponse;
         expect(writeResult.exitCode).toBe(0);
 
         // 5. Verify new file appears in R2 via binding (Mount → R2)
@@ -153,10 +160,10 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            command: `mountpoint -q ${MOUNT_PATH}`
+            command: ['/bin/bash', '-lc', `mountpoint -q ${MOUNT_PATH}`]
           })
         });
-        const mountCheckResult = (await mountCheck.json()) as ExecResult;
+        const mountCheckResult = (await mountCheck.json()) as CommandResponse;
         expect(mountCheckResult.exitCode).not.toBe(0);
 
         // 8. Verify mount directory was removed
@@ -164,10 +171,10 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            command: `test -d ${MOUNT_PATH}`
+            command: ['/bin/bash', '-lc', `test -d ${MOUNT_PATH}`]
           })
         });
-        const dirCheckResult = (await dirCheck.json()) as ExecResult;
+        const dirCheckResult = (await dirCheck.json()) as CommandResponse;
         expect(dirCheckResult.exitCode).not.toBe(0);
 
         // 9. Cleanup: delete both test files from R2
@@ -231,7 +238,7 @@ describe('Bucket Mounting E2E', () => {
     beforeAll(async () => {
       sandbox = await createTestSandbox();
       workerUrl = sandbox.workerUrl;
-      headers = sandbox.headers(createUniqueSession());
+      headers = sandbox.headers();
     }, 120000);
 
     test('should mount R2 binding without credentials and perform bidirectional file operations', async () => {
@@ -269,10 +276,14 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            command: `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
+            command: [
+              '/bin/bash',
+              '-lc',
+              `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
+            ]
           })
         });
-        const readResult = (await readResponse.json()) as ExecResult;
+        const readResult = (await readResponse.json()) as CommandResponse;
         expect(readResult.exitCode).toBe(0);
         expect(readResult.stdout?.trim()).toBe(PRE_EXISTING_CONTENT);
 
@@ -281,10 +292,14 @@ describe('Bucket Mounting E2E', () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            command: `echo "${WRITTEN_CONTENT}" > ${MOUNT_PATH}/${WRITTEN_FILE}`
+            command: [
+              '/bin/bash',
+              '-lc',
+              `echo "${WRITTEN_CONTENT}" > ${MOUNT_PATH}/${WRITTEN_FILE}`
+            ]
           })
         });
-        const writeResult = (await writeResponse.json()) as ExecResult;
+        const writeResult = (await writeResponse.json()) as CommandResponse;
         expect(writeResult.exitCode).toBe(0);
 
         // 5. Verify the written file is visible in R2 via binding
@@ -312,9 +327,11 @@ describe('Bucket Mounting E2E', () => {
         const mountCheck = await fetch(`${workerUrl}/api/execute`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ command: `mountpoint -q ${MOUNT_PATH}` })
+          body: JSON.stringify({
+            command: ['/bin/bash', '-lc', `mountpoint -q ${MOUNT_PATH}`]
+          })
         });
-        const mountCheckResult = (await mountCheck.json()) as ExecResult;
+        const mountCheckResult = (await mountCheck.json()) as CommandResponse;
         expect(mountCheckResult.exitCode).not.toBe(0);
       } finally {
         // Cleanup: delete test files from R2

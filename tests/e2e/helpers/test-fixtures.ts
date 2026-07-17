@@ -18,51 +18,15 @@ export function createSandboxId(): string {
 }
 
 /**
- * Generate unique session ID for session isolation testing
- *
- * Session ID determines which explicit shell session within a container to use.
- * Most tests should NOT need this - top-level SDK methods are sessionless.
- *
- * Only use this for:
- * - Testing session isolation (multiple sessions in one sandbox)
- * - Testing session-specific environment variables
- */
-export function createSessionId(): string {
-  // Generate a short readable id with unique suffix e.g. session-281e3c60
-  const id = randomBytes(4).toString('hex');
-  return `session-${id}`;
-}
-
-/**
- * Create headers for sandbox/session identification
+ * Create headers for sandbox identification.
  *
  * @param sandboxId - Which container instance to use
- * @param sessionId - (Optional) Which explicit session within that container
- *
- * @example
- * // Most tests: unique sandbox, sessionless top-level APIs
- * const headers = createTestHeaders(createSandboxId());
- *
- * @example
- * // Session isolation tests: one sandbox, multiple sessions
- * const sandboxId = createSandboxId();
- * const headers1 = createTestHeaders(sandboxId, createSessionId());
- * const headers2 = createTestHeaders(sandboxId, createSessionId());
  */
-export function createTestHeaders(
-  sandboxId: string,
-  sessionId?: string
-): Record<string, string> {
-  const headers: Record<string, string> = {
+export function createTestHeaders(sandboxId: string): Record<string, string> {
+  return {
     'Content-Type': 'application/json',
     'X-Sandbox-Id': sandboxId
   };
-
-  if (sessionId) {
-    headers['X-Session-Id'] = sessionId;
-  }
-
-  return headers;
 }
 
 /**
@@ -72,14 +36,12 @@ export function createTestHeaders(
  * The Python image is larger but supports Python code execution.
  *
  * @param sandboxId - Which container instance to use
- * @param sessionId - (Optional) Which session within that container
  */
 export function createPythonImageHeaders(
-  sandboxId: string,
-  sessionId?: string
+  sandboxId: string
 ): Record<string, string> {
   return {
-    ...createTestHeaders(sandboxId, sessionId),
+    ...createTestHeaders(sandboxId),
     'X-Sandbox-Type': 'python'
   };
 }
