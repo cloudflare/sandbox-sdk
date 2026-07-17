@@ -24,15 +24,15 @@ interface Message {
  * Get or create a browser-local workspace ID.
  * The ID is stored in localStorage and maps to one sandbox workspace.
  */
-function getOrCreateSessionId(): string {
-  let sessionId = localStorage.getItem('session-id');
+function getOrCreateConversationId(): string {
+  let conversationId = localStorage.getItem('conversation-id');
 
-  if (!sessionId) {
-    sessionId = nanoid(8);
-    localStorage.setItem('session-id', sessionId);
+  if (!conversationId) {
+    conversationId = nanoid(8);
+    localStorage.setItem('conversation-id', conversationId);
   }
 
-  return sessionId;
+  return conversationId;
 }
 
 const STORAGE_KEY = 'openai-agents-history';
@@ -43,7 +43,7 @@ async function makeApiCall(input: string): Promise<Response> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Session-Id': getOrCreateSessionId()
+        'X-Conversation-Id': getOrCreateConversationId()
       },
       body: JSON.stringify({ input })
     });

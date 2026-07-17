@@ -73,21 +73,24 @@ app.post('/sandboxes/:id/commit/:filename', async (c) => {
 
   const state = await ensureSandboxRepo(c.env, sandboxID);
 
-  const result = await state.sandbox
-    .exec(COMMIT_SCRIPT, {
-      env: {
-        DEFAULT_BRANCH: state.defaultBranch,
-        FILE_NAME: filename,
-        FILE_CONTENT: content,
-        REPO_DIR: `/workspace/repos/${sandboxID}`
-      },
-      timeout: 30_000
-    })
-    .output();
-  const stdout = redactSecret(result.stdout as string, state.tokenSecret);
-  const stderr = redactSecret(result.stderr as string, state.tokenSecret);
+  const proc = await state.sandbox.exec(['/bin/bash', '-lc', COMMIT_SCRIPT], {
+    env: {
+      DEFAULT_BRANCH: state.defaultBranch,
+      FILE_NAME: filename,
+      FILE_CONTENT: content,
+      REPO_DIR: `/workspace/repos/${sandboxID}`
+    },
+    timeout: 30_000
+  });
+  const result = await proc.output({ encoding: 'utf8' });
+  const decodedStdout = result.stdout;
+  const decodedStderr = result.stderr;
+  const stdout = redactSecret(decodedStdout, state.tokenSecret);
+  const stderr = redactSecret(decodedStderr, state.tokenSecret);
 
-  if (!result.success) {
+  const { exitCode } = result;
+
+  if (exitCode !== 0) {
     return c.json(
       {
         sandboxId: sandboxID,
@@ -96,7 +99,7 @@ app.post('/sandboxes/:id/commit/:filename', async (c) => {
         remote: state.remote,
         stdout,
         stderr,
-        exitCode: result.exitCode,
+        exitCode,
         success: false
       },
       500
@@ -111,7 +114,7 @@ app.post('/sandboxes/:id/commit/:filename', async (c) => {
     repoExisted: state.repoExisted,
     stdout,
     stderr,
-    exitCode: result.exitCode,
+    exitCode,
     success: true
   });
 });

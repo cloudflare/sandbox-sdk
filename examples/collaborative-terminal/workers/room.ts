@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { getSandbox } from '@cloudflare/sandbox';
 import type {
   ClientMessage,
   RoomInfo,
@@ -27,6 +28,7 @@ export class Room extends DurableObject<Env> {
   private roomId = '';
   private sandboxId = '';
   private terminalId = '';
+  private initialization: Promise<void> | null = null;
 
   private getUsers(): User[] {
     return Array.from(this.clients.values()).map((c) => c.user);
@@ -81,6 +83,70 @@ export class Room extends DurableObject<Env> {
     this.ctx.waitUntil(this.notifyRegistry());
   }
 
+  private async ensureRoom(roomId: string): Promise<void> {
+    if (!this.roomId) {
+      this.roomId = roomId;
+      this.sandboxId = `room-${roomId}`;
+    }
+
+    if (!this.initialization) {
+      this.initialization = this.admitRoomTerminal().finally(() => {
+        this.initialization = null;
+      });
+    }
+
+    await this.initialization;
+  }
+
+  private async admitRoomTerminal(): Promise<void> {
+    const storedTerminalId =
+      this.terminalId || (await this.ctx.storage.get<string>('terminalId'));
+    let reuse = false;
+
+    if (storedTerminalId) {
+      try {
+        const sandbox = getSandbox(this.env.Sandbox, this.sandboxId);
+        const terminal = await sandbox.getTerminal(storedTerminalId);
+        if (terminal) {
+          const snapshot = await terminal.getSnapshot();
+          if (snapshot.status === 'running') {
+            this.terminalId = storedTerminalId;
+            reuse = true;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to recover stored terminal, will recreate:', err);
+      }
+    }
+
+    if (!reuse) {
+      const sandbox = getSandbox(this.env.Sandbox, this.sandboxId);
+      const terminal = await sandbox.createTerminal({ command: ['bash'] });
+      const oldTerminalId = this.terminalId || storedTerminalId;
+      this.terminalId = terminal.id;
+      await this.ctx.storage.put('terminalId', this.terminalId);
+
+      if (oldTerminalId && oldTerminalId !== this.terminalId) {
+        this.broadcastRoomUpdate();
+      }
+    }
+  }
+
+  private broadcastRoomUpdate(): void {
+    for (const [userId, client] of this.clients) {
+      if (client.socket.readyState === WebSocket.OPEN) {
+        const connectedMessage: ServerMessage = {
+          type: 'connected',
+          userId,
+          user: client.user,
+          users: this.getUsers(),
+          room: this.getRoomInfo()
+        };
+        client.socket.send(JSON.stringify(connectedMessage));
+      }
+    }
+  }
+
   private async notifyRegistry(): Promise<void> {
     const id = this.env.RoomRegistry.idFromName('global');
     const registry = this.env.RoomRegistry.get(id);
@@ -102,12 +168,37 @@ export class Room extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     if (request.method === 'DELETE') {
+      const roomId = new URL(request.url).pathname.split('/')[3];
+      if (!roomId) {
+        return new Response('Missing roomId', { status: 400 });
+      }
+      this.roomId = roomId;
+      this.sandboxId = `room-${roomId}`;
+
       this.broadcast({ type: 'room_deleted' });
       for (const [, client] of this.clients) {
         client.socket.close(1000, 'Room deleted');
       }
       this.clients.clear();
       await this.ctx.storage.deleteAlarm();
+
+      const storedTerminalId =
+        this.terminalId || (await this.ctx.storage.get<string>('terminalId'));
+      if (storedTerminalId) {
+        try {
+          const sandbox = getSandbox(this.env.Sandbox, this.sandboxId);
+          const terminal = await sandbox.getTerminal(storedTerminalId);
+          if (terminal) {
+            await terminal.terminate();
+          }
+        } catch (err) {
+          console.warn(
+            'Failed to terminate terminal during room deletion:',
+            err
+          );
+        }
+      }
+
       const id = this.env.RoomRegistry.idFromName('global');
       const registry = this.env.RoomRegistry.get(id);
       await registry.unregisterRoom(this.roomId);
@@ -120,14 +211,13 @@ export class Room extends DurableObject<Env> {
       return new Response('Expected WebSocket', { status: 426 });
     }
 
-    const roomId = url.searchParams.get('roomId') || '';
+    const roomId = url.searchParams.get('roomId');
+    if (!roomId) {
+      return new Response('Missing roomId', { status: 400 });
+    }
     const userName = url.searchParams.get('name') || 'Anonymous';
 
-    if (!this.roomId) {
-      this.roomId = roomId;
-      this.sandboxId = `room-${roomId}`;
-      this.terminalId = this.sandboxId;
-    }
+    await this.ensureRoom(roomId);
 
     const userId = crypto.randomUUID();
     const user: User = {

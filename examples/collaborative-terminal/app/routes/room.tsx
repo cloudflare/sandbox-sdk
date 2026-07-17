@@ -1,5 +1,4 @@
-import type { SandboxAddon } from '@cloudflare/sandbox/xterm';
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { UserAvatars } from '../components/UserAvatars';
 import { useActiveRooms } from '../hooks/useActiveRooms';
@@ -19,16 +18,10 @@ export default function RoomPage({ params }: Route.ComponentProps) {
   const userName = useMemo(() => generateName(), []);
   const [copied, setCopied] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const addonRef = useRef<SandboxAddon | null>(null);
   const { rooms } = useActiveRooms();
   const otherRooms = rooms.filter((r) => r.roomId !== roomId);
   const switchRoom = useCallback(
     (newRoomId: string) => {
-      const sandboxId = `room-${newRoomId}`;
-      addonRef.current?.connect({
-        sandboxId,
-        terminalId: sandboxId
-      });
       navigate(`/room/${newRoomId}`, { replace: true });
     },
     [navigate]
@@ -134,9 +127,6 @@ export default function RoomPage({ params }: Route.ComponentProps) {
                     sandboxId={room.sandboxId}
                     terminalId={room.terminalId}
                     onTyping={sendTyping}
-                    onAddonReady={(addon) => {
-                      addonRef.current = addon;
-                    }}
                   />
                 </Suspense>
               ) : (

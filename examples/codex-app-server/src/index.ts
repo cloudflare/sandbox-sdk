@@ -21,14 +21,89 @@ import {
 
 export { ContainerProxy };
 
+export type CodexServerAdmission = { processId: string; token: string };
+
+const CODEX_WS_PORT = 4500;
+const CODEX_WS_TOKEN_FILE = '/tmp/codex-ws-token';
+
 export class Sandbox extends BaseSandbox<Env> {
   enableInternet = false;
   interceptHttps = true;
+
+  private codexServerAdmission: Promise<CodexServerAdmission> | null = null;
 
   git = withGit(this);
 
   gitCheckout(repoUrl: string, options?: GitCheckoutOptions) {
     return this.git.checkout(repoUrl, options);
+  }
+
+  async ensureCodexAppServer(): Promise<CodexServerAdmission> {
+    this.codexServerAdmission ??= this.admitCodexAppServer();
+    try {
+      return await this.codexServerAdmission;
+    } finally {
+      this.codexServerAdmission = null;
+    }
+  }
+
+  private async admitCodexAppServer(): Promise<CodexServerAdmission> {
+    const procs = await this.listProcesses();
+    const expectedCmd = [
+      '/bin/bash',
+      '-lc',
+      `codex app-server --listen ws://0.0.0.0:${CODEX_WS_PORT} --ws-auth capability-token --ws-token-file ${CODEX_WS_TOKEN_FILE}`
+    ] as const;
+
+    const running = procs.find(
+      (p) =>
+        p.state === 'running' &&
+        p.command.length === expectedCmd.length &&
+        p.command.every((val, index) => val === expectedCmd[index])
+    );
+
+    if (running) {
+      const tokenFile = await this.readFile(CODEX_WS_TOKEN_FILE);
+      if (tokenFile.content && tokenFile.content.trim() !== '') {
+        return { processId: running.id, token: tokenFile.content.trim() };
+      }
+    }
+
+    const codexWsToken = generateCapabilityToken();
+
+    await this.setEnvVars({
+      OPENAI_BASE_URL: 'http://api.openai.com/v1',
+      OPENAI_API_KEY: 'proxy-injected'
+    });
+    await this.writeFile(CODEX_WS_TOKEN_FILE, codexWsToken);
+
+    const proc = await this.exec(expectedCmd);
+    return { processId: proc.id, token: codexWsToken };
+  }
+
+  async waitForPortReady(port: number): Promise<void> {
+    const watch = await this.client.ports.openWatch(port);
+    const stream = await watch.stream();
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          throw new Error(`Port ${port} watch closed before ready`);
+        }
+        if (value) {
+          if (value.type === 'ready') {
+            return;
+          }
+          if (value.type === 'error') {
+            throw new Error(`Port ${port} watch reported error`);
+          }
+        }
+      }
+    } finally {
+      await reader.cancel();
+      watch[Symbol.dispose]?.();
+    }
   }
 }
 
@@ -40,8 +115,7 @@ declare global {
   }
 }
 
-const CODEX_WS_PORT = 4500;
-const CODEX_WS_TOKEN_FILE = '/tmp/codex-ws-token';
+type CodexSandboxClient = ReturnType<typeof getSandbox<Sandbox>>;
 
 // --- Egress control ---
 // The container uses OPENAI_BASE_URL=http://api.openai.com/v1 so requests
@@ -81,7 +155,7 @@ Sandbox.outbound = async (request: Request) => {
 // --- Custom command: sandbox/setup ---
 // Wipes /workspace and clones a fresh copy of the repo.
 
-function sandboxSetup(sandbox: Sandbox): MessageHandler {
+export function sandboxSetup(sandbox: CodexSandboxClient): MessageHandler {
   return (msg, ctx) => {
     if (
       ctx.direction !== 'client-to-server' ||
@@ -103,9 +177,12 @@ function sandboxSetup(sandbox: Sandbox): MessageHandler {
 
     (async () => {
       try {
-        await sandbox
-          .exec('find /workspace -mindepth 1 -delete 2>/dev/null; true')
-          .output();
+        const cleanup = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'find /workspace -mindepth 1 -delete 2>/dev/null; true'
+        ]);
+        await cleanup.waitForExit();
         const result = await sandbox.gitCheckout(repoUrl, {
           branch: params.branch as string | undefined,
           targetDir: '/workspace',
@@ -124,7 +201,7 @@ function sandboxSetup(sandbox: Sandbox): MessageHandler {
 
 // --- Custom command: sandbox/exec ---
 
-function sandboxExec(sandbox: Sandbox): MessageHandler {
+function sandboxExec(sandbox: CodexSandboxClient): MessageHandler {
   return (msg, ctx) => {
     if (
       ctx.direction !== 'client-to-server' ||
@@ -145,9 +222,13 @@ function sandboxExec(sandbox: Sandbox): MessageHandler {
     }
 
     sandbox
-      .exec(command)
-      .output()
-      .then((result) => ctx.sendToClient({ id: msg.id, result }))
+      .exec(['/bin/bash', '-lc', command])
+      .then(async (process) =>
+        ctx.sendToClient({
+          id: msg.id,
+          result: await process.output({ encoding: 'utf8' })
+        })
+      )
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         ctx.sendToClient({ id: msg.id, error: { code: -32000, message } });
@@ -165,32 +246,6 @@ function generateCapabilityToken(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
     ''
   );
-}
-
-async function ensureCodexRunning(sandbox: Sandbox): Promise<string> {
-  const procs = await sandbox.listProcesses();
-  const existing = procs.find((p) => p.id === 'codex-app-server');
-  if (existing) {
-    const status = await existing.status();
-    if (status === 'running' || status === 'starting') {
-      return (await sandbox.readFile(CODEX_WS_TOKEN_FILE)).content;
-    }
-  }
-
-  const codexWsToken = generateCapabilityToken();
-
-  await sandbox.setEnvVars({
-    OPENAI_BASE_URL: 'http://api.openai.com/v1',
-    OPENAI_API_KEY: 'proxy-injected'
-  });
-  await sandbox.writeFile(CODEX_WS_TOKEN_FILE, codexWsToken);
-
-  const proc = await sandbox.exec(
-    `bash -lc "codex app-server --listen ws://0.0.0.0:${CODEX_WS_PORT} --ws-auth capability-token --ws-token-file ${CODEX_WS_TOKEN_FILE}"`,
-    { processId: 'codex-app-server' }
-  );
-  await proc.waitForPort(CODEX_WS_PORT, { mode: 'tcp' });
-  return codexWsToken;
 }
 
 // --- Auth ---
@@ -213,8 +268,6 @@ const SANDBOX_ID_RE = /^\/ws\/([a-zA-Z0-9_-]{1,64})$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Cast: the Sandbox subclass widens the namespace type beyond the base
-    // `proxyToSandbox` signature (DurableObjectNamespace is invariant).
     const proxied = await proxyToSandbox(
       request,
       env as unknown as Parameters<typeof proxyToSandbox>[1]
@@ -241,7 +294,7 @@ export default {
 // --- WebSocket bridge ---
 
 async function connectToContainer(
-  sandbox: Sandbox,
+  sandbox: CodexSandboxClient,
   codexWsToken: string
 ): Promise<WebSocket> {
   const wsRequest = switchPort(
@@ -273,9 +326,19 @@ async function handleWebSocket(
   }
 
   const sleepAfter = env.SANDBOX_SLEEP_AFTER || '1m';
-  const sandbox = getSandbox(env.Sandbox, `codex-${sandboxId}`, { sleepAfter });
-  await sandbox.destroy();
-  const codexWsToken = await ensureCodexRunning(sandbox);
+  const sandbox = getSandbox<Sandbox>(env.Sandbox, `codex-${sandboxId}`, {
+    sleepAfter
+  });
+  const { processId, token: codexWsToken } =
+    await sandbox.ensureCodexAppServer();
+
+  const proc = await sandbox.getProcess(processId);
+  if (!proc) {
+    throw new Error(`Admitted app server process ${processId} was lost`);
+  }
+
+  // Ensure port readiness at the caller boundary so both newly launched and recovered processes are gated
+  await sandbox.waitForPortReady(CODEX_WS_PORT);
 
   const containerWs = await connectToContainer(sandbox, codexWsToken);
 

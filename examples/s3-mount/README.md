@@ -71,13 +71,13 @@ examples/s3-mount/
 
 The Worker's user-facing flow is the browser UI at `/`. The endpoints below back that UI; you can also call them directly if you want to script things.
 
-| Method | Path                              | Purpose                                                                  |
-| ------ | --------------------------------- | ------------------------------------------------------------------------ |
-| `GET`  | `/`                               | Static UI — the Start button + xterm.js terminal                         |
-| `POST` | `/api/session`                    | Spin up a fresh sandbox, mount the bucket, return `{ sandboxId, mount }` |
-| `WS`   | `/ws/terminal/:sandboxId`         | WebSocket proxy to an independent sandbox terminal                       |
-| `POST` | `/api/session/:sandboxId/cleanup` | Best-effort `fusermount -u /mnt/s3` when the session ends                |
-| `POST` | `/api/session/:sandboxId/exec`    | Run an arbitrary shell command in the sandbox (debug only)               |
+| Method | Path                              | Purpose                                                                              |
+| ------ | --------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/`                               | Static UI — the Start button + xterm.js terminal                                     |
+| `POST` | `/api/session`                    | Spin up a fresh sandbox, mount the bucket, return `{ sandboxId, terminalId, mount }` |
+| `WS`   | `/ws/terminal/:sandboxId`         | WebSocket proxy to the session's active terminal, requiring `terminalId` query param |
+| `POST` | `/api/session/:sandboxId/cleanup` | Best-effort terminal termination and `fusermount -u /mnt/s3` when the session ends   |
+| `POST` | `/api/session/:sandboxId/exec`    | Run an arbitrary shell command in the sandbox (debug only)                           |
 
 > ⚠️ These routes are unauthenticated in this example. Add your own auth layer before exposing publicly.
 >
@@ -218,9 +218,9 @@ https://sandbox-s3-mount-example.<your-account>.workers.dev/
 
 Click **Start**. The page does the rest:
 
-1. `POST /api/session` provisions a fresh sandbox container and mounts the bucket at `/mnt/s3`.
-2. xterm.js opens a WebSocket to `/ws/terminal/:sandboxId` and connects you to an interactive shell. `mountBucket()` drops a one-liner into `~/.bashrc`, so the shell lands you in `/mnt/s3` — every read/write you do is hitting the bucket directly.
-3. When you `exit` the shell (or close the tab), the page calls `POST /api/session/:sandboxId/cleanup` to unmount the bucket. The next click on Start spins up a brand-new sandbox.
+1. `POST /api/session` provisions a fresh sandbox container, mounts the bucket at `/mnt/s3`, and allocates a single interactive `bash` terminal.
+2. xterm.js opens a WebSocket to `/ws/terminal/:sandboxId?terminalId=:terminalId` and connects you to that terminal. `mountBucket()` drops a one-liner into `~/.bashrc`, so the shell lands you in `/mnt/s3` — every read/write you do is hitting the bucket directly.
+3. When you `exit` the shell (or close the tab), the page calls `POST /api/session/:sandboxId/cleanup` with the `terminalId` in the body to terminate the terminal and unmount the bucket. The next click on Start spins up a brand-new sandbox.
 
 If you'd rather drive the bucket from your own code, point a PTY client at `/ws/terminal/...` (see `scripts/test` for a small Bun example) or call `/api/session/:sandboxId/exec` for one-off commands.
 

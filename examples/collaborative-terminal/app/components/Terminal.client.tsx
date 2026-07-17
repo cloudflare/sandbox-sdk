@@ -10,7 +10,25 @@ interface TerminalProps {
   sandboxId: string;
   terminalId: string;
   onTyping?: () => void;
-  onAddonReady?: (addon: SandboxAddon) => void;
+  onAddonReady?: (addon: SandboxAddon | null) => void;
+}
+
+export function buildTerminalWebSocketUrl({
+  origin,
+  sandboxId,
+  terminalId,
+  cursor
+}: {
+  origin: string;
+  sandboxId: string;
+  terminalId?: string;
+  cursor?: string;
+}) {
+  const params = new URLSearchParams({ sandboxId });
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+  return `${origin}/ws/terminal/${encodeURIComponent(terminalId ?? '')}?${params}`;
 }
 
 export function Terminal({
@@ -20,9 +38,19 @@ export function Terminal({
   onAddonReady
 }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const addonRef = useRef<SandboxAddon | null>(null);
+  const onTypingRef = useRef(onTyping);
+  const onAddonReadyRef = useRef(onAddonReady);
   const [state, setState] = useState<ConnectionState>('disconnected');
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once — parent controls terminal switching via addon ref
+  useEffect(() => {
+    onTypingRef.current = onTyping;
+  }, [onTyping]);
+
+  useEffect(() => {
+    onAddonReadyRef.current = onAddonReady;
+  }, [onAddonReady]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -59,8 +87,7 @@ export function Terminal({
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
     const sandboxAddon = new SandboxAddon({
-      getWebSocketUrl: ({ origin, terminalId: id }) =>
-        `${origin}/ws/terminal/${id}`,
+      getWebSocketUrl: buildTerminalWebSocketUrl,
       onStateChange: (newState) => setState(newState)
     });
 
@@ -70,18 +97,25 @@ export function Terminal({
     terminal.open(containerRef.current);
     fitAddon.fit();
 
-    terminal.onData(() => onTyping?.());
-    sandboxAddon.connect({ sandboxId, terminalId });
-    onAddonReady?.(sandboxAddon);
+    terminal.onData(() => onTypingRef.current?.());
+    addonRef.current = sandboxAddon;
+    onAddonReadyRef.current?.(sandboxAddon);
 
     const handleResize = () => fitAddon.fit();
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      sandboxAddon.dispose();
       terminal.dispose();
+      addonRef.current = null;
+      onAddonReadyRef.current?.(null);
     };
   }, []);
+
+  useEffect(() => {
+    addonRef.current?.connect({ sandboxId, terminalId });
+  }, [sandboxId, terminalId]);
 
   return (
     <div className="relative h-full">

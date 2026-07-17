@@ -9,12 +9,14 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "types": "wrangler types",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
     "wrangler": "^4.102.0"
   },
   "author": "",

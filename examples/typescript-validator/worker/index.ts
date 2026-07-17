@@ -11,15 +11,15 @@ export default {
     if (url.pathname === '/validate') {
       // Route each browser session to its own Compiler DO. Do not use
       // sandbox sessions as a user isolation boundary.
-      const sessionId = request.headers.get('X-Session-ID');
-      if (!sessionId) {
+      const workspaceId = request.headers.get('X-Workspace-ID');
+      if (!workspaceId) {
         return Response.json(
-          { error: 'Missing X-Session-ID header' },
+          { error: 'Missing X-Workspace-ID header' },
           { status: 400 }
         );
       }
 
-      const id = env.Compiler.idFromName(sessionId);
+      const id = env.Compiler.idFromName(workspaceId);
       const stub = env.Compiler.get(id);
       return stub.fetch(request);
     }

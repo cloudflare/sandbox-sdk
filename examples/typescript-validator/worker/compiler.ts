@@ -112,7 +112,7 @@ export class CompilerDO implements DurableObject {
 
       // Hash schema code to check cache
       const codeHash = await this.hashCode(body.schemaCode);
-      const sessionId = codeHash.slice(0, 8); // Short ID
+      const workspaceId = codeHash.slice(0, 8); // Short workspace ID
 
       // Check DO storage for cached bundle
       let bundledCode = await this.state.storage.get<string>(codeHash);
@@ -131,29 +131,32 @@ export class CompilerDO implements DurableObject {
       if (!bundledCode) {
         // Start timing for all Sandbox SDK operations
         const compileStart = Date.now();
-        const sandbox = getSandbox(this.env.Sandbox, `compile-${sessionId}`);
+        const sandbox = getSandbox(this.env.Sandbox, `compile-${workspaceId}`);
 
         try {
           // Write TypeScript schema
           await sandbox.writeFile('/workspace/validator.ts', body.schemaCode);
 
           // Bundle with esbuild (using pre-installed dependencies from /base)
-          const bundleResult = await sandbox
-            .exec(
-              'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js',
-              {
-                timeout: 60000,
-                cwd: '/workspace'
-              }
-            )
-            .output();
+          const proc = await sandbox.exec(
+            [
+              '/bin/bash',
+              '-lc',
+              'NODE_PATH=/base/node_modules esbuild validator.ts --bundle --format=esm --outfile=bundle.js'
+            ],
+            {
+              timeout: 60000,
+              cwd: '/workspace'
+            }
+          );
+          const bundleResult = await proc.output();
           timings.bundle = Date.now() - compileStart;
 
-          if (!bundleResult.success) {
+          if (bundleResult.exitCode !== 0) {
             return Response.json(
               {
                 error: 'Build failed',
-                details: bundleResult.stderr as string
+                details: new TextDecoder().decode(bundleResult.stderr)
               } satisfies ErrorResponse,
               { status: 400 }
             );
@@ -229,7 +232,7 @@ export class CompilerDO implements DurableObject {
 
       // Return validation response
       return Response.json({
-        sessionId,
+        workspaceId,
         compiled,
         timings,
         result

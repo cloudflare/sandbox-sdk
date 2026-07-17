@@ -9,12 +9,17 @@ export default {
     const sandbox = getSandbox(env.Sandbox, 'my-sandbox');
 
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"').output();
+      const proc = await sandbox.exec([
+        '/bin/bash',
+        '-lc',
+        'echo "2 + 2 = $((2 + 2))"'
+      ]);
+      const out = await proc.output();
       return Response.json({
-        output: result.stdout,
-        error: result.stderr,
-        exitCode: result.exitCode,
-        success: result.success
+        output: new TextDecoder().decode(out.stdout),
+        error: new TextDecoder().decode(out.stderr),
+        exitCode: out.exitCode,
+        success: out.exitCode === 0
       });
     }
 
