@@ -7,14 +7,24 @@ import {
 import { TunnelService } from '../../src/tunnels/tunnel-service';
 import { makeLogger, makeStorage } from './helpers';
 
+type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
+
+function makeRuntimeCall(): TunnelsHost['runRuntimeCall'] {
+  const tunnels = {
+    ensureTunnelRun: vi.fn(),
+    stopTunnelRun: vi.fn()
+  };
+  return (_operation, call) =>
+    call(
+      tunnels as unknown as Parameters<
+        Parameters<TunnelsHost['runRuntimeCall']>[1]
+      >[0]
+    );
+}
+
 function makeService(storage: TunnelsStorage): TunnelService {
   return new TunnelService({
-    client: {
-      tunnels: {
-        ensureTunnelRun: vi.fn(),
-        stopTunnelRun: vi.fn()
-      }
-    },
+    runRuntimeCall: makeRuntimeCall(),
     storage,
     logger: makeLogger()
   });
@@ -86,12 +96,7 @@ describe('TunnelService', () => {
     async (_label, run) => {
       const storage = makeRestartStorage();
       const handle = createTunnelsHandle({
-        client: {
-          tunnels: {
-            ensureTunnelRun: vi.fn(),
-            stopTunnelRun: vi.fn()
-          }
-        },
+        runRuntimeCall: makeRuntimeCall(),
         storage,
         logger: makeLogger()
       });

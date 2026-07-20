@@ -5,7 +5,12 @@ import type {
 import { EXTENSION_TARBALL_REQUIRED } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SandboxLike } from '../../../packages/sandbox/src/extensions';
+import {
+  type ExtensionRuntimeCall,
+  type ExtensionRuntimeControl,
+  type SandboxLike,
+  sandboxRuntimeCall
+} from '../../../packages/sandbox/src/extensions';
 import { Interpreter, withInterpreter } from '../src/index';
 import type { InterpreterSidecarAPI } from '../src/sidecar-api';
 
@@ -31,10 +36,14 @@ function makeSandbox(): { sandbox: SandboxLike; api: ExtensionsApiMock } {
     })),
     stop: vi.fn(async () => {})
   };
+  const runtimeCall = (async (_operation, call) =>
+    await call({
+      extensions: api as unknown as SandboxExtensionsAPI
+    } as ExtensionRuntimeControl)) as ExtensionRuntimeCall;
   return {
     sandbox: {
-      client: { extensions: api as unknown as SandboxExtensionsAPI }
-    } as unknown as SandboxLike,
+      [sandboxRuntimeCall]: runtimeCall
+    },
     api
   };
 }

@@ -11,6 +11,7 @@ import type {
   TunnelRunExitEvent
 } from '@repo/shared';
 import { RpcTarget } from 'capnweb';
+import type { RuntimeIdentity } from '../runtime';
 import type { TunnelExitHandler } from './rpc-target';
 
 export class SandboxControlCallbackImpl
@@ -25,12 +26,44 @@ export class SandboxControlCallbackImpl
      * that window.
      */
     private readonly getHandler: () => TunnelExitHandler | null,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly expectedRuntime?: RuntimeIdentity,
+    private readonly getCurrentRuntime?: () =>
+      | RuntimeIdentity
+      | null
+      | Promise<RuntimeIdentity | null>
   ) {
     super();
   }
 
+  bindRuntime(runtime: RuntimeIdentity): SandboxControlCallbackImpl {
+    return new SandboxControlCallbackImpl(
+      this.getHandler,
+      this.logger,
+      runtime,
+      this.getCurrentRuntime
+    );
+  }
+
   async onTunnelRunExit(event: TunnelRunExitEvent): Promise<void> {
+    const currentRuntime = this.getCurrentRuntime
+      ? await this.getCurrentRuntime()
+      : null;
+    if (
+      this.expectedRuntime &&
+      (!currentRuntime ||
+        currentRuntime.id !== this.expectedRuntime.id ||
+        currentRuntime.runtimeIncarnationID !==
+          this.expectedRuntime.runtimeIncarnationID)
+    ) {
+      this.logger.debug('onTunnelRunExit: stale runtime callback ignored', {
+        tunnelId: event.tunnelId,
+        runId: event.runId,
+        mode: event.mode,
+        port: event.port
+      });
+      return;
+    }
     const handler = this.getHandler();
     if (!handler) {
       this.logger.debug('onTunnelRunExit: no handler bound; ignoring', {

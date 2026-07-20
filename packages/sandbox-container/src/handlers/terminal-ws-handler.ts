@@ -17,6 +17,7 @@ export interface TerminalWSData {
   cursor?: string;
   cols?: number;
   rows?: number;
+  runtimeIncarnationID: string;
 }
 
 interface TerminalOutputReader {

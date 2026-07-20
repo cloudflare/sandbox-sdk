@@ -1,7 +1,11 @@
 import type { SandboxCommand } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ContainerControlClient } from '../src/container-control';
 import { connect, Sandbox } from '../src/sandbox';
-import { createMockControlClient } from './helpers/mock-control-client';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
 
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
@@ -50,6 +54,58 @@ vi.mock('@cloudflare/containers', () => {
 });
 
 // Mock R2 bucket binding
+function createSSEFileStream(content: Uint8Array): ReadableStream<Uint8Array> {
+  const ssePayload = [
+    `data: ${JSON.stringify({ type: 'metadata', mimeType: 'application/octet-stream', size: content.length, isBinary: true, encoding: 'base64' })}\n\n`,
+    `data: ${JSON.stringify({ type: 'chunk', data: btoa(String.fromCharCode(...content)) })}\n\n`,
+    `data: ${JSON.stringify({ type: 'complete' })}\n\n`
+  ].join('');
+
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(ssePayload));
+      controller.close();
+    }
+  });
+}
+
+function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
+  const target = sandbox as unknown as {
+    client: ContainerControlClient;
+    runLegacyRuntimeCall<T>(
+      operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ): Promise<T>;
+  };
+  target.runLegacyRuntimeCall = async (_operation, call) =>
+    await call(target.client);
+}
+
+function installRuntimeCallRecorder(
+  sandbox: Sandbox,
+  controls: ContainerControlClient[]
+): { operations: string[]; controls: ContainerControlClient[] } {
+  const calls: { operations: string[]; controls: ContainerControlClient[] } = {
+    operations: [],
+    controls: []
+  };
+  let index = 0;
+  const target = sandbox as unknown as {
+    runLegacyRuntimeCall<T>(
+      operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ): Promise<T>;
+  };
+  target.runLegacyRuntimeCall = async (operation, call) => {
+    const control = controls[index++];
+    if (!control) throw new Error(`Missing test control for ${operation}`);
+    calls.operations.push(operation);
+    calls.controls.push(control);
+    return await call(control);
+  };
+  return calls;
+}
+
 function createMockR2Bucket() {
   const store = new Map<string, { data: ArrayBuffer; size: number }>();
   return {
@@ -184,7 +240,9 @@ describe('Local Backup & Restore', () => {
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
     });
-    sandbox.client = createMockControlClient();
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    sandboxWithClient.client = createMockControlClient();
+    installClientBackedRuntimeCalls(sandboxWithClient);
   });
 
   afterEach(() => {
@@ -196,7 +254,10 @@ describe('Local Backup & Restore', () => {
       // Mock createArchive
       const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]); // "hsqs" squashfs magic
 
-      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'createArchive'
+      ).mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: archiveContent.length
@@ -214,9 +275,10 @@ describe('Local Backup & Restore', () => {
         }
       });
 
-      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
-        stream
-      );
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'readFileStream'
+      ).mockResolvedValue(stream);
 
       const result = await sandbox.createBackup({
         dir: '/workspace/myapp',
@@ -230,7 +292,9 @@ describe('Local Backup & Restore', () => {
       expect(result.localBucket).toBe(true);
 
       // Verify archive was created in the container
-      expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
+      expect(
+        asSandboxWithClient(sandbox).client.backup.createArchive
+      ).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         {
@@ -257,6 +321,206 @@ describe('Local Backup & Restore', () => {
 
       // Verify upload was verified
       expect(mockBucket.head).toHaveBeenCalled();
+    });
+
+    it('runs each legacy backup RPC in a separate runtime callback scope', async () => {
+      const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
+      const controls = [
+        createMockControlClient(),
+        createMockControlClient(),
+        createMockControlClient()
+      ];
+      const runtimeCalls = installRuntimeCallRecorder(sandbox, controls);
+
+      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+        success: true,
+        archivePath: '/var/backups/test.sqsh',
+        sizeBytes: archiveContent.length
+      });
+      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(
+        createSSEFileStream(archiveContent)
+      );
+      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
+        undefined
+      );
+
+      await sandbox.createBackup({
+        dir: '/workspace/myapp',
+        localBucket: true
+      });
+
+      expect(runtimeCalls.operations).toEqual([
+        'backup.createArchive',
+        'backup.readArchive',
+        'backup.cleanupArchive'
+      ]);
+      expect(new Set(runtimeCalls.controls).size).toBe(3);
+      expect(controls[0].backup.createArchive).toHaveBeenCalledTimes(1);
+      expect(controls[1].files.readFileStream).toHaveBeenCalledTimes(1);
+      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+      expect(controls[0].files.readFileStream).not.toHaveBeenCalled();
+      expect(controls[0].backup.cleanupArchive).not.toHaveBeenCalled();
+      expect(controls[1].backup.cleanupArchive).not.toHaveBeenCalled();
+    });
+
+    it('keeps readArchive runtime callback open until archive upload completes', async () => {
+      const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
+      const controls = [
+        createMockControlClient(),
+        createMockControlClient(),
+        createMockControlClient()
+      ];
+      let readArchiveSettled = false;
+      const target = sandbox as unknown as {
+        runLegacyRuntimeCall<T>(
+          operation: string,
+          call: (control: ContainerControlClient) => Promise<T>
+        ): Promise<T>;
+      };
+      let index = 0;
+      target.runLegacyRuntimeCall = async (operation, call) => {
+        const control = controls[index++];
+        if (!control) throw new Error(`Missing test control for ${operation}`);
+        try {
+          return await call(control);
+        } finally {
+          if (operation === 'backup.readArchive') readArchiveSettled = true;
+        }
+      };
+
+      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+        success: true,
+        archivePath: '/var/backups/test.sqsh',
+        sizeBytes: archiveContent.length
+      });
+      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
+        undefined
+      );
+
+      let streamController: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'metadata', mimeType: 'application/octet-stream', size: archiveContent.length, isBinary: true, encoding: 'base64' })}\n\n`
+            )
+          );
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'chunk', data: btoa(String.fromCharCode(...archiveContent)) })}\n\n`
+            )
+          );
+        }
+      });
+      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(stream);
+
+      const backupPromise = sandbox.createBackup({
+        dir: '/workspace/myapp',
+        localBucket: true
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(readArchiveSettled).toBe(false);
+      expect(mockBucket.put).toHaveBeenCalledWith(
+        expect.stringMatching(/^backups\/.*\/data\.sqsh$/),
+        expect.any(ReadableStream)
+      );
+      expect(controls[2].backup.cleanupArchive).not.toHaveBeenCalled();
+
+      streamController!.enqueue(
+        new TextEncoder().encode(
+          `data: ${JSON.stringify({ type: 'complete' })}\n\n`
+        )
+      );
+      streamController!.close();
+
+      await backupPromise;
+      expect(readArchiveSettled).toBe(true);
+      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates archive upload errors before readArchive scope settles', async () => {
+      const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
+      const controls = [
+        createMockControlClient(),
+        createMockControlClient(),
+        createMockControlClient()
+      ];
+      const settlementOrder: string[] = [];
+      const target = sandbox as unknown as {
+        runLegacyRuntimeCall<T>(
+          operation: string,
+          call: (control: ContainerControlClient) => Promise<T>
+        ): Promise<T>;
+      };
+      let index = 0;
+      target.runLegacyRuntimeCall = async (operation, call) => {
+        const control = controls[index++];
+        if (!control) throw new Error(`Missing test control for ${operation}`);
+        try {
+          return await call(control);
+        } finally {
+          settlementOrder.push(operation);
+        }
+      };
+
+      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+        success: true,
+        archivePath: '/var/backups/test.sqsh',
+        sizeBytes: archiveContent.length
+      });
+      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(
+        createSSEFileStream(archiveContent)
+      );
+      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
+        undefined
+      );
+      mockBucket.put.mockRejectedValueOnce(new Error('r2 put failed'));
+
+      await expect(
+        sandbox.createBackup({
+          dir: '/workspace/myapp',
+          localBucket: true
+        })
+      ).rejects.toThrow('r2 put failed');
+
+      expect(settlementOrder).toEqual([
+        'backup.createArchive',
+        'backup.readArchive',
+        'backup.cleanupArchive'
+      ]);
+      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a fresh runtime callback for rejection cleanup', async () => {
+      const controls = [createMockControlClient(), createMockControlClient()];
+      const runtimeCalls = installRuntimeCallRecorder(sandbox, controls);
+
+      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+        success: false,
+        archivePath: '',
+        sizeBytes: 0
+      });
+      vi.spyOn(controls[1].backup, 'cleanupArchive').mockResolvedValue(
+        undefined
+      );
+
+      await expect(
+        sandbox.createBackup({
+          dir: '/workspace/myapp',
+          localBucket: true
+        })
+      ).rejects.toThrow('Container failed to create backup archive');
+
+      expect(runtimeCalls.operations).toEqual([
+        'backup.createArchive',
+        'backup.cleanupArchive'
+      ]);
+      expect(runtimeCalls.controls).toEqual(controls);
+      expect(controls[0].backup.createArchive).toHaveBeenCalledTimes(1);
+      expect(controls[0].backup.cleanupArchive).not.toHaveBeenCalled();
+      expect(controls[1].backup.cleanupArchive).toHaveBeenCalledTimes(1);
     });
 
     it('should throw if BACKUP_BUCKET binding is missing', async () => {
@@ -299,7 +563,10 @@ describe('Local Backup & Restore', () => {
     });
 
     it('should clean up on archive creation failure', async () => {
-      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'createArchive'
+      ).mockResolvedValue({
         success: false,
         archivePath: '',
         sizeBytes: 0
@@ -313,11 +580,16 @@ describe('Local Backup & Restore', () => {
       ).rejects.toThrow('Container failed to create backup archive');
 
       // Verify archive cleanup uses specialized backup RPC.
-      expect(sandbox.client.backup.cleanupArchive).toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.backup.cleanupArchive
+      ).toHaveBeenCalled();
     });
 
     it('should not require presigned URL credentials', async () => {
-      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'createArchive'
+      ).mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: 4
@@ -337,9 +609,10 @@ describe('Local Backup & Restore', () => {
         }
       });
 
-      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
-        stream
-      );
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'readFileStream'
+      ).mockResolvedValue(stream);
 
       // Should succeed without R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, etc.
       const result = await sandbox.createBackup({
@@ -352,7 +625,10 @@ describe('Local Backup & Restore', () => {
     });
 
     it('should normalize globstar excludes before calling createArchive', async () => {
-      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'createArchive'
+      ).mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: 4
@@ -365,7 +641,10 @@ describe('Local Backup & Restore', () => {
         `data: ${JSON.stringify({ type: 'complete' })}\n\n`
       ].join('');
 
-      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'readFileStream'
+      ).mockResolvedValue(
         new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(ssePayload));
@@ -380,7 +659,9 @@ describe('Local Backup & Restore', () => {
         excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
       });
 
-      expect(sandbox.client.backup.createArchive).toHaveBeenCalledWith(
+      expect(
+        asSandboxWithClient(sandbox).client.backup.createArchive
+      ).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/'),
         {
@@ -418,7 +699,10 @@ describe('Local Backup & Restore', () => {
       );
 
       // Mock writeFileStream for writing archive to container
-      vi.spyOn(sandbox.client.files, 'writeFileStream').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'writeFileStream'
+      ).mockResolvedValue({
         success: true,
         path: '/var/backups/test.sqsh',
         bytesWritten: archiveData.length,
@@ -441,13 +725,17 @@ describe('Local Backup & Restore', () => {
       );
 
       // Verify archive was streamed to container
-      expect(sandbox.client.files.writeFileStream).toHaveBeenCalledWith(
+      expect(
+        asSandboxWithClient(sandbox).client.files.writeFileStream
+      ).toHaveBeenCalledWith(
         expect.stringContaining('/var/backups/'),
         expect.any(ReadableStream)
       );
 
       // Verify extraction used the specialized backup RPC.
-      expect(sandbox.client.backup.extractArchive).toHaveBeenCalledWith(
+      expect(
+        asSandboxWithClient(sandbox).client.backup.extractArchive
+      ).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/')
       );
@@ -529,7 +817,10 @@ describe('Local Backup & Restore', () => {
         archiveData
       );
 
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'writeFile'
+      ).mockResolvedValue({
         success: true,
         path: '/var/backups/test.sqsh',
         timestamp: new Date().toISOString()
@@ -542,9 +833,9 @@ describe('Local Backup & Restore', () => {
       });
 
       // Verify cleanup used the specialized backup RPC.
-      expect(sandbox.client.backup.cleanupArchive).toHaveBeenCalledWith(
-        expect.stringContaining('.sqsh')
-      );
+      expect(
+        asSandboxWithClient(sandbox).client.backup.cleanupArchive
+      ).toHaveBeenCalledWith(expect.stringContaining('.sqsh'));
     });
 
     it('should handle unsquashfs failure', async () => {
@@ -567,14 +858,20 @@ describe('Local Backup & Restore', () => {
         archiveData
       );
 
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'writeFile'
+      ).mockResolvedValue({
         success: true,
         path: '/var/backups/test.sqsh',
         timestamp: new Date().toISOString()
       } as any);
 
       // Make specialized extraction fail
-      vi.spyOn(sandbox.client.backup, 'extractArchive').mockRejectedValue(
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'extractArchive'
+      ).mockRejectedValue(
         new Error('unsquashfs extraction failed: unsquashfs: bad archive')
       );
 
@@ -607,7 +904,10 @@ describe('Local Backup & Restore', () => {
         archiveData
       );
 
-      vi.spyOn(sandbox.client.files, 'writeFileStream').mockRejectedValue(
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'writeFileStream'
+      ).mockRejectedValue(
         new Error("Failed to write file '/var/backups/test.sqsh': disk full")
       );
 
@@ -619,13 +919,18 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('disk full');
 
-      expect(sandbox.client.backup.extractArchive).not.toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.backup.extractArchive
+      ).not.toHaveBeenCalled();
     });
   });
 
   describe('localBucket round-trip', () => {
     it('should round-trip localBucket through DirectoryBackup', async () => {
-      vi.spyOn(sandbox.client.backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.backup,
+        'createArchive'
+      ).mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: 4
@@ -638,7 +943,10 @@ describe('Local Backup & Restore', () => {
         `data: ${JSON.stringify({ type: 'complete' })}\n\n`
       ].join('');
 
-      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'readFileStream'
+      ).mockResolvedValue(
         new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(ssePayload));
@@ -647,7 +955,10 @@ describe('Local Backup & Restore', () => {
         })
       );
 
-      vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.files,
+        'writeFile'
+      ).mockResolvedValue({
         success: true,
         path: '/var/backups/test.sqsh',
         timestamp: new Date().toISOString()
@@ -667,11 +978,15 @@ describe('Local Backup & Restore', () => {
       expect(result.success).toBe(true);
 
       // Verify local extraction was used, not production transfer commands.
-      expect(sandbox.client.backup.extractArchive).toHaveBeenCalledWith(
+      expect(
+        asSandboxWithClient(sandbox).client.backup.extractArchive
+      ).toHaveBeenCalledWith(
         '/workspace/myapp',
         expect.stringContaining('/var/backups/')
       );
-      expect(sandbox.client.backup.downloadArchive).not.toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.backup.downloadArchive
+      ).not.toHaveBeenCalled();
     });
 
     it('should use production path when localBucket is not set', async () => {

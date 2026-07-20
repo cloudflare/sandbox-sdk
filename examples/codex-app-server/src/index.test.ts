@@ -384,20 +384,17 @@ describe('Codex App-Server Setup & Admission', () => {
     expect(mockExecCalls).toHaveLength(1);
   });
 
-  it('waitForPortReady succeeds on ready event and rejects on error/done', async () => {
+  it('waitForPortReady delegates to admitted public port readiness', async () => {
     const sandbox = new Sandbox(mockCtx, mockEnv);
+    const startAndWaitForPorts = vi.fn(async (_port: number) => undefined);
+    Object.assign(sandbox, { startAndWaitForPorts });
 
-    setupMockPorts(sandbox, [{ type: 'ready' }]);
     await expect(sandbox.waitForPortReady(4500)).resolves.toBeUndefined();
+    expect(startAndWaitForPorts).toHaveBeenCalledWith(4500);
 
-    setupMockPorts(sandbox, [{ type: 'error' }]);
+    startAndWaitForPorts.mockRejectedValueOnce(new Error('Port unavailable'));
     await expect(sandbox.waitForPortReady(4500)).rejects.toThrow(
-      'Port 4500 watch reported error'
-    );
-
-    setupMockPorts(sandbox, []);
-    await expect(sandbox.waitForPortReady(4500)).rejects.toThrow(
-      'Port 4500 watch closed before ready'
+      'Port unavailable'
     );
   });
 

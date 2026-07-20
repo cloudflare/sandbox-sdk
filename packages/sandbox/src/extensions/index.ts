@@ -6,7 +6,7 @@
  * {@link SandboxExtension}, captured lazily via a `withX(this)` factory.
  *
  * - No sidecar? Extend {@link SandboxExtension} and use `this.exec()` or
- *   `this.client.<subApi>` (`files`, `ports`, \u2026). Don't pass a package.
+ *   `this.withRuntime()` for scoped control APIs. Don't pass a package.
  * - Need a container sidecar? Pass an {@link ExtensionPackage} to `super()`.
  *   Then call {@link SandboxExtension.sidecar} to obtain the sidecar's typed
  *   capnweb remote main. Calls on that stub stream through capnweb \u2014 callback
@@ -43,11 +43,7 @@ import type { ProcessRPCDescriptor } from '../processes/rpc-types';
 // subpath without reaching into `@repo/shared` directly.
 export type { ExtensionHealth, ExtensionPackage } from '@repo/shared';
 
-/**
- * The slice of the Sandbox an extension captures: just its control `client`.
- * Narrow on purpose \u2014 an extension never holds the whole instance.
- */
-export type ExtensionControlClient = {
+export type ExtensionRuntimeControl = {
   readonly files: SandboxFilesAPI;
   readonly ports: SandboxPortsAPI;
   readonly backup: SandboxBackupAPI;
@@ -57,6 +53,37 @@ export type ExtensionControlClient = {
   readonly extensions: SandboxExtensionsAPI;
   readonly utils: SandboxUtilsAPI;
 };
+
+type ExtensionRuntimeDomain =
+  ExtensionRuntimeControl[keyof ExtensionRuntimeControl];
+
+export type ExtensionRuntimeCallback = (
+  control: ExtensionRuntimeControl
+) => Promise<unknown>;
+
+type ExtensionRuntimeResult<T> = T extends
+  | ExtensionRuntimeControl
+  | ExtensionRuntimeDomain
+  ? never
+  : T;
+
+export type ExtensionRuntimeCallbackResult<
+  Call extends ExtensionRuntimeCallback
+> = Awaited<ReturnType<Call>>;
+
+type RejectEscapingRuntimeCallback<Call extends ExtensionRuntimeCallback> =
+  ExtensionRuntimeCallbackResult<Call> extends
+    | ExtensionRuntimeControl
+    | ExtensionRuntimeDomain
+    ? never
+    : unknown;
+
+export type ExtensionRuntimeCall = <Call extends ExtensionRuntimeCallback>(
+  operation: string,
+  call: Call & RejectEscapingRuntimeCallback<Call>
+) => Promise<ExtensionRuntimeCallbackResult<Call>>;
+
+export const sandboxRuntimeCall: unique symbol = Symbol('sandboxRuntimeCall');
 
 export interface HTTPAuthHostConfig {
   token: string;
@@ -69,7 +96,7 @@ export interface HTTPAuthInterceptorParams {
 }
 
 export type SandboxLike = {
-  readonly client: ExtensionControlClient;
+  readonly [sandboxRuntimeCall]: ExtensionRuntimeCall;
   readonly exec?: (
     command: SandboxCommand,
     options?: ExecOptions
@@ -168,10 +195,9 @@ export function createExtensionProcessSandbox(
  * }
  * ```
  *
- * RPC-safety: the sandbox lives in `#sandbox` and is reached only through the
- * `protected` `client` getter (a prototype accessor, not an own property),
- * so it is never serialised across RPC. Only the public methods you add form
- * the extension's RPC surface.
+ * RPC-safety: the sandbox lives in `#sandbox` and runtime control is reached
+ * only through a symbol-keyed capability, so it is not exposed as a named RPC
+ * method. Only the public methods you add form the extension's RPC surface.
  */
 export abstract class SandboxExtension extends RpcTarget {
   readonly #sandbox: SandboxLike;
@@ -184,9 +210,19 @@ export abstract class SandboxExtension extends RpcTarget {
     this.#pkg = pkg;
   }
 
-  /** The container control client. Use inside your own methods, lazily. */
-  protected get client(): ExtensionControlClient {
-    return this.#sandbox.client;
+  protected withRuntime<Call extends ExtensionRuntimeCallback>(
+    operation: string,
+    call: Call & RejectEscapingRuntimeCallback<Call>
+  ): Promise<ExtensionRuntimeResult<ExtensionRuntimeCallbackResult<Call>>> {
+    const guardedCall = async (control: ExtensionRuntimeControl) => {
+      const result = await call(control);
+      assertRuntimeControlDidNotEscape(result, control);
+      return result;
+    };
+    return this.#sandbox[sandboxRuntimeCall](
+      operation,
+      guardedCall as ExtensionRuntimeCallback
+    ) as Promise<ExtensionRuntimeResult<ExtensionRuntimeCallbackResult<Call>>>;
   }
 
   /** Launch an argv process through the owning Sandbox. */
@@ -231,7 +267,9 @@ export abstract class SandboxExtension extends RpcTarget {
   /** Health snapshot for this extension's sidecar. */
   protected async sidecarHealth(): Promise<ExtensionHealth> {
     const hash = await this.#hashOnce();
-    return this.#sandbox.client.extensions.health(hash);
+    return await this.withRuntime('extension.health', (control) =>
+      control.extensions.health(hash)
+    );
   }
 
   /**
@@ -240,38 +278,40 @@ export abstract class SandboxExtension extends RpcTarget {
    */
   protected async stopSidecar(): Promise<void> {
     const hash = await this.#hashOnce();
-    await this.#sandbox.client.extensions.stop(hash);
+    await this.withRuntime('extension.stop', (control) =>
+      control.extensions.stop(hash)
+    );
   }
 
   // --- internals -----------------------------------------------------------
 
   async #connect(pkg: ExtensionPackage): Promise<object> {
     const packageHash = await this.#hashOnce();
-    const api = this.#sandbox.client.extensions;
 
-    // Hash-first: ask the host whether this process already has the package.
-    // If it doesn't, retry once with the tarball bytes attached.
-    try {
-      return (await api.connect({
-        packageHash,
-        bin: pkg.bin,
-        readinessTimeoutMs: pkg.readinessTimeoutMs,
-        allowInstallScripts: pkg.allowInstallScripts
-      })) as object;
-    } catch (error) {
-      if (!isTarballRequiredError(error)) throw error;
+    return await this.withRuntime('extension.connect', async (control) => {
+      const api = control.extensions;
       try {
         return (await api.connect({
           packageHash,
-          tarball: pkg.tarball,
           bin: pkg.bin,
           readinessTimeoutMs: pkg.readinessTimeoutMs,
           allowInstallScripts: pkg.allowInstallScripts
         })) as object;
-      } catch (retryError) {
-        throw createSidecarProvisioningError(packageHash, retryError);
+      } catch (error) {
+        if (!isTarballRequiredError(error)) throw error;
+        try {
+          return (await api.connect({
+            packageHash,
+            tarball: pkg.tarball,
+            bin: pkg.bin,
+            readinessTimeoutMs: pkg.readinessTimeoutMs,
+            allowInstallScripts: pkg.allowInstallScripts
+          })) as object;
+        } catch (retryError) {
+          throw createSidecarProvisioningError(packageHash, retryError);
+        }
       }
-    }
+    });
   }
 
   #hashOnce(): Promise<string> {
@@ -300,6 +340,29 @@ export abstract class SandboxExtension extends RpcTarget {
  *    `name` but preserving the message text. We fall back to matching the
  *    message so the tarball retry still fires in that case.
  */
+function assertRuntimeControlDidNotEscape(
+  result: unknown,
+  control: ExtensionRuntimeControl
+): void {
+  const forbiddenHandles: unknown[] = [
+    control,
+    control.files,
+    control.ports,
+    control.backup,
+    control.watch,
+    control.tunnels,
+    control.terminals,
+    control.extensions,
+    control.utils
+  ].filter((handle) => handle !== undefined);
+
+  if (!forbiddenHandles.includes(result)) return;
+
+  throw new Error(
+    'Sandbox extension runtime callbacks must not return runtime control handles'
+  );
+}
+
 function isTarballRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const candidate = error as { name?: unknown; message?: unknown };

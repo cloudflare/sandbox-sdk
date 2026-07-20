@@ -37,11 +37,16 @@ import { validateBackupDir } from './validation';
 
 export type { BackupRestoreTestFault } from './restore-fault-injection';
 
+type BackupRuntimeCall = <T>(
+  operation: string,
+  call: (control: ContainerControlClient) => Promise<T>
+) => Promise<T>;
+
 type BackupServiceDeps = {
   ctx: DurableObjectState<{}>;
   getEnv: () => unknown;
   logger: ReturnType<typeof createLogger>;
-  getClient: () => ContainerControlClient;
+  runRuntimeCall: BackupRuntimeCall;
   currentRuntime: CurrentRuntimeIdentity;
   currentLifetime: CurrentSandboxLifetime;
 };
@@ -70,12 +75,12 @@ export class BackupService {
     });
     this.transfer = new BackupTransfer({
       getEnv: deps.getEnv,
-      getClient: deps.getClient,
+      runRuntimeCall: deps.runRuntimeCall,
       logger: deps.logger
     });
     this.creator = new BackupCreator({
       getEnv: deps.getEnv,
-      getClient: deps.getClient,
+      runRuntimeCall: deps.runRuntimeCall,
       logger: deps.logger,
       transfer: this.transfer
     });
@@ -83,10 +88,6 @@ export class BackupService {
 
   private get env(): unknown {
     return this.deps.getEnv();
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
   }
 
   private static readonly UUID_REGEX =
@@ -268,11 +269,15 @@ export class BackupService {
       await lifecycle.runtimeReady(archiveHead.size);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      const prepareResult = await this.client.backup.prepareRestore({
-        dir,
-        backupId: id,
-        archivePath
-      });
+      const prepareResult = await this.deps.runRuntimeCall(
+        'backup.prepareRestore',
+        (control) =>
+          control.backup.prepareRestore({
+            dir,
+            backupId: id,
+            archivePath
+          })
+      );
 
       if (prepareResult.existingSize !== archiveHead.size) {
         await this.transfer.downloadBackupParallel(
@@ -286,9 +291,9 @@ export class BackupService {
 
       await lifecycle.archiveReady(archiveHead.size);
 
-      const restoreResult = await this.client.backup.restoreArchive(
-        dir,
-        archivePath
+      const restoreResult = await this.deps.runRuntimeCall(
+        'backup.restoreArchive',
+        (control) => control.backup.restoreArchive(dir, archivePath)
       );
 
       if (!restoreResult.success) {
@@ -315,7 +320,11 @@ export class BackupService {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id) {
         const cleanupPath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.client.backup.cleanupArchive(cleanupPath).catch(() => {});
+        await this.deps
+          .runRuntimeCall('backup.cleanupArchive', (control) =>
+            control.backup.cleanupArchive(cleanupPath)
+          )
+          .catch(() => {});
       }
       throw error;
     } finally {
@@ -430,11 +439,13 @@ export class BackupService {
       await lifecycle.runtimeReady(metadata.sizeBytes);
       const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
 
-      await this.client.backup.prepareRestore({
-        dir,
-        backupId: id,
-        archivePath
-      });
+      await this.deps.runRuntimeCall('backup.prepareRestore', (control) =>
+        control.backup.prepareRestore({
+          dir,
+          backupId: id,
+          archivePath
+        })
+      );
 
       // Stream the archive into the container to avoid base64-encoding the
       // whole archive in Worker memory and hitting workerd's 32 MiB RPC
@@ -449,14 +460,22 @@ export class BackupService {
           timestamp: new Date().toISOString()
         });
       }
-      await this.client.files.writeFileStream(archivePath, body);
+      await this.deps.runRuntimeCall('backup.writeArchive', (control) =>
+        control.files.writeFileStream(archivePath, body)
+      );
 
       await lifecycle.archiveReady(metadata.sizeBytes);
 
-      await this.client.backup.extractArchive(dir, archivePath);
+      await this.deps.runRuntimeCall('backup.extractArchive', (control) =>
+        control.backup.extractArchive(dir, archivePath)
+      );
 
       // Clean up archive after extraction (no FUSE mount holds it open)
-      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+      await this.deps
+        .runRuntimeCall('backup.cleanupArchive', (control) =>
+          control.backup.cleanupArchive(archivePath)
+        )
+        .catch(() => {});
 
       const result = {
         success: true as const,
@@ -472,7 +491,11 @@ export class BackupService {
       caughtError = error instanceof Error ? error : new Error(String(error));
       if (id) {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${id}.sqsh`;
-        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+        await this.deps
+          .runRuntimeCall('backup.cleanupArchive', (control) =>
+            control.backup.cleanupArchive(archivePath)
+          )
+          .catch(() => {});
       }
       throw error;
     } finally {

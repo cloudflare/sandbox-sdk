@@ -4,6 +4,7 @@ const connectionGenerations: number[] = [];
 const rpcGenerations: number[] = [];
 const processStarts: number[] = [];
 const terminalCreates: number[] = [];
+const terminalOutputCancels: number[] = [];
 const startAndWaitForPortsCalls: unknown[] = [];
 let connected = true;
 let nextConnectionGeneration = 0;
@@ -22,7 +23,8 @@ vi.mock('@cloudflare/containers', () => {
       this.env = env;
     }
 
-    async start(): Promise<void> {
+    private async physicalStart(): Promise<void> {
+      if (this.ctx.container?.running === true) return;
       if (!this.startPromise) {
         this.startPromise = (
           this.ctx.container?.start?.() ?? Promise.resolve()
@@ -33,6 +35,10 @@ vi.mock('@cloudflare/containers', () => {
       await this.startPromise;
     }
 
+    async start(): Promise<void> {
+      await this.physicalStart();
+    }
+
     async onActivityExpired(): Promise<void> {}
 
     async getState(): Promise<{ status: string }> {
@@ -41,7 +47,7 @@ vi.mock('@cloudflare/containers', () => {
 
     async startAndWaitForPorts(options: unknown): Promise<void> {
       startAndWaitForPortsCalls.push(options);
-      await this.start();
+      await this.physicalStart();
     }
 
     renewActivityTimeout(): void {}
@@ -58,6 +64,8 @@ vi.mock('@cloudflare/containers', () => {
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
     private readonly generation: number;
+    private connectionOpen = true;
+    private activated = false;
 
     constructor() {
       this.generation = nextConnectionGeneration;
@@ -66,7 +74,7 @@ vi.mock('../src/container-control/connection', () => ({
     }
 
     isConnected() {
-      return connected;
+      return this.connectionOpen && connected;
     }
 
     getStats() {
@@ -74,10 +82,11 @@ vi.mock('../src/container-control/connection', () => ({
     }
 
     disconnect() {
-      connected = false;
+      this.connectionOpen = false;
     }
 
     rpc() {
+      if (!this.activated) throw new Error('control session not activated');
       rpcGenerations.push(this.generation);
       return {
         processes: {
@@ -98,13 +107,54 @@ vi.mock('../src/container-control/connection', () => ({
             terminalCreates.push(this.generation);
             return { id: `terminal-${this.generation}` };
           },
+          output: async () => {
+            const generation = this.generation;
+            return {
+              stream: async () =>
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue({
+                      type: 'terminal',
+                      terminalId: `terminal-${generation}`,
+                      cursor: 'cursor-terminal',
+                      timestamp: new Date().toISOString(),
+                      state: 'exited',
+                      exit: { code: 0, timedOut: false }
+                    });
+                  }
+                }),
+              cancel: async () => {
+                terminalOutputCancels.push(generation);
+              },
+              [Symbol.dispose]: () => {}
+            };
+          },
           hasActive: async () => false
         },
         ports: {}
       };
     }
 
-    async connect() {}
+    async connect() {
+      this.connectionOpen = true;
+    }
+
+    async getRuntimeMetadata() {
+      return {
+        runtimeIncarnationID: `incarnation-${this.generation}`,
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
+
+    async activateControlSession(expectedRuntimeIncarnationID: string) {
+      this.activated = true;
+      return {
+        runtimeIncarnationID: expectedRuntimeIncarnationID,
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
   }
 }));
 
@@ -124,6 +174,14 @@ function deferred<T = void>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function runtimeRecord(id = 'runtime-a', incarnation = 'incarnation-0') {
+  return {
+    schemaVersion: 1,
+    id,
+    runtimeIncarnationID: incarnation
+  };
 }
 
 async function createSandbox() {
@@ -149,6 +207,7 @@ async function createSandbox() {
     waitUntil: vi.fn(),
     container: {
       running: true,
+      getTcpPort: vi.fn(() => ({ fetch: vi.fn() })),
       start: vi.fn(startContainer)
     },
     id: {
@@ -179,6 +238,7 @@ describe('Sandbox resource activity gate integration', () => {
     rpcGenerations.length = 0;
     processStarts.length = 0;
     terminalCreates.length = 0;
+    terminalOutputCancels.length = 0;
     startAndWaitForPortsCalls.length = 0;
   });
 
@@ -188,7 +248,7 @@ describe('Sandbox resource activity gate integration', () => {
 
   it('reads runtime liveness without starting or creating a control connection', async () => {
     const { sandbox, ctx } = await createSandbox();
-    await ctx.storage.put('currentRuntimeIdentity', { id: 'runtime-a' });
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
 
     await expect(sandbox.isRuntimeActive()).resolves.toBe(true);
 
@@ -200,17 +260,19 @@ describe('Sandbox resource activity gate integration', () => {
 
   it('holds exec and terminal creation behind a pending committed inactivity stop', async () => {
     const { sandbox, ctx } = await createSandbox();
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
     const stop = deferred();
+    let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
       'onActivityExpired'
     ).mockImplementation(() => {
-      sandbox.client.disconnect();
+      stopCalled = true;
       return stop.promise;
     });
 
     const expiry = sandbox.onActivityExpired();
-    await vi.waitFor(() => expect(rpcGenerations.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(stopCalled).toBe(true));
     expect(ctx.container.start).not.toHaveBeenCalled();
     const rpcGenerationsBeforeStopSettles = [...rpcGenerations];
     const connectionGenerationsBeforeStopSettles = [...connectionGenerations];
@@ -238,23 +300,53 @@ describe('Sandbox resource activity gate integration', () => {
     expect(connectionGenerations.at(-1)).toBeGreaterThan(
       connectionGenerationsBeforeStopSettles.at(-1) ?? -1
     );
-    expect(processStarts).toEqual([1]);
-    expect(terminalCreates).toEqual([1]);
+    expect(processStarts).toHaveLength(1);
+    expect(terminalCreates).toHaveLength(1);
+    expect(processStarts[0]).toBeGreaterThan(
+      connectionGenerationsBeforeStopSettles.at(-1) ?? -1
+    );
+    expect(terminalCreates[0]).toBeGreaterThan(
+      connectionGenerationsBeforeStopSettles.at(-1) ?? -1
+    );
+  });
+
+  it('closes retained terminal output after terminal event', async () => {
+    const { sandbox, ctx } = await createSandbox();
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
+
+    const terminal = await sandbox.createTerminal({ command: ['sh'] });
+    const stream = await terminal.output({ replay: true, follow: true });
+    const reader = stream.getReader();
+    const first = await reader.read();
+    const second = await reader.read();
+
+    expect(first).toMatchObject({
+      done: false,
+      value: {
+        type: 'terminal',
+        state: 'exited',
+        terminalId: terminal.id
+      }
+    });
+    expect(second).toEqual({ done: true, value: undefined });
+    expect(terminalOutputCancels).toHaveLength(1);
   });
 
   it('holds exposePort startup behind a pending committed inactivity stop', async () => {
     const { sandbox, ctx } = await createSandbox();
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
     (sandbox as any).sandboxName = 'sandbox-activity-gate-test';
     const stop = deferred();
+    let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
       'onActivityExpired'
     ).mockImplementation(() => {
-      sandbox.client.disconnect();
+      stopCalled = true;
       return stop.promise;
     });
     const expiry = sandbox.onActivityExpired();
-    await vi.waitFor(() => expect(rpcGenerations.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(stopCalled).toBe(true));
     expect(ctx.container.start).not.toHaveBeenCalled();
 
     ctx.container.running = false;
@@ -268,18 +360,31 @@ describe('Sandbox resource activity gate integration', () => {
     await expiry;
     await expect(exposed).resolves.toMatchObject({ port: 8080 });
 
-    expect(startAndWaitForPortsCalls).toHaveLength(1);
+    expect(startAndWaitForPortsCalls).toEqual([
+      {
+        ports: [3000],
+        cancellationOptions: {
+          instanceGetTimeoutMS: 30000,
+          portReadyTimeoutMS: 90000,
+          waitInterval: 300,
+          abort: undefined
+        }
+      }
+    ]);
+    // ctx.container.start is called internally because our startAndWaitForPorts mock calls physicalStart()
     expect(ctx.container.start).toHaveBeenCalledTimes(1);
   });
 
   it('releases the gate operation count when post-stop startup fails so a retry can run', async () => {
     const { sandbox, ctx } = await createSandbox();
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
     const stop = deferred();
+    let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
       'onActivityExpired'
     ).mockImplementation(() => {
-      sandbox.client.disconnect();
+      stopCalled = true;
       return stop.promise;
     });
 

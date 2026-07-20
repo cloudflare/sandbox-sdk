@@ -4,6 +4,7 @@ import type { ContainerControlClient } from './container-control';
 import { openRemoteSubscription } from './processes/remote-subscription';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
+import type { MountRuntimeCall } from './storage-mount/runtime-call';
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
@@ -20,7 +21,7 @@ interface LocalMountSyncOptions {
   mountPath: string;
   prefix: string | undefined;
   readOnly: boolean;
-  client: ContainerControlClient;
+  runRuntimeCall: MountRuntimeCall;
   logger: Logger;
   pollIntervalMs?: number;
   echoSuppressTtlMs?: number;
@@ -37,7 +38,7 @@ export class LocalMountSyncManager {
   private readonly mountPath: string;
   private readonly prefix: string | undefined;
   private readonly readOnly: boolean;
-  private readonly client: ContainerControlClient;
+  private readonly runRuntimeCall: MountRuntimeCall;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;
 
@@ -49,6 +50,9 @@ export class LocalMountSyncManager {
   private watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchAbortController: AbortController | null = null;
   private running = false;
+  private generation = 0;
+  private activePollCycle: Promise<void> | null = null;
+  private activeWatchLoop: Promise<void> | null = null;
   private consecutivePollFailures = 0;
   private consecutiveWatchFailures = 0;
 
@@ -62,7 +66,7 @@ export class LocalMountSyncManager {
     // value into bare R2 key format for list() and put().
     this.prefix = options.prefix?.replace(/^\//, '') || undefined;
     this.readOnly = options.readOnly;
-    this.client = options.client;
+    this.runRuntimeCall = options.runRuntimeCall;
     this.logger = options.logger.child({ operation: 'local-mount-sync' });
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.echoSuppressTtlMs =
@@ -75,10 +79,13 @@ export class LocalMountSyncManager {
    */
   async start(): Promise<void> {
     this.running = true;
+    this.generation += 1;
 
-    await this.client.files.mkdir(this.mountPath, {
-      recursive: true
-    });
+    await this.runRuntimeCall('mount.local.mkdir', (control) =>
+      control.files.mkdir(this.mountPath, {
+        recursive: true
+      })
+    );
 
     await this.fullSyncR2ToContainer();
     this.schedulePoll();
@@ -115,6 +122,10 @@ export class LocalMountSyncManager {
       this.watchAbortController.abort();
       this.watchAbortController = null;
     }
+
+    const pollCycle = this.activePollCycle;
+    const watchLoop = this.activeWatchLoop;
+    await Promise.allSettled([pollCycle, watchLoop].filter(isPromise));
 
     this.snapshot.clear();
     this.echoSuppressSet.clear();
@@ -159,23 +170,39 @@ export class LocalMountSyncManager {
           )
         : this.pollIntervalMs;
 
-    this.pollTimer = setTimeout(async () => {
-      try {
-        await this.pollR2ForChanges();
-        this.consecutivePollFailures = 0;
-      } catch (error) {
-        this.consecutivePollFailures++;
-        this.logger.error(
-          'R2 poll cycle failed',
-          error instanceof Error ? error : new Error(String(error))
-        );
-      }
-      this.schedulePoll();
+    const generation = this.generation;
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      if (!this.isCurrentGeneration(generation)) return;
+      const cycle = this.pollR2ForChanges(generation)
+        .then(() => {
+          if (this.isCurrentGeneration(generation)) {
+            this.consecutivePollFailures = 0;
+          }
+        })
+        .catch((error) => {
+          if (!this.isCurrentGeneration(generation)) return;
+          this.consecutivePollFailures++;
+          this.logger.error(
+            'R2 poll cycle failed',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        })
+        .finally(() => {
+          if (this.activePollCycle === cycle) {
+            this.activePollCycle = null;
+          }
+          if (this.isCurrentGeneration(generation)) {
+            this.schedulePoll();
+          }
+        });
+      this.activePollCycle = cycle;
     }, backoffMs);
   }
 
-  private async pollR2ForChanges(): Promise<void> {
+  private async pollR2ForChanges(generation: number): Promise<void> {
     const objects = await this.listAllR2Objects();
+    if (!this.isCurrentGeneration(generation)) return;
     const newSnapshot = new Map<string, R2ObjectSnapshot>();
 
     // Collect changed objects first, then transfer in batches
@@ -196,10 +223,16 @@ export class LocalMountSyncManager {
       await Promise.all(
         batch.map(async ({ key, action }) => {
           try {
+            if (!this.isCurrentGeneration(generation)) return;
             const containerPath = this.r2KeyToContainerPath(key);
-            await this.ensureParentDir(containerPath);
+            await this.ensureParentDir(containerPath, generation);
+            if (!this.isCurrentGeneration(generation)) return;
             this.suppressEcho(containerPath);
-            await this.transferR2ObjectToContainer(key, containerPath);
+            await this.transferR2ObjectToContainer(
+              key,
+              containerPath,
+              generation
+            );
             this.logger.debug('R2 -> Container: synced object', {
               key,
               action
@@ -220,7 +253,12 @@ export class LocalMountSyncManager {
         this.suppressEcho(containerPath);
 
         try {
-          await this.client.files.deleteFile(containerPath);
+          if (!this.isCurrentGeneration(generation)) return;
+          await this.runRuntimeCallIfCurrent(
+            generation,
+            'mount.local.deleteFile',
+            (control) => control.files.deleteFile(containerPath)
+          );
           this.logger.debug('R2 -> Container: deleted file', { key });
         } catch (error) {
           this.logger.error(
@@ -231,6 +269,7 @@ export class LocalMountSyncManager {
       }
     }
 
+    if (!this.isCurrentGeneration(generation)) return;
     this.snapshot = newSnapshot;
   }
 
@@ -258,7 +297,8 @@ export class LocalMountSyncManager {
 
   private async transferR2ObjectToContainer(
     key: string,
-    containerPath: string
+    containerPath: string,
+    generation?: number
   ): Promise<void> {
     const obj = await this.bucket.get(key);
     if (!obj) return;
@@ -266,20 +306,33 @@ export class LocalMountSyncManager {
     const arrayBuffer = await obj.arrayBuffer();
     const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
 
-    await this.client.files.writeFile(containerPath, base64, {
-      encoding: 'base64'
-    });
+    await this.runRuntimeCallIfCurrent(
+      generation,
+      'mount.local.writeFile',
+      (control) =>
+        control.files.writeFile(containerPath, base64, {
+          encoding: 'base64'
+        })
+    );
   }
 
-  private async ensureParentDir(containerPath: string): Promise<void> {
+  private async ensureParentDir(
+    containerPath: string,
+    generation?: number
+  ): Promise<void> {
     const parentDir = containerPath.substring(
       0,
       containerPath.lastIndexOf('/')
     );
     if (parentDir && parentDir !== this.mountPath) {
-      await this.client.files.mkdir(parentDir, {
-        recursive: true
-      });
+      await this.runRuntimeCallIfCurrent(
+        generation,
+        'mount.local.mkdir',
+        (control) =>
+          control.files.mkdir(parentDir, {
+            recursive: true
+          })
+      );
     }
   }
 
@@ -291,21 +344,29 @@ export class LocalMountSyncManager {
   private runWatchWithRetry(): void {
     if (!this.running) return;
 
-    this.runContainerWatchLoop()
+    const generation = this.generation;
+    const loop = this.runContainerWatchLoop(generation)
       .then(() => {
+        if (!this.isCurrentGeneration(generation)) return;
         // Stream ended cleanly (e.g. server closed it). Reconnect unless stopped.
         this.consecutiveWatchFailures = 0;
         this.scheduleWatchReconnect();
       })
       .catch((error) => {
-        if (!this.running) return;
+        if (!this.isCurrentGeneration(generation)) return;
         this.consecutiveWatchFailures++;
         this.logger.error(
           'Container watch loop failed',
           error instanceof Error ? error : new Error(String(error))
         );
         this.scheduleWatchReconnect();
+      })
+      .finally(() => {
+        if (this.activeWatchLoop === loop) {
+          this.activeWatchLoop = null;
+        }
       });
+    this.activeWatchLoop = loop;
   }
 
   private scheduleWatchReconnect(): void {
@@ -332,70 +393,76 @@ export class LocalMountSyncManager {
     }, backoffMs);
   }
 
-  private async runContainerWatchLoop(): Promise<void> {
-    const stream = await openRemoteSubscription(
-      this.client.watch.watch({
-        path: this.mountPath,
-        recursive: true
-      }),
-      {
-        signal: this.watchAbortController?.signal,
-        operation: 'open local mount filesystem watch'
-      }
-    );
-
-    for await (const event of parseSSEStream<FileWatchSSEEvent>(
-      stream,
-      this.watchAbortController?.signal
-    )) {
-      if (!this.running) break;
-
-      // Successful event received — reset failure counter
-      this.consecutiveWatchFailures = 0;
-
-      if (event.type !== 'event') continue;
-      if (event.isDirectory) continue;
-
-      const containerPath = event.path;
-
-      // Skip echo from our own R2 -> Container writes
-      if (this.echoSuppressSet.has(containerPath)) continue;
-
-      const r2Key = this.containerPathToR2Key(containerPath);
-      if (!r2Key) continue;
-
-      try {
-        switch (event.eventType) {
-          case 'create':
-          case 'modify':
-          case 'move_to': {
-            await this.uploadFileToR2(containerPath, r2Key);
-            this.logger.debug('Container -> R2: synced file', {
-              path: containerPath,
-              key: r2Key,
-              action: event.eventType
-            });
-            break;
+  private async runContainerWatchLoop(generation: number): Promise<void> {
+    await this.runRuntimeCallIfCurrent(
+      generation,
+      'mount.local.watch',
+      async (control) => {
+        const stream = await openRemoteSubscription(
+          control.watch.watch({
+            path: this.mountPath,
+            recursive: true
+          }),
+          {
+            signal: this.watchAbortController?.signal,
+            operation: 'open local mount filesystem watch'
           }
+        );
 
-          case 'delete':
-          case 'move_from': {
-            await this.bucket.delete(r2Key);
-            this.snapshot.delete(r2Key);
-            this.logger.debug('Container -> R2: deleted object', {
-              path: containerPath,
-              key: r2Key
-            });
-            break;
+        for await (const event of parseSSEStream<FileWatchSSEEvent>(
+          stream,
+          this.watchAbortController?.signal
+        )) {
+          if (!this.isCurrentGeneration(generation)) break;
+
+          // Successful event received — reset failure counter
+          this.consecutiveWatchFailures = 0;
+
+          if (event.type !== 'event') continue;
+          if (event.isDirectory) continue;
+
+          const containerPath = event.path;
+
+          // Skip echo from our own R2 -> Container writes
+          if (this.echoSuppressSet.has(containerPath)) continue;
+
+          const r2Key = this.containerPathToR2Key(containerPath);
+          if (!r2Key) continue;
+
+          try {
+            switch (event.eventType) {
+              case 'create':
+              case 'modify':
+              case 'move_to': {
+                await this.uploadFileToR2(containerPath, r2Key, generation);
+                this.logger.debug('Container -> R2: synced file', {
+                  path: containerPath,
+                  key: r2Key,
+                  action: event.eventType
+                });
+                break;
+              }
+
+              case 'delete':
+              case 'move_from': {
+                await this.bucket.delete(r2Key);
+                this.snapshot.delete(r2Key);
+                this.logger.debug('Container -> R2: deleted object', {
+                  path: containerPath,
+                  key: r2Key
+                });
+                break;
+              }
+            }
+          } catch (error) {
+            this.logger.error(
+              `Container -> R2 sync failed for ${containerPath}`,
+              error instanceof Error ? error : new Error(String(error))
+            );
           }
         }
-      } catch (error) {
-        this.logger.error(
-          `Container -> R2 sync failed for ${containerPath}`,
-          error instanceof Error ? error : new Error(String(error))
-        );
       }
-    }
+    );
   }
 
   /**
@@ -404,11 +471,17 @@ export class LocalMountSyncManager {
    */
   private async uploadFileToR2(
     containerPath: string,
-    r2Key: string
+    r2Key: string,
+    generation?: number
   ): Promise<void> {
-    const result = await this.client.files.readFile(containerPath, {
-      encoding: 'base64'
-    });
+    const result = await this.runRuntimeCallIfCurrent(
+      generation,
+      'mount.local.readFile',
+      (control) =>
+        control.files.readFile(containerPath, {
+          encoding: 'base64'
+        })
+    );
     const bytes = base64ToUint8Array(result.content);
     await this.bucket.put(r2Key, bytes);
 
@@ -416,6 +489,26 @@ export class LocalMountSyncManager {
     if (head) {
       this.snapshot.set(r2Key, { etag: head.etag, size: head.size });
     }
+  }
+
+  private async runRuntimeCallIfCurrent<T>(
+    generation: number | undefined,
+    operation: string,
+    call: (control: ContainerControlClient) => Promise<T>
+  ): Promise<T> {
+    if (generation !== undefined && !this.isCurrentGeneration(generation)) {
+      throw new Error('local mount sync stopped');
+    }
+    return await this.runRuntimeCall(operation, async (control) => {
+      if (generation !== undefined && !this.isCurrentGeneration(generation)) {
+        throw new Error('local mount sync stopped');
+      }
+      return await call(control);
+    });
+  }
+
+  private isCurrentGeneration(generation: number): boolean {
+    return this.running && this.generation === generation;
   }
 
   private suppressEcho(containerPath: string): void {
@@ -446,6 +539,10 @@ export class LocalMountSyncManager {
 
     return this.prefix ? path.join(this.prefix, relativePath) : relativePath;
   }
+}
+
+function isPromise<T>(value: Promise<T> | null): value is Promise<T> {
+  return value !== null;
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {

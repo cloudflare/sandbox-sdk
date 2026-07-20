@@ -124,7 +124,7 @@ export async function mountRemoteFuseBucket(
     const lifecycle = await context.lifecycle.capture();
 
     await createPasswordFile(
-      context.getS3FSHost(),
+      context.s3fsHost,
       passwordFilePath,
       bucket,
       credentialProxyEnabled
@@ -134,7 +134,7 @@ export async function mountRemoteFuseBucket(
     if (credentialProxyEnabled) {
       if (additionalHeaderFilePath) {
         await createDisableExpectHeaderFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           additionalHeaderFilePath
         );
       }
@@ -146,8 +146,12 @@ export async function mountRemoteFuseBucket(
       );
     }
 
-    dirExisted = await context.getMounts().pathExists(mountPath);
-    await context.getMounts().ensureDirectory(mountPath);
+    dirExisted = await context.runRuntimeCall('mount.pathExists', (control) =>
+      control.mounts.pathExists(mountPath)
+    );
+    await context.runRuntimeCall('mount.ensureDirectory', (control) =>
+      control.mounts.ensureDirectory(mountPath)
+    );
 
     const effectiveOptions: RemoteMountBucketOptions = credentialProxyEnabled
       ? {
@@ -163,7 +167,7 @@ export async function mountRemoteFuseBucket(
           ]
         }
       : options;
-    await executeS3FSMount(context.getS3FSHost(), {
+    await executeS3FSMount(context.s3fsHost, {
       bucket: s3fsSource,
       mountPath,
       options: effectiveOptions,
@@ -195,11 +199,11 @@ export async function mountRemoteFuseBucket(
 
     if (supportFilesSafeToDelete) {
       if (passwordFilePath) {
-        await deletePasswordFile(context.getS3FSHost(), passwordFilePath);
+        await deletePasswordFile(context.s3fsHost, passwordFilePath);
       }
       if (additionalHeaderFilePath) {
         await deleteAdditionalHeaderFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           additionalHeaderFilePath
         );
       }
@@ -207,10 +211,12 @@ export async function mountRemoteFuseBucket(
 
     if (!dirExisted) {
       try {
-        await context.getMounts().removeMountDirectory({
-          path: mountPath,
-          onlyIfNotMountpoint: false
-        });
+        await context.runRuntimeCall('mount.removeMountDirectory', (control) =>
+          control.mounts.removeMountDirectory({
+            path: mountPath,
+            onlyIfNotMountpoint: false
+          })
+        );
       } catch {
         // best-effort cleanup
       }

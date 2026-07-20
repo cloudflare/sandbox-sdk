@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
+import type { SandboxAPIDeps } from '@sandbox-container/control-plane';
 import type { FileService } from '@sandbox-container/services/file-service';
+import { createActivatedSandboxControlAPI } from './session-helper';
 
 const logger = {
   info: vi.fn(),
@@ -31,7 +29,7 @@ describe('SandboxControlAPI files', () => {
       writeFile: vi.fn().mockResolvedValue({ success: true }),
       exists: vi.fn().mockResolvedValue({ success: true, data: true })
     } as unknown as FileService;
-    const api = new SandboxControlAPI({
+    const api = await createActivatedSandboxControlAPI({
       fileService,
       logger
     } as unknown as SandboxAPIDeps);

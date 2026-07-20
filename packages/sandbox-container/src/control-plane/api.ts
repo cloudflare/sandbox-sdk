@@ -17,6 +17,7 @@ import type {
   ReadFileBinaryOptions,
   ReadFileOptions,
   ReadFileStreamOptions,
+  RuntimeMetadata,
   SandboxAPI,
   SandboxPortsAPI,
   StopTunnelRunRequest,
@@ -46,6 +47,7 @@ import type { WatchService } from '../services/watch-service';
 import { WorkspaceArchiveService } from '../services/workspace-archive-service';
 import { MountsRPCAPI } from './mounts-rpc';
 import { ProcessesRPCAPI } from './processes-rpc';
+import type { ControlSession } from './session';
 import { StreamSubscriptionRPC } from './subscription-rpc';
 import { TerminalsRPCAPI } from './terminals-rpc';
 import { WorkspaceRPCAPI } from './workspace-rpc';
@@ -94,45 +96,58 @@ function extractData<T>(
  */
 export class SandboxControlAPI extends RpcTarget implements SandboxAPI {
   #deps: SandboxAPIDeps;
-  constructor(deps: SandboxAPIDeps) {
+  #session: ControlSession;
+
+  constructor(deps: SandboxAPIDeps, session: ControlSession) {
     super();
     this.#deps = deps;
+    this.#session = session;
   }
 
   get files() {
+    this.#session.assertActive();
     return new FilesRPCAPI(this.#deps.fileService);
   }
   get ports() {
+    this.#session.assertActive();
     return new PortsRPCAPI(this.#deps.portService);
   }
   get processes() {
+    this.#session.assertActive();
     return new ProcessesRPCAPI(this.#deps.processService);
   }
   get mounts() {
+    this.#session.assertActive();
     return new MountsRPCAPI(new MountService(this.#deps.commandContextService));
   }
   get workspace() {
+    this.#session.assertActive();
     const service = new WorkspaceArchiveService(
       this.#deps.commandContextService
     );
     return new WorkspaceRPCAPI(service);
   }
   get utils() {
-    return new UtilsRPCAPI();
+    return new UtilsRPCAPI(this.#session);
   }
   get backup() {
+    this.#session.assertActive();
     return new BackupRPCAPI(this.#deps.backupService);
   }
   get watch() {
+    this.#session.assertActive();
     return new WatchRPCAPI(this.#deps.watchService);
   }
   get tunnels() {
+    this.#session.assertActive();
     return new TunnelsRPCAPI(this.#deps.tunnelService);
   }
   get terminals() {
+    this.#session.assertActive();
     return new TerminalsRPCAPI(this.#deps.terminalManager);
   }
   get extensions() {
+    this.#session.assertActive();
     return new ExtensionsRPCAPI(this.#deps.extensionHost);
   }
 }
@@ -361,16 +376,25 @@ class PortsRPCAPI extends RpcTarget implements SandboxPortsAPI {
 // ===========================================================================
 
 class UtilsRPCAPI extends RpcTarget {
+  #session: ControlSession;
+
+  constructor(session: ControlSession) {
+    super();
+    this.#session = session;
+  }
+
   async ping(): Promise<string> {
     return 'healthy';
   }
 
-  async getVersion(): Promise<string> {
-    try {
-      return process.env.SANDBOX_VERSION || 'unknown';
-    } catch {
-      return 'unknown';
-    }
+  async getRuntimeMetadata(): Promise<RuntimeMetadata> {
+    return this.#session.metadata;
+  }
+
+  async activateControlSession(
+    expectedRuntimeIncarnationID: string
+  ): Promise<RuntimeMetadata> {
+    return this.#session.activate(expectedRuntimeIncarnationID);
   }
 }
 

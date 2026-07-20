@@ -1,10 +1,18 @@
-import { createLogger, type SandboxControlCallback } from '@repo/shared';
+import {
+  createLogger,
+  type RuntimeMetadata,
+  type SandboxControlCallback
+} from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { type BunWebSocketTransport, newBunWebSocketRpcSession } from 'capnweb';
 import { trustRuntimeCert } from './cert';
 import { CONFIG } from './config';
-import { SandboxControlAPI } from './control-plane';
+import { type SandboxAPIDeps, SandboxControlAPI } from './control-plane';
+import {
+  CONTROL_PROTOCOL_VERSION,
+  ControlSession
+} from './control-plane/session';
 import { Container } from './core/container';
 import type { TerminalWSData } from './handlers/terminal-ws-handler';
 
@@ -12,6 +20,7 @@ export type CapnwebWSData = {
   type: 'capnweb';
   connectionId: string;
   transport?: BunWebSocketTransport<WSData>;
+  controlSession?: ControlSession;
 };
 
 export type WSData = TerminalWSData | CapnwebWSData;
@@ -25,6 +34,43 @@ function generateConnectionId(): string {
 
 export function webSocketUpgradeFailedResponse(): Response {
   return new Response('WebSocket upgrade failed', { status: 503 });
+}
+
+function terminalWebSocketUpgradeResponse(
+  req: Request,
+  server: { upgrade(req: Request, options: { data: TerminalWSData }): boolean },
+  runtimeIncarnationID: string
+): Response {
+  const url = new URL(req.url);
+  const terminalId = url.searchParams.get('terminalId');
+  if (!terminalId) {
+    return new Response('terminalId query parameter required', { status: 400 });
+  }
+
+  const expectedRuntimeIncarnationID = url.searchParams.get(
+    'runtimeIncarnationID'
+  );
+  if (expectedRuntimeIncarnationID !== runtimeIncarnationID) {
+    return new Response('Runtime incarnation mismatch', { status: 409 });
+  }
+
+  const colsParam = url.searchParams.get('cols');
+  const rowsParam = url.searchParams.get('rows');
+  const cursor = url.searchParams.get('cursor') ?? undefined;
+
+  const upgraded = server.upgrade(req, {
+    data: {
+      type: 'terminal' as const,
+      terminalId,
+      connectionId: generateConnectionId(),
+      cursor,
+      runtimeIncarnationID: expectedRuntimeIncarnationID,
+      cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
+      rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
+    }
+  });
+  if (upgraded) return undefined as unknown as Response;
+  return webSocketUpgradeFailedResponse();
 }
 
 // Global error handlers to prevent fragmented stack traces in logs
@@ -54,13 +100,19 @@ async function createApplication(): Promise<{
     server: ReturnType<typeof serve<WSData>>
   ) => Promise<Response>;
   container: Container;
-  controlPlaneAPI: SandboxControlAPI;
+  controlPlaneMetadata: RuntimeMetadata;
+  controlPlaneDeps: SandboxAPIDeps;
 }> {
   const container = new Container();
   await container.initialize();
 
-  // Create the control-plane API that calls services directly.
-  const controlPlaneAPI = new SandboxControlAPI({
+  const controlPlaneMetadata: RuntimeMetadata = {
+    runtimeIncarnationID: crypto.randomUUID(),
+    sandboxVersion: process.env.SANDBOX_VERSION || 'unknown',
+    controlProtocolVersion: CONTROL_PROTOCOL_VERSION
+  };
+
+  const controlPlaneDeps: SandboxAPIDeps = {
     fileService: container.get('fileService'),
     portService: container.get('portService'),
     processService: container.get('processService'),
@@ -71,7 +123,7 @@ async function createApplication(): Promise<{
     extensionHost: container.get('extensionHost'),
     commandContextService: container.get('commandContextService'),
     logger
-  });
+  };
 
   return {
     fetch: async (
@@ -83,35 +135,11 @@ async function createApplication(): Promise<{
         const url = new URL(req.url);
 
         if (url.pathname === '/ws/terminal') {
-          const terminalId = url.searchParams.get('terminalId');
-          if (!terminalId) {
-            return new Response('terminalId query parameter required', {
-              status: 400
-            });
-          }
-
-          const colsParam = url.searchParams.get('cols');
-          const rowsParam = url.searchParams.get('rows');
-          const cursor = url.searchParams.get('cursor') ?? undefined;
-
-          const upgraded = server.upgrade(req, {
-            data: {
-              type: 'terminal' as const,
-              terminalId,
-              connectionId: generateConnectionId(),
-              cursor,
-              cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
-              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
-            }
-          });
-          if (upgraded) {
-            // Bun's server.upgrade() handles the response internally — at runtime the
-            // fetch handler returns `undefined` to signal a successful upgrade. The Bun
-            // type signature requires `MaybePromise<Response>` (no `undefined`), so we
-            // cast through `unknown`. See: https://bun.sh/docs/api/websockets#upgrade
-            return undefined as unknown as Response;
-          }
-          return webSocketUpgradeFailedResponse();
+          return terminalWebSocketUpgradeResponse(
+            req,
+            server,
+            controlPlaneMetadata.runtimeIncarnationID
+          );
         }
 
         if (url.pathname === '/rpc') {
@@ -132,7 +160,8 @@ async function createApplication(): Promise<{
       return new Response('Not Found', { status: 404 });
     },
     container,
-    controlPlaneAPI
+    controlPlaneMetadata,
+    controlPlaneDeps
   };
 }
 
@@ -172,15 +201,25 @@ export async function startServer(): Promise<ServerInstance> {
                 } catch {}
               });
           } else if (ws.data.type === 'capnweb') {
+            const session = new ControlSession({
+              metadata: app.controlPlaneMetadata,
+              connectionID: ws.data.connectionId,
+              peerCallback: undefined,
+              registerControlCallback: (connectionID, callback) => {
+                app.container.setControlCallback(connectionID, callback);
+              },
+              clearControlCallback: (connectionID) => {
+                app.container.clearControlCallback(connectionID);
+              }
+            });
+            const api = new SandboxControlAPI(app.controlPlaneDeps, session);
             const { stub, transport } = newBunWebSocketRpcSession<
               SandboxControlCallback,
               WSData
-            >(ws, app.controlPlaneAPI);
+            >(ws, api);
             ws.data.transport = transport;
-            // Capture the peer's remote main (the DO's
-            // SandboxControlCallback) so the container can push
-            // events back — e.g. tunnel-exit notifications.
-            app.container.setControlCallback(stub);
+            session.setPeerCallback(stub);
+            ws.data.controlSession = session;
             logger.debug('RPC session initialized', {
               connectionId: ws.data.connectionId
             });
@@ -200,10 +239,7 @@ export async function startServer(): Promise<ServerInstance> {
               .onClose(ws as ServerWebSocket<TerminalWSData>, code, reason);
           } else if (ws.data.type === 'capnweb') {
             ws.data.transport?.dispatchClose(code, reason);
-            // Forget the peer's control callback. Subsequent tunnel
-            // exits resolve `null` from the accessor and become no-ops
-            // until a new session opens.
-            app.container.setControlCallback(null);
+            ws.data.controlSession?.close();
           }
         } catch (error) {
           logger.error(

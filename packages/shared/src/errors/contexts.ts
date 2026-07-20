@@ -124,6 +124,11 @@ export interface TerminalControlErrorContext {
   };
 }
 
+export interface StaleTerminalHandleContext {
+  terminalId: string;
+  operation: string;
+}
+
 /**
  * Process readiness error contexts
  */
@@ -335,7 +340,6 @@ export interface OperationInterruptedContext {
   phase?: string;
   admitted: true | 'unknown';
   retryable: boolean;
-  effect?: 'none' | 'unknown';
   operationId?: string;
   operationKey?: string;
   idempotencyKey?: string;

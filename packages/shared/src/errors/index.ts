@@ -79,6 +79,7 @@ export type {
   RPCTransportContext,
   RPCTransportErrorKind,
   StaleProcessHandleContext,
+  StaleTerminalHandleContext,
   TerminalControlErrorContext,
   TerminalNotFoundContext,
   ValidationFailedContext

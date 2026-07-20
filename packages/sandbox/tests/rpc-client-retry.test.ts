@@ -13,19 +13,14 @@ interface CapturedOptions {
 
 const captured: {
   options: CapturedOptions[];
-  setRetryTimeoutCalls: number[];
 } = {
-  options: [],
-  setRetryTimeoutCalls: []
+  options: []
 };
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
     constructor(options: CapturedOptions) {
       captured.options.push(options);
-    }
-    setRetryTimeoutMs(ms: number) {
-      captured.setRetryTimeoutCalls.push(ms);
     }
     isConnected() {
       return false;
@@ -93,7 +88,6 @@ describe('translateRPCError operation interruption mapping', () => {
 describe('ContainerControlClient retry timeout wiring', () => {
   beforeEach(() => {
     captured.options.length = 0;
-    captured.setRetryTimeoutCalls.length = 0;
     vi.useFakeTimers();
   });
 
@@ -122,34 +116,5 @@ describe('ContainerControlClient retry timeout wiring', () => {
 
     expect(captured.options).toHaveLength(1);
     expect(captured.options[0].retryTimeoutMs).toBeUndefined();
-  });
-
-  it('forwards setRetryTimeoutMs() to the active connection', async () => {
-    const client = new ContainerControlClient({
-      stub: { fetch: vi.fn() },
-      retryTimeoutMs: 60_000
-    });
-
-    await client.connect();
-
-    client.setRetryTimeoutMs(45_000);
-
-    expect(captured.setRetryTimeoutCalls).toEqual([45_000]);
-  });
-
-  it('caches setRetryTimeoutMs() calls made before any connection is created', async () => {
-    const client = new ContainerControlClient({
-      stub: { fetch: vi.fn() }
-    });
-
-    // No connection exists yet. The setter should still take effect once the
-    // connection is created — either by stashing the value and applying it on
-    // construction, or by applying it immediately if a connection is present.
-    client.setRetryTimeoutMs(15_000);
-
-    await client.connect();
-
-    expect(captured.options).toHaveLength(1);
-    expect(captured.options[0].retryTimeoutMs).toBe(15_000);
   });
 });

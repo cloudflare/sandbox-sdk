@@ -1,5 +1,5 @@
 import { getContainer } from '@cloudflare/containers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
@@ -7,7 +7,10 @@ import {
   r2EgressHandler
 } from '../src/storage-mount/outbound/r2-egress-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
-import { createMockControlClient } from './helpers/mock-control-client';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -274,6 +277,38 @@ function createMountResult(
   };
 }
 
+type SandboxWithClient = Sandbox & {
+  client: ReturnType<typeof createMockControlClient> & {
+    mounts: ReturnType<typeof createMountMocks>;
+  };
+};
+
+const originalRunLegacyRuntimeCallDescriptor = Object.getOwnPropertyDescriptor(
+  Sandbox.prototype,
+  'runLegacyRuntimeCall'
+);
+
+Object.defineProperty(Sandbox.prototype, 'runLegacyRuntimeCall', {
+  configurable: true,
+  value: async function (
+    this: SandboxWithClient,
+    _operation: string,
+    call: (control: SandboxWithClient['client']) => Promise<unknown>
+  ) {
+    return await call(this.client);
+  }
+});
+
+afterAll(() => {
+  if (originalRunLegacyRuntimeCallDescriptor) {
+    Object.defineProperty(
+      Sandbox.prototype,
+      'runLegacyRuntimeCall',
+      originalRunLegacyRuntimeCallDescriptor
+    );
+  }
+});
+
 function createMountMocks() {
   return {
     pathExists: vi.fn(async () => true),
@@ -395,7 +430,9 @@ describe('Sandbox credential proxy mounts', () => {
       credentialProxy: true
     });
 
-    expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
+    expect(
+      asSandboxWithClient(sandbox).client.files.writeFile
+    ).toHaveBeenCalledWith(
       expect.stringContaining('/tmp/.passwd-s3fs-'),
       'my-bucket:x:x'
     );
@@ -922,7 +959,7 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: bucket }
     );
     const client = createMockControlClient();
-    sandbox.client = client;
+    asSandboxWithClient(sandbox).client = client;
 
     vi.mocked(client.files.mkdir).mockResolvedValue({
       success: true,

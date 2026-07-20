@@ -117,7 +117,11 @@ describe('terminal proxy', () => {
       headers: { Upgrade: 'websocket' }
     });
 
-    const terminal = terminalHandle(stub, snapshot('terminal-123'));
+    const terminal = terminalHandle(
+      stub,
+      snapshot('terminal-123'),
+      'runtime-incarnation-1'
+    );
     await terminal.connect(request, {
       cursor: 'cursor-1',
       cols: 120,
@@ -131,6 +135,9 @@ describe('terminal proxy', () => {
     expect(url.searchParams.get('cursor')).toBe('cursor-1');
     expect(url.searchParams.get('cols')).toBe('120');
     expect(url.searchParams.get('rows')).toBe('40');
+    expect(url.searchParams.get('runtimeIncarnationID')).toBe(
+      'runtime-incarnation-1'
+    );
     expect(url.searchParams.get('shell')).toBeNull();
     expect(url.searchParams.get('id')).toBeNull();
   });

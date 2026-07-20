@@ -13,6 +13,8 @@ import type {
 } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
 import type { CurrentRuntimeIdentity } from '../current-runtime-identity';
+import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
+import { OperationInterruptedError } from '../errors';
 import type { CurrentSandboxLifetime } from '../sandbox-lifetime';
 import {
   SandboxSecurityError,
@@ -24,8 +26,11 @@ import {
   resumeNamedTunnelCleanupEntry,
   resumeNamedTunnelCleanupRecords
 } from './cleanup';
-import { TunnelOperationLifecycle } from './lifecycle';
-import { TunnelProvisioner } from './provisioner';
+import {
+  createTunnelInterruptedError,
+  TunnelOperationLifecycle
+} from './lifecycle';
+import { TunnelProvisioner, type TunnelRuntimeCall } from './provisioner';
 import { randomId } from './random-id';
 import { pruneTunnelsForRestart } from './restart';
 import type { TunnelCleanupEntry, TunnelsStorage } from './storage';
@@ -50,14 +55,9 @@ import {
 
 export type { TunnelsStorage, TunnelsStorageTxn } from './storage';
 
-/** Subset of the RPC client this service depends on. */
-interface TunnelsRPCClient {
-  tunnels: SandboxTunnelsAPI;
-}
-
 /** Subset of the Sandbox DO the service reads from. */
 export interface TunnelServiceHost {
-  client: TunnelsRPCClient;
+  runRuntimeCall: TunnelRuntimeCall;
   storage: TunnelsStorage;
   logger: Logger;
   /**
@@ -127,6 +127,8 @@ export interface TunnelsHandle {
    * call this; they call `destroy(port)` for an individual tunnel.
    */
   destroyAll: () => Promise<void>;
+  /** Stop stored container-side tunnel runs without mutating durable state. */
+  destroyAllRuntimeRuns: () => Promise<void>;
   /** Resume retained Cloudflare-side cleanup records. Internal lifecycle hook. */
   resumeCleanup: () => Promise<void>;
   /** Reconcile durable tunnel state after a fresh container runtime starts. */
@@ -227,17 +229,33 @@ export class TunnelService implements TunnelsHandler {
       const requestedHash = computeOptionsHash(options);
 
       const recovery: TunnelGetRecoveryState = {};
-      const result = await this.#withPortLock(port, () =>
-        this.#lifecycle.runGetWithRecovery(() =>
-          this.#getLocked(port, options, requestedHash, recovery)
-        )
-      );
+      const result = await this.#withPortLock(port, async () => {
+        try {
+          return await this.#getLocked(port, options, requestedHash, recovery);
+        } catch (error) {
+          if (error instanceof RuntimeIdentityInactiveError) {
+            throw createTunnelInterruptedError({
+              reason: 'runtime_replaced',
+              phase: 'process_ready',
+              admitted: 'unknown',
+              retryable: false,
+              message:
+                'Tunnel operation was interrupted by a runtime replacement'
+            });
+          }
+          throw error;
+        }
+      });
       cacheState = result.cacheState;
       outcome = 'success';
       return result.info;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      throw error;
+      if (caughtError instanceof OperationInterruptedError) {
+        // Ensure retryable is false since we do not recover
+        caughtError.context.retryable = false;
+      }
+      throw caughtError;
     } finally {
       logCanonicalEvent(this.#host.logger, {
         event: 'tunnel.get',
@@ -510,10 +528,13 @@ export class TunnelService implements TunnelsHandler {
 
         try {
           if (current.meta?.tunnelRunId) {
-            await this.#host.client.tunnels.stopTunnelRun({
-              tunnelId: existing.id,
-              runId: current.meta.tunnelRunId
-            });
+            const tunnelRunId = current.meta.tunnelRunId;
+            await this.#host.runRuntimeCall('tunnel.stopRun', (tunnels) =>
+              tunnels.stopTunnelRun({
+                tunnelId: existing.id,
+                runId: tunnelRunId
+              })
+            );
           }
         } catch (error) {
           if (isTunnelNotFoundError(error)) {
@@ -621,15 +642,7 @@ export class TunnelService implements TunnelsHandler {
   }
 
   async destroyAll(): Promise<void> {
-    const map = await readMap(this.#host.storage);
-    const meta = await readMetaMap(this.#host.storage);
-    const ports = new Set(Object.keys(map).map((p) => Number(p)));
-    for (const [portKey, entry] of Object.entries(meta)) {
-      const port = Number(portKey);
-      if (Number.isFinite(port) && namedTunnelInfoFromMeta(port, entry)) {
-        ports.add(port);
-      }
-    }
+    const ports = await this.destroyAllPorts();
 
     for (const port of ports) {
       try {
@@ -643,6 +656,41 @@ export class TunnelService implements TunnelsHandler {
     }
 
     await this.resumeCleanup();
+  }
+
+  async destroyAllRuntimeRuns(): Promise<void> {
+    const map = await readMap(this.#host.storage);
+    const meta = await readMetaMap(this.#host.storage);
+    const ports = await this.destroyAllPorts();
+    for (const port of ports) {
+      const info = map[String(port)];
+      const runId = meta[String(port)]?.tunnelRunId;
+      if (!info || !runId) continue;
+      try {
+        await this.#host.runRuntimeCall('tunnel.stopRun', (tunnels) =>
+          tunnels.stopTunnelRun({ tunnelId: info.id, runId })
+        );
+      } catch (error) {
+        if (isTunnelNotFoundError(error)) continue;
+        this.#host.logger.warn('tunnels.destroyAllRuntimeRuns: stop failed', {
+          port,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+
+  private async destroyAllPorts(): Promise<Set<number>> {
+    const map = await readMap(this.#host.storage);
+    const meta = await readMetaMap(this.#host.storage);
+    const ports = new Set(Object.keys(map).map((p) => Number(p)));
+    for (const [portKey, entry] of Object.entries(meta)) {
+      const port = Number(portKey);
+      if (Number.isFinite(port) && namedTunnelInfoFromMeta(port, entry)) {
+        ports.add(port);
+      }
+    }
+    return ports;
   }
 
   async onRuntimeStart(): Promise<void> {

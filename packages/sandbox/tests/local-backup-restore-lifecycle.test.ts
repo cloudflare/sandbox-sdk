@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackupRestoreOperationRecord } from '../src/backup/restore-operation-store';
+import type { ContainerControlClient } from '../src/container-control';
 import { ErrorCode, RPCTransportError } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
-import { createMockControlClient } from './helpers/mock-control-client';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
 
 vi.mock('@cloudflare/containers', () => {
   class MockContainer {
@@ -105,6 +109,18 @@ function createMockR2Bucket() {
   };
 }
 
+function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
+  const target = sandbox as unknown as {
+    client: ContainerControlClient;
+    runLegacyRuntimeCall<T>(
+      operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ): Promise<T>;
+  };
+  target.runLegacyRuntimeCall = async (_operation, call) =>
+    await call(target.client);
+}
+
 async function createLocalRestoreSandbox(params?: {
   storageHooks?: { onPut?: (key: string, value: StoredValue) => void };
 }) {
@@ -151,7 +167,9 @@ async function createLocalRestoreSandbox(params?: {
     expect(ctx.blockConcurrencyWhile).toHaveBeenCalled();
   });
 
-  sandbox.client = createMockControlClient();
+  const sandboxWithClient = asSandboxWithClient(sandbox);
+  sandboxWithClient.client = createMockControlClient();
+  installClientBackedRuntimeCalls(sandboxWithClient);
 
   return { sandbox, storageMap, backupId };
 }
@@ -207,20 +225,21 @@ describe('local backup restore lifecycle', () => {
 
   it('does not mark the local archive ready before stream upload completes', async () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
-    vi.spyOn(sandbox.client.files, 'writeFileStream').mockImplementationOnce(
-      async () => {
-        const record = storageMap.get(
-          `operations:restore:${backupId}:/workspace/project`
-        ) as BackupRestoreOperationRecord;
-        expect(record.phase).toBe('runtime_ready');
-        return {
-          success: true,
-          path: `/var/backups/${backupId}.sqsh`,
-          bytesWritten: 4,
-          timestamp: '2026-06-15T12:00:00.000Z'
-        } as never;
-      }
-    );
+    vi.spyOn(
+      asSandboxWithClient(sandbox).client.files,
+      'writeFileStream'
+    ).mockImplementationOnce(async () => {
+      const record = storageMap.get(
+        `operations:restore:${backupId}:/workspace/project`
+      ) as BackupRestoreOperationRecord;
+      expect(record.phase).toBe('runtime_ready');
+      return {
+        success: true,
+        path: `/var/backups/${backupId}.sqsh`,
+        bytesWritten: 4,
+        timestamp: '2026-06-15T12:00:00.000Z'
+      } as never;
+    });
 
     await sandbox.restoreBackup({
       id: backupId,
@@ -232,7 +251,7 @@ describe('local backup restore lifecycle', () => {
   it('recovers internally when local archive streaming loses the RPC transport once', async () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
     const writeFileStreamSpy = vi
-      .spyOn(sandbox.client.files, 'writeFileStream')
+      .spyOn(asSandboxWithClient(sandbox).client.files, 'writeFileStream')
       .mockRejectedValueOnce(createDisposedRPCError())
       .mockResolvedValueOnce({
         success: true,

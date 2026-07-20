@@ -5,7 +5,6 @@ import type {
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions
 } from '@repo/shared';
-import type { ContainerControlClient } from '../container-control';
 import type { CurrentRuntimeIdentity } from '../current-runtime-identity';
 import type { CurrentSandboxLifetime } from '../sandbox-lifetime';
 import { InvalidMountConfigError } from './errors';
@@ -22,13 +21,14 @@ import { mountRemoteFuseBucket } from './operations/remote-fuse-mount';
 import { unmountBucketOperation } from './operations/unmount';
 import type { MountOutboundHost } from './outbound';
 import { MountRegistry } from './registry';
+import type { MountRuntimeCall } from './runtime-call';
 import type { S3FSHost } from './s3fs';
 import { isR2Bucket, validateBucketName, validatePrefix } from './validation';
 
 export interface BucketMountServiceDeps {
   getEnv(): unknown;
   getEnvVars(): Record<string, string>;
-  getClient(): ContainerControlClient;
+  runRuntimeCall: MountRuntimeCall;
   logger: Logger;
   currentRuntime: CurrentRuntimeIdentity;
   currentLifetime: CurrentSandboxLifetime;
@@ -41,16 +41,17 @@ export class BucketMountService {
   private readonly registry = new MountRegistry();
   private readonly operations = new MountOperationQueue();
   private readonly lifecycle: MountLifecycle;
+  private readonly s3fsHost: S3FSHost;
 
   constructor(private readonly deps: BucketMountServiceDeps) {
     this.lifecycle = new MountLifecycle(
       deps.currentRuntime,
       deps.currentLifetime
     );
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
+    this.s3fsHost = {
+      runRuntimeCall: deps.runRuntimeCall,
+      logger: deps.logger
+    };
   }
 
   /**
@@ -120,24 +121,16 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        getMounts: () => this.client.mounts,
+        runRuntimeCall: this.deps.runRuntimeCall,
         getOutboundHost: () => this.deps.getOutboundHost(),
-        getS3FSHost: () => this.getS3FSHost(),
+        s3fsHost: this.s3fsHost,
         getEnv: () => this.deps.getEnv(),
-        getClient: () => this.client,
         lifecycle: this.lifecycle
       },
       bucket,
       mountPath,
       options
     );
-  }
-
-  private getS3FSHost(): S3FSHost {
-    return {
-      client: this.client,
-      logger: this.deps.logger
-    };
   }
 
   private async mountBucketR2Egress(
@@ -149,9 +142,9 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        getMounts: () => this.client.mounts,
+        runRuntimeCall: this.deps.runRuntimeCall,
         getOutboundHost: () => this.deps.getOutboundHost(),
-        getS3FSHost: () => this.getS3FSHost(),
+        s3fsHost: this.s3fsHost,
         lifecycle: this.lifecycle
       },
       bucket,
@@ -169,9 +162,9 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        getMounts: () => this.client.mounts,
+        runRuntimeCall: this.deps.runRuntimeCall,
         getOutboundHost: () => this.deps.getOutboundHost(),
-        getS3FSHost: () => this.getS3FSHost(),
+        s3fsHost: this.s3fsHost,
         getEnv: () => this.deps.getEnv(),
         getEnvVars: () => this.deps.getEnvVars(),
         getR2AccessKeyID: () => this.deps.getR2AccessKeyID(),
@@ -201,19 +194,28 @@ export class BucketMountService {
       {
         registry: this.registry,
         logger: this.deps.logger,
-        getMounts: () => this.client.mounts,
+        runRuntimeCall: this.deps.runRuntimeCall,
         getOutboundHost: () => this.deps.getOutboundHost(),
-        getS3FSHost: () => this.getS3FSHost()
+        s3fsHost: this.s3fsHost
       },
       mountPath
     );
   }
 
   async cleanupForDestroy(): Promise<BucketMountDestroyCleanupResult> {
+    return this.cleanupForDestroyUsing(this.deps.runRuntimeCall);
+  }
+
+  async cleanupForDestroyUsing(
+    runRuntimeCall: MountRuntimeCall
+  ): Promise<BucketMountDestroyCleanupResult> {
     return cleanupBucketMountsForDestroy({
       registry: this.registry,
       logger: this.deps.logger,
-      getS3FSHost: () => this.getS3FSHost(),
+      s3fsHost: {
+        runRuntimeCall,
+        logger: this.deps.logger
+      },
       getOutboundHost: () => this.deps.getOutboundHost(),
       runMountOperation: (operation) => this.operations.run(operation)
     });
@@ -223,7 +225,7 @@ export class BucketMountService {
     return cleanupBucketMountsForStop({
       registry: this.registry,
       logger: this.deps.logger,
-      getS3FSHost: () => this.getS3FSHost(),
+      s3fsHost: this.s3fsHost,
       getOutboundHost: () => this.deps.getOutboundHost(),
       runMountOperation: (operation) => this.operations.run(operation)
     });

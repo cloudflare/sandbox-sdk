@@ -28,7 +28,7 @@ export interface BucketMountDestroyCleanupResult {
 export interface BucketMountLifecycleCleanupHost {
   registry: MountRegistry;
   logger: Logger;
-  getS3FSHost(): S3FSHost;
+  s3fsHost: S3FSHost;
   getOutboundHost(): MountOutboundHost;
   runMountOperation<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -72,7 +72,7 @@ export async function cleanupBucketMountsForDestroy(
         let supportFilesSafeToDelete = false;
         try {
           supportFilesSafeToDelete = await unmountTrackedFuseMount(
-            host.getS3FSHost(),
+            host.s3fsHost,
             mountPath,
             mountInfo
           );
@@ -83,13 +83,10 @@ export async function cleanupBucketMountsForDestroy(
           );
         }
         if (supportFilesSafeToDelete) {
-          await deletePasswordFile(
-            host.getS3FSHost(),
-            mountInfo.passwordFilePath
-          );
+          await deletePasswordFile(host.s3fsHost, mountInfo.passwordFilePath);
           if (mountInfo.additionalHeaderFilePath) {
             await deleteAdditionalHeaderFile(
-              host.getS3FSHost(),
+              host.s3fsHost,
               mountInfo.additionalHeaderFilePath
             );
           }

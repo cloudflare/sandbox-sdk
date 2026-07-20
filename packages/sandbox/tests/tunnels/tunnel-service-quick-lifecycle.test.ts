@@ -143,7 +143,15 @@ function makeHandler(extra: Partial<TunnelsHost> = {}) {
   const storage =
     (providedStorage as TunnelsStorage | undefined) ?? makeStorage();
   const { tunnels, handleTunnelExit } = createTunnelsHandle({
-    client: client as unknown as TunnelsHost['client'],
+    runRuntimeCall: ((operation, call) =>
+      call(
+        client.tunnels as unknown as TunnelsHost['runRuntimeCall'] extends (
+          op: string,
+          call: (tunnels: infer U) => Promise<unknown>
+        ) => Promise<unknown>
+          ? U
+          : never
+      )) as TunnelsHost['runRuntimeCall'],
     storage,
     logger: makeLogger(),
     ...rest
@@ -157,9 +165,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -178,9 +191,14 @@ describe('tunnel service > destroy', () => {
       '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-quick-1' }
     });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -201,9 +219,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -219,9 +242,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -244,9 +272,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -283,9 +316,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -306,9 +344,14 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -339,9 +382,14 @@ describe('tunnel service > list', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': a, '8081': b });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -432,9 +480,14 @@ describe('tunnel service > per-port serialization', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -481,9 +534,14 @@ describe('tunnel service > handleTunnelExit', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels, handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -528,9 +586,14 @@ describe('tunnel service > handleTunnelExit', () => {
       }
     });
     const { handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -605,9 +668,14 @@ describe('tunnel service > handleTunnelExit', () => {
       }
     });
     const { handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -635,9 +703,14 @@ describe('tunnel service > handleTunnelExit', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': newer });
     const { handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -654,9 +727,14 @@ describe('tunnel service > handleTunnelExit', () => {
     const { client } = makeClient();
     const storage = makeStorage();
     const { handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });
@@ -725,9 +803,14 @@ describe('tunnel service > handleTunnelExit', () => {
     } as unknown as TunnelsStorage;
     const { client } = makeClient();
     const { handleTunnelExit } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage: failingStorage,
       logger
     });

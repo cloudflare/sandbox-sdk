@@ -24,9 +24,14 @@ import {
   validateBackupDir
 } from './validation';
 
+type BackupRuntimeCall = <T>(
+  operation: string,
+  call: (control: ContainerControlClient) => Promise<T>
+) => Promise<T>;
+
 type BackupCreatorDeps = {
   getEnv: () => unknown;
-  getClient: () => ContainerControlClient;
+  runRuntimeCall: BackupRuntimeCall;
   logger: ReturnType<typeof createLogger>;
   transfer: BackupTransfer;
 };
@@ -36,10 +41,6 @@ export class BackupCreator {
 
   private get env(): unknown {
     return this.deps.getEnv();
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
   }
 
   private get logger(): ReturnType<typeof createLogger> {
@@ -140,14 +141,14 @@ export class BackupCreator {
       backupId = crypto.randomUUID();
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
 
-      const createResult = await this.client.backup.createArchive(
-        dir,
-        archivePath,
-        {
-          gitignore,
-          excludes: normalizedExcludes,
-          compression: resolvedCompression
-        }
+      const createResult = await this.deps.runRuntimeCall(
+        'backup.createArchive',
+        (control) =>
+          control.backup.createArchive(dir, archivePath, {
+            gitignore,
+            excludes: normalizedExcludes,
+            compression: resolvedCompression
+          })
       );
 
       if (!createResult.success) {
@@ -193,7 +194,11 @@ export class BackupCreator {
       await bucket.put(metaKey, JSON.stringify(metadata));
 
       outcome = 'success';
-      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+      await this.deps
+        .runRuntimeCall('backup.cleanupArchive', (control) =>
+          control.backup.cleanupArchive(archivePath)
+        )
+        .catch(() => {});
       return { id: backupId, dir };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
@@ -201,7 +206,11 @@ export class BackupCreator {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+        await this.deps
+          .runRuntimeCall('backup.cleanupArchive', (control) =>
+            control.backup.cleanupArchive(archivePath)
+          )
+          .catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
@@ -322,14 +331,14 @@ export class BackupCreator {
       const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
 
       // Step 1: Create squashfs archive in the container (same as production)
-      const createResult = await this.client.backup.createArchive(
-        dir,
-        archivePath,
-        {
-          gitignore,
-          excludes: normalizedExcludes,
-          compression: resolvedCompression
-        }
+      const createResult = await this.deps.runRuntimeCall(
+        'backup.createArchive',
+        (control) =>
+          control.backup.createArchive(dir, archivePath, {
+            gitignore,
+            excludes: normalizedExcludes,
+            compression: resolvedCompression
+          })
       );
 
       if (!createResult.success) {
@@ -351,27 +360,41 @@ export class BackupCreator {
       // streamFile (which decodes SSE frames + base64 on the fly) into a
       // FixedLengthStream backed by the known archive size. This avoids
       // buffering the whole archive in Worker memory.
-      const archiveStream = await this.client.files.readFileStream(
-        archivePath,
-        {}
-      );
-      const sseDecoded = new ReadableStream<Uint8Array>({
-        async start(controller) {
+      await this.deps.runRuntimeCall('backup.readArchive', async (control) => {
+        const archiveStream = await control.files.readFileStream(
+          archivePath,
+          {}
+        );
+        const fixedStream = new FixedLengthStream(createResult.sizeBytes);
+        const writer = fixedStream.writable.getWriter();
+        const uploadArchive = bucket
+          .put(r2Key, fixedStream.readable)
+          .catch(async (error) => {
+            await writer.abort(error).catch(() => {});
+            throw error;
+          });
+        const decodeAndWrite = (async () => {
           try {
             for await (const chunk of streamFile(archiveStream)) {
               if (chunk instanceof Uint8Array) {
-                controller.enqueue(chunk);
+                await writer.write(chunk);
               }
             }
-            controller.close();
-          } catch (err) {
-            controller.error(err);
+            await writer.close();
+          } catch (error) {
+            await writer.abort(error).catch(() => {});
+            throw error;
           }
-        }
+        })();
+        const results = await Promise.allSettled([
+          decodeAndWrite,
+          uploadArchive
+        ]);
+        const rejected = [...results]
+          .reverse()
+          .find((result) => result.status === 'rejected');
+        if (rejected) throw rejected.reason;
       });
-      const fixedStream = new FixedLengthStream(createResult.sizeBytes);
-      sseDecoded.pipeTo(fixedStream.writable).catch(() => {});
-      await bucket.put(r2Key, fixedStream.readable);
 
       // Verify upload — size comes from createArchive result, not the stream.
       const head = await bucket.head(r2Key);
@@ -399,7 +422,11 @@ export class BackupCreator {
       outcome = 'success';
 
       // Clean up local archive
-      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+      await this.deps
+        .runRuntimeCall('backup.cleanupArchive', (control) =>
+          control.backup.cleanupArchive(archivePath)
+        )
+        .catch(() => {});
 
       return { id: backupId, dir, localBucket: true };
     } catch (error) {
@@ -408,7 +435,11 @@ export class BackupCreator {
         const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
         const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
         const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
+        await this.deps
+          .runRuntimeCall('backup.cleanupArchive', (control) =>
+            control.backup.cleanupArchive(archivePath)
+          )
+          .catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }

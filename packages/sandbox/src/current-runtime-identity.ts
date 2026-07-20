@@ -1,3 +1,7 @@
+import { RuntimeIdentityInactiveError } from './errors/classes/runtime-inactive';
+
+export { RuntimeIdentityInactiveError };
+
 export type RuntimeIdentityID = string & {
   readonly __runtimeIdentityID: unique symbol;
 };
@@ -27,13 +31,6 @@ type RuntimeIdentityStorage = Pick<
 >;
 
 const CURRENT_RUNTIME_IDENTITY_STORAGE_KEY = 'currentRuntimeIdentity';
-
-export class RuntimeIdentityInactiveError extends Error {
-  constructor() {
-    super('Runtime identity is no longer active');
-    this.name = 'RuntimeIdentityInactiveError';
-  }
-}
 
 export class RuntimeIdentity {
   readonly id: RuntimeIdentityID;

@@ -5,7 +5,6 @@ import type {
   QuickTunnelInfo,
   SandboxTunnelsAPI
 } from '@repo/shared';
-import { RPCTransportError } from '../errors';
 import {
   createTunnel,
   findTunnelByName,
@@ -21,12 +20,13 @@ import {
   type TunnelMetaEntry
 } from './storage';
 
-interface TunnelsRPCClient {
-  tunnels: SandboxTunnelsAPI;
-}
+export type TunnelRuntimeCall = <T>(
+  operation: string,
+  call: (tunnels: SandboxTunnelsAPI) => Promise<T>
+) => Promise<T>;
 
 export interface TunnelProvisionerHost {
-  client: TunnelsRPCClient;
+  runRuntimeCall: TunnelRuntimeCall;
   sandboxId?: string;
   getNamedTunnelConfig?: () => Promise<{
     token: string;
@@ -52,10 +52,6 @@ export interface NamedTunnelPreparationHooks {
 function createQuickTunnelId(): string {
   return `quick-${randomId()}`;
 }
-
-// Replays use the same request so container runId idempotency can resolve
-// an ambiguous transport failure.
-const TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS = 1;
 
 export class TunnelProvisioner {
   readonly #host: TunnelProvisionerHost;
@@ -218,20 +214,9 @@ export class TunnelProvisioner {
   async #ensureTunnelRun(
     request: EnsureTunnelRunRequest
   ): Promise<EnsureTunnelRunResult> {
-    let replays = 0;
-    while (true) {
-      try {
-        return await this.#host.client.tunnels.ensureTunnelRun(request);
-      } catch (error) {
-        if (
-          !(error instanceof RPCTransportError) ||
-          replays >= TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS
-        ) {
-          throw error;
-        }
-        replays += 1;
-      }
-    }
+    return await this.#host.runRuntimeCall('tunnel.ensureRun', (tunnels) =>
+      tunnels.ensureTunnelRun(request)
+    );
   }
 
   async #getZoneName(config: {

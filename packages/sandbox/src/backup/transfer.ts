@@ -1,4 +1,8 @@
-import { type createLogger, getEnvString } from '@repo/shared';
+import {
+  type createLogger,
+  getEnvString,
+  type UploadPartsResponse
+} from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import type { ContainerControlClient } from '../container-control';
 import {
@@ -19,9 +23,14 @@ import {
   calculatePartCount
 } from './constants';
 
+type BackupRuntimeCall = <T>(
+  operation: string,
+  call: (control: ContainerControlClient) => Promise<T>
+) => Promise<T>;
+
 type BackupTransferDeps = {
   getEnv: () => unknown;
-  getClient: () => ContainerControlClient;
+  runRuntimeCall: BackupRuntimeCall;
   logger: ReturnType<typeof createLogger>;
 };
 
@@ -34,10 +43,6 @@ export class BackupTransfer {
 
   private get env(): unknown {
     return this.deps.getEnv();
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
   }
 
   private parseBackupBucketEndpoint(
@@ -238,11 +243,13 @@ export class BackupTransfer {
   ): Promise<void> {
     const presignedURL = await this.generatePresignedPutURL(r2Key);
 
-    await this.client.backup.uploadArchive({
-      archivePath,
-      url: presignedURL,
-      timeoutMs: 1_810_000
-    });
+    await this.deps.runRuntimeCall('backup.uploadArchive', (control) =>
+      control.backup.uploadArchive({
+        archivePath,
+        url: presignedURL,
+        timeoutMs: 1_810_000
+      })
+    );
 
     // Verify the upload landed correctly in R2
     const bucket = this.requireBackupBucket();
@@ -384,14 +391,16 @@ export class BackupTransfer {
         }))
       );
 
-      let uploadResult: Awaited<
-        ReturnType<typeof this.client.backup.uploadParts>
-      >;
+      let uploadResult: UploadPartsResponse;
       try {
-        uploadResult = await this.client.backup.uploadParts({
-          archivePath,
-          parts
-        });
+        uploadResult = await this.deps.runRuntimeCall(
+          'backup.uploadParts',
+          (control) =>
+            control.backup.uploadParts({
+              archivePath,
+              parts
+            })
+        );
       } catch (err) {
         if (
           err instanceof SandboxError &&
@@ -502,12 +511,14 @@ export class BackupTransfer {
           })();
 
     try {
-      await this.client.backup.downloadArchive({
-        archivePath,
-        expectedSize,
-        parts,
-        timeoutMs: 1_810_000
-      });
+      await this.deps.runRuntimeCall('backup.downloadArchive', (control) =>
+        control.backup.downloadArchive({
+          archivePath,
+          expectedSize,
+          parts,
+          timeoutMs: 1_810_000
+        })
+      );
     } catch (error) {
       throw new BackupRestoreError({
         message: `Presigned URL download failed: ${error instanceof Error ? error.message : String(error)}`,

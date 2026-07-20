@@ -7,10 +7,12 @@ import { ContainerUnavailableError, ErrorCode } from '../src/errors';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /**
@@ -28,11 +30,11 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(false);
     });
 
-    it('should have a stub available immediately after construction', () => {
+    it('should not expose the RPC stub before activation', () => {
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
-      expect(conn.rpc()).toBeDefined();
+      expect(() => conn.rpc()).toThrow(/not activated/);
     });
   });
 
@@ -66,9 +68,13 @@ describe('ContainerControlConnection', () => {
           })
         }
       });
-      const internals = conn as unknown as { transport: DeferredTransport };
+      const internals = conn as unknown as {
+        transport: DeferredTransport;
+        state: 'active';
+      };
       const activate = vi.spyOn(internals.transport, 'activate');
       const connecting = conn.connect();
+      internals.state = 'active';
       const connectRejected = vi.fn();
       const connectOutcome = connecting.then(
         () => 'resolved',
@@ -167,7 +173,9 @@ describe('ContainerControlConnection', () => {
         }
       });
 
-      // rpc() triggers connect() in the background and returns the stub.
+      const connecting = conn.connect().catch(() => undefined);
+      const internals = conn as unknown as { state: 'active' };
+      internals.state = 'active';
       const stub = conn.rpc();
 
       // Calling a method on the stub queues a send and starts a receive().
@@ -176,11 +184,12 @@ describe('ContainerControlConnection', () => {
       const rpcCall = stub.utils.ping();
 
       await expect(rpcCall).rejects.toThrow();
+      await connecting;
     }, 5000);
   });
 
   describe('rpc', () => {
-    it('should trigger connect lazily when calling rpc()', () => {
+    it('should reject rpc access before activation', () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValue(new Response('Not Found', { status: 404 }));
@@ -188,10 +197,8 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: fetchMock }
       });
 
-      // rpc() returns the stub immediately and triggers connect in the background
-      const stub = conn.rpc();
-      expect(stub).toBeDefined();
-      expect(fetchMock).toHaveBeenCalled();
+      expect(() => conn.rpc()).toThrow(/not activated/);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
@@ -201,13 +208,13 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
-        internals.connected = true;
+        internals.state = 'connected';
         internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
@@ -215,26 +222,80 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(true);
     });
 
-    it('should return the same stub before and after connect', async () => {
+    it('should return the same stub after activation', async () => {
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'active' | 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
-        internals.connected = true;
+        internals.state = 'connected';
         internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
-      // rpc() returns the stub immediately — same reference before and after connect
-      const stubBefore = conn.rpc();
       await conn.connect();
+      internals.state = 'active';
+      const stubBefore = conn.rpc();
       const stubAfter = conn.rpc();
       expect(stubAfter).toBe(stubBefore);
+    });
+
+    it('does not overwrite disconnected state when activation fails after peer close', async () => {
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() }
+      });
+      const activation = deferred<never>();
+      const internals = conn as unknown as {
+        state: 'connected' | 'activating' | 'disconnected';
+        stub: {
+          utils: { activateControlSession: (id: string) => Promise<never> };
+        };
+        onWebSocketClose: () => void;
+      };
+      internals.state = 'connected';
+      internals.stub = {
+        utils: { activateControlSession: () => activation.promise }
+      };
+
+      const activating = conn.activateControlSession('incarnation-1');
+      await Promise.resolve();
+      expect(internals.state).toBe('activating');
+      internals.onWebSocketClose();
+      activation.reject(new Error('Peer closed WebSocket: 1006'));
+
+      await expect(activating).rejects.toThrow('Peer closed WebSocket');
+      expect(internals.state).toBe('disconnected');
+    });
+
+    it('does not overwrite disconnected state when activation fails after peer error', async () => {
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() }
+      });
+      const activation = deferred<never>();
+      const internals = conn as unknown as {
+        state: 'connected' | 'activating' | 'disconnected';
+        stub: {
+          utils: { activateControlSession: (id: string) => Promise<never> };
+        };
+        onWebSocketError: () => void;
+      };
+      internals.state = 'connected';
+      internals.stub = {
+        utils: { activateControlSession: () => activation.promise }
+      };
+
+      const activating = conn.activateControlSession('incarnation-1');
+      await Promise.resolve();
+      expect(internals.state).toBe('activating');
+      internals.onWebSocketError();
+      activation.reject(new Error('WebSocket connection failed.'));
+
+      await expect(activating).rejects.toThrow('WebSocket connection failed');
+      expect(internals.state).toBe('disconnected');
     });
 
     it('should permanently revoke an explicitly disconnected connection', async () => {
@@ -242,7 +303,7 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
@@ -250,7 +311,7 @@ describe('ContainerControlConnection', () => {
       const doConnect = vi
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
-          internals.connected = true;
+          internals.state = 'connected';
           internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
@@ -269,7 +330,7 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
@@ -277,7 +338,7 @@ describe('ContainerControlConnection', () => {
       const doConnect = vi
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
-          internals.connected = true;
+          internals.state = 'connected';
           internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
@@ -564,6 +625,9 @@ describe('ContainerControlConnection', () => {
         retryTimeoutMs: 0
       });
 
+      const connecting = conn.connect().catch(() => undefined);
+      const internals = conn as unknown as { state: 'active' };
+      internals.state = 'active';
       const rpcCall = conn.rpc().utils.ping();
 
       await expect(rpcCall).rejects.toMatchObject({
@@ -627,39 +691,6 @@ describe('ContainerControlConnection', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(conn.isConnected()).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('respects setRetryTimeoutMs() updates made before connect()', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(makeUpgradeFailure(503));
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          // Start with a very large budget — would normally allow many retries.
-          retryTimeoutMs: 600_000
-        });
-
-        // Lower the budget so the very first elapsed-time check gives up.
-        conn.setRetryTimeoutMs(1_000);
-
-        const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toMatchObject({
-          name: 'ContainerUnavailableError',
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'rpc_upgrade_failed', retryable: true }
-        });
-
-        await vi.advanceTimersByTimeAsync(60_000);
-        await assertion;
-
-        // Budget too small to satisfy MIN_TIME_FOR_RETRY_MS — no retries.
-        expect(fetchMock).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }

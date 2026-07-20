@@ -49,7 +49,7 @@ function host(status: ProcessStatus | null = running) {
   const ports = subscription() satisfies PortWatchSubscriptionAPI;
   const releaseConnection = vi.fn();
   const control: ProcessCapabilityControl = {
-    retainConnection: vi.fn(() => releaseConnection),
+    retainRuntimeHold: vi.fn(() => releaseConnection),
     getProcess: vi.fn(async () => status),
     openLogs: vi.fn(async () => logs),
     openPortWatch: vi.fn(async () => ports),
@@ -68,7 +68,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -84,7 +84,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -108,7 +108,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -129,8 +129,7 @@ describe('ProcessCapabilityTarget', () => {
           reason: 'runtime_replaced',
           operation: 'process.kill',
           admitted: true,
-          retryable: false,
-          effect: 'unknown'
+          retryable: false
         },
         httpStatus: 409,
         timestamp: new Date().toISOString()
@@ -139,7 +138,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -164,7 +163,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -214,7 +213,7 @@ describe('ProcessCapabilityTarget', () => {
       const capability = new ProcessCapabilityTarget({
         id: 'p1',
         pid: 123,
-        runtime: { id: 'runtime-a' },
+        runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
         lifecycle: testHost.lifecycle
       });
 
@@ -242,7 +241,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -271,7 +270,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -290,7 +289,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 

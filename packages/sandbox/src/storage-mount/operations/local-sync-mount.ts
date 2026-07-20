@@ -1,6 +1,5 @@
 import type { LocalMountBucketOptions } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
-import type { ContainerControlClient } from '../../container-control';
 import { LocalMountSyncManager } from '../../local-mount-sync';
 import { InvalidMountConfigError } from '../errors';
 import type { MountLifecycle } from '../lifecycle';
@@ -11,7 +10,6 @@ import type { BucketMountOperationContext } from './context';
 
 export interface LocalSyncMountContext extends BucketMountOperationContext {
   getEnv(): unknown;
-  getClient(): ContainerControlClient;
   lifecycle: MountLifecycle;
 }
 
@@ -51,7 +49,7 @@ export async function mountLocalSyncBucket(
       mountPath,
       prefix: options.prefix,
       readOnly: options.readOnly ?? false,
-      client: context.getClient(),
+      runRuntimeCall: context.runRuntimeCall,
       logger: context.logger
     });
 

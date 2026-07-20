@@ -144,6 +144,9 @@ function createControllableWatchClient() {
   const close = () => {
     controller!.close();
   };
+  const fail = (error: Error) => {
+    controller!.error(error);
+  };
 
   return {
     client: {
@@ -155,6 +158,7 @@ function createControllableWatchClient() {
     },
     emit,
     close,
+    fail,
     cancel,
     dispose
   };
@@ -168,6 +172,16 @@ function createMockControlClient(
     files: fileClient,
     watch: watchClient
   } as any;
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +201,239 @@ describe('LocalMountSyncManager', () => {
     vi.restoreAllMocks();
   });
 
+  describe('runtime callback scoping', () => {
+    it('uses fresh runtime callback controls for sequential file RPCs', async () => {
+      const r2Objects = new Map([
+        ['file1.txt', { body: 'hello', etag: 'etag1' }]
+      ]);
+      const bucket = createMockR2Bucket(r2Objects);
+      const watchClient = createMockWatchClient();
+      const controls: ReturnType<typeof createMockControlClient>[] = [];
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: true,
+        runRuntimeCall: async (_operation, call) => {
+          const control = createMockControlClient(
+            createMockFileClient(),
+            watchClient
+          );
+          controls.push(control);
+          return await call(control);
+        },
+        logger
+      });
+
+      await manager.start();
+
+      expect(controls.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(controls).size).toBe(controls.length);
+    });
+
+    it('stop remains pending until the active watch callback settles', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const fileClient = createMockFileClient();
+      const watch = createControllableWatchClient();
+      const client = createMockControlClient(fileClient, watch.client);
+      const watchRelease = deferred();
+      let watchEntered = false;
+      let stopped = false;
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        runRuntimeCall: async (operation, call) => {
+          if (operation === 'mount.local.watch') {
+            watchEntered = true;
+          }
+          const result = await call(client);
+          if (operation === 'mount.local.watch') {
+            await watchRelease.promise;
+          }
+          return result;
+        },
+        logger
+      });
+
+      await manager.start();
+      await vi.waitFor(() => expect(watchEntered).toBe(true));
+
+      const stopPromise = manager.stop().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+
+      expect(stopped).toBe(false);
+      watchRelease.resolve();
+      await stopPromise;
+      expect(stopped).toBe(true);
+    });
+
+    it('does not reconnect after a stopped watch callback rejects', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const fileClient = createMockFileClient();
+      const watch = createControllableWatchClient();
+      const client = createMockControlClient(fileClient, watch.client);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        runRuntimeCall: async (operation, call) => {
+          if (operation === 'mount.local.watch') {
+            throw new Error('runtime replaced');
+          }
+          return await call(client);
+        },
+        logger,
+        pollIntervalMs: 1000
+      });
+
+      await manager.start();
+      await manager.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(watch.client.watch).not.toHaveBeenCalled();
+    });
+
+    it('stop joins already-admitted poll work and prevents later poll RPCs', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const watchClient = createMockWatchClient();
+      const client = createMockControlClient(fileClient, watchClient);
+      const writeRelease = deferred();
+      const operations: string[] = [];
+      let stopped = false;
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: true,
+        runRuntimeCall: async (operation, call) => {
+          operations.push(operation);
+          if (operation === 'mount.local.writeFile') {
+            await writeRelease.promise;
+          }
+          return await call(client);
+        },
+        logger,
+        pollIntervalMs: 1000
+      });
+
+      await manager.start();
+      operations.length = 0;
+      r2Objects.set('new-file.txt', { body: 'new', etag: 'etag-new' });
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() =>
+        expect(operations).toContain('mount.local.writeFile')
+      );
+
+      const stopPromise = manager.stop().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      writeRelease.resolve();
+      await stopPromise;
+
+      operations.length = 0;
+      r2Objects.set('later.txt', { body: 'later', etag: 'etag-later' });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(operations).toEqual([]);
+    });
+
+    it('watch events read files through a fresh control outside the watch control', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const watch = createControllableWatchClient();
+      const watchControl = createMockControlClient(
+        createMockFileClient(),
+        watch.client
+      );
+      const readControl = createMockControlClient(
+        createMockFileClient(),
+        createMockWatchClient()
+      );
+      const controlsByOperation = new Map<string, unknown[]>();
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        runRuntimeCall: async (operation, call) => {
+          const control =
+            operation === 'mount.local.readFile' ? readControl : watchControl;
+          controlsByOperation.set(operation, [
+            ...(controlsByOperation.get(operation) ?? []),
+            control
+          ]);
+          return await call(control);
+        },
+        logger
+      });
+
+      await manager.start();
+      await vi.waitFor(() => expect(watch.client.watch).toHaveBeenCalled());
+      watch.emit({
+        type: 'event',
+        path: '/mnt/data/file.txt',
+        eventType: 'modify',
+        isDirectory: false
+      });
+      await vi.waitFor(() =>
+        expect(readControl.files.readFile).toHaveBeenCalled()
+      );
+
+      expect(controlsByOperation.get('mount.local.watch')).toEqual([
+        watchControl
+      ]);
+      expect(controlsByOperation.get('mount.local.readFile')).toEqual([
+        readControl
+      ]);
+      expect(readControl).not.toBe(watchControl);
+      watch.close();
+      await manager.stop();
+    });
+
+    it('keeps the local watch runtime callback pending until the stream closes', async () => {
+      const bucket = createMockR2Bucket(new Map());
+      const fileClient = createMockFileClient();
+      const watch = createControllableWatchClient();
+      const client = createMockControlClient(fileClient, watch.client);
+      const settled: string[] = [];
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        runRuntimeCall: async (operation, call) => {
+          const result = await call(client);
+          settled.push(operation);
+          return result;
+        },
+        logger
+      });
+
+      await manager.start();
+      await vi.waitFor(() => expect(watch.client.watch).toHaveBeenCalled());
+      await Promise.resolve();
+
+      expect(settled).not.toContain('mount.local.watch');
+
+      watch.close();
+      await vi.waitFor(() => expect(settled).toContain('mount.local.watch'));
+      await manager.stop();
+    });
+  });
+
   describe('initial full sync (R2 → Container)', () => {
     it('should sync all R2 objects to the container on start', async () => {
       const r2Objects = new Map([
@@ -203,7 +450,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -253,7 +500,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -276,7 +523,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -305,7 +552,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 1000
       });
@@ -347,7 +594,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 1000
       });
@@ -385,7 +632,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 1000
       });
@@ -421,7 +668,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 1000
       });
@@ -458,7 +705,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/data/',
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -493,7 +740,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/some/prefix/',
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -530,7 +777,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/some/prefix/',
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -572,7 +819,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -606,7 +853,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/',
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -637,7 +884,7 @@ describe('LocalMountSyncManager', () => {
             mountPath: '/mnt/data',
             prefix: 'data/',
             readOnly: true,
-            client,
+            runRuntimeCall: async (_operation, call) => call(client),
             logger
           })
       ).toThrow(/Prefix must start with/);
@@ -657,7 +904,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/uploads',
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger
       });
 
@@ -694,7 +941,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -746,7 +993,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -792,7 +1039,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -834,7 +1081,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -888,7 +1135,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -928,7 +1175,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -968,7 +1215,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: '/uploads/',
         readOnly: false,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 60_000
       });
@@ -1008,7 +1255,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        client,
+        runRuntimeCall: async (_operation, call) => call(client),
         logger,
         pollIntervalMs: 1000
       });

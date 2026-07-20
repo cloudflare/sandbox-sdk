@@ -44,8 +44,14 @@ export function makeFences(
 ): Pick<TunnelServiceHost, 'currentRuntime' | 'currentLifetime'> {
   return {
     currentRuntime: {
-      get: vi.fn(async () => ({ id: 'runtime-1' })),
-      markStarted: vi.fn(async () => ({ id: 'runtime-1' })),
+      get: vi.fn(async () => ({
+        id: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      })),
+      markStarted: vi.fn(async () => ({
+        id: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      })),
       assertActive: vi.fn(async () => {}),
       ...overrides.currentRuntime
     },

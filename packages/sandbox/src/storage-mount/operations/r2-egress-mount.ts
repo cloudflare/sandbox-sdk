@@ -70,12 +70,12 @@ export async function mountR2EgressBucket(
     const lifecycle = await context.lifecycle.capture();
     passwordFilePath = generatePasswordFilePath();
     additionalHeaderFilePath = generateS3FSAdditionalHeaderFilePath();
-    await createPasswordFile(context.getS3FSHost(), passwordFilePath, bucket, {
+    await createPasswordFile(context.s3fsHost, passwordFilePath, bucket, {
       accessKeyId: 'x',
       secretAccessKey: 'x'
     });
     await createDisableExpectHeaderFile(
-      context.getS3FSHost(),
+      context.s3fsHost,
       additionalHeaderFilePath
     );
 
@@ -100,10 +100,12 @@ export async function mountR2EgressBucket(
       }
     });
 
-    await context.getMounts().ensureDirectory(mountPath);
+    await context.runRuntimeCall('mount.ensureDirectory', (control) =>
+      control.mounts.ensureDirectory(mountPath)
+    );
 
     s3fsStarted = true;
-    await executeS3FSMount(context.getS3FSHost(), {
+    await executeS3FSMount(context.s3fsHost, {
       bucket,
       mountPath,
       provider: 'r2',
@@ -158,13 +160,13 @@ export async function mountR2EgressBucket(
 
       if (cleanupPasswordFilePath) {
         await deletePasswordFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           cleanupPasswordFilePath
         ).catch(() => {});
       }
       if (cleanupAdditionalHeaderFilePath) {
         await deleteAdditionalHeaderFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           cleanupAdditionalHeaderFilePath
         ).catch(() => {});
       }

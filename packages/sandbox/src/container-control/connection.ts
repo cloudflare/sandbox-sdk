@@ -8,6 +8,7 @@
 
 import type {
   Logger,
+  RuntimeMetadata,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxControlCallback,
@@ -139,7 +140,13 @@ export class ContainerControlConnection {
   private readonly session: RpcSession<SandboxAPI>;
   private readonly transport: DeferredTransport;
   private ws: WebSocket | null = null;
-  private connected = false;
+  private state:
+    | 'disconnected'
+    | 'connecting'
+    | 'connected'
+    | 'activating'
+    | 'active'
+    | 'disposed' = 'disconnected';
   private connectPromise: Promise<void> | null = null;
   private activeUpgradeAbortController: AbortController | null = null;
   private readonly containerStub: ContainerFetchStub;
@@ -175,10 +182,38 @@ export class ContainerControlConnection {
    * the WebSocket is established.
    */
   rpc(): RpcStub<SandboxAPI> {
-    if (!this.connected && !this.connectPromise) {
-      this.connect().catch(() => {});
+    if (this.state !== 'active') {
+      throw new Error('Container control connection is not activated');
     }
     return this.stub;
+  }
+
+  async getRuntimeMetadata(): Promise<RuntimeMetadata> {
+    await this.connect();
+    return this.stub.utils.getRuntimeMetadata();
+  }
+
+  async activateControlSession(
+    expectedRuntimeIncarnationID: string
+  ): Promise<RuntimeMetadata> {
+    await this.connect();
+    if (this.state === 'active') return this.stub.utils.getRuntimeMetadata();
+    if (this.state !== 'connected') {
+      throw new Error(
+        'Container control connection cannot activate from current state'
+      );
+    }
+    this.state = 'activating';
+    try {
+      const metadata = await this.stub.utils.activateControlSession(
+        expectedRuntimeIncarnationID
+      );
+      this.state = 'active';
+      return metadata;
+    } catch (error) {
+      if (this.state === 'activating') this.state = 'connected';
+      throw error;
+    }
   }
 
   /**
@@ -191,12 +226,16 @@ export class ContainerControlConnection {
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return (
+      this.state === 'connected' ||
+      this.state === 'activating' ||
+      this.state === 'active'
+    );
   }
 
   async connect(): Promise<void> {
-    if (this.disposed) throw this.disposalError;
-    if (this.connected) return;
+    if (this.state === 'disposed') throw this.disposalError;
+    if (this.isConnected()) return;
 
     if (this.connectPromise) {
       return this.connectPromise;
@@ -211,7 +250,8 @@ export class ContainerControlConnection {
   }
 
   disconnect(): void {
-    if (this.disposed) return;
+    if (this.state === 'disposed') return;
+    this.state = 'disposed';
     this.disposed = true;
     this.activeUpgradeAbortController?.abort();
     this.activeUpgradeAbortController = null;
@@ -228,16 +268,6 @@ export class ContainerControlConnection {
       // Stub may already be disposed
     }
     this.ws = null;
-    this.connected = false;
-  }
-
-  /**
-   * Update the upgrade retry budget without recreating the connection. Takes
-   * effect on the next `connect()`; an in-flight connect uses the value
-   * captured at start.
-   */
-  setRetryTimeoutMs(ms: number): void {
-    this.retryTimeoutMs = ms;
   }
 
   // -----------------------------------------------------------------------
@@ -267,8 +297,8 @@ export class ContainerControlConnection {
    * fail to unbind.
    */
   private onWebSocketClose = (): void => {
-    const wasConnected = this.connected;
-    this.connected = false;
+    const wasConnected = this.isConnected();
+    if (this.state !== 'disposed') this.state = 'disconnected';
     this.ws = null;
     this.logger.debug('ContainerControlConnection WebSocket closed');
     if (wasConnected) this.fireOnClose();
@@ -279,13 +309,14 @@ export class ContainerControlConnection {
    * {@link onWebSocketClose}.
    */
   private onWebSocketError = (): void => {
-    const wasConnected = this.connected;
-    this.connected = false;
+    const wasConnected = this.isConnected();
+    if (this.state !== 'disposed') this.state = 'disconnected';
     this.ws = null;
     if (wasConnected) this.fireOnClose();
   };
 
   private async doConnect(): Promise<void> {
+    this.state = 'connecting';
     try {
       const response = await this.fetchUpgradeWithRetry();
 
@@ -340,13 +371,13 @@ export class ContainerControlConnection {
 
       this.ws = ws;
       this.transport.activate(ws);
-      this.connected = true;
+      this.state = 'connected';
 
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
     } catch (error) {
-      this.connected = false;
+      if (!this.disposed) this.state = 'disconnected';
       this.transport.abort(error);
       if (this.disposed) throw this.disposalError;
       this.logger.error(

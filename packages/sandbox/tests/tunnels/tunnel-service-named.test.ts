@@ -269,7 +269,15 @@ function makeHandler(opts?: {
     zoneId: opts?.config?.zoneId ?? 'zone-id'
   };
   const built = createTunnelsHandle({
-    client: client as unknown as TunnelsHost['client'],
+    runRuntimeCall: ((operation, call) =>
+      call(
+        client.tunnels as unknown as TunnelsHost['runRuntimeCall'] extends (
+          op: string,
+          call: (tunnels: infer U) => Promise<unknown>
+        ) => Promise<unknown>
+          ? U
+          : never
+      )) as TunnelsHost['runRuntimeCall'],
     storage,
     logger,
     sandboxId: opts?.sandboxId ?? 'sb1',
@@ -322,35 +330,22 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
     expect(JSON.stringify(info)).not.toContain('OPAQUE_TOKEN');
   });
 
-  it('replays the same named run request when the first call loses RPC transport', async () => {
+  it('surfaces RPC transport loss without replaying the named tunnel run', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.ensureTunnelRun
-      .mockRejectedValueOnce(createDisposedRPCError())
-      .mockImplementationOnce(async (request) => namedRunResult(request));
+    const error = createDisposedRPCError();
+    client.tunnels.ensureTunnelRun.mockRejectedValueOnce(error);
 
-    const info = await tunnels.get(8080, { name: 'api' });
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toBe(error);
 
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
-    const second = client.tunnels.ensureTunnelRun.mock.calls[1][0];
-    expect(second).toEqual(first);
-    expect(info).toMatchObject({
-      id: NAMED_TUNNEL_ID,
-      port: 8080,
-      name: 'api',
-      hostname: 'api.example.com',
-      url: 'https://api.example.com'
-    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds runtime-replacement recovery and never commits a partial record', async () => {
-    // Every post-spawn fence reports a replaced runtime, so recovery can
-    // never converge. The operation surfaces recovery_exhausted and
-    // leaves storage empty so no orphaned tunnel record persists.
+  it('surfaces interruption without recovery/replay', async () => {
+    // We removed recovery/retry loops from tunnels.get()
     const cf = makeFakeCloudflare({});
     let assertCalls = 0;
     const { client, storage, tunnels } = makeHandler({
@@ -359,7 +354,7 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
         currentRuntime: {
           assertActive: vi.fn(async () => {
             assertCalls += 1;
-            if (assertCalls % 3 === 0) {
+            if (assertCalls === 1) {
               throw new RuntimeIdentityInactiveError();
             }
           })
@@ -372,12 +367,10 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
       name: 'OperationInterruptedError',
       code: ErrorCode.OPERATION_INTERRUPTED,
       context: expect.objectContaining({
-        reason: 'recovery_exhausted',
+        reason: 'runtime_replaced',
         operation: 'tunnel.get',
-        retryable: true,
-        admitted: true,
-        recoveryAttempts: 2,
-        maxRecoveryAttempts: 2
+        retryable: false,
+        admitted: 'unknown'
       })
     });
     expect(await storage.get('tunnels')).toBeUndefined();
@@ -626,9 +619,14 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
       throw new Error(`Unhandled ${method} ${url}`);
     });
     const built = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger,
       sandboxId: 'sb1',

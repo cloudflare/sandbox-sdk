@@ -47,7 +47,8 @@ export async function listTerminalHandles(
 
 export function terminalHandle(
   stub: SandboxTerminalStub,
-  snapshot: TerminalSnapshot
+  snapshot: TerminalSnapshot,
+  runtimeIncarnationID?: string
 ): Terminal {
   const id = snapshot.id;
   return {
@@ -63,7 +64,15 @@ export function terminalHandle(
     waitForExit: (options) => waitForTerminalExit(stub, id, options),
     interrupt: () => stub.interrupt(id),
     terminate: () => stub.terminate(id),
-    connect: (request, options) => proxyTerminal(stub, id, request, options)
+    connect: (request, options) => {
+      if (!runtimeIncarnationID) {
+        throw new Error('terminal.connect() requires a runtime incarnation ID');
+      }
+      return proxyTerminal(stub, id, request, {
+        ...options,
+        runtimeIncarnationID
+      });
+    }
   };
 }
 
@@ -210,15 +219,24 @@ export async function proxyTerminal(
   stub: Pick<SandboxTerminalStub, 'fetch'>,
   terminalId: string,
   request: Request,
-  options?: { cursor?: TerminalOutputCursor; cols?: number; rows?: number }
+  options: {
+    cursor?: TerminalOutputCursor;
+    cols?: number;
+    rows?: number;
+    runtimeIncarnationID: string;
+  }
 ): Promise<Response> {
   const upgradeHeader = request.headers.get('Upgrade');
   if (upgradeHeader?.toLowerCase() !== 'websocket')
     throw new Error('terminal.connect() requires a WebSocket upgrade request');
   const params = new URLSearchParams({ terminalId });
-  if (options?.cursor) params.set('cursor', options.cursor);
-  if (options?.cols) params.set('cols', String(options.cols));
-  if (options?.rows) params.set('rows', String(options.rows));
+  if (!options.runtimeIncarnationID) {
+    throw new Error('terminal.connect() requires a runtime incarnation ID');
+  }
+  if (options.cursor) params.set('cursor', options.cursor);
+  if (options.cols) params.set('cols', String(options.cols));
+  if (options.rows) params.set('rows', String(options.rows));
+  params.set('runtimeIncarnationID', options.runtimeIncarnationID);
   return stub.fetch(
     switchPort(
       new Request(`http://localhost/ws/terminal?${params}`, request),

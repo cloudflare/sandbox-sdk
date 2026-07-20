@@ -23,8 +23,6 @@ export interface TunnelLifecycleSnapshot {
   lifetime?: SandboxLifetime;
 }
 
-const TUNNEL_GET_MAX_RECOVERY_ATTEMPTS = 2;
-
 export class TunnelOperationLifecycle {
   readonly #host: TunnelLifecycleHost;
 
@@ -54,7 +52,7 @@ export class TunnelOperationLifecycle {
         reason: 'runtime_replaced',
         phase,
         admitted,
-        retryable: true,
+        retryable: false,
         message: 'Tunnel operation was interrupted by a runtime replacement'
       });
     }
@@ -79,7 +77,7 @@ export class TunnelOperationLifecycle {
           reason: 'runtime_replaced',
           phase,
           admitted,
-          retryable: true,
+          retryable: false,
           message: 'Tunnel operation was interrupted by a runtime replacement'
         });
       }
@@ -97,22 +95,6 @@ export class TunnelOperationLifecycle {
     }
   }
 
-  async runGetWithRecovery<T>(attempt: () => Promise<T>): Promise<T> {
-    let recoveryAttempts = 0;
-    while (true) {
-      try {
-        return await attempt();
-      } catch (error) {
-        if (!(error instanceof OperationInterruptedError)) throw error;
-        if (!error.context.retryable) throw error;
-        if (recoveryAttempts >= TUNNEL_GET_MAX_RECOVERY_ATTEMPTS) {
-          throw createTunnelRecoveryExhaustedError(error, recoveryAttempts);
-        }
-        recoveryAttempts += 1;
-      }
-    }
-  }
-
   async #captureRuntime(): Promise<RuntimeIdentity | undefined> {
     const currentRuntime = this.#host.currentRuntime;
     if (!currentRuntime) return undefined;
@@ -123,7 +105,7 @@ export class TunnelOperationLifecycle {
   }
 }
 
-function createTunnelInterruptedError(params: {
+export function createTunnelInterruptedError(params: {
   reason: 'runtime_replaced' | 'sandbox_lifetime_changed';
   phase: string;
   admitted: true | 'unknown';
@@ -140,26 +122,6 @@ function createTunnelInterruptedError(params: {
       phase: params.phase,
       admitted: params.admitted,
       retryable: params.retryable
-    },
-    timestamp: new Date().toISOString(),
-    suggestion: 'Retry tunnels.get() with the same port and options.'
-  });
-}
-
-function createTunnelRecoveryExhaustedError(
-  error: OperationInterruptedError,
-  recoveryAttempts: number
-): OperationInterruptedError {
-  return new OperationInterruptedError({
-    message: 'Tunnel operation recovery attempts were exhausted',
-    code: ErrorCode.OPERATION_INTERRUPTED,
-    httpStatus: 409,
-    context: {
-      ...error.context,
-      reason: 'recovery_exhausted',
-      retryable: true,
-      recoveryAttempts,
-      maxRecoveryAttempts: TUNNEL_GET_MAX_RECOVERY_ATTEMPTS
     },
     timestamp: new Date().toISOString(),
     suggestion: 'Retry tunnels.get() with the same port and options.'

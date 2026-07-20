@@ -38,7 +38,10 @@ export async function unmountBucketOperation(
     } else {
       let unmounted = !mountInfo.mounted;
       if (mountInfo.mounted) {
-        const result = await context.getMounts().unmountFuse(mountPath);
+        const result = await context.runRuntimeCall(
+          'mount.unmountFuse',
+          (control) => control.mounts.unmountFuse(mountPath)
+        );
         if (!result.success) {
           const stderr = result.stderr || 'unknown error';
           throw new BucketUnmountError(
@@ -70,10 +73,14 @@ export async function unmountBucketOperation(
       context.registry.delete(mountPath);
 
       try {
-        const cleanup = await context.getMounts().removeMountDirectory({
-          path: mountPath,
-          onlyIfNotMountpoint: true
-        });
+        const cleanup = await context.runRuntimeCall(
+          'mount.removeMountDirectory',
+          (control) =>
+            control.mounts.removeMountDirectory({
+              path: mountPath,
+              onlyIfNotMountpoint: true
+            })
+        );
         if (!cleanup.success) {
           context.logger.warn('mount directory removal failed', {
             mountPath,
@@ -89,13 +96,10 @@ export async function unmountBucketOperation(
       }
 
       if (unmounted) {
-        await deletePasswordFile(
-          context.getS3FSHost(),
-          mountInfo.passwordFilePath
-        );
+        await deletePasswordFile(context.s3fsHost, mountInfo.passwordFilePath);
         if (mountInfo.additionalHeaderFilePath) {
           await deleteAdditionalHeaderFile(
-            context.getS3FSHost(),
+            context.s3fsHost,
             mountInfo.additionalHeaderFilePath
           );
         }

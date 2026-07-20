@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackupRestoreOperationRecord } from '../src/backup/restore-operation-store';
+import type { ContainerControlClient } from '../src/container-control';
 import {
   ErrorCode,
   OperationInterruptedError,
@@ -7,7 +8,10 @@ import {
 } from '../src/errors';
 import { Sandbox } from '../src/sandbox';
 import type { SandboxLifetimeID } from '../src/sandbox-lifetime';
-import { createMockControlClient } from './helpers/mock-control-client';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
 
 vi.mock('@cloudflare/containers', () => {
   class MockContainer {
@@ -109,6 +113,18 @@ function createNonRetryableInterruptedError(
   });
 }
 
+function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
+  const target = sandbox as unknown as {
+    client: ContainerControlClient;
+    runLegacyRuntimeCall<T>(
+      operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ): Promise<T>;
+  };
+  target.runLegacyRuntimeCall = async (_operation, call) =>
+    await call(target.client);
+}
+
 async function createBackupSandbox(params?: {
   storageMap?: Map<string, StoredValue>;
   bucket?: ReturnType<typeof createBackupBucket>;
@@ -151,11 +167,15 @@ async function createBackupSandbox(params?: {
     expect(ctx.blockConcurrencyWhile).toHaveBeenCalled();
   });
 
-  sandbox.client = createMockControlClient();
-  vi.spyOn(sandbox.client.backup, 'restoreArchive').mockResolvedValue({
-    success: true,
-    dir: '/workspace/project'
-  } as never);
+  const sandboxWithClient = asSandboxWithClient(sandbox);
+  sandboxWithClient.client = createMockControlClient();
+  installClientBackedRuntimeCalls(sandboxWithClient);
+  vi.spyOn(sandboxWithClient.client.backup, 'restoreArchive').mockResolvedValue(
+    {
+      success: true,
+      dir: '/workspace/project'
+    } as never
+  );
 
   return { sandbox, storageMap, bucket };
 }
@@ -226,8 +246,9 @@ describe('backup restore lifecycle', () => {
       backupId,
       '/workspace/project'
     );
+    const sandboxWithClient = asSandboxWithClient(sandbox);
     const restoreArchiveSpy = vi
-      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockRejectedValueOnce(interruption)
       .mockResolvedValueOnce({ success: true, dir: '/workspace/project' });
 
@@ -240,8 +261,9 @@ describe('backup restore lifecycle', () => {
   it('recovers internally when the first restore attempt loses the RPC transport', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
+    const sandboxWithClient = asSandboxWithClient(sandbox);
     const restoreArchiveSpy = vi
-      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockRejectedValueOnce(createDisposedRPCError())
       .mockResolvedValueOnce({ success: true, dir: '/workspace/project' });
 
@@ -268,8 +290,9 @@ describe('backup restore lifecycle', () => {
   it('surfaces OPERATION_INTERRUPTED after exhausting restore recovery attempts', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
+    const sandboxWithClient = asSandboxWithClient(sandbox);
     const restoreArchiveSpy = vi
-      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockRejectedValue(createDisposedRPCError());
 
     let thrown: unknown;
@@ -317,7 +340,8 @@ describe('backup restore lifecycle', () => {
       }
     });
     const backupId = crypto.randomUUID();
-    vi.spyOn(sandbox.client.backup, 'restoreArchive')
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    vi.spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockRejectedValueOnce(createDisposedRPCError())
       .mockResolvedValueOnce({
         success: true,
@@ -341,7 +365,8 @@ describe('backup restore lifecycle', () => {
     // Three consecutive failures exhaust the two internal recovery attempts
     // so the first restoreBackup() call surfaces OperationInterruptedError to
     // the caller instead of being swallowed by internal retry.
-    vi.spyOn(sandbox.client.backup, 'restoreArchive')
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    vi.spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockRejectedValueOnce(createDisposedRPCError())
       .mockRejectedValueOnce(createDisposedRPCError())
       .mockRejectedValueOnce(createDisposedRPCError())
@@ -372,8 +397,9 @@ describe('backup restore lifecycle', () => {
   it('recovers internally when the runtime changes after restoreArchive returns', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
+    const sandboxWithClient = asSandboxWithClient(sandbox);
     const restoreArchiveSpy = vi
-      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockImplementationOnce(async () => {
         storageMap.delete('currentRuntimeIdentity');
         return { success: true, dir: '/workspace/project' } as never;
@@ -421,7 +447,11 @@ describe('backup restore lifecycle', () => {
     });
     storageMap.delete('currentRuntimeIdentity');
     const backupId = crypto.randomUUID();
-    const restoreArchiveSpy = vi.spyOn(sandbox.client.backup, 'restoreArchive');
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    const restoreArchiveSpy = vi.spyOn(
+      sandboxWithClient.client.backup,
+      'restoreArchive'
+    );
 
     let thrown: unknown;
     try {
@@ -470,7 +500,11 @@ describe('backup restore lifecycle', () => {
     } satisfies BackupRestoreOperationRecord);
 
     const { sandbox } = await createBackupSandbox({ storageMap });
-    const restoreArchiveSpy = vi.spyOn(sandbox.client.backup, 'restoreArchive');
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    const restoreArchiveSpy = vi.spyOn(
+      sandboxWithClient.client.backup,
+      'restoreArchive'
+    );
 
     await expect(
       sandbox.restoreBackup({ id: backupId, dir: '/workspace/project' })
@@ -485,8 +519,9 @@ describe('backup restore lifecycle', () => {
   it('does not retry restore across a sandbox lifetime change', async () => {
     const { sandbox, storageMap } = await createBackupSandbox();
     const backupId = crypto.randomUUID();
+    const sandboxWithClient = asSandboxWithClient(sandbox);
     const restoreArchiveSpy = vi
-      .spyOn(sandbox.client.backup, 'restoreArchive')
+      .spyOn(sandboxWithClient.client.backup, 'restoreArchive')
       .mockImplementationOnce(async () => {
         storageMap.set('sandbox:lifetime', {
           id: 'lifetime-2',

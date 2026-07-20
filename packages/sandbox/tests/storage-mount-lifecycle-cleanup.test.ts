@@ -72,9 +72,10 @@ describe('bucket mount destroy lifecycle cleanup', () => {
       .mockResolvedValue(mountResult());
     const deleteFile = vi.fn(async () => undefined);
     const s3fsHost: S3FSHost = {
-      client: {
-        mounts: { unmountFuse, deleteFile }
-      } as unknown as ContainerControlClient,
+      runRuntimeCall: async (_operation, call) =>
+        call({
+          mounts: { unmountFuse, deleteFile }
+        } as unknown as ContainerControlClient),
       logger
     };
     const outboundHost = createOutboundHost(logger);
@@ -85,7 +86,7 @@ describe('bucket mount destroy lifecycle cleanup', () => {
     const firstResult = await cleanupBucketMountsForDestroy({
       registry,
       logger,
-      getS3FSHost: () => s3fsHost,
+      s3fsHost,
       getOutboundHost: () => outboundHost,
       runMountOperation
     });
@@ -98,7 +99,7 @@ describe('bucket mount destroy lifecycle cleanup', () => {
     const retryResult = await cleanupBucketMountsForDestroy({
       registry,
       logger,
-      getS3FSHost: () => s3fsHost,
+      s3fsHost,
       getOutboundHost: () => outboundHost,
       runMountOperation
     });

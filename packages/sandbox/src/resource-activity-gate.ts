@@ -27,20 +27,36 @@ export class ResourceActivityGate {
     this.renewActivity();
   }
 
-  beginOperation(): ResourceActivityOperation {
-    return this.beginTrackedOperation(true);
+  beginActivity(): ResourceActivityOperation {
+    return this.beginTrackedOperation('activity');
   }
 
   /**
-   * Admits observation of an already-live runtime without renewing activity.
-   * A committed inactivity stop remains authoritative: observers await it and
-   * then inspect the resulting inactive state without restarting the runtime.
+   * Admits already-live work without renewing activity. The hold blocks an
+   * expiry decision while the operation is in flight.
    */
-  beginNonWakingOperation(): ResourceActivityOperation {
-    return this.beginTrackedOperation(false);
+  beginExistingHold(): ResourceActivityOperation {
+    return this.beginTrackedOperation('hold');
   }
 
-  private beginTrackedOperation(renew: boolean): ResourceActivityOperation {
+  /**
+   * Admits observation of an already-live runtime without renewing activity or
+   * blocking the expiry decision that the observation may inform.
+   */
+  beginProbe(): ResourceActivityOperation {
+    const stopToAwait = this.committedStop;
+    return {
+      beforeCall: stopToAwait
+        ? this.awaitCommittedTeardowns(stopToAwait)
+        : Promise.resolve(),
+      finish: () => {}
+    };
+  }
+
+  private beginTrackedOperation(
+    mode: 'activity' | 'hold'
+  ): ResourceActivityOperation {
+    const renew = mode === 'activity';
     if (renew) {
       this.recordActivity();
       this.activityInFlight += 1;
@@ -52,7 +68,7 @@ export class ResourceActivityGate {
 
     return {
       beforeCall: stopToAwait
-        ? stopToAwait.then(() => {
+        ? this.awaitCommittedTeardowns(stopToAwait).then(() => {
             if (renew) this.recordActivity();
           })
         : Promise.resolve(),
@@ -67,6 +83,41 @@ export class ResourceActivityGate {
         }
       }
     };
+  }
+
+  private async awaitCommittedTeardowns(initial: Promise<void>): Promise<void> {
+    let current = initial;
+    while (true) {
+      let failed = false;
+      let failure: unknown;
+      try {
+        await current;
+      } catch (error) {
+        failed = true;
+        failure = error;
+      }
+      const latest = this.committedStop;
+      if (latest && latest !== current) {
+        current = latest;
+        continue;
+      }
+      if (failed) throw failure;
+      return;
+    }
+  }
+
+  async runStopTeardown(teardown: () => Promise<void>): Promise<void> {
+    if (!this.committedStop) {
+      this.committedStop = this.wrapCommittedStop(teardown());
+    }
+    await this.committedStop;
+  }
+
+  runDestroyTeardown(teardown: () => Promise<void>): Promise<void> {
+    const previous = this.committedStop;
+    const work = previous ? previous.then(teardown, teardown) : teardown();
+    this.committedStop = this.wrapCommittedStop(work);
+    return this.committedStop;
   }
 
   async runExpiry(
@@ -163,11 +214,18 @@ export class ResourceActivityGate {
 
   private async commitStop(): Promise<void> {
     if (!this.committedStop) {
-      this.committedStop = this.stopInactive().finally(() => {
-        this.committedStop = null;
-        this.recordActivity();
-      });
+      this.committedStop = this.wrapCommittedStop(this.stopInactive());
     }
     await this.committedStop;
+  }
+
+  private wrapCommittedStop(work: Promise<void>): Promise<void> {
+    const committed = work.finally(() => {
+      if (this.committedStop === committed) {
+        this.committedStop = null;
+      }
+      this.recordActivity();
+    });
+    return committed;
   }
 }
