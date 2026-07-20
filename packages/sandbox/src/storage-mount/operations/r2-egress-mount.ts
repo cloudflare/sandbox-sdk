@@ -4,6 +4,8 @@ import { InvalidMountConfigError } from '../errors';
 import type { MountLifecycle } from '../lifecycle';
 import { configureR2EgressOutbound } from '../outbound';
 import { buildR2EgressParams } from '../outbound/params';
+import type { MountRuntimeLease } from '../runtime-call';
+import type { S3FSHost } from '../s3fs';
 import {
   createDisableExpectHeaderFile,
   createPasswordFile,
@@ -22,6 +24,43 @@ import { unmountFuseIfMountedForCleanup } from './fuse-cleanup';
 
 export interface R2EgressMountContext extends BucketMountOperationContext {
   lifecycle: MountLifecycle;
+  runtime: MountRuntimeLease['runtime'];
+  s3fsHost: S3FSHost;
+}
+
+export function validateR2EgressMount(
+  context: Pick<R2EgressMountContext, 'registry'>,
+  bucket: string,
+  mountPath: string,
+  options: R2BindingMountBucketOptions
+): void {
+  const prefix = options.prefix;
+  validateBucketBindingName(bucket, mountPath);
+  validateMountPath(context.registry.activeMounts, mountPath);
+  validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
+
+  for (const [existingMountPath, existingMount] of context.registry) {
+    if (
+      existingMount.mountType === 'r2-egress' &&
+      existingMount.bucket === bucket &&
+      existingMount.prefix !== prefix
+    ) {
+      throw new InvalidMountConfigError(
+        `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different prefix. ` +
+          'Mount the same binding only once, or use the same prefix for additional mounts.'
+      );
+    }
+    if (
+      existingMount.mountType === 'r2-egress' &&
+      existingMount.bucket === bucket &&
+      existingMount.readOnly !== (options.readOnly ?? false)
+    ) {
+      throw new InvalidMountConfigError(
+        `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different readOnly setting. ` +
+          'Mount the same binding only once, or use the same readOnly value for additional mounts.'
+      );
+    }
+  }
 }
 
 export async function mountR2EgressBucket(
@@ -40,34 +79,9 @@ export async function mountR2EgressBucket(
   let mountInfo: R2BindingMountInfo | undefined;
 
   try {
-    validateBucketBindingName(bucket, mountPath);
-    validateMountPath(context.registry.activeMounts, mountPath);
-    validateProtectedS3fsOptions(options.s3fsOptions, 'R2 binding');
+    validateR2EgressMount(context, bucket, mountPath, options);
 
-    for (const [existingMountPath, existingMount] of context.registry) {
-      if (
-        existingMount.mountType === 'r2-egress' &&
-        existingMount.bucket === bucket &&
-        existingMount.prefix !== prefix
-      ) {
-        throw new InvalidMountConfigError(
-          `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different prefix. ` +
-            'Mount the same binding only once, or use the same prefix for additional mounts.'
-        );
-      }
-      if (
-        existingMount.mountType === 'r2-egress' &&
-        existingMount.bucket === bucket &&
-        existingMount.readOnly !== (options.readOnly ?? false)
-      ) {
-        throw new InvalidMountConfigError(
-          `R2 binding "${bucket}" is already mounted at ${existingMountPath} with a different readOnly setting. ` +
-            'Mount the same binding only once, or use the same readOnly value for additional mounts.'
-        );
-      }
-    }
-
-    const lifecycle = await context.lifecycle.capture();
+    const lifecycle = await context.lifecycle.capture(context.runtime);
     passwordFilePath = generatePasswordFilePath();
     additionalHeaderFilePath = generateS3FSAdditionalHeaderFilePath();
     await createPasswordFile(context.s3fsHost, passwordFilePath, bucket, {

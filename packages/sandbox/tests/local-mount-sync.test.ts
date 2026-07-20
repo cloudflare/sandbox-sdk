@@ -202,7 +202,31 @@ describe('LocalMountSyncManager', () => {
   });
 
   describe('runtime callback scoping', () => {
-    it('uses fresh runtime callback controls for sequential file RPCs', async () => {
+    it('releases retained runtime authority exactly once', async () => {
+      const release = vi.fn();
+      const manager = new LocalMountSyncManager({
+        bucket: createMockR2Bucket(new Map()) as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: true,
+        runRuntimeCall: async (_operation, call) =>
+          await call(
+            createMockControlClient(
+              createMockFileClient(),
+              createMockWatchClient()
+            )
+          ),
+        runtimeHold: { release },
+        logger
+      });
+
+      manager.interrupt();
+      await manager.stop();
+
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('delegates sequential file RPCs through the provided scope', async () => {
       const r2Objects = new Map([
         ['file1.txt', { body: 'hello', etag: 'etag1' }]
       ]);
@@ -223,6 +247,7 @@ describe('LocalMountSyncManager', () => {
           controls.push(control);
           return await call(control);
         },
+        runtimeHold: { release: () => {} },
         logger
       });
 
@@ -256,6 +281,7 @@ describe('LocalMountSyncManager', () => {
           }
           return result;
         },
+        runtimeHold: { release: () => {} },
         logger
       });
 
@@ -290,6 +316,7 @@ describe('LocalMountSyncManager', () => {
           }
           return await call(client);
         },
+        runtimeHold: { release: () => {} },
         logger,
         pollIntervalMs: 1000
       });
@@ -323,6 +350,7 @@ describe('LocalMountSyncManager', () => {
           }
           return await call(client);
         },
+        runtimeHold: { release: () => {} },
         logger,
         pollIntervalMs: 1000
       });
@@ -376,6 +404,7 @@ describe('LocalMountSyncManager', () => {
           ]);
           return await call(control);
         },
+        runtimeHold: { release: () => {} },
         logger
       });
 
@@ -419,6 +448,7 @@ describe('LocalMountSyncManager', () => {
           settled.push(operation);
           return result;
         },
+        runtimeHold: { release: () => {} },
         logger
       });
 
@@ -554,6 +584,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: true,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 1000
       });
 
@@ -596,6 +627,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: true,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 1000
       });
 
@@ -634,6 +666,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: true,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 1000
       });
 
@@ -670,6 +703,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: true,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 1000
       });
 
@@ -779,6 +813,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -821,6 +856,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -943,6 +979,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -995,6 +1032,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1041,6 +1079,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1083,6 +1122,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1137,6 +1177,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1177,6 +1218,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1217,6 +1259,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: false,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 60_000
       });
 
@@ -1257,6 +1300,7 @@ describe('LocalMountSyncManager', () => {
         readOnly: true,
         runRuntimeCall: async (_operation, call) => call(client),
         logger,
+        runtimeHold: { release: () => {} },
         pollIntervalMs: 1000
       });
 

@@ -1,6 +1,7 @@
 import { getContainer } from '@cloudflare/containers';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
+import { RuntimeIdentity, RuntimeOperationRunner } from '../src/runtime';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
@@ -211,6 +212,7 @@ function createMockCtx(options?: {
       name: 'test-sandbox'
     },
     container: {
+      running: true,
       interceptOutboundHttp: vi.fn().mockResolvedValue(undefined)
     },
     exports: options?.includeContainerProxy === false ? {} : { ContainerProxy },
@@ -283,28 +285,76 @@ type SandboxWithClient = Sandbox & {
   };
 };
 
-const originalRunLegacyRuntimeCallDescriptor = Object.getOwnPropertyDescriptor(
+const originalRunExisting = RuntimeOperationRunner.prototype.runExisting;
+RuntimeOperationRunner.prototype.runExisting = async function <T>(
+  this: { testSandbox?: SandboxWithClient },
+  _target: unknown,
+  _operation: string,
+  call: (lease: {
+    runtime: RuntimeIdentity;
+    control: SandboxWithClient['client'];
+    retain(): { release(): void };
+  }) => Promise<T>
+) {
+  if (!this.testSandbox) return { status: 'absent' };
+  return await call({
+    runtime: new RuntimeIdentity({
+      id: 'runtime-1' as never,
+      runtimeIncarnationID: 'incarnation-1' as never
+    }),
+    control: this.testSandbox.client,
+    retain: () => ({ release: () => {} })
+  });
+};
+
+const originalRunWakingCompositeDescriptor = Object.getOwnPropertyDescriptor(
   Sandbox.prototype,
-  'runLegacyRuntimeCall'
+  'runWakingComposite'
 );
 
-Object.defineProperty(Sandbox.prototype, 'runLegacyRuntimeCall', {
+Object.defineProperty(Sandbox.prototype, 'runWakingComposite', {
   configurable: true,
   value: async function (
     this: SandboxWithClient,
     _operation: string,
-    call: (control: SandboxWithClient['client']) => Promise<unknown>
+    call: (lease: {
+      runtime: RuntimeIdentity;
+      control: SandboxWithClient['client'];
+      retain(): { release(): void };
+    }) => Promise<unknown>
   ) {
-    return await call(this.client);
+    (
+      this as unknown as {
+        runtimeRunner: RuntimeOperationRunner & {
+          testSandbox?: SandboxWithClient;
+        };
+      }
+    ).runtimeRunner.testSandbox = this;
+    await (
+      this as unknown as { ctx: { storage: DurableObjectStorage } }
+    ).ctx.storage.put('currentRuntimeIdentity', {
+      schemaVersion: 1,
+      id: 'runtime-1',
+      runtimeIncarnationID: 'incarnation-1'
+    });
+    return await call({
+      runtime: new RuntimeIdentity({
+        id: 'runtime-1' as never,
+        runtimeIncarnationID: 'incarnation-1' as never
+      }),
+      control: this.client,
+      retain: () => ({ release: () => {} })
+    });
   }
 });
 
 afterAll(() => {
-  if (originalRunLegacyRuntimeCallDescriptor) {
+  RuntimeOperationRunner.prototype.runExisting = originalRunExisting;
+  if (originalRunWakingCompositeDescriptor) {
     Object.defineProperty(
       Sandbox.prototype,
-      'runLegacyRuntimeCall',
-      originalRunLegacyRuntimeCallDescriptor
+      'runWakingComposite',
+      originalRunWakingCompositeDescriptor
     );
   }
 });

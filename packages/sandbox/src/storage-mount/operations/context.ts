@@ -9,5 +9,5 @@ export interface BucketMountOperationContext {
   logger: Logger;
   runRuntimeCall: MountRuntimeCall;
   getOutboundHost(): MountOutboundHost;
-  s3fsHost: S3FSHost;
+  s3fsHost: S3FSHost | null;
 }

@@ -5,7 +5,8 @@ import type {
   R2BindingMountBucketOptions,
   RemoteMountBucketOptions
 } from '@repo/shared';
-import type { CurrentRuntimeIdentity } from '../current-runtime-identity';
+import { OperationInterruptedError } from '../errors';
+import type { RuntimeIdentityReader } from '../runtime';
 import type { CurrentSandboxLifetime } from '../sandbox-lifetime';
 import { InvalidMountConfigError } from './errors';
 import { MountLifecycle } from './lifecycle';
@@ -15,22 +16,36 @@ import {
   cleanupBucketMountsForStop
 } from './lifecycle-cleanup';
 import { MountOperationQueue } from './operation-queue';
-import { mountLocalSyncBucket } from './operations/local-sync-mount';
-import { mountR2EgressBucket } from './operations/r2-egress-mount';
-import { mountRemoteFuseBucket } from './operations/remote-fuse-mount';
+import {
+  mountLocalSyncBucket,
+  validateLocalSyncMount
+} from './operations/local-sync-mount';
+import {
+  mountR2EgressBucket,
+  validateR2EgressMount
+} from './operations/r2-egress-mount';
+import {
+  mountRemoteFuseBucket,
+  validateRemoteFuseMount
+} from './operations/remote-fuse-mount';
 import { unmountBucketOperation } from './operations/unmount';
 import type { MountOutboundHost } from './outbound';
 import { MountRegistry } from './registry';
-import type { MountRuntimeCall } from './runtime-call';
-import type { S3FSHost } from './s3fs';
+import {
+  callWithMountControl,
+  type MountExistingRuntimeAttempt,
+  type MountRuntimeAttempt,
+  type MountRuntimeCall
+} from './runtime-call';
 import { isR2Bucket, validateBucketName, validatePrefix } from './validation';
 
 export interface BucketMountServiceDeps {
   getEnv(): unknown;
   getEnvVars(): Record<string, string>;
-  runRuntimeCall: MountRuntimeCall;
+  runMountAttempt: MountRuntimeAttempt;
+  runExistingMountAttempt: MountExistingRuntimeAttempt;
   logger: Logger;
-  currentRuntime: CurrentRuntimeIdentity;
+  runtimeReader: RuntimeIdentityReader;
   currentLifetime: CurrentSandboxLifetime;
   getR2AccessKeyID(): string | null;
   getR2SecretAccessKey(): string | null;
@@ -41,17 +56,11 @@ export class BucketMountService {
   private readonly registry = new MountRegistry();
   private readonly operations = new MountOperationQueue();
   private readonly lifecycle: MountLifecycle;
-  private readonly s3fsHost: S3FSHost;
-
   constructor(private readonly deps: BucketMountServiceDeps) {
     this.lifecycle = new MountLifecycle(
-      deps.currentRuntime,
+      deps.runtimeReader,
       deps.currentLifetime
     );
-    this.s3fsHost = {
-      runRuntimeCall: deps.runRuntimeCall,
-      logger: deps.logger
-    };
   }
 
   /**
@@ -117,20 +126,33 @@ export class BucketMountService {
     mountPath: string,
     options: LocalMountBucketOptions
   ): Promise<void> {
-    await mountLocalSyncBucket(
+    validateLocalSyncMount(
       {
         registry: this.registry,
-        logger: this.deps.logger,
-        runRuntimeCall: this.deps.runRuntimeCall,
-        getOutboundHost: () => this.deps.getOutboundHost(),
-        s3fsHost: this.s3fsHost,
-        getEnv: () => this.deps.getEnv(),
-        lifecycle: this.lifecycle
+        getEnv: () => this.deps.getEnv()
       },
       bucket,
-      mountPath,
-      options
+      mountPath
     );
+    await this.deps.runMountAttempt('mount.local', async (lease) => {
+      const runRuntimeCall = callWithMountControl(lease.control);
+      await mountLocalSyncBucket(
+        {
+          registry: this.registry,
+          logger: this.deps.logger,
+          runRuntimeCall,
+          getOutboundHost: () => this.deps.getOutboundHost(),
+          s3fsHost: { runRuntimeCall, logger: this.deps.logger },
+          getEnv: () => this.deps.getEnv(),
+          lifecycle: this.lifecycle,
+          runtime: lease.runtime,
+          retainRuntime: lease.retain
+        },
+        bucket,
+        mountPath,
+        options
+      );
+    });
   }
 
   private async mountBucketR2Egress(
@@ -138,19 +160,29 @@ export class BucketMountService {
     mountPath: string,
     options: R2BindingMountBucketOptions
   ): Promise<void> {
-    await mountR2EgressBucket(
-      {
-        registry: this.registry,
-        logger: this.deps.logger,
-        runRuntimeCall: this.deps.runRuntimeCall,
-        getOutboundHost: () => this.deps.getOutboundHost(),
-        s3fsHost: this.s3fsHost,
-        lifecycle: this.lifecycle
-      },
+    validateR2EgressMount(
+      { registry: this.registry },
       bucket,
       mountPath,
       options
     );
+    await this.deps.runMountAttempt('mount.r2-egress', async (lease) => {
+      const runRuntimeCall = callWithMountControl(lease.control);
+      await mountR2EgressBucket(
+        {
+          registry: this.registry,
+          logger: this.deps.logger,
+          runRuntimeCall,
+          getOutboundHost: () => this.deps.getOutboundHost(),
+          s3fsHost: { runRuntimeCall, logger: this.deps.logger },
+          lifecycle: this.lifecycle,
+          runtime: lease.runtime
+        },
+        bucket,
+        mountPath,
+        options
+      );
+    });
   }
 
   private async mountBucketFuse(
@@ -158,23 +190,40 @@ export class BucketMountService {
     mountPath: string,
     options: RemoteMountBucketOptions
   ): Promise<void> {
-    await mountRemoteFuseBucket(
+    validateRemoteFuseMount(
       {
         registry: this.registry,
         logger: this.deps.logger,
-        runRuntimeCall: this.deps.runRuntimeCall,
-        getOutboundHost: () => this.deps.getOutboundHost(),
-        s3fsHost: this.s3fsHost,
         getEnv: () => this.deps.getEnv(),
         getEnvVars: () => this.deps.getEnvVars(),
         getR2AccessKeyID: () => this.deps.getR2AccessKeyID(),
-        getR2SecretAccessKey: () => this.deps.getR2SecretAccessKey(),
-        lifecycle: this.lifecycle
+        getR2SecretAccessKey: () => this.deps.getR2SecretAccessKey()
       },
       bucket,
       mountPath,
       options
     );
+    await this.deps.runMountAttempt('mount.fuse', async (lease) => {
+      const runRuntimeCall = callWithMountControl(lease.control);
+      await mountRemoteFuseBucket(
+        {
+          registry: this.registry,
+          logger: this.deps.logger,
+          runRuntimeCall,
+          getOutboundHost: () => this.deps.getOutboundHost(),
+          s3fsHost: { runRuntimeCall, logger: this.deps.logger },
+          getEnv: () => this.deps.getEnv(),
+          getEnvVars: () => this.deps.getEnvVars(),
+          getR2AccessKeyID: () => this.deps.getR2AccessKeyID(),
+          getR2SecretAccessKey: () => this.deps.getR2SecretAccessKey(),
+          lifecycle: this.lifecycle,
+          runtime: lease.runtime
+        },
+        bucket,
+        mountPath,
+        options
+      );
+    });
   }
 
   /**
@@ -190,20 +239,54 @@ export class BucketMountService {
   }
 
   private async unmountBucketUnlocked(mountPath: string): Promise<void> {
+    try {
+      const result = await this.deps.runExistingMountAttempt(
+        'mount.unmount',
+        async (lease) => {
+          const runRuntimeCall = callWithMountControl(lease.control);
+          await unmountBucketOperation(
+            {
+              registry: this.registry,
+              logger: this.deps.logger,
+              runRuntimeCall,
+              getOutboundHost: () => this.deps.getOutboundHost(),
+              s3fsHost: { runRuntimeCall, logger: this.deps.logger }
+            },
+            mountPath
+          );
+        }
+      );
+      if (result.status === 'completed') return;
+    } catch (error) {
+      if (!(error instanceof OperationInterruptedError)) throw error;
+      if (!this.registry.has(mountPath)) return;
+    }
+    await this.unmountBucketWithoutRuntime(mountPath);
+  }
+
+  private async unmountBucketWithoutRuntime(mountPath: string): Promise<void> {
     await unmountBucketOperation(
       {
         registry: this.registry,
         logger: this.deps.logger,
-        runRuntimeCall: this.deps.runRuntimeCall,
+        runRuntimeCall: async () => {
+          throw new Error('runtime is not active');
+        },
         getOutboundHost: () => this.deps.getOutboundHost(),
-        s3fsHost: this.s3fsHost
+        s3fsHost: null
       },
       mountPath
     );
   }
 
   async cleanupForDestroy(): Promise<BucketMountDestroyCleanupResult> {
-    return this.cleanupForDestroyUsing(this.deps.runRuntimeCall);
+    const result = await this.deps.runExistingMountAttempt(
+      'mount.destroyCleanup',
+      async (lease) =>
+        await this.cleanupForDestroyUsing(callWithMountControl(lease.control))
+    );
+    if (result.status === 'completed') return result.value;
+    return this.cleanupForDestroyWithoutRuntime();
   }
 
   async cleanupForDestroyUsing(
@@ -221,11 +304,21 @@ export class BucketMountService {
     });
   }
 
+  async cleanupForDestroyWithoutRuntime(): Promise<BucketMountDestroyCleanupResult> {
+    return cleanupBucketMountsForDestroy({
+      registry: this.registry,
+      logger: this.deps.logger,
+      s3fsHost: null,
+      getOutboundHost: () => this.deps.getOutboundHost(),
+      runMountOperation: (operation) => operation()
+    });
+  }
+
   async cleanupForStop(): Promise<void> {
     return cleanupBucketMountsForStop({
       registry: this.registry,
       logger: this.deps.logger,
-      s3fsHost: this.s3fsHost,
+      s3fsHost: null,
       getOutboundHost: () => this.deps.getOutboundHost(),
       runMountOperation: (operation) => this.operations.run(operation)
     });

@@ -8,6 +8,8 @@ import {
   evictDirectoryMarkerCacheForMount,
   evictSigV4ClientCacheEntry
 } from '../outbound/s3-credential-proxy-handler';
+import type { MountRuntimeLease } from '../runtime-call';
+import type { S3FSHost } from '../s3fs';
 import {
   createDisableExpectHeaderFile,
   createPasswordFile,
@@ -32,6 +34,55 @@ export interface RemoteFuseMountContext extends BucketMountOperationContext {
   getR2AccessKeyID(): string | null;
   getR2SecretAccessKey(): string | null;
   lifecycle: MountLifecycle;
+  runtime: MountRuntimeLease['runtime'];
+  s3fsHost: S3FSHost;
+}
+
+export function validateRemoteFuseMount(
+  context: Pick<
+    RemoteFuseMountContext,
+    | 'registry'
+    | 'logger'
+    | 'getEnv'
+    | 'getEnvVars'
+    | 'getR2AccessKeyID'
+    | 'getR2SecretAccessKey'
+  >,
+  bucket: string,
+  mountPath: string,
+  options: RemoteMountBucketOptions
+): {
+  provider: BucketProvider | null;
+  credentials: ReturnType<typeof detectCredentials>;
+} {
+  const prefix = options.prefix;
+  validateRemoteMountOptions(context.registry.activeMounts, bucket, mountPath, {
+    ...options,
+    prefix
+  });
+  const provider = options.provider || detectProviderFromUrl(options.endpoint);
+  context.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+    explicitProvider: options.provider,
+    prefix
+  });
+  const envObj = context.getEnv() as Record<string, unknown>;
+  const envCredentials = {
+    AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+    AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+    R2_ACCESS_KEY_ID: context.getR2AccessKeyID() || undefined,
+    R2_SECRET_ACCESS_KEY: context.getR2SecretAccessKey() || undefined
+  };
+  const credentials = detectCredentials(options, {
+    ...envCredentials,
+    ...context.getEnvVars()
+  });
+  if (options.credentialProxy === true) {
+    validateProtectedS3fsOptions(options.s3fsOptions, 'credential proxy', [
+      'ahbe_conf',
+      'use_path_request_style'
+    ]);
+  }
+  return { provider, credentials };
 }
 
 export async function mountRemoteFuseBucket(
@@ -52,43 +103,17 @@ export async function mountRemoteFuseBucket(
   let credentialProxyMountId: string | undefined;
   let mountInfo: FuseMountInfo | undefined;
   try {
-    validateRemoteMountOptions(
-      context.registry.activeMounts,
+    const validation = validateRemoteFuseMount(
+      context,
       bucket,
       mountPath,
-      {
-        ...options,
-        prefix
-      }
+      options
     );
-
     const s3fsSource = buildS3fsSource(bucket, prefix);
-    provider = options.provider || detectProviderFromUrl(options.endpoint);
-
-    context.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
-
-    const envObj = context.getEnv() as Record<string, unknown>;
-    const envCredentials = {
-      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
-      R2_ACCESS_KEY_ID: context.getR2AccessKeyID() || undefined,
-      R2_SECRET_ACCESS_KEY: context.getR2SecretAccessKey() || undefined
-    };
-    const credentials = detectCredentials(options, {
-      ...envCredentials,
-      ...context.getEnvVars()
-    });
+    provider = validation.provider;
+    const credentials = validation.credentials;
 
     credentialProxyEnabled = options.credentialProxy === true;
-    if (credentialProxyEnabled) {
-      validateProtectedS3fsOptions(options.s3fsOptions, 'credential proxy', [
-        'ahbe_conf',
-        'use_path_request_style'
-      ]);
-    }
 
     passwordFilePath = generatePasswordFilePath();
     if (credentialProxyEnabled) {
@@ -121,7 +146,7 @@ export async function mountRemoteFuseBucket(
           }
         : {})
     };
-    const lifecycle = await context.lifecycle.capture();
+    const lifecycle = await context.lifecycle.capture(context.runtime);
 
     await createPasswordFile(
       context.s3fsHost,

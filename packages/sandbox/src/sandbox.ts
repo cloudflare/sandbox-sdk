@@ -232,12 +232,7 @@ function runtimeInterrupted(operation: string): OperationInterruptedError {
 }
 
 function isRuntimeAbsent(value: unknown): value is typeof RUNTIME_ABSENT {
-  return Boolean(
-    value &&
-    typeof value === 'object' &&
-    'status' in value &&
-    value.status === 'absent'
-  );
+  return value === RUNTIME_ABSENT;
 }
 
 function staleTerminal(
@@ -1143,10 +1138,35 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.bucketMounts = new BucketMountService({
       getEnv: () => this.env,
       getEnvVars: () => this.envVars,
-      runRuntimeCall: (operation, call) =>
-        this.runLegacyRuntimeCall(operation, call),
+      runMountAttempt: (operation, call) =>
+        this.runWakingComposite(operation, (lease) =>
+          call({
+            runtime: lease.runtime,
+            control: lease.control,
+            retain: lease.retain
+          })
+        ),
+      runExistingMountAttempt: async (operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'current' },
+          operation,
+          (lease) =>
+            call({
+              runtime: lease.runtime,
+              control: lease.control,
+              retain: lease.retain
+            })
+        );
+        if (isRuntimeAbsent(result)) return { status: 'absent' };
+        return { status: 'completed', value: result };
+      },
       logger: this.logger,
-      currentRuntime: this.currentRuntime,
+      runtimeReader: {
+        get: () => this.runtimeLifecycle.get(),
+        getStored: (storage) => this.runtimeLifecycle.getStored(storage),
+        isActive: (runtime) => this.runtimeLifecycle.isActive(runtime),
+        assertActive: (runtime) => this.runtimeLifecycle.assertActive(runtime)
+      },
       currentLifetime: this.currentLifetime,
       getR2AccessKeyID: () => this.r2AccessKeyId,
       getR2SecretAccessKey: () => this.r2SecretAccessKey,
@@ -1539,7 +1559,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     mountsProcessed: number;
     mountFailures: number;
   }> {
-    if (!cleanupRuntime) return { mountsProcessed: 0, mountFailures: 0 };
+    if (!cleanupRuntime) {
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
+    }
 
     let timeoutID: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<'timeout'>((resolve) => {
@@ -1556,7 +1578,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       this.logger.warn('Failed runtime cleanup before destroy()', {
         error: error instanceof Error ? error.message : String(error)
       });
-      return { mountsProcessed: 0, mountFailures: 0 };
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
     } finally {
       if (timeoutID) clearTimeout(timeoutID);
       this.runtimeSessions.closeActive();
@@ -1570,7 +1592,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           error: error instanceof Error ? error.message : String(error)
         });
       });
-      return { mountsProcessed: 0, mountFailures: 0 };
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
     }
     return result;
   }

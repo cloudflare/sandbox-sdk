@@ -4,7 +4,10 @@ import type { ContainerControlClient } from './container-control';
 import { openRemoteSubscription } from './processes/remote-subscription';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
-import type { MountRuntimeCall } from './storage-mount/runtime-call';
+import type {
+  MountRuntimeCall,
+  MountRuntimeHold
+} from './storage-mount/runtime-call';
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
@@ -22,6 +25,7 @@ interface LocalMountSyncOptions {
   prefix: string | undefined;
   readOnly: boolean;
   runRuntimeCall: MountRuntimeCall;
+  runtimeHold?: MountRuntimeHold;
   logger: Logger;
   pollIntervalMs?: number;
   echoSuppressTtlMs?: number;
@@ -39,6 +43,7 @@ export class LocalMountSyncManager {
   private readonly prefix: string | undefined;
   private readonly readOnly: boolean;
   private readonly runRuntimeCall: MountRuntimeCall;
+  private readonly runtimeHold: MountRuntimeHold;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;
 
@@ -55,6 +60,7 @@ export class LocalMountSyncManager {
   private activeWatchLoop: Promise<void> | null = null;
   private consecutivePollFailures = 0;
   private consecutiveWatchFailures = 0;
+  private runtimeHoldReleased = false;
 
   constructor(options: LocalMountSyncOptions) {
     this.bucket = options.bucket;
@@ -67,6 +73,7 @@ export class LocalMountSyncManager {
     this.prefix = options.prefix?.replace(/^\//, '') || undefined;
     this.readOnly = options.readOnly;
     this.runRuntimeCall = options.runRuntimeCall;
+    this.runtimeHold = options.runtimeHold ?? { release: () => {} };
     this.logger = options.logger.child({ operation: 'local-mount-sync' });
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.echoSuppressTtlMs =
@@ -80,14 +87,20 @@ export class LocalMountSyncManager {
   async start(): Promise<void> {
     this.running = true;
     this.generation += 1;
+    const generation = this.generation;
 
-    await this.runRuntimeCall('mount.local.mkdir', (control) =>
-      control.files.mkdir(this.mountPath, {
-        recursive: true
-      })
+    await this.runRuntimeCallIfCurrent(
+      generation,
+      'mount.local.mkdir',
+      (control) =>
+        control.files.mkdir(this.mountPath, {
+          recursive: true
+        })
     );
 
-    await this.fullSyncR2ToContainer();
+    if (!this.isCurrentGeneration(generation)) return;
+    await this.fullSyncR2ToContainer(generation);
+    if (!this.isCurrentGeneration(generation)) return;
     this.schedulePoll();
 
     if (!this.readOnly) {
@@ -106,6 +119,21 @@ export class LocalMountSyncManager {
    * Stop all sync activity and clean up resources.
    */
   async stop(): Promise<void> {
+    this.interrupt();
+
+    const pollCycle = this.activePollCycle;
+    const watchLoop = this.activeWatchLoop;
+    await Promise.allSettled([pollCycle, watchLoop].filter(isPromise));
+
+    this.snapshot.clear();
+    this.echoSuppressSet.clear();
+
+    this.logger.info('Local mount sync stopped', {
+      mountPath: this.mountPath
+    });
+  }
+
+  interrupt(): void {
     this.running = false;
 
     if (this.pollTimer) {
@@ -123,36 +151,38 @@ export class LocalMountSyncManager {
       this.watchAbortController = null;
     }
 
-    const pollCycle = this.activePollCycle;
-    const watchLoop = this.activeWatchLoop;
-    await Promise.allSettled([pollCycle, watchLoop].filter(isPromise));
-
-    this.snapshot.clear();
-    this.echoSuppressSet.clear();
-
-    this.logger.info('Local mount sync stopped', {
-      mountPath: this.mountPath
-    });
+    if (!this.runtimeHoldReleased) {
+      this.runtimeHoldReleased = true;
+      this.runtimeHold.release();
+    }
   }
 
-  private async fullSyncR2ToContainer(): Promise<void> {
+  private async fullSyncR2ToContainer(generation: number): Promise<void> {
     const objects = await this.listAllR2Objects();
+    if (!this.isCurrentGeneration(generation)) return;
     const newSnapshot = new Map<string, R2ObjectSnapshot>();
 
     // No echo suppression needed: this runs before startContainerWatch() in start().
     // Process in batches to limit concurrent HTTP requests
     for (let i = 0; i < objects.length; i += SYNC_CONCURRENCY) {
+      if (!this.isCurrentGeneration(generation)) return;
       const batch = objects.slice(i, i + SYNC_CONCURRENCY);
       await Promise.all(
         batch.map(async (obj) => {
+          if (!this.isCurrentGeneration(generation)) return;
           const containerPath = this.r2KeyToContainerPath(obj.key);
           newSnapshot.set(obj.key, { etag: obj.etag, size: obj.size });
-          await this.ensureParentDir(containerPath);
-          await this.transferR2ObjectToContainer(obj.key, containerPath);
+          await this.ensureParentDir(containerPath, generation);
+          await this.transferR2ObjectToContainer(
+            obj.key,
+            containerPath,
+            generation
+          );
         })
       );
     }
 
+    if (!this.isCurrentGeneration(generation)) return;
     this.snapshot = newSnapshot;
     this.logger.debug('Initial R2 -> Container sync complete', {
       objectCount: objects.length
@@ -445,7 +475,9 @@ export class LocalMountSyncManager {
 
               case 'delete':
               case 'move_from': {
+                if (!this.isCurrentGeneration(generation)) break;
                 await this.bucket.delete(r2Key);
+                if (!this.isCurrentGeneration(generation)) break;
                 this.snapshot.delete(r2Key);
                 this.logger.debug('Container -> R2: deleted object', {
                   path: containerPath,
@@ -482,8 +514,10 @@ export class LocalMountSyncManager {
           encoding: 'base64'
         })
     );
+    if (!this.isCurrentOrUnscoped(generation)) return;
     const bytes = base64ToUint8Array(result.content);
     await this.bucket.put(r2Key, bytes);
+    if (!this.isCurrentOrUnscoped(generation)) return;
 
     const head = await this.bucket.head(r2Key);
     if (head) {
@@ -505,6 +539,10 @@ export class LocalMountSyncManager {
       }
       return await call(control);
     });
+  }
+
+  private isCurrentOrUnscoped(generation: number | undefined): boolean {
+    return generation === undefined || this.isCurrentGeneration(generation);
   }
 
   private isCurrentGeneration(generation: number): boolean {

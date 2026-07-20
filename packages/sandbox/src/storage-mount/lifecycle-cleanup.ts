@@ -28,7 +28,7 @@ export interface BucketMountDestroyCleanupResult {
 export interface BucketMountLifecycleCleanupHost {
   registry: MountRegistry;
   logger: Logger;
-  s3fsHost: S3FSHost;
+  s3fsHost: S3FSHost | null;
   getOutboundHost(): MountOutboundHost;
   runMountOperation<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -49,7 +49,11 @@ export async function cleanupBucketMountsForDestroy(
       mountsProcessed++;
       if (mountInfo.mountType === 'local-sync') {
         try {
-          await mountInfo.syncManager.stop();
+          if (host.s3fsHost) {
+            await mountInfo.syncManager.stop();
+          } else {
+            mountInfo.syncManager.interrupt();
+          }
           mountInfo.mounted = false;
           cleanedMountPaths.push(mountPath);
           cleanedMountIds.push(mountInfo.mountId);
@@ -70,33 +74,38 @@ export async function cleanupBucketMountsForDestroy(
         }
 
         let supportFilesSafeToDelete = false;
-        try {
-          supportFilesSafeToDelete = await unmountTrackedFuseMount(
-            host.s3fsHost,
-            mountPath,
-            mountInfo
-          );
-        } catch (error) {
-          mountFailures++;
-          host.logger.warn(
-            `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-        if (supportFilesSafeToDelete) {
-          await deletePasswordFile(host.s3fsHost, mountInfo.passwordFilePath);
-          if (mountInfo.additionalHeaderFilePath) {
-            await deleteAdditionalHeaderFile(
+        if (host.s3fsHost) {
+          try {
+            supportFilesSafeToDelete = await unmountTrackedFuseMount(
               host.s3fsHost,
-              mountInfo.additionalHeaderFilePath
+              mountPath,
+              mountInfo
+            );
+          } catch (error) {
+            mountFailures++;
+            host.logger.warn(
+              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${error instanceof Error ? error.message : String(error)}`
             );
           }
-          cleanedMountPaths.push(mountPath);
-          cleanedMountIds.push(mountInfo.mountId);
-
-          if (mountInfo.mountType === 'fuse' && mountInfo.credentialProxy) {
-            evictSigV4ClientCacheEntry(mountInfo.mountId);
-            evictDirectoryMarkerCacheForMount(mountInfo.mountId);
+          if (supportFilesSafeToDelete) {
+            await deletePasswordFile(host.s3fsHost, mountInfo.passwordFilePath);
+            if (mountInfo.additionalHeaderFilePath) {
+              await deleteAdditionalHeaderFile(
+                host.s3fsHost,
+                mountInfo.additionalHeaderFilePath
+              );
+            }
           }
+        } else if (mountInfo.mounted) {
+          mountFailures++;
+        }
+
+        cleanedMountPaths.push(mountPath);
+        cleanedMountIds.push(mountInfo.mountId);
+
+        if (mountInfo.mountType === 'fuse' && mountInfo.credentialProxy) {
+          evictSigV4ClientCacheEntry(mountInfo.mountId);
+          evictDirectoryMarkerCacheForMount(mountInfo.mountId);
         }
       }
     }
@@ -132,10 +141,8 @@ export async function cleanupBucketMountsForDestroy(
       }
     }
 
-    if (mountFailures === 0) {
-      for (const mountPath of cleanedMountPaths) {
-        host.registry.delete(mountPath);
-      }
+    for (const mountPath of cleanedMountPaths) {
+      host.registry.delete(mountPath);
     }
 
     return { mountsProcessed, mountFailures };
@@ -150,7 +157,7 @@ export async function cleanupBucketMountsForStop(
     let hadCredentialProxyMount = false;
     for (const [, mountInfo] of host.registry) {
       if (mountInfo.mountType === 'local-sync') {
-        await mountInfo.syncManager.stop().catch(() => {});
+        mountInfo.syncManager.interrupt();
       } else if (mountInfo.mountType === 'r2-egress') {
         hadR2EgressMount = true;
       } else if (mountInfo.mountType === 'fuse' && mountInfo.credentialProxy) {
