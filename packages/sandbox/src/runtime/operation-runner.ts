@@ -1,9 +1,9 @@
 import { ErrorCode } from '@repo/shared';
 import { getHttpStatus } from '@repo/shared/errors';
 import type { ContainerControlClient } from '../container-control/client';
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import { OperationInterruptedError } from '../errors';
 import type { ResourceActivityGate } from '../resource-activity-gate';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import type {
   RuntimeEstablishOptions,
   SandboxRuntimeLifecycle

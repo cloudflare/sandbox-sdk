@@ -442,107 +442,7 @@ describe('ContainerControlConnection', () => {
     });
   });
 
-  describe('WebSocket upgrade retry', () => {
-    /**
-     * Build a fake successful upgrade Response. Mirrors what
-     * Cloudflare's Container base class returns from `stub.fetch()`:
-     * a Response with `status === 101` and a non-standard `webSocket`
-     * property carrying the WebSocket instance.
-     */
-    function makeUpgradeResponse(): Response {
-      const target = new EventTarget();
-      const ws = Object.assign(target, {
-        send: () => {},
-        close: () => {},
-        accept: () => {}
-      }) as unknown as WebSocket;
-      // The workerd test runtime rejects new Response(null, { status: 101 }),
-      // so synthesize a Response-shaped object exposing only the fields
-      // ContainerControlConnection actually reads (status, statusText,
-      // and the non-standard `webSocket` accessor).
-      return {
-        status: 101,
-        statusText: 'Switching Protocols',
-        webSocket: ws
-      } as unknown as Response;
-    }
-
-    function makeUpgradeFailure(status: number): Response {
-      return new Response('Container upgrade unavailable.', {
-        status,
-        statusText: 'Service Unavailable'
-      });
-    }
-
-    it('retries retryable upgrade responses until success', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(makeUpgradeFailure(500))
-          .mockResolvedValueOnce(makeUpgradeFailure(500))
-          .mockResolvedValueOnce(makeUpgradeResponse());
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          retryTimeoutMs: 60_000
-        });
-
-        const connectPromise = conn.connect();
-        // First attempt fires synchronously.
-        await vi.advanceTimersByTimeAsync(0);
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-
-        // Backoff is 3s for attempt 1, 6s for attempt 2.
-        await vi.advanceTimersByTimeAsync(3_000);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-
-        await vi.advanceTimersByTimeAsync(6_000);
-        await connectPromise;
-
-        expect(fetchMock).toHaveBeenCalledTimes(3);
-        expect(conn.isConnected()).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('surfaces container unavailability once upgrade retry budget is exhausted', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(makeUpgradeFailure(500));
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          // 20s budget. Walk-through with MIN_TIME_FOR_RETRY_MS = 15s and
-          // 3s/6s/12s exponential backoff:
-          //   attempt 1 at t=0   (remaining 20s, retry after 3s)
-          //   attempt 2 at t=3s  (remaining 17s, retry after 6s)
-          //   attempt 3 at t=9s  (remaining 11s < 15s, give up)
-          retryTimeoutMs: 20_000
-        });
-
-        const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toMatchObject({
-          name: 'ContainerUnavailableError',
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'rpc_upgrade_failed', retryable: true }
-        });
-
-        // Run all timers — connect() must settle even with fake timers.
-        await vi.advanceTimersByTimeAsync(60_000);
-        await assertion;
-
-        expect(conn.isConnected()).toBe(false);
-        // Three attempts before remaining < MIN_TIME_FOR_RETRY_MS.
-        expect(fetchMock).toHaveBeenCalledTimes(3);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
+  describe('WebSocket upgrade errors', () => {
     function makeContainerUnavailableResponse(): Response {
       return new Response(
         JSON.stringify({
@@ -566,8 +466,7 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(makeContainerUnavailableResponse());
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
       let thrown: unknown;
@@ -603,8 +502,7 @@ describe('ContainerControlConnection', () => {
         );
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
       await expect(conn.connect()).rejects.toMatchObject({
@@ -621,8 +519,7 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(makeContainerUnavailableResponse());
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
       const connecting = conn.connect().catch(() => undefined);
@@ -636,6 +533,7 @@ describe('ContainerControlConnection', () => {
         context: { reason: 'container_starting', retryable: true }
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      await connecting;
     });
 
     it('does not retry terminal upgrade failures', async () => {
@@ -644,92 +542,13 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(new Response('Not retryable', { status: 404 }));
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 120_000
+        stub: { fetch: fetchMock }
       });
 
       await expect(conn.connect()).rejects.toThrow(
         'WebSocket upgrade failed: 404'
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('disables retries when retryTimeoutMs is set to 0', async () => {
-      const fetchMock = vi
-        .fn<(req: Request) => Promise<Response>>()
-        .mockResolvedValue(makeUpgradeFailure(500));
-
-      const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
-      });
-
-      await expect(conn.connect()).rejects.toMatchObject({
-        name: 'ContainerUnavailableError',
-        code: ErrorCode.CONTAINER_UNAVAILABLE,
-        context: { reason: 'rpc_upgrade_failed', retryable: true }
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('uses a default retry budget when retryTimeoutMs is omitted', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(makeUpgradeFailure(503))
-          .mockResolvedValueOnce(makeUpgradeResponse());
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock }
-        });
-
-        const connectPromise = conn.connect();
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(3_000);
-        await connectPromise;
-
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(conn.isConnected()).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('passes a fresh, non-aborted Request to each retry attempt', async () => {
-      vi.useFakeTimers();
-      try {
-        const seenRequests: Request[] = [];
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockImplementationOnce(async (req) => {
-            seenRequests.push(req);
-            return makeUpgradeFailure(503);
-          })
-          .mockImplementationOnce(async (req) => {
-            seenRequests.push(req);
-            if (req.signal.aborted) {
-              throw new Error('retry reused an aborted signal');
-            }
-            return makeUpgradeResponse();
-          });
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          retryTimeoutMs: 60_000
-        });
-
-        const connectPromise = conn.connect();
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(3_000);
-        await connectPromise;
-
-        expect(seenRequests).toHaveLength(2);
-        expect(seenRequests[0]).not.toBe(seenRequests[1]);
-        expect(seenRequests[1].signal.aborted).toBe(false);
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 

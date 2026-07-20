@@ -1,13 +1,13 @@
 import type { RuntimeMetadata } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../../src/container-control/client';
-import type { RuntimeIdentityID } from '../../src/current-runtime-identity';
 import {
   RuntimeIdentity,
   type RuntimeIncarnationID,
   type RuntimeRecord,
   SandboxRuntimeLifecycle
 } from '../../src/runtime';
+import type { RuntimeIdentityID } from '../../src/runtime/types';
 
 type Stored = RuntimeRecord | { id: RuntimeIdentityID } | undefined;
 type FailurePoint =

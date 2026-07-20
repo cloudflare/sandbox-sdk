@@ -2,10 +2,10 @@ import type { SandboxControlCallback, TunnelRunExitEvent } from '@repo/shared';
 import type { RpcTarget } from 'capnweb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerControlConnection } from '../../src/container-control/connection';
-import type { RuntimeIdentityID } from '../../src/current-runtime-identity';
 import { RuntimeControlProtocolError } from '../../src/errors';
 import type { RuntimeIncarnationID } from '../../src/runtime';
 import { RuntimeIdentity, RuntimeSessionManager } from '../../src/runtime';
+import type { RuntimeIdentityID } from '../../src/runtime/types';
 import { SandboxControlCallbackImpl } from '../../src/tunnels/sandbox-control-callback';
 
 const runtime = (id: string, incarnation: string) =>

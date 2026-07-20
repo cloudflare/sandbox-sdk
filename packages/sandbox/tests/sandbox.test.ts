@@ -3,7 +3,6 @@ import type * as SharedRoot from '@repo/shared';
 import type { ISandbox, ProcessLogEvent, ProcessStatus } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
-import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
   ContainerUnavailableError,
   ErrorCode,
@@ -13,6 +12,7 @@ import {
   RuntimeControlProtocolError
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
+import { RuntimeIdentityInactiveError } from '../src/runtime/types';
 import { connect, getSandbox, Sandbox } from '../src/sandbox';
 import {
   asSandboxWithClient,
@@ -226,7 +226,8 @@ type PreviewRuntimeRunnerProbe = {
     call: (lease: {
       runtime: unknown;
       retain(): { release(): void };
-    }) => Promise<T>
+    }) => Promise<T>,
+    options?: { signal?: AbortSignal }
   ): Promise<T>;
 };
 
@@ -417,7 +418,9 @@ describe('Sandbox durable object behavior', () => {
       waitUntil: vi.fn(),
       container: {
         running: true,
-        getTcpPort: vi.fn(() => ({ fetch: vi.fn() })),
+        getTcpPort: vi.fn(() => ({
+          fetch: vi.fn(async () => new Response('Mock TCP port fetch'))
+        })),
         start: vi.fn(),
         exec: vi.fn().mockImplementation(async () => {
           return {
@@ -467,12 +470,6 @@ describe('Sandbox durable object behavior', () => {
     });
     const sandboxWithClient = asSandboxWithClient(sandbox);
     sandboxWithClient.client = createMockControlClient();
-    Object.assign(sandbox, {
-      runLegacyRuntimeCall: async (
-        _operation: string,
-        call: (control: typeof sandboxWithClient.client) => Promise<unknown>
-      ) => call(sandboxWithClient.client)
-    });
     controlConnectionMockState.client = sandboxWithClient.client;
     controlConnectionMockState.activated = false;
 
@@ -611,11 +608,6 @@ describe('Sandbox durable object behavior', () => {
           };
         }
         return null;
-      });
-      Object.assign(sandbox, {
-        ensureContainerRunning: vi.fn(async () => {
-          order.push('wake');
-        })
       });
       vi.spyOn(
         asSandboxWithClient(sandbox).client.processes,
@@ -1097,12 +1089,8 @@ describe('Sandbox durable object behavior', () => {
           headers: { 'x-test': 'body' }
         }
       );
-      const parentContainerFetch = vi
-        .spyOn(
-          Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-          'containerFetch'
-        )
-        .mockResolvedValueOnce(response);
+      const tcpFetch = vi.fn(async () => response);
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
       const forwarded = await sandbox.containerFetch(
         new Request('https://example.com/data'),
@@ -1120,16 +1108,13 @@ describe('Sandbox durable object behavior', () => {
       expect(forwarded.status).toBe(202);
       expect(forwarded.statusText).toBe('Accepted');
       expect(forwarded.headers.get('x-test')).toBe('body');
-      expect(parentContainerFetch).toHaveBeenCalledOnce();
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
     });
 
     it('releases direct HTTP responses without bodies immediately', async () => {
-      const parentContainerFetch = vi
-        .spyOn(
-          Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-          'containerFetch'
-        )
-        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      const tcpFetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
       const forwarded = await sandbox.containerFetch(
         new Request('https://example.com/empty'),
@@ -1139,7 +1124,8 @@ describe('Sandbox durable object behavior', () => {
 
       expect(forwarded.status).toBe(204);
       expect(forwarded.body).toBeNull();
-      expect(parentContainerFetch).toHaveBeenCalledOnce();
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
     });
 
     it('propagates caller abort during direct HTTP port readiness', async () => {
@@ -1178,6 +1164,33 @@ describe('Sandbox durable object behavior', () => {
       await expect(forwarded).rejects.toBe(reason);
     });
 
+    it('passes caller abort into direct HTTP runtime establishment', async () => {
+      const controller = new AbortController();
+      const reason = new DOMException('caller stopped', 'AbortError');
+      const runWaking = vi
+        .spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking')
+        .mockImplementationOnce(async (_operation, _call, options) => {
+          expect(options?.signal).toBe(controller.signal);
+          controller.abort(reason);
+          throw reason;
+        });
+
+      await expect(
+        sandbox.containerFetch(
+          new Request('https://example.com/data', {
+            signal: controller.signal
+          }),
+          8080
+        )
+      ).rejects.toBe(reason);
+
+      expect(runWaking).toHaveBeenCalledWith(
+        'container.fetch',
+        expect.any(Function),
+        { signal: controller.signal }
+      );
+    });
+
     it('interrupts direct HTTP forwarding during port readiness without physical forwarding', async () => {
       const releaseReadiness = deferred<void>();
       vi.mocked(
@@ -1196,10 +1209,8 @@ describe('Sandbox durable object behavior', () => {
         cancel: vi.fn(async () => undefined),
         [Symbol.dispose]: vi.fn()
       });
-      const parentContainerFetch = vi.spyOn(
-        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-        'containerFetch'
-      );
+      const tcpFetch = vi.fn();
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
       const forwarded = sandbox.containerFetch(
         new Request('https://example.com/data'),
@@ -1217,27 +1228,47 @@ describe('Sandbox durable object behavior', () => {
       releaseReadiness.resolve();
 
       await forwardExpectation;
-      expect(parentContainerFetch).not.toHaveBeenCalled();
+      expect(tcpFetch).not.toHaveBeenCalled();
     });
   });
 
   describe('fetch() override - WebSocket detection', () => {
-    let superFetchSpy: any;
+    let tcpFetch: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox');
-
-      // Spy on Container.prototype.fetch to verify WebSocket routing
-      superFetchSpy = vi
-        .spyOn(Container.prototype, 'fetch')
-        .mockResolvedValue(new Response('WebSocket response'));
+      tcpFetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
     });
 
-    afterEach(() => {
-      superFetchSpy?.mockRestore();
+    it('passes caller abort into WebSocket runtime establishment', async () => {
+      const controller = new AbortController();
+      const reason = new DOMException('caller stopped', 'AbortError');
+      const runWaking = vi
+        .spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking')
+        .mockImplementationOnce(async (_operation, _call, options) => {
+          expect(options?.signal).toBe(controller.signal);
+          controller.abort(reason);
+          throw reason;
+        });
+      const request = new Request('https://example.com/ws', {
+        signal: controller.signal,
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await expect(sandbox.fetch(request)).rejects.toBe(reason);
+
+      expect(runWaking).toHaveBeenCalledWith(
+        'container.websocket',
+        expect.any(Function),
+        { signal: controller.signal }
+      );
     });
 
-    it('should detect WebSocket upgrade header and route to super.fetch', async () => {
+    it('should detect WebSocket upgrade header and route through admitted TCP port', async () => {
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -1245,41 +1276,40 @@ describe('Sandbox durable object behavior', () => {
         }
       });
 
+      tcpFetch.mockResolvedValueOnce(new Response('WebSocket response'));
+
       const response = await sandbox.fetch(request);
 
-      // Should route through super.fetch() for WebSocket
-      expect(superFetchSpy).toHaveBeenCalledTimes(1);
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(3000);
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
       expect(await response.text()).toBe('WebSocket response');
     });
 
-    it('should route non-WebSocket requests through containerFetch', async () => {
-      // GET request
-      const getRequest = new Request('https://example.com/api/data');
-      await sandbox.fetch(getRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
+    it.each([
+      ['GET', new Request('https://example.com/api/data')],
+      [
+        'POST',
+        new Request('https://example.com/api/data', {
+          method: 'POST',
+          body: JSON.stringify({ data: 'test' }),
+          headers: { 'Content-Type': 'application/json' }
+        })
+      ],
+      [
+        'SSE',
+        new Request('https://example.com/events', {
+          headers: { Accept: 'text/event-stream' }
+        })
+      ]
+    ])(
+      'should route non-WebSocket %s requests through containerFetch',
+      async (_kind, request) => {
+        await (await sandbox.fetch(request)).text();
+        expect(tcpFetch).toHaveBeenCalledTimes(1);
+      }
+    );
 
-      vi.clearAllMocks();
-
-      // POST request
-      const postRequest = new Request('https://example.com/api/data', {
-        method: 'POST',
-        body: JSON.stringify({ data: 'test' }),
-        headers: { 'Content-Type': 'application/json' }
-      });
-      await sandbox.fetch(postRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
-
-      vi.clearAllMocks();
-
-      // SSE request (should not be detected as WebSocket)
-      const sseRequest = new Request('https://example.com/events', {
-        headers: { Accept: 'text/event-stream' }
-      });
-      await sandbox.fetch(sseRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
-    });
-
-    it('should preserve WebSocket request unchanged when calling super.fetch()', async () => {
+    it('should preserve WebSocket request unchanged when forwarding through admitted TCP port', async () => {
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -1291,8 +1321,8 @@ describe('Sandbox durable object behavior', () => {
 
       await sandbox.fetch(request);
 
-      expect(superFetchSpy).toHaveBeenCalledTimes(1);
-      const passedRequest = superFetchSpy.mock.calls[0][0] as Request;
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+      const passedRequest = tcpFetch.mock.calls[0][0] as Request;
       expect(passedRequest.headers.get('Upgrade')).toBe('websocket');
       expect(passedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(passedRequest.headers.get('Sec-WebSocket-Key')).toBe(
@@ -1305,7 +1335,7 @@ describe('Sandbox durable object behavior', () => {
       const socket = new FakeSocket();
       const response = new Response('WebSocket response');
       Object.defineProperty(response, 'webSocket', { value: socket });
-      superFetchSpy.mockResolvedValueOnce(response);
+      tcpFetch.mockResolvedValueOnce(response);
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -1326,7 +1356,7 @@ describe('Sandbox durable object behavior', () => {
       const response = new Response('WebSocket response');
       Object.defineProperty(response, 'webSocket', { value: socket });
       const releaseFetch = deferred<Response>();
-      superFetchSpy.mockImplementationOnce(() => releaseFetch.promise);
+      tcpFetch.mockImplementationOnce(() => releaseFetch.promise);
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -1338,7 +1368,7 @@ describe('Sandbox durable object behavior', () => {
       const forwardExpectation = expect(forwarded).rejects.toMatchObject({
         code: ErrorCode.OPERATION_INTERRUPTED
       });
-      await vi.waitFor(() => expect(superFetchSpy).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(tcpFetch).toHaveBeenCalledOnce());
       await sandbox.stop();
       releaseFetch.resolve(response);
 
@@ -1730,6 +1760,15 @@ describe('Sandbox durable object behavior', () => {
           Connection: 'Upgrade'
         }
       });
+      mockCtx.container.getTcpPort = vi.fn(() => ({
+        fetch: vi.fn(
+          async () =>
+            new Response('WebSocket Upgraded', {
+              status: 200,
+              headers: { 'X-WebSocket-Upgraded': 'true' }
+            })
+        )
+      }));
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
       const response = await sandbox.wsConnect(request, 8080);
@@ -2115,17 +2154,6 @@ describe('Sandbox durable object behavior', () => {
         'super.stop:end',
         'super.destroy'
       ]);
-    });
-
-    it('destroy() does not use the transitional waking runtime bridge for cleanup', async () => {
-      const runLegacyRuntimeCall = vi.fn(async () => undefined);
-      Object.assign(sandbox, { runLegacyRuntimeCall });
-      vi.spyOn(Container.prototype, 'destroy').mockResolvedValue(undefined);
-
-      await sandbox.destroy();
-
-      expect(runLegacyRuntimeCall).not.toHaveBeenCalled();
-      expect(mockCtx.container.start).not.toHaveBeenCalled();
     });
 
     it('failed physical destroy leaves runtime authority invalidated', async () => {

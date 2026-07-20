@@ -19,8 +19,8 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
@@ -366,11 +366,13 @@ describe('tunnel service > get', () => {
       .fn()
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ id: 'runtime-after-rpc' });
-    const markStarted = vi.fn(async () => ({ id: 'runtime-created-early' }));
+    const unexpectedPublisher = vi.fn(async () => ({
+      id: 'runtime-created-early'
+    }));
     const { client, storage, handler } = makeHandler({
       currentRuntime: {
         get: getRuntime,
-        markStarted,
+        unexpectedPublisher,
         assertActive: vi.fn(async () => {})
       },
       currentLifetime: makeFences().currentLifetime
@@ -382,7 +384,7 @@ describe('tunnel service > get', () => {
     await handler.get(8080);
 
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
-    expect(markStarted).not.toHaveBeenCalled();
+    expect(unexpectedPublisher).not.toHaveBeenCalled();
     const meta =
       await storage.get<Record<string, Record<string, unknown>>>(
         'tunnels:meta'

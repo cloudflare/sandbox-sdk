@@ -57,8 +57,7 @@ export class RuntimeBootstrapProbe implements RuntimeBootstrapProbeContract {
 
   async probe(): Promise<RuntimeMetadata> {
     const connection = new ContainerControlConnection({
-      stub: this.options.getTcpPort(3000),
-      retryTimeoutMs: 0
+      stub: this.options.getTcpPort(3000)
     });
     try {
       await connection.connect();

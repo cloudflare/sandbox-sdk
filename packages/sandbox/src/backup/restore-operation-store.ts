@@ -1,5 +1,5 @@
-import type { RuntimeIdentityID } from '../current-runtime-identity';
 import type { RuntimeIncarnationID } from '../runtime';
+import type { RuntimeIdentityID } from '../runtime/types';
 import type { SandboxLifetimeID } from '../sandbox-lifetime';
 
 export type BackupRestoreOperationStatus =

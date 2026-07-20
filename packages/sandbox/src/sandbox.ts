@@ -44,7 +44,6 @@ import {
   BackupService
 } from './backup/backup-service';
 import type { ContainerControlClient } from './container-control';
-import { CurrentRuntimeIdentity } from './current-runtime-identity';
 import type { ErrorResponse } from './errors';
 import {
   ContainerUnavailableError,
@@ -950,7 +949,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private bucketMounts: BucketMountService;
-  private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
   private previewService: PreviewService;
@@ -1042,10 +1040,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
   }
 
-  private getControlPortStub(port: number) {
+  private getRuntimePortStub(port: number) {
     const stub = this.ctx.container?.getTcpPort?.(port);
-    if (!stub)
-      throw new Error('Container runtime control port is not available');
+    if (!stub) throw new Error('Container runtime port is not available');
     return stub;
   }
 
@@ -1068,11 +1065,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       sandboxId: this.ctx.id.toString()
     });
 
-    this.currentRuntime = new CurrentRuntimeIdentity(
-      this.ctx.storage,
-      () => this.getState(),
-      () => this.ctx.container?.running === true
-    );
     this.currentLifetime = new CurrentSandboxLifetime(this.ctx.storage);
     this.namedTunnelConfigResolver = new NamedTunnelConfigResolver({
       getEnv: () => this.env
@@ -1116,7 +1108,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       () => this.performRuntimeStop(() => super.onActivityExpired())
     );
     this.runtimeSessions = new RuntimeSessionManager({
-      getTcpPort: (port) => this.getControlPortStub(port),
+      getTcpPort: (port) => this.getRuntimePortStub(port),
       logger: this.logger,
       callbackBinder: (runtime, isSessionCurrent) =>
         this.controlCallback.bindRuntime(runtime, isSessionCurrent)
@@ -1139,7 +1131,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       waitForControlPort: async () => undefined,
       stopControlPort: async () => undefined,
       probe: new RuntimeBootstrapProbe({
-        getTcpPort: (port) => this.getControlPortStub(port)
+        getTcpPort: (port) => this.getRuntimePortStub(port)
       }),
       sessions: this.runtimeSessions,
       observeVersionCompatibility: async (_client, _runtime) => undefined,
@@ -1535,7 +1527,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       // the container.
       await this.currentLifetime.rotate();
       await this.previewService.clearPreviewState();
-      await this.currentRuntime.clear();
 
       ({ mountsProcessed, mountFailures } =
         await this.runBoundedDestroyRuntimeCleanup(cleanupRuntime));
@@ -1564,7 +1555,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     physicalStop: () => Promise<void>
   ): Promise<void> {
     await this.runtimeLifecycle.invalidate();
-    await this.currentRuntime.clear();
     await this.previewService.clearActivePreviewPorts();
     await physicalStop();
   }
@@ -1768,7 +1758,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.logger.debug('Sandbox stopped');
 
     await this.runtimeLifecycle.invalidate();
-    await this.currentRuntime.clear();
     await this.previewService.clearActivePreviewPorts();
 
     try {
@@ -1825,11 +1814,12 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           }
           physicalForwardStarted = true;
           return retainedResponse(
-            await super.containerFetch(requestOrUrl, portOrInit, portParam),
+            await this.getRuntimePortStub(port).fetch(request),
             lease,
             'container.fetch.body'
           );
-        }
+        },
+        { signal: request.signal }
       );
     } catch (error) {
       if (
@@ -2187,7 +2177,8 @@ export class Sandbox<Env = unknown> extends Container<Env> {
               throw runtimeInterrupted('container.websocket');
             }
             try {
-              const response = await super.fetch(request);
+              const response =
+                await this.getRuntimePortStub(port).fetch(request);
               retained = retainWebSocketResponse(response, hold.release);
               if (interrupted) {
                 retained.interrupt();
@@ -2198,7 +2189,8 @@ export class Sandbox<Env = unknown> extends Container<Env> {
               hold.release();
               throw error;
             }
-          }
+          },
+          { signal: request.signal }
         );
       } catch (error) {
         requestLogger.error(
@@ -2377,7 +2369,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
             throw staleTerminal('', 'terminal.connect');
           }
           try {
-            const response = await super.fetch(request);
+            const response = await this.getRuntimePortStub(3000).fetch(request);
             retained = retainWebSocketResponse(response, hold.release);
             if (interrupted) {
               retained.interrupt();

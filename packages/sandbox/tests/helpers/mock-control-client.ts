@@ -117,8 +117,7 @@ export function createMockControlClient(): ContainerControlClient {
       }))
     },
     utils: {
-      ping: vi.fn(),
-      getVersion: vi.fn()
+      ping: vi.fn()
     },
     workspace: {
       createArchive: vi.fn(async () => ({ archivePath: '/tmp/archive.tar' })),

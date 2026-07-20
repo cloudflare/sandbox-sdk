@@ -1,6 +1,6 @@
 import type { NamedTunnelInfo, TunnelInfo, TunnelOptions } from '@repo/shared';
-import type { RuntimeIdentityID } from '../current-runtime-identity';
 import type { RuntimeIncarnationID } from '../runtime';
+import type { RuntimeIdentityID } from '../runtime/types';
 import type { SandboxLifetimeID } from '../sandbox-lifetime';
 
 /** DO storage key for the `port → TunnelInfo` map. */

@@ -6,8 +6,8 @@ import {
   type ContainerFetchStub
 } from '../container-control/connection';
 import { translateRPCError } from '../container-control/rpc-error';
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import { RuntimeControlProtocolError } from '../errors';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import { validateRuntimeMetadata } from './bootstrap-probe';
 import { interrupted } from './operation-runner';
 import type {
@@ -132,7 +132,6 @@ export class RuntimeSessionManager implements RuntimeSessionManagerContract {
     let connection: ContainerControlConnection;
     connection = new ContainerControlConnection({
       stub: this.options.getTcpPort(3000),
-      retryTimeoutMs: 0,
       logger: this.options.logger,
       localMain: this.bindLocalMain(runtime, generation),
       onClose: () => {
@@ -164,7 +163,6 @@ export class RuntimeSessionManager implements RuntimeSessionManagerContract {
 
       const client = new ContainerControlClient({
         stub: this.options.getTcpPort(3000),
-        retryTimeoutMs: 0,
         logger: this.options.logger,
         translateTransportErrorsAsInterruptions: false,
         connection,

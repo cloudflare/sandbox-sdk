@@ -1,9 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { ContainerControlClient } from '../../src/container-control/client';
-import {
-  type RuntimeIdentityID,
-  RuntimeIdentityInactiveError
-} from '../../src/current-runtime-identity';
 import { ErrorCode, OperationInterruptedError } from '../../src/errors';
 import { ResourceActivityGate } from '../../src/resource-activity-gate';
 import type {
@@ -12,6 +8,10 @@ import type {
 } from '../../src/runtime';
 import { RuntimeIdentity, RuntimeOperationRunner } from '../../src/runtime';
 import type { RuntimeSession } from '../../src/runtime/types';
+import {
+  type RuntimeIdentityID,
+  RuntimeIdentityInactiveError
+} from '../../src/runtime/types';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

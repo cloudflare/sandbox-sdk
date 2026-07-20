@@ -12,7 +12,6 @@ import type {
   TunnelOptions
 } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import {
   OperationInterruptedError,
   RuntimeControlProtocolError
@@ -22,6 +21,7 @@ import {
   type RuntimeLease,
   type RuntimeRecordStorage
 } from '../runtime';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import type {
   CurrentSandboxLifetime,
   SandboxLifetime

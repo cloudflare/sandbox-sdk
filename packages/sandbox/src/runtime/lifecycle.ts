@@ -3,7 +3,7 @@ import type { ContainerControlClient } from '../container-control/client';
 import {
   type RuntimeIdentityID,
   RuntimeIdentityInactiveError
-} from '../current-runtime-identity';
+} from '../runtime/types';
 import { validateRuntimeMetadata } from './bootstrap-probe';
 import type { RuntimeBootstrapProbe, RuntimeSessionManager } from './types';
 import {

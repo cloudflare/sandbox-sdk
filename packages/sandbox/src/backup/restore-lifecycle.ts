@@ -1,10 +1,10 @@
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import {
   ErrorCode,
   OperationInterruptedError,
   RPCTransportError
 } from '../errors';
 import type { RuntimeIdentity, RuntimeIdentityReader } from '../runtime';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import type {
   CurrentSandboxLifetime,
   SandboxLifetime

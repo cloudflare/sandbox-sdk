@@ -1,5 +1,4 @@
 import { type Logger, logCanonicalEvent } from '@repo/shared';
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import type { ErrorResponse } from '../errors';
 import {
   CustomDomainRequiredError,
@@ -9,6 +8,7 @@ import {
 } from '../errors';
 import type { RuntimeLease } from '../runtime';
 import type { RuntimeIdentity } from '../runtime/types';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import { SandboxSecurityError, validatePort } from '../security';
 import {
   forwardPreviewRequest,

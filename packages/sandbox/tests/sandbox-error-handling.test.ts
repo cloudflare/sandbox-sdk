@@ -205,7 +205,10 @@ describe('Sandbox.containerFetch() error classification', () => {
       waitUntil: vi.fn(),
       container: {
         running: false,
-        getTcpPort: vi.fn(() => ({ fetch: vi.fn(), connect: vi.fn() }))
+        getTcpPort: vi.fn(() => ({
+          fetch: vi.fn(async () => new Response('Mock TCP port fetch')),
+          connect: vi.fn()
+        }))
       } as unknown as DurableObjectState<{}>['container'],
       abort: vi.fn(),
       id: {

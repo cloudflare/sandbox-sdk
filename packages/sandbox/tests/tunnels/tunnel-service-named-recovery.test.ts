@@ -27,8 +27,8 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
@@ -580,7 +580,7 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
       fetcher: cf.fetcher as unknown as typeof fetch,
       currentRuntime: {
         get: vi.fn(async () => ({ id: 'runtime-new' })),
-        markStarted: vi.fn(async () => ({ id: 'runtime-new' })),
+        unexpectedPublisher: vi.fn(async () => ({ id: 'runtime-new' })),
         assertActive: vi.fn(async () => {})
       },
       currentLifetime: {

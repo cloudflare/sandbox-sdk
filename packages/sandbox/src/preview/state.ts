@@ -1,5 +1,4 @@
-import type { RuntimeIdentityID } from '../current-runtime-identity';
-import type { RuntimeIncarnationID } from '../runtime/types';
+import type { RuntimeIdentityID, RuntimeIncarnationID } from '../runtime/types';
 
 /**
  * Persisted record for a single exposed port. `token` authorizes preview

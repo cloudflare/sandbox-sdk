@@ -83,22 +83,6 @@ function testBackupLease(control: ContainerControlClient): TestBackupLease {
   };
 }
 
-function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
-  const target = sandbox as unknown as {
-    client: ContainerControlClient;
-    runWakingComposite<T>(
-      operation: string,
-      call: (lease: {
-        runtime: { id: string; runtimeIncarnationID: string };
-        control: ContainerControlClient;
-        retain(onInterrupt?: () => void): { release(): void };
-      }) => Promise<T>
-    ): Promise<T>;
-  };
-  target.runWakingComposite = async (_operation, call) =>
-    await call(testBackupLease(target.client));
-}
-
 function installRuntimeCallRecorder(
   sandbox: Sandbox,
   controls: ContainerControlClient[]
@@ -269,7 +253,10 @@ describe('Local Backup & Restore', () => {
     });
     const sandboxWithClient = asSandboxWithClient(sandbox);
     sandboxWithClient.client = createMockControlClient();
-    installClientBackedRuntimeCalls(sandboxWithClient);
+    installRuntimeCallRecorder(
+      sandbox,
+      Array.from({ length: 100 }, () => sandboxWithClient.client)
+    );
   });
 
   afterEach(() => {

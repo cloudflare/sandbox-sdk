@@ -121,7 +121,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     });
 
     await client.connect();
-    const release = client.retainConnection();
+    const release = client.retainRuntimeHold();
 
     vi.advanceTimersByTime(3_000);
     expect(disconnects).toHaveLength(0);

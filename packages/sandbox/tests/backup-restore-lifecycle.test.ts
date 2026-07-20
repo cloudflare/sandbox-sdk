@@ -113,18 +113,6 @@ function createNonRetryableInterruptedError(
   });
 }
 
-function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
-  const target = sandbox as unknown as {
-    client: ContainerControlClient;
-    runLegacyRuntimeCall<T>(
-      operation: string,
-      call: (control: ContainerControlClient) => Promise<T>
-    ): Promise<T>;
-  };
-  target.runLegacyRuntimeCall = async (_operation, call) =>
-    await call(target.client);
-}
-
 async function createBackupSandbox(params?: {
   storageMap?: Map<string, StoredValue>;
   bucket?: ReturnType<typeof createBackupBucket>;
@@ -173,7 +161,6 @@ async function createBackupSandbox(params?: {
 
   const sandboxWithClient = asSandboxWithClient(sandbox);
   sandboxWithClient.client = createMockControlClient();
-  installClientBackedRuntimeCalls(sandboxWithClient);
   const runWakingSpy = vi
     .spyOn(
       (

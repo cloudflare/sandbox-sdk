@@ -1,9 +1,16 @@
 import type { RuntimeMetadata } from '@repo/shared';
 import type { ContainerControlClient } from '../container-control/client';
-import type {
-  RuntimeIdentityID,
-  RuntimeScoped
-} from '../current-runtime-identity';
+import { RuntimeIdentityInactiveError } from '../errors/classes/runtime-inactive';
+
+export { RuntimeIdentityInactiveError };
+
+export type RuntimeIdentityID = string & {
+  readonly __runtimeIdentityID: unique symbol;
+};
+
+export type RuntimeScoped<T extends object> = T & {
+  readonly runtimeIdentityID: RuntimeIdentityID;
+};
 
 export type RuntimeIncarnationID = string & {
   readonly __runtimeIncarnationID: unique symbol;

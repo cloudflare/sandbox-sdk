@@ -113,18 +113,6 @@ function createMockR2Bucket() {
   };
 }
 
-function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
-  const target = sandbox as unknown as {
-    client: ContainerControlClient;
-    runLegacyRuntimeCall<T>(
-      operation: string,
-      call: (control: ContainerControlClient) => Promise<T>
-    ): Promise<T>;
-  };
-  target.runLegacyRuntimeCall = async (_operation, call) =>
-    await call(target.client);
-}
-
 async function createLocalRestoreSandbox(params?: {
   storageHooks?: { onPut?: (key: string, value: StoredValue) => void };
 }) {
@@ -177,7 +165,6 @@ async function createLocalRestoreSandbox(params?: {
 
   const sandboxWithClient = asSandboxWithClient(sandbox);
   sandboxWithClient.client = createMockControlClient();
-  installClientBackedRuntimeCalls(sandboxWithClient);
   vi.spyOn(
     (
       sandbox as unknown as {

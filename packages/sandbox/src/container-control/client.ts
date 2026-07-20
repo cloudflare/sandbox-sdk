@@ -140,7 +140,6 @@ export class ContainerControlClient {
       port: options.port,
       localMain: options.localMain,
       logger: options.logger,
-      retryTimeoutMs: options.retryTimeoutMs,
       connection: options.connection,
       externallyOwnedConnection: options.externallyOwnedConnection,
       // Event-driven failure recovery: when the live WebSocket closes
@@ -404,7 +403,7 @@ export class ContainerControlClient {
     await this.getConnection().connect();
   }
 
-  retainConnection(): () => void {
+  retainRuntimeHold(): () => void {
     this.getConnection();
     const generation = this.connectionGeneration;
     this.connectionRetainers += 1;
