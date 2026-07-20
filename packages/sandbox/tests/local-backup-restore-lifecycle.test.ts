@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackupRestoreOperationRecord } from '../src/backup/restore-operation-store';
 import type { ContainerControlClient } from '../src/container-control';
-import { ErrorCode, RPCTransportError } from '../src/errors';
+import {
+  ErrorCode,
+  OperationInterruptedError,
+  RPCTransportError
+} from '../src/errors';
 import { Sandbox } from '../src/sandbox';
 import {
   asSandboxWithClient,
@@ -125,7 +129,11 @@ async function createLocalRestoreSandbox(params?: {
   storageHooks?: { onPut?: (key: string, value: StoredValue) => void };
 }) {
   const storageMap = new Map<string, StoredValue>();
-  storageMap.set('currentRuntimeIdentity', { id: 'runtime-1' });
+  storageMap.set('currentRuntimeIdentity', {
+    schemaVersion: 1,
+    id: 'runtime-1',
+    runtimeIncarnationID: 'incarnation-1'
+  });
   storageMap.set('sandbox:lifetime', {
     id: 'lifetime-1',
     generation: 1,
@@ -170,6 +178,32 @@ async function createLocalRestoreSandbox(params?: {
   const sandboxWithClient = asSandboxWithClient(sandbox);
   sandboxWithClient.client = createMockControlClient();
   installClientBackedRuntimeCalls(sandboxWithClient);
+  vi.spyOn(
+    (
+      sandbox as unknown as {
+        runtimeRunner: {
+          runWaking<T>(
+            operation: string,
+            call: (lease: {
+              runtime: { id: string; runtimeIncarnationID: string };
+              control: ContainerControlClient;
+              retain(): { release(): void };
+            }) => Promise<T>
+          ): Promise<T>;
+        };
+      }
+    ).runtimeRunner,
+    'runWaking'
+  ).mockImplementation(async (_operation, call) =>
+    call({
+      runtime: {
+        id: 'runtime-1',
+        runtimeIncarnationID: 'incarnation-1'
+      },
+      control: sandboxWithClient.client,
+      retain: () => ({ release: () => {} })
+    })
+  );
 
   return { sandbox, storageMap, backupId };
 }
@@ -192,6 +226,7 @@ describe('local backup restore lifecycle', () => {
       status: 'committed',
       phase: 'verified',
       runtimeIdentityID: 'runtime-1',
+      runtimeIncarnationID: 'incarnation-1',
       payload: {
         backupId,
         dir: '/workspace/project',
@@ -201,18 +236,11 @@ describe('local backup restore lifecycle', () => {
     });
   });
 
-  it('captures cold-start runtime identity before restore transfer', async () => {
-    const order: string[] = [];
-    const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox({
-      storageHooks: {
-        onPut: (key) => {
-          if (key === 'currentRuntimeIdentity') {
-            order.push('runtimeReady');
-          }
-        }
-      }
+  it('records the supplied runtime without marking a new one', async () => {
+    const writes: string[] = [];
+    const { sandbox, backupId } = await createLocalRestoreSandbox({
+      storageHooks: { onPut: (key) => writes.push(key) }
     });
-    storageMap.delete('currentRuntimeIdentity');
 
     await sandbox.restoreBackup({
       id: backupId,
@@ -220,7 +248,7 @@ describe('local backup restore lifecycle', () => {
       localBucket: true
     });
 
-    expect(order.slice(0, 1)).toEqual(['runtimeReady']);
+    expect(writes).not.toContain('currentRuntimeIdentity');
   });
 
   it('does not mark the local archive ready before stream upload completes', async () => {
@@ -248,7 +276,7 @@ describe('local backup restore lifecycle', () => {
     });
   });
 
-  it('recovers internally when local archive streaming loses the RPC transport once', async () => {
+  it('does not replay local archive streaming after transport loss', async () => {
     const { sandbox, storageMap, backupId } = await createLocalRestoreSandbox();
     const writeFileStreamSpy = vi
       .spyOn(asSandboxWithClient(sandbox).client.files, 'writeFileStream')
@@ -260,22 +288,19 @@ describe('local backup restore lifecycle', () => {
         timestamp: '2026-06-15T12:00:00.000Z'
       });
 
-    const result = await sandbox.restoreBackup({
-      id: backupId,
-      dir: '/workspace/project',
-      localBucket: true
-    });
+    await expect(
+      sandbox.restoreBackup({
+        id: backupId,
+        dir: '/workspace/project',
+        localBucket: true
+      })
+    ).rejects.toBeInstanceOf(OperationInterruptedError);
 
-    expect(result).toEqual({
-      success: true,
-      id: backupId,
-      dir: '/workspace/project'
-    });
-    expect(writeFileStreamSpy).toHaveBeenCalledTimes(2);
+    expect(writeFileStreamSpy).toHaveBeenCalledTimes(1);
     const record = storageMap.get(
       `operations:restore:${backupId}:/workspace/project`
     ) as BackupRestoreOperationRecord;
-    expect(record.status).toBe('committed');
-    expect(record.phase).toBe('verified');
+    expect(record.status).toBe('interrupted');
+    expect(record.phase).toBe('interrupted');
   });
 });

@@ -1070,9 +1070,20 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       ctx: this.ctx,
       getEnv: () => this.env,
       logger: this.logger,
-      runRuntimeCall: (operation, call) =>
-        this.runLegacyRuntimeCall(operation, call),
-      currentRuntime: this.currentRuntime,
+      runBackupAttempt: (operation, call) =>
+        this.runWakingComposite(operation, (lease) =>
+          call({
+            runtime: lease.runtime,
+            control: lease.control,
+            retain: lease.retain
+          })
+        ),
+      runtimeReader: {
+        get: () => this.runtimeLifecycle.get(),
+        getStored: (storage) => this.runtimeLifecycle.getStored(storage),
+        isActive: (runtime) => this.runtimeLifecycle.isActive(runtime),
+        assertActive: (runtime) => this.runtimeLifecycle.assertActive(runtime)
+      },
       currentLifetime: this.currentLifetime
     });
 

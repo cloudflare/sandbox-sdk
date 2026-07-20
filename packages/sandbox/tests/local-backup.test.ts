@@ -69,16 +69,34 @@ function createSSEFileStream(content: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
+type TestBackupLease = {
+  runtime: { id: string; runtimeIncarnationID: string };
+  control: ContainerControlClient;
+  retain(onInterrupt?: () => void): { release(): void };
+};
+
+function testBackupLease(control: ContainerControlClient): TestBackupLease {
+  return {
+    runtime: { id: 'runtime-1', runtimeIncarnationID: 'incarnation-1' },
+    control,
+    retain: () => ({ release: () => {} })
+  };
+}
+
 function installClientBackedRuntimeCalls(sandbox: Sandbox): void {
   const target = sandbox as unknown as {
     client: ContainerControlClient;
-    runLegacyRuntimeCall<T>(
+    runWakingComposite<T>(
       operation: string,
-      call: (control: ContainerControlClient) => Promise<T>
+      call: (lease: {
+        runtime: { id: string; runtimeIncarnationID: string };
+        control: ContainerControlClient;
+        retain(onInterrupt?: () => void): { release(): void };
+      }) => Promise<T>
     ): Promise<T>;
   };
-  target.runLegacyRuntimeCall = async (_operation, call) =>
-    await call(target.client);
+  target.runWakingComposite = async (_operation, call) =>
+    await call(testBackupLease(target.client));
 }
 
 function installRuntimeCallRecorder(
@@ -91,17 +109,21 @@ function installRuntimeCallRecorder(
   };
   let index = 0;
   const target = sandbox as unknown as {
-    runLegacyRuntimeCall<T>(
+    runWakingComposite<T>(
       operation: string,
-      call: (control: ContainerControlClient) => Promise<T>
+      call: (lease: {
+        runtime: { id: string; runtimeIncarnationID: string };
+        control: ContainerControlClient;
+        retain(onInterrupt?: () => void): { release(): void };
+      }) => Promise<T>
     ): Promise<T>;
   };
-  target.runLegacyRuntimeCall = async (operation, call) => {
+  target.runWakingComposite = async (operation, call) => {
     const control = controls[index++];
     if (!control) throw new Error(`Missing test control for ${operation}`);
     calls.operations.push(operation);
     calls.controls.push(control);
-    return await call(control);
+    return await call(testBackupLease(control));
   };
   return calls;
 }
@@ -198,6 +220,11 @@ describe('Local Backup & Restore', () => {
 
     mockBucket = createMockR2Bucket();
     const storageMap = new Map<string, unknown>();
+    storageMap.set('currentRuntimeIdentity', {
+      schemaVersion: 1,
+      id: 'runtime-1',
+      runtimeIncarnationID: 'incarnation-1'
+    });
 
     mockCtx = {
       storage: {
@@ -323,79 +350,57 @@ describe('Local Backup & Restore', () => {
       expect(mockBucket.head).toHaveBeenCalled();
     });
 
-    it('runs each legacy backup RPC in a separate runtime callback scope', async () => {
+    it('uses one runtime lease for the complete backup attempt', async () => {
       const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
-      const controls = [
-        createMockControlClient(),
-        createMockControlClient(),
-        createMockControlClient()
-      ];
-      const runtimeCalls = installRuntimeCallRecorder(sandbox, controls);
+      const control = createMockControlClient();
+      const runtimeCalls = installRuntimeCallRecorder(sandbox, [control]);
 
-      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(control.backup, 'createArchive').mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: archiveContent.length
       });
-      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(
+      vi.spyOn(control.files, 'readFileStream').mockResolvedValue(
         createSSEFileStream(archiveContent)
       );
-      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
-        undefined
-      );
+      vi.spyOn(control.backup, 'cleanupArchive').mockResolvedValue(undefined);
 
       await sandbox.createBackup({
         dir: '/workspace/myapp',
         localBucket: true
       });
 
-      expect(runtimeCalls.operations).toEqual([
-        'backup.createArchive',
-        'backup.readArchive',
-        'backup.cleanupArchive'
-      ]);
-      expect(new Set(runtimeCalls.controls).size).toBe(3);
-      expect(controls[0].backup.createArchive).toHaveBeenCalledTimes(1);
-      expect(controls[1].files.readFileStream).toHaveBeenCalledTimes(1);
-      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
-      expect(controls[0].files.readFileStream).not.toHaveBeenCalled();
-      expect(controls[0].backup.cleanupArchive).not.toHaveBeenCalled();
-      expect(controls[1].backup.cleanupArchive).not.toHaveBeenCalled();
+      expect(runtimeCalls.operations).toEqual(['backup.create']);
+      expect(runtimeCalls.controls).toEqual([control]);
+      expect(control.backup.createArchive).toHaveBeenCalledTimes(1);
+      expect(control.files.readFileStream).toHaveBeenCalledTimes(1);
+      expect(control.backup.cleanupArchive).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps readArchive runtime callback open until archive upload completes', async () => {
+    it('keeps the backup lease open until archive upload completes', async () => {
       const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
-      const controls = [
-        createMockControlClient(),
-        createMockControlClient(),
-        createMockControlClient()
-      ];
-      let readArchiveSettled = false;
+      const control = createMockControlClient();
+      let attemptSettled = false;
       const target = sandbox as unknown as {
-        runLegacyRuntimeCall<T>(
+        runWakingComposite<T>(
           operation: string,
-          call: (control: ContainerControlClient) => Promise<T>
+          call: (lease: TestBackupLease) => Promise<T>
         ): Promise<T>;
       };
-      let index = 0;
-      target.runLegacyRuntimeCall = async (operation, call) => {
-        const control = controls[index++];
-        if (!control) throw new Error(`Missing test control for ${operation}`);
+      target.runWakingComposite = async (_operation, call) => {
         try {
-          return await call(control);
+          return await call(testBackupLease(control));
         } finally {
-          if (operation === 'backup.readArchive') readArchiveSettled = true;
+          attemptSettled = true;
         }
       };
 
-      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(control.backup, 'createArchive').mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: archiveContent.length
       });
-      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
-        undefined
-      );
+      vi.spyOn(control.backup, 'cleanupArchive').mockResolvedValue(undefined);
 
       let streamController: ReadableStreamDefaultController<Uint8Array>;
       const stream = new ReadableStream<Uint8Array>({
@@ -413,7 +418,7 @@ describe('Local Backup & Restore', () => {
           );
         }
       });
-      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(stream);
+      vi.spyOn(control.files, 'readFileStream').mockResolvedValue(stream);
 
       const backupPromise = sandbox.createBackup({
         dir: '/workspace/myapp',
@@ -421,12 +426,12 @@ describe('Local Backup & Restore', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(readArchiveSettled).toBe(false);
+      expect(attemptSettled).toBe(false);
       expect(mockBucket.put).toHaveBeenCalledWith(
         expect.stringMatching(/^backups\/.*\/data\.sqsh$/),
         expect.any(ReadableStream)
       );
-      expect(controls[2].backup.cleanupArchive).not.toHaveBeenCalled();
+      expect(control.backup.cleanupArchive).not.toHaveBeenCalled();
 
       streamController!.enqueue(
         new TextEncoder().encode(
@@ -436,45 +441,40 @@ describe('Local Backup & Restore', () => {
       streamController!.close();
 
       await backupPromise;
-      expect(readArchiveSettled).toBe(true);
-      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+      expect(attemptSettled).toBe(true);
+      expect(control.backup.cleanupArchive).toHaveBeenCalledTimes(1);
     });
 
-    it('propagates archive upload errors before readArchive scope settles', async () => {
+    it('cleans up before the failed backup lease settles', async () => {
       const archiveContent = new Uint8Array([0x68, 0x73, 0x71, 0x73]);
-      const controls = [
-        createMockControlClient(),
-        createMockControlClient(),
-        createMockControlClient()
-      ];
+      const control = createMockControlClient();
       const settlementOrder: string[] = [];
       const target = sandbox as unknown as {
-        runLegacyRuntimeCall<T>(
+        runWakingComposite<T>(
           operation: string,
-          call: (control: ContainerControlClient) => Promise<T>
+          call: (lease: TestBackupLease) => Promise<T>
         ): Promise<T>;
       };
-      let index = 0;
-      target.runLegacyRuntimeCall = async (operation, call) => {
-        const control = controls[index++];
-        if (!control) throw new Error(`Missing test control for ${operation}`);
+      target.runWakingComposite = async (_operation, call) => {
         try {
-          return await call(control);
+          return await call(testBackupLease(control));
         } finally {
-          settlementOrder.push(operation);
+          settlementOrder.push('lease');
         }
       };
 
-      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(control.backup, 'createArchive').mockResolvedValue({
         success: true,
         archivePath: '/var/backups/test.sqsh',
         sizeBytes: archiveContent.length
       });
-      vi.spyOn(controls[1].files, 'readFileStream').mockResolvedValue(
+      vi.spyOn(control.files, 'readFileStream').mockResolvedValue(
         createSSEFileStream(archiveContent)
       );
-      vi.spyOn(controls[2].backup, 'cleanupArchive').mockResolvedValue(
-        undefined
+      vi.spyOn(control.backup, 'cleanupArchive').mockImplementation(
+        async () => {
+          settlementOrder.push('cleanup');
+        }
       );
       mockBucket.put.mockRejectedValueOnce(new Error('r2 put failed'));
 
@@ -485,26 +485,20 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('r2 put failed');
 
-      expect(settlementOrder).toEqual([
-        'backup.createArchive',
-        'backup.readArchive',
-        'backup.cleanupArchive'
-      ]);
-      expect(controls[2].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+      expect(settlementOrder).toEqual(['cleanup', 'lease']);
+      expect(control.backup.cleanupArchive).toHaveBeenCalledTimes(1);
     });
 
-    it('uses a fresh runtime callback for rejection cleanup', async () => {
-      const controls = [createMockControlClient(), createMockControlClient()];
-      const runtimeCalls = installRuntimeCallRecorder(sandbox, controls);
+    it('uses the admitted control for rejection cleanup', async () => {
+      const control = createMockControlClient();
+      const runtimeCalls = installRuntimeCallRecorder(sandbox, [control]);
 
-      vi.spyOn(controls[0].backup, 'createArchive').mockResolvedValue({
+      vi.spyOn(control.backup, 'createArchive').mockResolvedValue({
         success: false,
         archivePath: '',
         sizeBytes: 0
       });
-      vi.spyOn(controls[1].backup, 'cleanupArchive').mockResolvedValue(
-        undefined
-      );
+      vi.spyOn(control.backup, 'cleanupArchive').mockResolvedValue(undefined);
 
       await expect(
         sandbox.createBackup({
@@ -513,14 +507,10 @@ describe('Local Backup & Restore', () => {
         })
       ).rejects.toThrow('Container failed to create backup archive');
 
-      expect(runtimeCalls.operations).toEqual([
-        'backup.createArchive',
-        'backup.cleanupArchive'
-      ]);
-      expect(runtimeCalls.controls).toEqual(controls);
-      expect(controls[0].backup.createArchive).toHaveBeenCalledTimes(1);
-      expect(controls[0].backup.cleanupArchive).not.toHaveBeenCalled();
-      expect(controls[1].backup.cleanupArchive).toHaveBeenCalledTimes(1);
+      expect(runtimeCalls.operations).toEqual(['backup.create']);
+      expect(runtimeCalls.controls).toEqual([control]);
+      expect(control.backup.createArchive).toHaveBeenCalledTimes(1);
+      expect(control.backup.cleanupArchive).toHaveBeenCalledTimes(1);
     });
 
     it('should throw if BACKUP_BUCKET binding is missing', async () => {

@@ -9,6 +9,7 @@ import {
   ErrorCode,
   InvalidBackupConfigError,
   PortNotExposedError,
+  RPCTransportError,
   RuntimeControlProtocolError
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
@@ -3084,15 +3085,36 @@ describe('Sandbox durable object behavior', () => {
       });
       asSandboxWithClient(backupSandbox as any).client =
         createMockControlClient();
+      await (
+        mockCtx.storage.put as unknown as (
+          key: string,
+          value: unknown
+        ) => Promise<void>
+      )('currentRuntimeIdentity', {
+        schemaVersion: 1,
+        id: 'runtime-1',
+        runtimeIncarnationID: 'incarnation-1'
+      });
       const runtimeTarget = backupSandbox as unknown as {
         client: ContainerControlClient;
-        runLegacyRuntimeCall<T>(
+        runWakingComposite<T>(
           operation: string,
-          call: (control: ContainerControlClient) => Promise<T>
+          call: (lease: {
+            runtime: { id: string; runtimeIncarnationID: string };
+            control: ContainerControlClient;
+            retain(): { release(): void };
+          }) => Promise<T>
         ): Promise<T>;
       };
-      runtimeTarget.runLegacyRuntimeCall = async (_operation, call) =>
-        await call(runtimeTarget.client);
+      runtimeTarget.runWakingComposite = async (_operation, call) =>
+        await call({
+          runtime: {
+            id: 'runtime-1',
+            runtimeIncarnationID: 'incarnation-1'
+          },
+          control: runtimeTarget.client,
+          retain: () => ({ release: () => {} })
+        });
 
       return { backupSandbox, bucket };
     }
@@ -3262,8 +3284,12 @@ describe('Sandbox durable object behavior', () => {
       );
     });
 
-    it('should reject unsupported backup compression before calling the container', async () => {
+    it('should reject unsupported backup compression before runtime admission', async () => {
       const { backupSandbox } = await createBackupSandbox();
+      const runWakingSpy = vi.spyOn(
+        backupSandbox as unknown as { runWakingComposite(): Promise<unknown> },
+        'runWakingComposite'
+      );
       const createArchiveSpy = vi.spyOn(
         asSandboxWithClient(backupSandbox as any).client.backup,
         'createArchive'
@@ -3280,6 +3306,7 @@ describe('Sandbox durable object behavior', () => {
         /BackupOptions\.compression\.format must be one of: gzip, lz4, zstd/
       );
 
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(createArchiveSpy).not.toHaveBeenCalled();
     });
 
@@ -3348,7 +3375,8 @@ describe('Sandbox durable object behavior', () => {
         `backups/${backupId}/data.sqsh`,
         42,
         backupId,
-        '/app/project'
+        '/app/project',
+        asSandboxWithClient(backupSandbox as any).client
       );
     });
 
@@ -3371,7 +3399,8 @@ describe('Sandbox durable object behavior', () => {
         'backups/test/data.sqsh',
         expectedSize,
         'test-backup-id',
-        '/app/project'
+        '/app/project',
+        asSandboxWithClient(backupSandbox as any).client
       );
 
       expect(downloadArchiveSpy).toHaveBeenCalledWith({
@@ -3386,6 +3415,40 @@ describe('Sandbox durable object behavior', () => {
         ]),
         timeoutMs: 1_810_000
       });
+    });
+
+    it('preserves transport interruption during parallel download', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const interruption = new RPCTransportError({
+        code: ErrorCode.RPC_TRANSPORT_ERROR,
+        message: 'Transport disposed',
+        httpStatus: 503,
+        context: {
+          kind: 'session_disposed',
+          originalMessage: 'Transport disposed',
+          errorName: 'Error'
+        },
+        timestamp: '2026-06-15T12:00:00.000Z'
+      });
+      vi.spyOn(
+        asSandboxWithClient(backupSandbox as any).client.backup,
+        'downloadArchive'
+      ).mockRejectedValue(interruption);
+      vi.spyOn(
+        (backupSandbox as any).backupService.transfer,
+        'generatePresignedGetURL'
+      ).mockResolvedValue('https://example.com/archive');
+
+      await expect(
+        (backupSandbox as any).backupService.transfer.downloadBackupParallel(
+          '/var/backups/test.sqsh',
+          'backups/test/data.sqsh',
+          16 * 1024 * 1024,
+          'test-backup-id',
+          '/app/project',
+          asSandboxWithClient(backupSandbox as any).client
+        )
+      ).rejects.toBe(interruption);
     });
 
     it('should reject unsupported backup roots before calling the container', async () => {

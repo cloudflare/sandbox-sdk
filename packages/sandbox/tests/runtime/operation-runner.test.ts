@@ -4,6 +4,7 @@ import {
   type RuntimeIdentityID,
   RuntimeIdentityInactiveError
 } from '../../src/current-runtime-identity';
+import { ErrorCode, OperationInterruptedError } from '../../src/errors';
 import { ResourceActivityGate } from '../../src/resource-activity-gate';
 import type {
   RuntimeConnectionHold,
@@ -201,6 +202,29 @@ describe('RuntimeOperationRunner', () => {
       ctx.runner.runExisting({ kind: 'current' }, 'race.operation', dispatch)
     ).rejects.toMatchObject({ name: 'OperationInterruptedError' });
     expect(dispatch).not.toHaveBeenCalled();
+    expect(ctx.listenerCount).toBe(0);
+  });
+
+  test('preserves structured interruption while the runtime stays active', async () => {
+    const ctx = setup(runtime('current', 'one'));
+    const interruption = new OperationInterruptedError({
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: 'Sandbox lifetime changed',
+      httpStatus: 409,
+      context: {
+        reason: 'sandbox_lifetime_changed',
+        operation: 'backup.restore',
+        admitted: true,
+        retryable: false
+      },
+      timestamp: '2026-06-15T12:00:00.000Z'
+    });
+
+    await expect(
+      ctx.runner.runWaking('backup.restore', async () => {
+        throw interruption;
+      })
+    ).rejects.toBe(interruption);
     expect(ctx.listenerCount).toBe(0);
   });
 

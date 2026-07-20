@@ -180,7 +180,6 @@ export class RuntimeOperationRunner {
     session: RuntimeSession,
     error: unknown
   ): Promise<boolean> {
-    if (error instanceof OperationInterruptedError) return true;
     if (error instanceof RuntimeIdentityInactiveError) return true;
     if (session.isInterrupted()) return true;
     return !(await this.options.lifecycle.isActive(runtime));
