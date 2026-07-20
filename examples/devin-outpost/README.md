@@ -2,19 +2,19 @@
 
 Run [Devin Outposts](https://docs.devin.ai/cloud/outposts/overview) on Cloudflare, with one isolated [Durable Object Container](https://developers.cloudflare.com/durable-objects/api/container/) per Devin session.
 
-This is a deployable example: connect a Devin pool, deploy the Worker, and Cloudflare handles the session containers. Suspended sessions save their workspace to R2 and restore it when they resume.
+This is a deployable example: connect a Devin Outpost, deploy the Worker, and Cloudflare handles the session containers. Suspended sessions save their workspace to R2 and restore it when they resume.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/examples/devin-outpost)
 
-The button provisions the Cloudflare resources and prompts for `DEVIN_API_TOKEN` and `DEVIN_POOL_ID`. The CLI setup below shows the manual flow.
+The button provisions the Cloudflare resources and prompts for `DEVIN_API_TOKEN` and `DEVIN_OUTPOST_ID`. The CLI setup below shows the manual flow.
 
 ## Quick start
 
 You need:
 
 - a Cloudflare account with Workers, Durable Object Containers, and R2;
-- a Devin Outposts pool;
-- a Devin Enterprise API token with `account.outposts.orchestrator` scope;
+- a Devin Outpost;
+- a Devin service-user token with the **Run outpost workers** permission;
 - Node.js 24 and a running Docker daemon.
 
 ### 1. Install
@@ -35,15 +35,15 @@ npx wrangler r2 bucket create devin-outpost-state
 
 If you choose another name, update `bucket_name` in `wrangler.jsonc`.
 
-### 3. Add your Devin pool
+### 3. Add your Devin Outpost
 
-Set the pool ID in `wrangler.jsonc`:
+Set the Outpost ID in `wrangler.jsonc`:
 
 ```jsonc
-"DEVIN_POOL_ID": "your-pool-id"
+"DEVIN_OUTPOST_ID": "your-outpost-id"
 ```
 
-The example defaults to `https://api.devin.ai`. Change `DEVIN_API_URL` only if your Devin environment uses another API root.
+`DEVIN_API_URL` is the complete queue API prefix and defaults to `https://api.devin.ai/opbeta`. Change it when using another Devin environment. The container derives the API origin required by the Devin CLI from this URL.
 
 Add the API token as a Worker secret:
 
@@ -66,7 +66,7 @@ curl https://<your-worker>.workers.dev/
 # {"service":"devin-outpost","status":"ok"}
 ```
 
-Your Devin pool is now ready to run sessions on Cloudflare.
+Your Devin Outpost is now ready to run sessions on Cloudflare.
 
 ## What gets deployed
 
@@ -86,7 +86,7 @@ flowchart LR
     Worker --> R2
 ```
 
-Once per minute, the Worker reads the pool's session statuses. It ensures `pending` and `running` sessions have a container, allows `suspended` sessions to exit naturally, and destroys `terminated` sessions. Unknown statuses are ignored.
+Once per minute, the Worker reads the Outpost's session statuses. It ensures `pending` and `running` sessions have a container, allows `suspended` sessions to exit naturally, and destroys `terminated` sessions. Unknown statuses are ignored.
 
 Each container runs the official `devin worker start` CLI. Devin handles the claim and session runtime; this Worker handles the Cloudflare lifecycle around it.
 
@@ -104,13 +104,13 @@ This is suspend/resume persistence rather than continuous backup. Abrupt contain
 
 ## Configuration
 
-| Setting             | Description                                                 |
-| ------------------- | ----------------------------------------------------------- |
-| `DEVIN_POOL_ID`     | Required Devin Outposts pool ID.                            |
-| `DEVIN_API_TOKEN`   | Required secret with `account.outposts.orchestrator` scope. |
-| `DEVIN_API_URL`     | Devin API root; defaults to `https://api.devin.ai`.         |
-| `WORKER_ID_PREFIX`  | Acceptor ID prefix; defaults to `cf-outpost`.               |
-| `DEVIN_CHECKPOINTS` | R2 binding for suspend checkpoints.                         |
+| Setting             | Description                                                                    |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `DEVIN_OUTPOST_ID`  | Required Devin Outpost ID.                                                     |
+| `DEVIN_API_TOKEN`   | Required Devin service-user token with the **Run outpost workers** permission. |
+| `DEVIN_API_URL`     | Complete queue API prefix; defaults to `https://api.devin.ai/opbeta`.          |
+| `WORKER_ID_PREFIX`  | Acceptor ID prefix; defaults to `cf-outpost`.                                  |
+| `DEVIN_CHECKPOINTS` | R2 binding for suspend checkpoints.                                            |
 
 ## Things to know
 
@@ -123,7 +123,7 @@ This is suspend/resume persistence rather than continuous backup. Abrupt contain
 
 ```bash
 cp .dev.vars.example .dev.vars
-# Set DEVIN_API_TOKEN in .dev.vars and DEVIN_POOL_ID in wrangler.jsonc.
+# Set DEVIN_API_TOKEN in .dev.vars and DEVIN_OUTPOST_ID in wrangler.jsonc.
 npm run dev
 ```
 

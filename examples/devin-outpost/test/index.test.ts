@@ -13,7 +13,7 @@ function item(
   phase = 'claimed'
 ): DevinSessionSummary {
   return {
-    metadata: { session_id: sessionId, pool_id: 'pool-1' },
+    metadata: { session_id: sessionId, outpost_id: 'outpost-1' },
     status: { phase, session_status: sessionStatus }
   };
 }
@@ -37,8 +37,8 @@ type TestNamespace = Env['DevinWorker'] & {
 
 function baseEnv(overrides: Record<string, unknown> = {}): Env {
   return {
-    DEVIN_POOL_ID: 'pool-1',
-    DEVIN_API_URL: 'https://api.example.test',
+    DEVIN_OUTPOST_ID: 'outpost-1',
+    DEVIN_API_URL: 'https://api.example.test/opbeta',
     DEVIN_CHECKPOINTS: {
       head: vi.fn().mockResolvedValue(null),
       get: vi.fn().mockResolvedValue(null),
@@ -270,7 +270,7 @@ describe('Devin API fetch', () => {
     vi.stubGlobal('fetch', vi.fn());
   });
 
-  it('fetches the full pool with one documented pool query', async () => {
+  it('fetches only the configured Outpost', async () => {
     const fetch = vi.mocked(globalThis.fetch);
     fetch.mockResolvedValueOnce(jsonResponse({ items: [] }));
 
@@ -278,7 +278,7 @@ describe('Devin API fetch', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(
-      'https://api.example.test/opbeta/outposts/devins?pool=pool-1',
+      'https://api.example.test/opbeta/outposts/devins?outpost=outpost-1',
       {
         headers: { Authorization: 'Bearer secret-token' },
         signal: expect.any(AbortSignal)
@@ -286,14 +286,19 @@ describe('Devin API fetch', () => {
     );
   });
 
-  it('url-encodes pool ids', async () => {
+  it('url-encodes Outpost ids', async () => {
     const fetch = vi.mocked(globalThis.fetch);
     fetch.mockResolvedValueOnce(jsonResponse({ items: [] }));
 
-    await fetchSessions(baseEnv({ DEVIN_POOL_ID: 'pool with spaces' }));
+    await fetchSessions(
+      baseEnv({
+        DEVIN_OUTPOST_ID: 'outpost with spaces',
+        DEVIN_API_URL: 'https://api.example.test/opbeta/'
+      })
+    );
 
     expect(fetch).toHaveBeenCalledWith(
-      'https://api.example.test/opbeta/outposts/devins?pool=pool%20with%20spaces',
+      'https://api.example.test/opbeta/outposts/devins?outpost=outpost%20with%20spaces',
       expect.anything()
     );
   });
@@ -321,7 +326,7 @@ describe('Devin API fetch', () => {
     });
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenLastCalledWith(
-      'https://api.example.test/opbeta/outposts/devins?pool=pool-1&cursor=page-2',
+      'https://api.example.test/opbeta/outposts/devins?outpost=outpost-1&cursor=page-2',
       expect.anything()
     );
   });
@@ -358,14 +363,14 @@ describe('Worker reconciliation', () => {
       stubFor(stubs, 'id:devin-pending').ensureRunning
     ).toHaveBeenCalledWith(
       'devin-pending',
-      'pool-1',
+      'outpost-1',
       'cf-outpost-devin-pending'
     );
     expect(
       stubFor(stubs, 'id:devin-running').ensureRunning
     ).toHaveBeenCalledWith(
       'devin-running',
-      'pool-1',
+      'outpost-1',
       'cf-outpost-devin-running'
     );
     expect(stubFor(stubs, 'id:devin-suspended').stop).toHaveBeenCalledWith(
@@ -375,6 +380,37 @@ describe('Worker reconciliation', () => {
     expect(stubFor(stubs, 'id:devin-terminated').stop).toHaveBeenCalledWith(
       'devin-terminated',
       'terminated'
+    );
+  });
+
+  it('ignores sessions returned for a different Outpost', async () => {
+    const namespace = makeNamespace();
+    const env = baseEnv({ DevinWorker: namespace });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      jsonResponse({
+        items: [
+          item('devin-correct', 'running'),
+          {
+            ...item('devin-other', 'running'),
+            metadata: { session_id: 'devin-other', outpost_id: 'outpost-2' }
+          }
+        ]
+      })
+    );
+
+    await expect(reconcile(env)).resolves.toMatchObject({
+      scanned: 2,
+      ensured: 1,
+      stopped: 0,
+      ignored: 1,
+      errors: []
+    });
+
+    expect(namespace.idFromName).toHaveBeenCalledWith('devin-correct');
+    expect(namespace.idFromName).not.toHaveBeenCalledWith('devin-other');
+    expect(warn).toHaveBeenCalledWith(
+      '[devin-other] ignored session from outpost=outpost-2; configured outpost=outpost-1'
     );
   });
 
@@ -415,9 +451,9 @@ describe('Worker reconciliation', () => {
     const fetch = vi.mocked(globalThis.fetch);
 
     await expect(
-      reconcile(baseEnv({ DEVIN_POOL_ID: '' }))
+      reconcile(baseEnv({ DEVIN_OUTPOST_ID: '' }))
     ).resolves.toMatchObject({
-      errors: ['DEVIN_POOL_ID is not set']
+      errors: ['DEVIN_OUTPOST_ID is not set']
     });
     await expect(
       reconcile(baseEnv({ DEVIN_API_TOKEN: '' }))
@@ -454,7 +490,7 @@ describe('Durable Object container actuator', () => {
     const ctx = makeCtx(container);
     const durableObject = newTestDevinWorker(ctx, baseEnv());
 
-    await durableObject.ensureRunning('devin-1', 'pool-1', 'acceptor-1');
+    await durableObject.ensureRunning('devin-1', 'outpost-1', 'acceptor-1');
 
     expect(container.running).toBe(true);
     expect(container.starts).toHaveLength(1);
@@ -462,7 +498,7 @@ describe('Durable Object container actuator', () => {
       enableInternet: true,
       env: {
         DEVIN_OUTPOST_SESSION_ID: 'devin-1',
-        DEVIN_POOL_ID: 'pool-1',
+        DEVIN_OUTPOST_ID: 'outpost-1',
         DEVIN_WORKER_ACCEPTOR_ID: 'acceptor-1',
         DEVIN_API_TOKEN: 'secret-token',
         DEVIN_API_URL: 'https://api.example.test',
@@ -497,12 +533,12 @@ describe('Durable Object container actuator', () => {
 
     const first = durableObject.ensureRunning(
       'devin-1',
-      'pool-1',
+      'outpost-1',
       'acceptor-1'
     );
     const second = durableObject.ensureRunning(
       'devin-1',
-      'pool-1',
+      'outpost-1',
       'acceptor-1'
     );
     release();
@@ -526,7 +562,7 @@ describe('Durable Object container actuator', () => {
 
     const start = durableObject.ensureRunning(
       'devin-1',
-      'pool-1',
+      'outpost-1',
       'acceptor-1'
     );
     const stop = durableObject.stop('devin-1', 'terminated');
@@ -544,7 +580,7 @@ describe('Durable Object container actuator', () => {
     const container = fakeContainer(true);
     const durableObject = newTestDevinWorker(makeCtx(container), baseEnv());
 
-    await durableObject.ensureRunning('devin-1', 'pool-1', 'acceptor-1');
+    await durableObject.ensureRunning('devin-1', 'outpost-1', 'acceptor-1');
 
     expect(container.starts).toHaveLength(0);
     expect(container.running).toBe(true);
@@ -604,12 +640,12 @@ describe('Durable Object container actuator', () => {
 
     await newTestDevinWorker(makeCtx(container), env).ensureRunning(
       'devin-1',
-      'pool-1',
+      'outpost-1',
       'acceptor-1'
     );
     await newTestDevinWorker(makeCtx(container), env).ensureRunning(
       'devin-1',
-      'pool-1',
+      'outpost-1',
       'acceptor-1'
     );
 
@@ -621,9 +657,9 @@ describe('Durable Object container actuator', () => {
     const container = fakeContainer(false);
     const stub = newTestDevinWorker(makeCtx(container), baseEnv());
 
-    await stub.ensureRunning('devin-1', 'pool-1', 'acceptor-1');
+    await stub.ensureRunning('devin-1', 'outpost-1', 'acceptor-1');
     container.running = false; // simulate the CLI/container exiting independently
-    await stub.ensureRunning('devin-1', 'pool-1', 'acceptor-1');
+    await stub.ensureRunning('devin-1', 'outpost-1', 'acceptor-1');
 
     expect(container.starts).toHaveLength(2);
     expect(container.running).toBe(true);

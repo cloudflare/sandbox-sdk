@@ -2,7 +2,7 @@
 set -euo pipefail
 
 : "${DEVIN_OUTPOST_SESSION_ID:?required}"
-: "${DEVIN_POOL_ID:?required}"
+: "${DEVIN_OUTPOST_ID:?required}"
 : "${DEVIN_WORKER_ACCEPTOR_ID:?required}"
 : "${DEVIN_API_TOKEN:?required}"
 : "${DEVIN_API_URL:?required}"
@@ -19,7 +19,7 @@ cd /workspace
 # checkpoint after Devin exits and forward platform termination signals.
 args=(worker start \
   --session="$DEVIN_OUTPOST_SESSION_ID" \
-  --pool="$DEVIN_POOL_ID" \
+  --outpost="$DEVIN_OUTPOST_ID" \
   --acceptor-id="$DEVIN_WORKER_ACCEPTOR_ID" \
   --token="$DEVIN_API_TOKEN" \
   --api-url="$DEVIN_API_URL")

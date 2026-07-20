@@ -11,7 +11,8 @@ async function getDevin<T>(env: Env, path: string): Promise<T> {
     span.setAttribute('http.request.method', 'GET');
     span.setAttribute('devin.api.path', path);
 
-    const response = await fetch(`${env.DEVIN_API_URL}/opbeta${path}`, {
+    const apiUrl = env.DEVIN_API_URL.replace(/\/$/, '');
+    const response = await fetch(`${apiUrl}${path}`, {
       headers: { Authorization: `Bearer ${env.DEVIN_API_TOKEN}` },
       signal: AbortSignal.timeout(30_000)
     });
@@ -37,7 +38,7 @@ interface DevinSessionPage {
 export async function fetchSessions(
   env: Env
 ): Promise<{ items: DevinSessionSummary[] }> {
-  const pool = encodeURIComponent(env.DEVIN_POOL_ID);
+  const outpost = encodeURIComponent(env.DEVIN_OUTPOST_ID);
   const items: DevinSessionSummary[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -46,7 +47,7 @@ export async function fetchSessions(
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const page = await getDevin<DevinSessionPage>(
       env,
-      `/outposts/devins?pool=${pool}${suffix}`
+      `/outposts/devins?outpost=${outpost}${suffix}`
     );
     items.push(...page.items);
 
@@ -74,9 +75,16 @@ export async function reconcileSession(
   entry: DevinSessionSummary
 ): Promise<SessionCommand> {
   const sessionId = entry.metadata.session_id;
-  const poolId = entry.metadata.pool_id;
+  const outpostId = entry.metadata.outpost_id;
   const rawStatus = entry.status?.session_status ?? null;
   const command = sessionCommand(rawStatus);
+
+  if (outpostId !== env.DEVIN_OUTPOST_ID) {
+    console.warn(
+      `[${sessionId}] ignored session from outpost=${outpostId}; configured outpost=${env.DEVIN_OUTPOST_ID}`
+    );
+    return 'ignore';
+  }
 
   if (command === 'ignore') {
     console.warn(
@@ -89,7 +97,7 @@ export async function reconcileSession(
   if (command === 'ensureRunning') {
     await stub.ensureRunning(
       sessionId,
-      poolId,
+      outpostId,
       acceptorId(env.WORKER_ID_PREFIX, sessionId)
     );
     return command;
@@ -119,8 +127,8 @@ export async function reconcile(env: Env): Promise<ReconcileResult> {
       errors: []
     };
 
-    if (!env.DEVIN_POOL_ID) {
-      result.errors.push('DEVIN_POOL_ID is not set');
+    if (!env.DEVIN_OUTPOST_ID) {
+      result.errors.push('DEVIN_OUTPOST_ID is not set');
       span.setAttribute('error', true);
       return result;
     }

@@ -1,16 +1,16 @@
 {
-  "name": "@cloudflare/sandbox-devin-outpost-example",
-  "version": "1.0.0",
+  "name": "cloudflare-devin-outpost",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
   "description": "Devin Outposts orchestrator on Cloudflare Workers + Durable Object Containers.",
   "cloudflare": {
     "bindings": {
-      "DEVIN_POOL_ID": {
-        "description": "The Devin Outposts pool ID this Worker should serve."
+      "DEVIN_OUTPOST_ID": {
+        "description": "The Devin Outpost ID this Worker should serve."
       },
       "DEVIN_API_TOKEN": {
-        "description": "A Devin Enterprise API token with the `account.outposts.orchestrator` scope."
+        "description": "A Devin service-user token with the Run outpost workers permission."
       }
     }
   },

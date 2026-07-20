@@ -1,5 +1,5 @@
 export interface DevinSessionSummary {
-  metadata: { session_id: string; pool_id: string };
+  metadata: { session_id: string; outpost_id: string };
   status?: {
     phase?: string | null;
     session_status?: string | null;

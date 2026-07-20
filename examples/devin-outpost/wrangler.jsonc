@@ -13,8 +13,8 @@
   "observability": { "enabled": true, "traces": { "enabled": true } },
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "DEVIN_POOL_ID": "",
-    "DEVIN_API_URL": "https://api.devin.ai",
+    "DEVIN_OUTPOST_ID": "",
+    "DEVIN_API_URL": "https://api.devin.ai/opbeta",
     "WORKER_ID_PREFIX": "cf-outpost"
   },
   "r2_buckets": [

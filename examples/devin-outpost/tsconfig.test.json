@@ -6,7 +6,7 @@
   "include": [
     "worker-configuration.d.ts",
     "src/**/*.ts",
-    "tests/**/*.ts",
+    "test/**/*.ts",
     "vitest.config.ts"
   ]
 }

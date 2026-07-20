@@ -15,7 +15,7 @@ export class DevinWorker extends DurableObject<Env> {
 
   async ensureRunning(
     sessionId: string,
-    poolId: string,
+    outpostId: string,
     acceptorId: string
   ): Promise<void> {
     if (!this.ctx.container)
@@ -23,7 +23,7 @@ export class DevinWorker extends DurableObject<Env> {
     if (this.ctx.container.running) return;
 
     if (!this.#starting)
-      this.#starting = this.#startContainer(sessionId, poolId, acceptorId);
+      this.#starting = this.#startContainer(sessionId, outpostId, acceptorId);
     const starting = this.#starting;
     try {
       await starting;
@@ -45,7 +45,7 @@ export class DevinWorker extends DurableObject<Env> {
 
   async #startContainer(
     sessionId: string,
-    poolId: string,
+    outpostId: string,
     acceptorId: string
   ): Promise<void> {
     const container = this.ctx.container!;
@@ -56,10 +56,11 @@ export class DevinWorker extends DurableObject<Env> {
 
     const env: Record<string, string> = {
       DEVIN_OUTPOST_SESSION_ID: sessionId,
-      DEVIN_POOL_ID: poolId,
+      DEVIN_OUTPOST_ID: outpostId,
       DEVIN_WORKER_ACCEPTOR_ID: acceptorId,
       DEVIN_API_TOKEN: this.env.DEVIN_API_TOKEN,
-      DEVIN_API_URL: this.env.DEVIN_API_URL,
+      // The CLI expects an origin and appends its own Outposts API path.
+      DEVIN_API_URL: new URL(this.env.DEVIN_API_URL).origin,
       DEVIN_OUTPOST_DESKTOP: 'true',
       DEVIN_CHROME_PATH: '/usr/bin/chromium',
       HOME: '/root',
@@ -68,7 +69,7 @@ export class DevinWorker extends DurableObject<Env> {
       TMPDIR: '/tmp',
       LANG: 'C.UTF-8'
     };
-    console.log(`[${sessionId}] starting container (pool=${poolId})`);
+    console.log(`[${sessionId}] starting container (outpost=${outpostId})`);
     container.start({ enableInternet: true, env });
     // Log exit; the next poll tick reconciles against the latest supported
     // status. Unknown statuses/errors leave the container unchanged.
