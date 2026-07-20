@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * Named-tunnel behavior tests for the SDK tunnel service.
  *
@@ -28,7 +32,7 @@ import { ErrorCode, RPCTransportError } from '../../src/errors';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   type TunnelsStorage
 } from '../../src/tunnels/rpc-target';
 import { makeFences, makeLogger, makeStorage } from './helpers';
@@ -257,7 +261,7 @@ function makeHandler(opts?: {
     zoneId: string;
   }>;
   configError?: Error;
-  fences?: Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
+  fences?: Pick<TunnelsHost, 'getStoredRuntime' | 'currentLifetime'>;
 }) {
   const { client } = makeClient();
   mockTunnelRun(client);
@@ -299,6 +303,9 @@ function makeHandler(opts?: {
     resumeCleanup: built.resumeCleanup
   };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > destroy() for named tunnels', () => {
   it('resumes retained cleanup when the public tunnel record is gone', async () => {

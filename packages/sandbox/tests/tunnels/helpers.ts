@@ -1,9 +1,58 @@
-import type { Logger } from '@repo/shared';
+import type { Logger, SandboxTunnelsAPI } from '@repo/shared';
 import { vi } from 'vitest';
+import { RuntimeIdentity } from '../../src/runtime';
 import type {
   TunnelServiceHost,
   TunnelsStorage
 } from '../../src/tunnels/rpc-target';
+
+type TunnelRuntimeCall = <T>(
+  operation: string,
+  call: (tunnels: SandboxTunnelsAPI) => Promise<T>
+) => Promise<T>;
+
+export type TestTunnelServiceHost = Omit<
+  TunnelServiceHost,
+  'runProvision' | 'runExisting' | 'getStoredRuntime'
+> &
+  Partial<
+    Pick<TunnelServiceHost, 'runProvision' | 'runExisting' | 'getStoredRuntime'>
+  > & { runRuntimeCall: TunnelRuntimeCall };
+
+export function completeTunnelServiceHost(
+  host: TestTunnelServiceHost
+): TunnelServiceHost {
+  const runtime = new RuntimeIdentity({
+    id: 'runtime-1' as RuntimeIdentity['id'],
+    runtimeIncarnationID: 'inc-1' as RuntimeIdentity['runtimeIncarnationID']
+  });
+  const { runRuntimeCall, ...serviceHost } = host;
+  return {
+    ...serviceHost,
+    getStoredRuntime: host.getStoredRuntime ?? (async () => runtime),
+    runProvision:
+      host.runProvision ??
+      ((call) =>
+        runRuntimeCall('tunnel.provision', (tunnels) =>
+          call({
+            runtime,
+            tunnels,
+            retain: () => ({ release: () => {} })
+          })
+        )),
+    runExisting:
+      host.runExisting ??
+      ((target, operation, call) => {
+        if (
+          target.id !== runtime.id ||
+          target.runtimeIncarnationID !== runtime.runtimeIncarnationID
+        ) {
+          return Promise.resolve(null);
+        }
+        return runRuntimeCall(operation, call);
+      })
+  };
+}
 
 export function makeLogger(): Logger {
   const log: Logger = {
@@ -41,24 +90,31 @@ export function makeFences(
     currentRuntime?: Record<string, unknown>;
     currentLifetime?: Record<string, unknown>;
   } = {}
-): Pick<TunnelServiceHost, 'currentRuntime' | 'currentLifetime'> {
+): Pick<TunnelServiceHost, 'getStoredRuntime' | 'currentLifetime'> {
+  const runtime = {
+    id: 'runtime-1',
+    runtimeIncarnationID: 'inc-1'
+  };
+  const getRuntime = overrides.currentRuntime?.get as
+    | (() => Promise<unknown>)
+    | undefined;
   return {
-    currentRuntime: {
-      get: vi.fn(async () => ({
-        id: 'runtime-1',
-        runtimeIncarnationID: 'inc-1'
-      })),
-      markStarted: vi.fn(async () => ({
-        id: 'runtime-1',
-        runtimeIncarnationID: 'inc-1'
-      })),
-      assertActive: vi.fn(async () => {}),
-      ...overrides.currentRuntime
+    getStoredRuntime: async () => {
+      const value = getRuntime ? await getRuntime() : runtime;
+      if (!value) return null;
+      const record = value as { id: string; runtimeIncarnationID?: string };
+      return {
+        id: record.id,
+        runtimeIncarnationID: record.runtimeIncarnationID ?? 'inc-1'
+      } as Awaited<ReturnType<TunnelServiceHost['getStoredRuntime']>>;
     },
     currentLifetime: {
       getOrCreate: vi.fn(async () => ({ id: 'lifetime-1' })),
       assertCurrent: vi.fn(async () => {}),
       ...overrides.currentLifetime
     }
-  } as unknown as Pick<TunnelServiceHost, 'currentRuntime' | 'currentLifetime'>;
+  } as unknown as Pick<
+    TunnelServiceHost,
+    'getStoredRuntime' | 'currentLifetime'
+  >;
 }

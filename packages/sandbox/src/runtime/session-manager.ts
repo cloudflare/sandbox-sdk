@@ -18,7 +18,8 @@ import type {
 } from './types';
 
 export type RuntimeControlCallbackBinder = (
-  runtime: RuntimeIdentity
+  runtime: RuntimeIdentity,
+  isSessionCurrent: () => boolean
 ) => (SandboxControlCallback & RpcTarget) | undefined;
 
 export type RuntimeSessionManagerOptions = {
@@ -64,7 +65,7 @@ export class RuntimeSessionManager implements RuntimeSessionManagerContract {
 
     this.supersedeCurrentSession();
     const generation = ++this.generation;
-    const connection = this.createConnection(runtime);
+    const connection = this.createConnection(runtime, generation);
     const promise = this.open(runtime, key, generation, connection);
     this.opening = { key, generation, connection, promise };
 
@@ -125,14 +126,15 @@ export class RuntimeSessionManager implements RuntimeSessionManagerContract {
   }
 
   private createConnection(
-    runtime: RuntimeIdentity
+    runtime: RuntimeIdentity,
+    generation: number
   ): ContainerControlConnection {
     let connection: ContainerControlConnection;
     connection = new ContainerControlConnection({
       stub: this.options.getTcpPort(3000),
       retryTimeoutMs: 0,
       logger: this.options.logger,
-      localMain: this.bindLocalMain(runtime),
+      localMain: this.bindLocalMain(runtime, generation),
       onClose: () => {
         const cached =
           this.cached?.connection === connection ? this.cached : null;
@@ -259,9 +261,20 @@ export class RuntimeSessionManager implements RuntimeSessionManagerContract {
   }
 
   private bindLocalMain(
-    runtime: RuntimeIdentity
+    runtime: RuntimeIdentity,
+    generation: number
   ): (SandboxControlCallback & RpcTarget) | undefined {
-    return this.options.callbackBinder?.(runtime);
+    return this.options.callbackBinder?.(runtime, () =>
+      this.isSessionGenerationCurrent(generation)
+    );
+  }
+
+  private isSessionGenerationCurrent(generation: number): boolean {
+    if (this.disposed || this.generation !== generation) return false;
+    return (
+      this.cached?.generation === generation ||
+      this.opening?.generation === generation
+    );
   }
 
   private cacheKey(runtime: RuntimeIdentity): string {

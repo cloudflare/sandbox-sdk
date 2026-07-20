@@ -9,8 +9,26 @@
 
 import type { Logger } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { RuntimeIdentity } from '../src/runtime';
 import type { TunnelExitHandler } from '../src/tunnels/rpc-target';
 import { SandboxControlCallbackImpl } from '../src/tunnels/sandbox-control-callback';
+
+const runtime = new RuntimeIdentity({
+  id: 'runtime-1' as RuntimeIdentity['id'],
+  runtimeIncarnationID: 'inc-1' as RuntimeIdentity['runtimeIncarnationID']
+});
+
+function makeCallback(
+  getHandler: () => TunnelExitHandler | null
+): SandboxControlCallbackImpl {
+  return new SandboxControlCallbackImpl(
+    getHandler,
+    makeLogger(),
+    runtime,
+    async () => runtime,
+    () => true
+  );
+}
 
 function makeLogger(): Logger {
   const log: Logger = {
@@ -26,7 +44,7 @@ function makeLogger(): Logger {
 describe('SandboxControlCallbackImpl', () => {
   it('routes onTunnelRunExit events through to the bound handler', async () => {
     const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
-    const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
+    const cb = makeCallback(() => handler);
 
     await cb.onTunnelRunExit({
       tunnelId: 'quick-a',
@@ -37,12 +55,19 @@ describe('SandboxControlCallbackImpl', () => {
     });
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith('quick-a', 8080, 0, 'run-a');
+    expect(handler).toHaveBeenCalledWith(
+      'quick-a',
+      8080,
+      0,
+      'run-a',
+      runtime,
+      expect.any(Function)
+    );
   });
 
   it('passes through a null exitCode', async () => {
     const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
-    const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
+    const cb = makeCallback(() => handler);
 
     await cb.onTunnelRunExit({
       tunnelId: 'quick-b',
@@ -52,7 +77,14 @@ describe('SandboxControlCallbackImpl', () => {
       exitCode: null
     });
 
-    expect(handler).toHaveBeenCalledWith('quick-b', 8081, null, 'run-b');
+    expect(handler).toHaveBeenCalledWith(
+      'quick-b',
+      8081,
+      null,
+      'run-b',
+      runtime,
+      expect.any(Function)
+    );
   });
 
   it('is a no-op when the accessor returns null', async () => {
@@ -71,7 +103,7 @@ describe('SandboxControlCallbackImpl', () => {
 
   it('reads the handler accessor every call', async () => {
     let current: TunnelExitHandler | null = null;
-    const cb = new SandboxControlCallbackImpl(() => current, makeLogger());
+    const cb = makeCallback(() => current);
 
     await cb.onTunnelRunExit({
       tunnelId: 'quick-d',
@@ -105,11 +137,36 @@ describe('SandboxControlCallbackImpl', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores callbacks after the activated runtime is replaced', async () => {
+    const handler = vi.fn<TunnelExitHandler>().mockResolvedValue(undefined);
+    const replacement = new RuntimeIdentity({
+      id: runtime.id,
+      runtimeIncarnationID: 'inc-2' as RuntimeIdentity['runtimeIncarnationID']
+    });
+    const cb = new SandboxControlCallbackImpl(
+      () => handler,
+      makeLogger(),
+      runtime,
+      async () => replacement,
+      () => true
+    );
+
+    await cb.onTunnelRunExit({
+      tunnelId: 'quick-stale',
+      runId: 'run-stale',
+      mode: 'quick',
+      port: 8084,
+      exitCode: 0
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('propagates handler errors to the caller', async () => {
     const handler = vi
       .fn<TunnelExitHandler>()
       .mockRejectedValue(new Error('storage boom'));
-    const cb = new SandboxControlCallbackImpl(() => handler, makeLogger());
+    const cb = makeCallback(() => handler);
 
     await expect(
       cb.onTunnelRunExit({

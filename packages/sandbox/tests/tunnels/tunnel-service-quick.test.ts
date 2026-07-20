@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * SDK tunnel service unit tests.
  *
@@ -20,7 +24,7 @@ import { ErrorCode, RPCTransportError } from '../../src/errors';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
@@ -144,23 +148,42 @@ function makeHandler(extra: Partial<TunnelsHost> = {}) {
   const { storage: providedStorage, ...rest } = extra;
   const storage =
     (providedStorage as TunnelsStorage | undefined) ?? makeStorage();
+  const runRuntimeCall = (async (operation, call) => {
+    const control = {
+      ensureTunnelRun: client.tunnels.ensureTunnelRun,
+      stopTunnelRun: client.tunnels.stopTunnelRun
+    };
+    runtimeCalls.push({ operation, control });
+    return await call(
+      control as unknown as Parameters<
+        Parameters<TunnelsHost['runRuntimeCall']>[1]
+      >[0]
+    );
+  }) as TunnelsHost['runRuntimeCall'];
   const { tunnels, handleTunnelExit } = createTunnelsHandle({
-    runRuntimeCall: (async (operation, call) => {
-      const control = {
-        ensureTunnelRun: client.tunnels.ensureTunnelRun,
-        stopTunnelRun: client.tunnels.stopTunnelRun
-      };
-      runtimeCalls.push({ operation, control });
-      return await call(
-        control as unknown as Parameters<
-          Parameters<TunnelsHost['runRuntimeCall']>[1]
-        >[0]
-      );
-    }) as TunnelsHost['runRuntimeCall'],
+    runProvision: (call) =>
+      runRuntimeCall('tunnel.provision', (control) =>
+        call({
+          runtime: {
+            id: 'runtime-1',
+            runtimeIncarnationID: 'inc-1'
+          } as Parameters<
+            Parameters<NonNullable<TunnelsHost['runProvision']>>[0]
+          >[0]['runtime'],
+          tunnels: control,
+          retain: () => ({ release: () => {} })
+        })
+      ),
+    runRuntimeCall,
+    getStoredRuntime: async () =>
+      ({
+        id: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      }) as Awaited<ReturnType<NonNullable<TunnelsHost['getStoredRuntime']>>>,
     storage,
     logger: makeLogger(),
     ...rest
-  } as unknown as TunnelsHost);
+  });
   return {
     client,
     storage,
@@ -170,6 +193,9 @@ function makeHandler(extra: Partial<TunnelsHost> = {}) {
     runtimeCalls
   };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > get', () => {
   let warn: ReturnType<typeof vi.spyOn>;
@@ -214,7 +240,12 @@ describe('tunnel service > get', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
     expect(metaPut?.[1]).toEqual({
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: request.runId }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: request.runId
+      }
     });
   });
 
@@ -239,9 +270,9 @@ describe('tunnel service > get', () => {
     await handler.get(8080);
 
     expect(runtimeCalls.map((call) => call.operation)).toEqual([
-      'tunnel.ensureRun',
-      'tunnel.stopRun',
-      'tunnel.ensureRun'
+      'tunnel.provision',
+      'tunnel.destroy',
+      'tunnel.provision'
     ]);
     expect(runtimeCalls[0].control).not.toBe(runtimeCalls[1].control);
     expect(runtimeCalls[1].control).not.toBe(runtimeCalls[2].control);
@@ -281,7 +312,11 @@ describe('tunnel service > get', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-1' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      }
     });
     const { tunnels: handler } = createTunnelsHandle({
       runRuntimeCall: ((operation, call) =>
@@ -326,7 +361,7 @@ describe('tunnel service > get', () => {
     await expect(storage.get('tunnels')).resolves.toEqual({ '8080': fresh });
   });
 
-  it('captures runtime after spawn when no active runtime exists before RPC', async () => {
+  it('persists the admitted lease runtime instead of a discovery snapshot', async () => {
     const getRuntime = vi
       .fn()
       .mockResolvedValueOnce(null)
@@ -352,39 +387,23 @@ describe('tunnel service > get', () => {
       await storage.get<Record<string, Record<string, unknown>>>(
         'tunnels:meta'
       );
-    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-after-rpc');
+    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-1');
+    expect(meta?.['8080']?.runtimeIncarnationID).toBe('inc-1');
   });
 
-  it('does not commit when runtime is unavailable after spawn', async () => {
+  it('does not use a separate runtime discovery after admission', async () => {
+    const getRuntime = vi.fn(async () => null);
     const { client, storage, handler } = makeHandler({
-      currentRuntime: {
-        get: vi.fn(async () => null),
-        assertActive: vi.fn(async () => {})
-      },
+      currentRuntime: { get: getRuntime },
       currentLifetime: makeFences().currentLifetime
     } as unknown as Partial<TunnelsHost>);
     mockEnsureQuick(client.tunnels, async (id, port) =>
       makeRecord({ id, port })
     );
 
-    let caught: unknown;
-    try {
-      await handler.get(8080);
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toMatchObject({ name: 'OperationInterruptedError' });
-    expect((caught as { code?: unknown }).code).toBe(
-      ErrorCode.OPERATION_INTERRUPTED
-    );
-    expect((caught as { context?: unknown }).context).toMatchObject({
-      operation: 'tunnel.get',
-      reason: 'runtime_replaced',
-      admitted: true,
-      retryable: false
-    });
-    await expect(storage.get('tunnels')).resolves.toBeUndefined();
+    await expect(handler.get(8080)).resolves.toMatchObject({ port: 8080 });
+    expect(getRuntime).not.toHaveBeenCalled();
+    await expect(storage.get('tunnels')).resolves.toBeDefined();
   });
 
   it('surfaces runtime replacement during spawn without recovery/retry', async () => {
@@ -401,16 +420,9 @@ describe('tunnel service > get', () => {
       throw new RuntimeIdentityInactiveError();
     });
 
-    await expect(handler.get(8080)).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: expect.objectContaining({
-        reason: 'runtime_replaced',
-        operation: 'tunnel.get',
-        retryable: false,
-        admitted: 'unknown'
-      })
-    });
+    await expect(handler.get(8080)).rejects.toBeInstanceOf(
+      RuntimeIdentityInactiveError
+    );
   });
 
   it('surfaces sandbox lifetime changes as non-retryable operation interruptions', async () => {
@@ -439,37 +451,21 @@ describe('tunnel service > get', () => {
     });
   });
 
-  it('surfaces interruption when runtime replacement assert fails and never commits a partial record', async () => {
-    // We removed recovery/retry loops from tunnels.get()
-    let assertCalls = 0;
+  it('does not consult transitional runtime assertions', async () => {
+    const assertActive = vi.fn(async () => {
+      throw new RuntimeIdentityInactiveError();
+    });
     const { client, storage, handler } = makeHandler(
-      makeFences({
-        currentRuntime: {
-          assertActive: vi.fn(async () => {
-            assertCalls += 1;
-            if (assertCalls === 1) {
-              throw new RuntimeIdentityInactiveError();
-            }
-          })
-        }
-      })
+      makeFences({ currentRuntime: { assertActive } })
     );
     mockEnsureQuick(client.tunnels, async (id, port) =>
       makeRecord({ id, port })
     );
 
-    await expect(handler.get(8080)).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: expect.objectContaining({
-        reason: 'runtime_replaced',
-        operation: 'tunnel.get',
-        retryable: false,
-        admitted: 'unknown'
-      })
-    });
-    expect(await storage.get('tunnels')).toBeUndefined();
-    expect(await storage.get('tunnels:meta')).toBeUndefined();
+    await expect(handler.get(8080)).resolves.toMatchObject({ port: 8080 });
+    expect(assertActive).not.toHaveBeenCalled();
+    expect(await storage.get('tunnels')).toBeDefined();
+    expect(await storage.get('tunnels:meta')).toBeDefined();
   });
 
   it('refreshes a quick cache hit owned by an old runtime', async () => {
@@ -483,16 +479,15 @@ describe('tunnel service > get', () => {
       '8080': makeRecord({ id: 'quick-stale0000stale' })
     });
     await (storage.put as StoragePutMock)('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-old' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'old-incarnation'
+      }
     });
     const { client, handler } = makeHandler({
       storage,
-      ...makeFences({
-        currentRuntime: {
-          get: vi.fn(async () => ({ id: 'runtime-new' })),
-          markStarted: vi.fn(async () => ({ id: 'runtime-new' }))
-        }
-      })
+      ...makeFences()
     });
     mockEnsureQuick(client.tunnels, async () => fresh);
 

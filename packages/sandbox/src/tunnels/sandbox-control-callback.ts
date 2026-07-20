@@ -31,17 +31,22 @@ export class SandboxControlCallbackImpl
     private readonly getCurrentRuntime?: () =>
       | RuntimeIdentity
       | null
-      | Promise<RuntimeIdentity | null>
+      | Promise<RuntimeIdentity | null>,
+    private readonly isSessionCurrent?: () => boolean
   ) {
     super();
   }
 
-  bindRuntime(runtime: RuntimeIdentity): SandboxControlCallbackImpl {
+  bindRuntime(
+    runtime: RuntimeIdentity,
+    isSessionCurrent: () => boolean
+  ): SandboxControlCallbackImpl {
     return new SandboxControlCallbackImpl(
       this.getHandler,
       this.logger,
       runtime,
-      this.getCurrentRuntime
+      this.getCurrentRuntime,
+      isSessionCurrent
     );
   }
 
@@ -50,11 +55,12 @@ export class SandboxControlCallbackImpl
       ? await this.getCurrentRuntime()
       : null;
     if (
-      this.expectedRuntime &&
-      (!currentRuntime ||
-        currentRuntime.id !== this.expectedRuntime.id ||
-        currentRuntime.runtimeIncarnationID !==
-          this.expectedRuntime.runtimeIncarnationID)
+      this.isSessionCurrent?.() !== true ||
+      !this.expectedRuntime ||
+      !currentRuntime ||
+      currentRuntime.id !== this.expectedRuntime.id ||
+      currentRuntime.runtimeIncarnationID !==
+        this.expectedRuntime.runtimeIncarnationID
     ) {
       this.logger.debug('onTunnelRunExit: stale runtime callback ignored', {
         tunnelId: event.tunnelId,
@@ -75,6 +81,13 @@ export class SandboxControlCallbackImpl
       });
       return;
     }
-    await handler(event.tunnelId, event.port, event.exitCode, event.runId);
+    await handler(
+      event.tunnelId,
+      event.port,
+      event.exitCode,
+      event.runId,
+      this.expectedRuntime,
+      this.isSessionCurrent
+    );
   }
 }

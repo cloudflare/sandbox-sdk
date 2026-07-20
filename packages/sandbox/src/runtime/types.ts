@@ -39,10 +39,9 @@ export type RuntimeRecord = {
   readonly runtimeIncarnationID: RuntimeIncarnationID;
 };
 
-export type RuntimeRecordStorage = Pick<
-  DurableObjectStorage | DurableObjectTransaction,
-  'get'
->;
+export type RuntimeRecordStorage = {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+};
 
 export interface RuntimeIdentityReader {
   get(): Promise<RuntimeIdentity | null>;

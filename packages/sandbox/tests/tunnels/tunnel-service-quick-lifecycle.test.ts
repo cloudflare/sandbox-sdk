@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * SDK tunnel service unit tests.
  *
@@ -17,10 +21,11 @@ import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentity } from '../../src/runtime';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
@@ -159,6 +164,9 @@ function makeHandler(extra: Partial<TunnelsHost> = {}) {
   return { client, storage, handler: tunnels, tunnels, handleTunnelExit };
 }
 
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
+
 describe('tunnel service > destroy', () => {
   it('clears storage without a container RPC for an unscoped known port', async () => {
     const record = makeRecord({ id: 'quick-known0000known00', port: 8080 });
@@ -188,8 +196,15 @@ describe('tunnel service > destroy', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-quick-1' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: 'run-quick-1'
+      }
     });
+    let targetedRuntime: RuntimeIdentity | undefined;
+    let admittedOperation: string | undefined;
     const { tunnels: handler } = createTunnelsHandle({
       runRuntimeCall: ((operation, call) =>
         call(
@@ -199,6 +214,13 @@ describe('tunnel service > destroy', () => {
             ? U
             : never
         )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
+      runExisting: async (runtime, operation, call) => {
+        targetedRuntime = runtime;
+        admittedOperation = operation;
+        return await call(
+          client.tunnels as unknown as Parameters<typeof call>[0]
+        );
+      },
       storage,
       logger: makeLogger()
     });
@@ -208,10 +230,48 @@ describe('tunnel service > destroy', () => {
 
     await handler.destroy(8080);
 
+    expect(targetedRuntime).toMatchObject({
+      id: 'runtime-1',
+      runtimeIncarnationID: 'inc-1'
+    });
+    expect(admittedOperation).toBe('tunnel.destroy');
     expect(client.tunnels.stopTunnelRun).toHaveBeenCalledWith({
       tunnelId: record.id,
       runId: 'run-quick-1'
     });
+  });
+
+  it('does not wake or fail when the recorded owning runtime is stale', async () => {
+    const record = makeRecord({ id: 'quick-stale-owner', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'old-incarnation',
+        tunnelRunId: 'run-stale-owner'
+      }
+    });
+    const runRuntimeCall = vi.fn(async (_operation, call) =>
+      call(
+        client.tunnels as unknown as Parameters<
+          Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+        >[1] extends (tunnels: infer U) => Promise<unknown>
+          ? U
+          : never
+      )
+    ) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'];
+    const { tunnels: handler } = createTunnelsHandle({
+      runRuntimeCall,
+      storage,
+      logger: makeLogger()
+    });
+
+    await expect(handler.destroy(8080)).resolves.toBeUndefined();
+
+    expect(runRuntimeCall).not.toHaveBeenCalled();
+    await expect(storage.get('tunnels')).resolves.toEqual({});
   });
 
   it('wraps the read-modify-write in storage.transaction()', async () => {
@@ -294,7 +354,12 @@ describe('tunnel service > destroy', () => {
       }
     );
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-gone' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: 'run-gone'
+      }
     });
     (storage.put as StoragePutMock).mockClear();
     client.tunnels.stopTunnelRun.mockRejectedValue(notFound);
@@ -328,7 +393,12 @@ describe('tunnel service > destroy', () => {
       logger: makeLogger()
     });
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-real' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: 'run-real'
+      }
     });
     client.tunnels.stopTunnelRun.mockRejectedValue(
       new Error('rpc transport failure: original was TUNNEL_NOT_FOUND')
@@ -356,7 +426,12 @@ describe('tunnel service > destroy', () => {
       logger: makeLogger()
     });
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-err' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: 'run-err'
+      }
     });
     (storage.put as StoragePutMock).mockClear();
     client.tunnels.stopTunnelRun.mockRejectedValue(new Error('boom'));
@@ -381,6 +456,18 @@ describe('tunnel service > list', () => {
     });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': a, '8081': b });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      },
+      '8081': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      }
+    });
     const { tunnels: handler } = createTunnelsHandle({
       runRuntimeCall: ((operation, call) =>
         call(
@@ -397,6 +484,33 @@ describe('tunnel service > list', () => {
     const tunnels = await handler.list();
     expect(tunnels).toEqual(expect.arrayContaining([a, b]));
     expect(tunnels).toHaveLength(2);
+  });
+
+  it('omits records owned by another runtime incarnation', async () => {
+    const stale = makeRecord({ id: 'quick-stale-incarnation', port: 8080 });
+    const storage = makeStorage({ '8080': stale });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'old-incarnation'
+      }
+    });
+    const { client } = makeClient();
+    const { tunnels: handler } = createTunnelsHandle({
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
+      storage,
+      logger: makeLogger()
+    });
+
+    await expect(handler.list()).resolves.toEqual([]);
   });
 
   it('returns an empty array when storage is empty', async () => {
@@ -420,7 +534,11 @@ describe('tunnel service > list', () => {
       '8081': staleNamed
     });
     await (storage.put as StoragePutMock)('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick' },
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      },
       '8081': {
         optionsHash: 'v1:named:api',
         dnsRecordId: 'dns-id',
@@ -493,7 +611,12 @@ describe('tunnel service > per-port serialization', () => {
     });
     let resolveDestroy: () => void = () => {};
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: 'run-pre' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: 'run-pre'
+      }
     });
     client.tunnels.stopTunnelRun.mockImplementation(
       () =>
@@ -528,11 +651,25 @@ describe('tunnel service > per-port serialization', () => {
   });
 });
 
+const callbackRuntime = new RuntimeIdentity({
+  id: 'runtime-1' as RuntimeIdentity['id'],
+  runtimeIncarnationID: 'inc-1' as RuntimeIdentity['runtimeIncarnationID']
+});
+const callbackRunID = 'run-callback';
+
 describe('tunnel service > handleTunnelExit', () => {
   it('clears the matching port from storage when the stored id matches', async () => {
     const record = makeRecord({ id: 'quick-exit0000exit0000', port: 8080 });
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: callbackRuntime.id,
+        runtimeIncarnationID: callbackRuntime.runtimeIncarnationID,
+        tunnelRunId: callbackRunID
+      }
+    });
     const { tunnels, handleTunnelExit } = createTunnelsHandle({
       runRuntimeCall: ((operation, call) =>
         call(
@@ -546,7 +683,14 @@ describe('tunnel service > handleTunnelExit', () => {
       logger: makeLogger()
     });
 
-    await handleTunnelExit(record.id, 8080, 0);
+    await handleTunnelExit(
+      record.id,
+      8080,
+      0,
+      callbackRunID,
+      callbackRuntime,
+      () => true
+    );
 
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(final ?? {}).toEqual({});
@@ -582,7 +726,10 @@ describe('tunnel service > handleTunnelExit', () => {
         optionsHash: 'v1:named:api',
         dnsRecordId: 'kept-dns-id',
         accountId: 'acct-A',
-        zoneId: 'zone-A'
+        zoneId: 'zone-A',
+        runtimeIdentityID: callbackRuntime.id,
+        runtimeIncarnationID: callbackRuntime.runtimeIncarnationID,
+        tunnelRunId: callbackRunID
       }
     });
     const { handleTunnelExit } = createTunnelsHandle({
@@ -598,7 +745,14 @@ describe('tunnel service > handleTunnelExit', () => {
       logger: makeLogger()
     });
 
-    await handleTunnelExit('tunnel-uuid-named', 8080, 0);
+    await handleTunnelExit(
+      'tunnel-uuid-named',
+      8080,
+      0,
+      callbackRunID,
+      callbackRuntime,
+      () => true
+    );
 
     // The public record is hidden; the next get() uses private metadata
     // to respawn cloudflared behind the same named hostname.
@@ -664,6 +818,8 @@ describe('tunnel service > handleTunnelExit', () => {
         tunnelId: 'tunnel-uuid-named',
         name: 'api',
         hostname: 'api.example.com',
+        runtimeIdentityID: callbackRuntime.id,
+        runtimeIncarnationID: callbackRuntime.runtimeIncarnationID,
         tunnelRunId: 'run-current'
       }
     });
@@ -680,14 +836,14 @@ describe('tunnel service > handleTunnelExit', () => {
       logger: makeLogger()
     });
 
-    await (
-      handleTunnelExit as unknown as (
-        id: string,
-        port: number,
-        exitCode: number | null,
-        tunnelRunId: string
-      ) => Promise<void>
-    )('tunnel-uuid-named', 8080, 0, 'run-old');
+    await handleTunnelExit(
+      'tunnel-uuid-named',
+      8080,
+      0,
+      'run-old',
+      callbackRuntime,
+      () => true
+    );
 
     await expect(storage.get('tunnels')).resolves.toEqual({ '8080': current });
     const meta =
@@ -696,6 +852,50 @@ describe('tunnel service > handleTunnelExit', () => {
       );
     expect(meta?.['8080']?.tunnelRunId).toBe('run-current');
     expect(meta?.['8080']).not.toHaveProperty('needsRespawn');
+  });
+
+  it('ignores an old-runtime callback even when tunnel id and run id match', async () => {
+    const record = makeRecord({ id: 'quick-current-runtime', port: 8080 });
+    const { client } = makeClient();
+    const storage = makeStorage({ '8080': record });
+    await storage.put('tunnels:meta', {
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: callbackRuntime.id,
+        runtimeIncarnationID: callbackRuntime.runtimeIncarnationID,
+        tunnelRunId: callbackRunID
+      }
+    });
+    const replacement = new RuntimeIdentity({
+      id: callbackRuntime.id,
+      runtimeIncarnationID: 'inc-2' as RuntimeIdentity['runtimeIncarnationID']
+    });
+    const { handleTunnelExit } = createTunnelsHandle({
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
+      getStoredRuntime: async () => replacement,
+      storage,
+      logger: makeLogger()
+    });
+
+    await handleTunnelExit(
+      record.id,
+      8080,
+      0,
+      callbackRunID,
+      callbackRuntime,
+      () => true
+    );
+
+    await expect(storage.get('tunnels')).resolves.toEqual({
+      '8080': record
+    });
   });
 
   it('is a no-op when the stored id has been replaced (id-mismatch safety net)', async () => {
@@ -716,7 +916,14 @@ describe('tunnel service > handleTunnelExit', () => {
     });
 
     // Callback fires for an OLDER tunnel id that's no longer in storage.
-    await handleTunnelExit('quick-stale0000stale00', 8080, null);
+    await handleTunnelExit(
+      'quick-stale0000stale00',
+      8080,
+      null,
+      callbackRunID,
+      callbackRuntime,
+      () => true
+    );
 
     // Storage is untouched.
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
@@ -740,7 +947,14 @@ describe('tunnel service > handleTunnelExit', () => {
     });
 
     await expect(
-      handleTunnelExit('quick-anything00000ok', 8080, null)
+      handleTunnelExit(
+        'quick-anything00000ok',
+        8080,
+        null,
+        callbackRunID,
+        callbackRuntime,
+        () => true
+      )
     ).resolves.toBeUndefined();
     // No write happened.
     expect((storage.put as StoragePutMock).mock.calls.length).toBe(0);
@@ -762,11 +976,17 @@ describe('tunnel service > handleTunnelExit', () => {
       await new Promise((r) => setTimeout(r, 1));
     }
 
-    // Fire an exit callback for some arbitrary id while get() is
-    // blocked. Without the lock, the callback would read the empty
-    // storage now (before get() writes) and observe nothing to clean
-    // up. With the lock, it must wait until get() releases.
-    const exitPromise = handleTunnelExit('quick-old', 8080, 0);
+    const request = client.tunnels.ensureTunnelRun.mock.calls[0]?.[0];
+    if (!request) throw new Error('Expected tunnel provisioning request');
+    let sessionCurrent = true;
+    const exitPromise = handleTunnelExit(
+      request.tunnelId,
+      8080,
+      0,
+      request.runId,
+      callbackRuntime,
+      () => sessionCurrent
+    );
     await new Promise((r) => setTimeout(r, 5));
 
     // The exit hook has not yet read storage — storage is empty so
@@ -778,14 +998,14 @@ describe('tunnel service > handleTunnelExit', () => {
     });
     expect(exitResolved).toBe(false);
 
-    // Let get() finish.
+    // Supersede the callback session before the lock becomes available.
+    sessionCurrent = false;
     resolveSpawn(makeRecord({ id: 'unused', port: 8080 }));
     const info = await getPromise;
     await exitPromise;
 
-    // The exit callback ran after the get() wrote storage, saw a
-    // different id ('quick-old' vs the spawned id), and no-op'd —
-    // the spawned record is still there.
+    // The callback matches the tunnel and run, but its session authority
+    // was revoked while it waited for the lock, so the record remains.
     const final = await storage.get<Record<string, TunnelInfo>>('tunnels');
     expect(final).toEqual({ '8080': info });
   });
@@ -818,7 +1038,16 @@ describe('tunnel service > handleTunnelExit', () => {
     // The handler must surface the rejection to the caller so the
     // port-lock chain and any awaiter see it — silently swallowing
     // would hide the bug.
-    await expect(handleTunnelExit('quick-x', 8080, 0)).rejects.toThrow(/boom/);
+    await expect(
+      handleTunnelExit(
+        'quick-x',
+        8080,
+        0,
+        callbackRunID,
+        callbackRuntime,
+        () => true
+      )
+    ).rejects.toThrow(/boom/);
 
     // And a canonical event with outcome: 'error' must have been logged.
     const errorCalls = (logger.error as LogMock).mock.calls;

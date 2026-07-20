@@ -392,11 +392,15 @@ describe('RuntimeSessionManager', () => {
     ).mockImplementation(() => undefined);
     const manager = new RuntimeSessionManager({
       getTcpPort: () => ({ fetch: vi.fn() }),
-      callbackBinder: (runtimeIdentity) => callback.bindRuntime(runtimeIdentity)
+      callbackBinder: (runtimeIdentity, isSessionCurrent) =>
+        callback.bindRuntime(runtimeIdentity, isSessionCurrent)
     });
 
     await manager.acquire(expectedRuntime);
-    expect(bindRuntime).toHaveBeenCalledWith(expectedRuntime);
+    expect(bindRuntime).toHaveBeenCalledWith(
+      expectedRuntime,
+      expect.any(Function)
+    );
     const bound = bindRuntime.mock.results[0]?.value as SandboxControlCallback &
       RpcTarget;
     await bound.onTunnelRunExit({
@@ -409,6 +413,16 @@ describe('RuntimeSessionManager', () => {
 
     expect(handled).not.toHaveBeenCalled();
     current = expectedRuntime;
+    await bound.onTunnelRunExit({
+      tunnelId: 'tunnel',
+      runId: 'run',
+      mode: 'quick',
+      port: 3000,
+      exitCode: 1
+    } as TunnelRunExitEvent);
+    expect(handled).toHaveBeenCalledTimes(1);
+
+    manager.closeActive();
     await bound.onTunnelRunExit({
       tunnelId: 'tunnel',
       runId: 'run',

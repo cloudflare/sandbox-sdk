@@ -3,11 +3,13 @@ import type * as SharedRoot from '@repo/shared';
 import type { ISandbox, ProcessLogEvent, ProcessStatus } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
+import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
 import {
   ContainerUnavailableError,
   ErrorCode,
   InvalidBackupConfigError,
-  PortNotExposedError
+  PortNotExposedError,
+  RuntimeControlProtocolError
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
 import { connect, getSandbox, Sandbox } from '../src/sandbox';
@@ -174,10 +176,6 @@ interface MockCtx {
   };
 }
 
-interface SandboxRuntimeStart {
-  ensureRuntimeActiveForPreview(): Promise<unknown>;
-}
-
 function deferred<T = void>(): {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -213,6 +211,41 @@ function runtimeRecord(id: string) {
   };
 }
 
+type PreviewRuntimeRunnerProbe = {
+  runExisting<T>(
+    target: unknown,
+    operation: string,
+    call: (lease: {
+      runtime: unknown;
+      retain(): { release(): void };
+    }) => Promise<T>
+  ): Promise<T | { status: 'absent' }>;
+  runWaking<T>(
+    operation: string,
+    call: (lease: {
+      runtime: unknown;
+      retain(): { release(): void };
+    }) => Promise<T>
+  ): Promise<T>;
+};
+
+function getPreviewRuntimeRunner(sandbox: Sandbox): PreviewRuntimeRunnerProbe {
+  return (sandbox as unknown as { runtimeRunner: PreviewRuntimeRunnerProbe })
+    .runtimeRunner;
+}
+
+type PreviewRuntimeLifecycleProbe = {
+  assertActive(runtime: unknown): Promise<void>;
+};
+
+function getPreviewRuntimeLifecycle(
+  sandbox: Sandbox
+): PreviewRuntimeLifecycleProbe {
+  return (
+    sandbox as unknown as { runtimeLifecycle: PreviewRuntimeLifecycleProbe }
+  ).runtimeLifecycle;
+}
+
 function activePreviewStorageState({
   port = PREVIEW_TEST_PORT,
   token = PREVIEW_TEST_TOKEN,
@@ -230,6 +263,7 @@ function activePreviewStorageState({
     activePreviewPorts: {
       [port.toString()]: {
         runtimeIdentityID,
+        runtimeIncarnationID: 'test-incarnation',
         token
       }
     }
@@ -1322,6 +1356,9 @@ describe('Sandbox durable object behavior', () => {
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
       const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
       const response = await sandbox.fetch(
         createPreviewProxyRequest('/hello?x=1')
@@ -1331,6 +1368,13 @@ describe('Sandbox durable object behavior', () => {
       expect(containerFetchSpy).not.toHaveBeenCalled();
       expect(startAndWaitSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.start).not.toHaveBeenCalled();
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runExistingSpy).toHaveBeenCalledWith(
+        { kind: 'current' },
+        'preview.forward',
+        expect.any(Function)
+      );
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
       expect(tcpFetch).toHaveBeenCalledWith(
         'http://localhost:8080/hello?x=1',
@@ -1394,6 +1438,9 @@ describe('Sandbox durable object behavior', () => {
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
       const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
       const response = await sandbox.fetch(createPreviewProxyRequest());
 
@@ -1404,6 +1451,8 @@ describe('Sandbox durable object behavior', () => {
       expect(mockCtx.container.getTcpPort).not.toHaveBeenCalled();
       expect(containerFetchSpy).not.toHaveBeenCalled();
       expect(startAndWaitSpy).not.toHaveBeenCalled();
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.start).not.toHaveBeenCalled();
     });
 
@@ -1433,7 +1482,7 @@ describe('Sandbox durable object behavior', () => {
       });
     });
 
-    it('returns controlled disconnect response when network loss keeps the runtime active', async () => {
+    it('returns stale response when preview forwarding loses the network', async () => {
       mockCtx.container.running = true;
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const tcpFetch = vi
@@ -1445,10 +1494,10 @@ describe('Sandbox durable object behavior', () => {
 
       const response = await sandbox.fetch(createPreviewProxyRequest());
 
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe(
-        'Container suddenly disconnected, try again'
-      );
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
     });
 
     it('rejects preview proxy requests without durable authorization', async () => {
@@ -1457,6 +1506,9 @@ describe('Sandbox durable object behavior', () => {
         key === 'portTokens' ? {} : null
       );
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
       const response = await sandbox.fetch(
         new Request('https://8080-test-sandbox-badtoken.example.com/api', {
@@ -1474,6 +1526,8 @@ describe('Sandbox durable object behavior', () => {
         code: 'INVALID_TOKEN'
       });
       expect(containerFetchSpy).not.toHaveBeenCalled();
+      expect(runExistingSpy).not.toHaveBeenCalled();
+      expect(runWakingSpy).not.toHaveBeenCalled();
     });
 
     it('rejects preview proxy requests without current-runtime activation', async () => {
@@ -1499,6 +1553,143 @@ describe('Sandbox durable object behavior', () => {
         code: 'STALE_PREVIEW_URL'
       });
       expect(containerFetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects preview proxy requests when activation belongs to another runtime', async () => {
+      mockCtx.container.running = true;
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        const state = {
+          ...activePreviewStorageState(),
+          activePreviewPorts: {
+            '8080': {
+              runtimeIdentityID: 'runtime-2',
+              runtimeIncarnationID: 'test-incarnation',
+              token: PREVIEW_TEST_TOKEN
+            }
+          }
+        };
+        return state[key as keyof typeof state] ?? null;
+      });
+      const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).not.toHaveBeenCalled();
+      expect(tcpFetch).not.toHaveBeenCalled();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'same runtime id with another incarnation',
+        activation: {
+          runtimeIdentityID: PREVIEW_TEST_RUNTIME_ID,
+          runtimeIncarnationID: 'old-incarnation',
+          token: PREVIEW_TEST_TOKEN
+        },
+        expectedAdmissions: 1
+      },
+      {
+        name: 'legacy activation without an incarnation',
+        activation: {
+          runtimeIdentityID: PREVIEW_TEST_RUNTIME_ID,
+          token: PREVIEW_TEST_TOKEN
+        },
+        expectedAdmissions: 0
+      }
+    ])(
+      'clears stale preview activation for $name',
+      async ({ activation, expectedAdmissions }) => {
+        const state = activePreviewStorageState();
+        const storage = new Map<string, unknown>([
+          ...Object.entries(state),
+          ['activePreviewPorts', { '8080': activation }]
+        ]);
+        mockCtx.storage.get.mockImplementation(
+          async (key: string) => storage.get(key) ?? null
+        );
+        mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+          storage.set(key, value);
+        });
+        mockCtx.storage.delete.mockImplementation(async (key: string) => {
+          storage.delete(key);
+        });
+        mockCtx.storage.transaction.mockImplementation(
+          async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+            await callback(mockCtx.storage)
+        );
+        mockCtx.container.running = true;
+        const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+        mockCtx.container.getTcpPort = vi
+          .fn()
+          .mockReturnValue({ fetch: tcpFetch });
+        const runExisting = vi.spyOn(
+          getPreviewRuntimeRunner(sandbox),
+          'runExisting'
+        );
+
+        const response = await sandbox.fetch(createPreviewProxyRequest());
+
+        expect(response.status).toBe(410);
+        expect(runExisting).toHaveBeenCalledTimes(expectedAdmissions);
+        expect(tcpFetch).not.toHaveBeenCalled();
+        expect(storage.has('activePreviewPorts')).toBe(false);
+        expect(mockCtx.container.start).not.toHaveBeenCalled();
+      }
+    );
+
+    it('clears preview activation when reconstructed session observes a changed incarnation', async () => {
+      const storage = new Map<string, unknown>(
+        Object.entries(activePreviewStorageState())
+      );
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      mockCtx.storage.transaction.mockImplementation(
+        async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+          await callback(mockCtx.storage)
+      );
+      const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+      mockCtx.container.running = true;
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+      vi.spyOn(
+        getPreviewRuntimeRunner(sandbox),
+        'runExisting'
+      ).mockRejectedValueOnce(
+        new RuntimeControlProtocolError('Runtime incarnation does not match', {
+          reason: 'activation-mismatch',
+          operation: 'utils.activateControlSession'
+        })
+      );
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      expect(tcpFetch).not.toHaveBeenCalled();
+      expect(storage.get('activePreviewPorts')).toBeUndefined();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
     });
 
     it('rejects persisted preview auth without runtime identity or activation', async () => {
@@ -1739,10 +1930,15 @@ describe('Sandbox durable object behavior', () => {
         if (key === 'activePreviewPorts') return {};
         return null;
       });
+      const runWakingSpy = vi.spyOn(
+        getPreviewRuntimeRunner(sandbox),
+        'runWaking'
+      );
 
       await expect(
         sandbox.exposePort(8081, { hostname: 'example.com', token: 'shared' })
       ).rejects.toThrow(/already in use by port 8080/);
+      expect(runWakingSpy).not.toHaveBeenCalled();
     });
 
     it('should allow re-exposing same port with same token', async () => {
@@ -1771,7 +1967,7 @@ describe('Sandbox durable object behavior', () => {
       await sandbox.setSandboxName('test-sandbox', false);
     });
 
-    it('ensureRuntimeActiveForPreview() establishes an activated runtime without restoring saved ports', async () => {
+    it('exposePort() uses one waking preview scope and no legacy preview starter', async () => {
       const storage = new Map<string, unknown>([
         ['portTokens', { '8080': { token: 'tok8080', name: 'api' } }]
       ]);
@@ -1781,20 +1977,43 @@ describe('Sandbox durable object behavior', () => {
       vi.mocked(mockCtx.storage!.put).mockImplementation(async (key, value) => {
         storage.set(String(key), value);
       });
+      const runtimeRunner = (
+        sandbox as unknown as {
+          runtimeRunner: {
+            runWaking<T>(
+              operation: string,
+              call: (lease: {
+                runtime: unknown;
+                retain(): { release(): void };
+              }) => Promise<T>
+            ): Promise<T>;
+          };
+        }
+      ).runtimeRunner;
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
-      await (sandbox as any).ensureRuntimeActiveForPreview();
+      await sandbox.exposePort(9090, {
+        hostname: 'example.com',
+        token: 'newtoken'
+      });
 
+      expect(runWakingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).toHaveBeenCalledWith(
+        'preview.expose',
+        expect.any(Function)
+      );
+      expect('ensureRuntimeActiveForPreview' in sandbox).toBe(false);
       expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'currentRuntimeIdentity',
+        'activePreviewPorts',
         expect.objectContaining({
-          schemaVersion: 1,
-          id: expect.any(String),
-          runtimeIncarnationID: 'test-incarnation'
+          '9090': expect.objectContaining({ token: 'newtoken' })
         })
       );
       expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
         'activePreviewPorts',
-        expect.anything()
+        expect.objectContaining({
+          '8080': expect.anything()
+        })
       );
     });
 
@@ -1974,9 +2193,52 @@ describe('Sandbox durable object behavior', () => {
       expect(putSpy).toHaveBeenCalledWith('activePreviewPorts', {
         '8080': {
           runtimeIdentityID: 'runtime-1',
+          runtimeIncarnationID: 'test-incarnation',
           token: 'friendlytok'
         }
       });
+    });
+
+    it('exposePort() rolls back preview state when the post-write fence fails', async () => {
+      const storage = new Map<string, unknown>([
+        ['currentRuntimeIdentity', runtimeRecord('runtime-1')]
+      ]);
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      mockCtx.storage.transaction.mockImplementation(
+        async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+          await callback(mockCtx.storage)
+      );
+      const lifecycle = getPreviewRuntimeLifecycle(sandbox);
+      const assertActive = lifecycle.assertActive.bind(lifecycle);
+      vi.spyOn(lifecycle, 'assertActive').mockImplementation(
+        async (runtime) => {
+          if (storage.has('activePreviewPorts')) {
+            throw new RuntimeIdentityInactiveError();
+          }
+          await assertActive(runtime);
+        }
+      );
+
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'friendlytok'
+        })
+      ).rejects.toMatchObject({
+        code: 'OPERATION_INTERRUPTED',
+        context: { operation: 'preview.expose' }
+      });
+
+      expect(storage.get('portTokens')).toEqual({});
+      expect(storage.has('activePreviewPorts')).toBe(false);
     });
 
     it('exposePort() does not write preview state when runtime identity changes before storage writes', async () => {
@@ -2005,7 +2267,7 @@ describe('Sandbox durable object behavior', () => {
         })
       ).rejects.toMatchObject({
         code: 'OPERATION_INTERRUPTED',
-        context: { operation: 'preview.runtime.activate' }
+        context: { operation: 'preview.expose' }
       });
 
       expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
@@ -2044,7 +2306,7 @@ describe('Sandbox durable object behavior', () => {
         })
       ).rejects.toMatchObject({
         code: 'OPERATION_INTERRUPTED',
-        context: { operation: 'preview.runtime.activate' }
+        context: { operation: 'preview.expose' }
       });
 
       expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
@@ -2104,27 +2366,37 @@ describe('Sandbox durable object behavior', () => {
       const startupGate = new Promise<void>((resolve) => {
         releaseStartup = resolve;
       });
-      const ensureRuntimeSpy = vi
-        .spyOn(
-          sandbox as unknown as SandboxRuntimeStart,
-          'ensureRuntimeActiveForPreview'
-        )
-        .mockImplementation(async () => {
-          await startupGate;
-          return {
-            id: 'runtime-1',
-            scope: (value: { token: string }) => ({
-              ...value,
-              runtimeIdentityID: 'runtime-1'
-            })
+      const runtimeRunner = (
+        sandbox as unknown as {
+          runtimeRunner: {
+            runWaking<T>(
+              operation: string,
+              call: (lease: {
+                runtime: unknown;
+                retain(): { release(): void };
+              }) => Promise<T>
+            ): Promise<T>;
           };
+        }
+      ).runtimeRunner;
+      const runWakingSpy = vi
+        .spyOn(runtimeRunner, 'runWaking')
+        .mockImplementation(async (_operation, call) => {
+          await startupGate;
+          return call({
+            runtime: {
+              id: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation'
+            },
+            retain: () => ({ release: () => {} })
+          });
         });
 
       const exposePromise = sandbox.exposePort(9090, {
         hostname: 'example.com',
         token: 'newtoken'
       });
-      await vi.waitFor(() => expect(ensureRuntimeSpy).toHaveBeenCalled());
+      await vi.waitFor(() => expect(runWakingSpy).toHaveBeenCalled());
 
       await sandbox.unexposePort(8080);
       expect(storage.get('portTokens')).toEqual({});
@@ -2246,13 +2518,21 @@ describe('Sandbox durable object behavior', () => {
         }
       }));
 
+      const runWaking = vi.spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking');
+
       await sandbox.tunnels.get(8080);
 
+      expect(runWaking).toHaveBeenCalledTimes(1);
+      expect(runWaking).toHaveBeenCalledWith(
+        'tunnel.provision',
+        expect.any(Function)
+      );
       const meta = (await storageGet('tunnels:meta')) as Record<
         string,
         Record<string, unknown>
       >;
       expect(meta['8080']?.runtimeIdentityID).toBe('runtime-1');
+      expect(meta['8080']?.runtimeIncarnationID).toBe('test-incarnation');
       expect(meta['8080']?.sandboxLifetimeID).toBe('lifetime-1');
     });
 
@@ -2343,10 +2623,12 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             },
             '9090': {
               runtimeIdentityID: 'runtime-old',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok9090'
             }
           };
@@ -2374,6 +2656,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -2417,6 +2700,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -2456,6 +2740,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-old',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -2479,6 +2764,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -2504,6 +2790,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };

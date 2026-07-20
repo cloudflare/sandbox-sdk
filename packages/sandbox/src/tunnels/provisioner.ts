@@ -20,13 +20,7 @@ import {
   type TunnelMetaEntry
 } from './storage';
 
-export type TunnelRuntimeCall = <T>(
-  operation: string,
-  call: (tunnels: SandboxTunnelsAPI) => Promise<T>
-) => Promise<T>;
-
 export interface TunnelProvisionerHost {
-  runRuntimeCall: TunnelRuntimeCall;
   sandboxId?: string;
   getNamedTunnelConfig?: () => Promise<{
     token: string;
@@ -62,11 +56,12 @@ export class TunnelProvisioner {
   }
 
   async provisionQuickTunnel(
+    tunnels: SandboxTunnelsAPI,
     port: number,
     tunnelRunId: string,
     tunnelId = createQuickTunnelId()
   ): Promise<QuickTunnelInfo> {
-    const result = await this.#ensureTunnelRun({
+    const result = await this.#ensureTunnelRun(tunnels, {
       mode: 'quick',
       tunnelId,
       runId: tunnelRunId,
@@ -192,10 +187,11 @@ export class TunnelProvisioner {
   }
 
   async startNamedTunnelRun(
+    tunnels: SandboxTunnelsAPI,
     prepared: PreparedNamedTunnel,
     tunnelRunId: string
   ): Promise<void> {
-    const result = await this.#ensureTunnelRun({
+    const result = await this.#ensureTunnelRun(tunnels, {
       mode: 'named',
       tunnelId: prepared.tunnelId,
       runId: tunnelRunId,
@@ -212,11 +208,10 @@ export class TunnelProvisioner {
   }
 
   async #ensureTunnelRun(
+    tunnels: SandboxTunnelsAPI,
     request: EnsureTunnelRunRequest
   ): Promise<EnsureTunnelRunResult> {
-    return await this.#host.runRuntimeCall('tunnel.ensureRun', (tunnels) =>
-      tunnels.ensureTunnelRun(request)
-    );
+    return await tunnels.ensureTunnelRun(request);
   }
 
   async #getZoneName(config: {

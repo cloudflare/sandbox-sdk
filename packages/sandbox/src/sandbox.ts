@@ -429,10 +429,6 @@ type PreviewForwardingContainerState = DurableObjectState<{}> & {
   container?: PreviewForwardingContainer;
 };
 
-type PreviewForwardingLifecycleState = {
-  inflightRequests?: number;
-};
-
 type ConfigurableSandboxStub = {
   configure?: (configuration: SandboxConfiguration) => Promise<void>;
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
@@ -1100,7 +1096,8 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.runtimeSessions = new RuntimeSessionManager({
       getTcpPort: (port) => this.getControlPortStub(port),
       logger: this.logger,
-      callbackBinder: (runtime) => this.controlCallback.bindRuntime(runtime)
+      callbackBinder: (runtime, isSessionCurrent) =>
+        this.controlCallback.bindRuntime(runtime, isSessionCurrent)
     });
     this.runtimeLifecycle = new SandboxRuntimeLifecycle({
       storage: this.ctx.storage,
@@ -1147,14 +1144,24 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.previewService = new PreviewService({
       storage: this.ctx.storage,
       logger: this.logger,
-      currentRuntime: this.currentRuntime,
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
+      assertRuntimeActive: (runtime) =>
+        this.runtimeLifecycle.assertActive(runtime),
       getContainerState: () => this.getState(),
       getForwardingContainer: () => this.getPreviewForwardingContainer(),
-      ensureRuntimeActiveForPreview: () => this.ensureRuntimeActiveForPreview(),
+      runWaking: (operation, call) =>
+        this.runWakingComposite(operation, (lease) => call(lease)),
+      runExisting: async (operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'current' },
+          operation,
+          (lease) => call(lease)
+        );
+        if (isRuntimeAbsent(result)) return null;
+        return result;
+      },
       getSandboxName: () => this.sandboxName,
-      getNormalizeID: () => this.normalizeId,
-      beginForward: () => this.beginPreviewForward(),
-      renewActivity: () => this.renewActivityTimeout()
+      getNormalizeID: () => this.normalizeId
     });
 
     this.ctx.blockConcurrencyWhile(async () => {
@@ -1589,7 +1596,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
 
     try {
-      const teardownTunnels = this.createTeardownTunnelsHandle(runControl);
+      const teardownTunnels = this.createTeardownTunnelsHandle(
+        runControl,
+        cleanupRuntime
+      );
       await teardownTunnels.destroyAllRuntimeRuns();
     } catch (error) {
       this.logger.warn('Failed to tear down tunnels during destroy()', {
@@ -1606,30 +1616,38 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     runControl: <T>(
       operation: string,
       call: (control: ContainerControlClient) => Promise<T>
-    ) => Promise<T>
+    ) => Promise<T>,
+    cleanupRuntime: RuntimeIdentity
   ): TunnelsHandle {
-    return this.createDestroyTunnelsHandle((operation, call) =>
-      runControl(operation, (control) =>
+    return this.createDestroyTunnelsHandle(async (runtime, operation, call) => {
+      if (
+        runtime.id !== cleanupRuntime.id ||
+        runtime.runtimeIncarnationID !== cleanupRuntime.runtimeIncarnationID
+      ) {
+        return null;
+      }
+      return await runControl(operation, (control) =>
         call(control.tunnels as SandboxTunnelsAPI)
-      )
-    );
-  }
-
-  private createDurableDestroyTunnelsHandle(): TunnelsHandle {
-    return this.createDestroyTunnelsHandle(async () => {
-      throw { code: 'TUNNEL_NOT_FOUND' };
+      );
     });
   }
 
+  private createDurableDestroyTunnelsHandle(): TunnelsHandle {
+    return this.createDestroyTunnelsHandle(async () => null);
+  }
+
   private createDestroyTunnelsHandle(
-    runRuntimeCall: Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+    runExisting: Parameters<typeof createTunnelsHandle>[0]['runExisting']
   ): TunnelsHandle {
     return createTunnelsHandle({
-      runRuntimeCall,
+      runProvision: async () => {
+        throw new Error('Tunnel provisioning is unavailable during teardown');
+      },
+      runExisting,
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
-      currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime,
       getNamedTunnelConfig: () => this.namedTunnelConfigResolver.getConfig()
     });
@@ -2055,27 +2073,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     return (this.ctx as PreviewForwardingContainerState).container;
   }
 
-  private beginPreviewForward(): () => void {
-    const lifecycle = this as unknown as PreviewForwardingLifecycleState;
-    lifecycle.inflightRequests = (lifecycle.inflightRequests ?? 0) + 1;
-    this.renewActivityTimeout();
-
-    let settled = false;
-    return () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      lifecycle.inflightRequests = Math.max(
-        0,
-        (lifecycle.inflightRequests ?? 0) - 1
-      );
-      if (lifecycle.inflightRequests === 0) {
-        this.renewActivityTimeout();
-      }
-    };
-  }
-
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     // Extract or generate trace ID from request
@@ -2136,6 +2133,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
               releaseHold();
             });
             releaseHold = hold.release;
+            if (interrupted) {
+              hold.release();
+              throw runtimeInterrupted('container.websocket');
+            }
             try {
               const response = await super.fetch(request);
               retained = retainWebSocketResponse(response, hold.release);
@@ -2322,6 +2323,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
             releaseHold();
           });
           releaseHold = hold.release;
+          if (interrupted) {
+            hold.release();
+            throw staleTerminal('', 'terminal.connect');
+          }
           try {
             const response = await super.fetch(request);
             retained = retainWebSocketResponse(response, hold.release);
@@ -2696,13 +2701,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     );
   }
 
-  private async ensureRuntimeActiveForPreview(): Promise<RuntimeIdentity> {
-    return this.runtimeRunner.runWaking(
-      'preview.runtime.activate',
-      async (lease) => lease.runtime
-    );
-  }
-
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
@@ -2732,6 +2730,22 @@ export class Sandbox<Env = unknown> extends Container<Env> {
    * });
    * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
+  private async runWakingComposite<T>(
+    operation: string,
+    call: (lease: RuntimeLease) => Promise<T>
+  ): Promise<T> {
+    let callbackOutcome: Promise<T> | undefined;
+    try {
+      return await this.runtimeRunner.runWaking(operation, (lease) => {
+        callbackOutcome = call(lease);
+        return callbackOutcome;
+      });
+    } catch (error) {
+      await callbackOutcome?.catch(() => undefined);
+      throw error;
+    }
+  }
+
   private async runLegacyRuntimeCall<T>(
     operation: string,
     call: (control: ContainerControlClient) => Promise<T>
@@ -2822,14 +2836,26 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private ensureTunnelsBuilt(): void {
     if (this.tunnelsHandler) return;
     const built = createTunnelsHandle({
-      runRuntimeCall: (operation, call) =>
-        this.runLegacyRuntimeCall(operation, (control) =>
-          call(control.tunnels)
+      runProvision: (call) =>
+        this.runWakingComposite('tunnel.provision', (lease) =>
+          call({
+            runtime: lease.runtime,
+            tunnels: lease.control.tunnels,
+            retain: lease.retain
+          })
         ),
+      runExisting: async (runtime, operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'runtime', runtime },
+          operation,
+          (lease) => call(lease.control.tunnels)
+        );
+        return isRuntimeAbsent(result) ? null : result;
+      },
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
-      currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime,
       getNamedTunnelConfig: () => this.namedTunnelConfigResolver.getConfig()
     });

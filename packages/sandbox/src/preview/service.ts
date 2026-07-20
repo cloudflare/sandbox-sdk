@@ -1,12 +1,20 @@
 import { type Logger, logCanonicalEvent } from '@repo/shared';
-import type {
-  CurrentRuntimeIdentity,
-  RuntimeIdentity
-} from '../current-runtime-identity';
+import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import type { ErrorResponse } from '../errors';
-import { CustomDomainRequiredError, ErrorCode } from '../errors';
+import {
+  CustomDomainRequiredError,
+  ErrorCode,
+  OperationInterruptedError,
+  RuntimeControlProtocolError
+} from '../errors';
+import type { RuntimeLease } from '../runtime';
+import type { RuntimeIdentity } from '../runtime/types';
 import { SandboxSecurityError, validatePort } from '../security';
-import { forwardPreviewRequest, type PreviewTCPPort } from './forwarding';
+import {
+  forwardPreviewRequest,
+  type PreviewForwardingLease,
+  type PreviewTCPPort
+} from './forwarding';
 import { readPreviewProxyMetadata } from './protocol';
 import { buildPreviewProxyRequest } from './proxy-request';
 import { constructPreviewURL } from './route';
@@ -15,6 +23,7 @@ import {
   clearActivePreviewPorts,
   PORT_TOKENS_STORAGE_KEY,
   type PortTokenEntry,
+  type PreviewPortActivation,
   type PreviewPortActivations,
   readActivePreviewPorts,
   readPortTokens,
@@ -47,7 +56,7 @@ type StalePreviewRuntime = {
 type PreviewURLRuntimeValidation =
   | { status: 'invalid' }
   | StalePreviewRuntime
-  | { status: 'active'; runtime: RuntimeIdentity };
+  | { status: 'active'; activation: PreviewPortActivation };
 
 type PreviewRuntimeAvailability =
   | StalePreviewRuntime
@@ -61,17 +70,37 @@ type PreviewRuntimeSnapshot = {
   runtime: RuntimeIdentity | null;
 };
 
+type PreviewExposureLease = Pick<RuntimeLease, 'runtime' | 'retain'>;
+
+type PreviewExposureCommit = {
+  portKey: string;
+  previousEntry: PortTokenEntry | undefined;
+  previousActivation: PreviewPortActivation | undefined;
+  entry: PortTokenEntry;
+  activation: PreviewPortActivation;
+};
+
 export interface PreviewServiceDeps {
   storage: DurableObjectStorage;
   logger: Logger;
-  currentRuntime: CurrentRuntimeIdentity;
+  getStoredRuntime(
+    storage: DurableObjectTransaction
+  ): Promise<RuntimeIdentity | null>;
+  assertRuntimeActive(runtime: RuntimeIdentity): Promise<void>;
   getContainerState(): Promise<{ status: string }>;
   getForwardingContainer(): PreviewForwardingContainer | undefined;
-  ensureRuntimeActiveForPreview(): Promise<RuntimeIdentity>;
+  runWaking<T>(
+    operation: string,
+    call: (lease: PreviewExposureLease) => Promise<T>
+  ): Promise<T>;
+  runExisting<T>(
+    operation: string,
+    call: (
+      lease: PreviewForwardingLease & { runtime: RuntimeIdentity }
+    ) => Promise<T>
+  ): Promise<T | null>;
   getSandboxName(): string | null;
   getNormalizeID(): boolean;
-  beginForward(): () => void;
-  renewActivity(): void;
 }
 
 export class PreviewService {
@@ -95,6 +124,7 @@ export class PreviewService {
     const exposeStartTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let committed: PreviewExposureCommit | undefined;
     try {
       if (!validatePort(port)) {
         throw new SandboxSecurityError(
@@ -124,55 +154,107 @@ export class PreviewService {
         assertValidCustomPreviewToken(options.token);
       }
 
-      const runtime = await this.deps.ensureRuntimeActiveForPreview();
-      await this.deps.currentRuntime.assertActive(runtime);
+      await this.preflightTokenCollision(port, options.token);
 
-      const token = await this.deps.storage.transaction(async (txn) => {
-        const tokens = await readPortTokens(txn);
-        const existingEntry = tokens[port.toString()];
-        const nextToken =
-          options.token ?? existingEntry?.token ?? generatePreviewToken();
+      const result = await this.deps.runWaking(
+        'preview.expose',
+        async (lease) => {
+          let interrupted = false;
+          const hold = lease.retain(() => {
+            interrupted = true;
+          });
+          const assertLeaseActive = () => {
+            if (interrupted) throw new RuntimeIdentityInactiveError();
+          };
+          const runtime = lease.runtime;
+          try {
+            assertLeaseActive();
+            await this.deps.assertRuntimeActive(runtime);
 
-        const existingPort = Object.entries(tokens).find(
-          ([p, entry]) => entry.token === nextToken && p !== port.toString()
-        );
-        if (existingPort) {
-          throw new SandboxSecurityError(
-            `Token '${nextToken}' is already in use by port ${existingPort[0]}. Please use a different token.`
-          );
+            const exposure = await this.deps.storage.transaction(
+              async (txn) => {
+                const portKey = port.toString();
+                const tokens = await readPortTokens(txn);
+                const previousEntry = tokens[portKey];
+                const nextToken =
+                  options.token ??
+                  previousEntry?.token ??
+                  generatePreviewToken();
+
+                const existingPort = Object.entries(tokens).find(
+                  ([p, entry]) => entry.token === nextToken && p !== portKey
+                );
+                if (existingPort) {
+                  throw new SandboxSecurityError(
+                    `Token '${nextToken}' is already in use by port ${existingPort[0]}. Please use a different token.`
+                  );
+                }
+
+                const activations = await readActivePreviewPorts(txn);
+                const previousActivation = activations[portKey];
+                const storedRuntime = await this.deps.getStoredRuntime(txn);
+                assertLeaseActive();
+                if (!storedRuntime || !sameRuntime(storedRuntime, runtime)) {
+                  throw new RuntimeIdentityInactiveError();
+                }
+
+                const entry = { token: nextToken, name: options.name };
+                const activation = {
+                  runtimeIdentityID: runtime.id,
+                  runtimeIncarnationID: runtime.runtimeIncarnationID,
+                  token: nextToken
+                };
+                tokens[portKey] = entry;
+                activations[portKey] = activation;
+                await Promise.all([
+                  txn.put(PORT_TOKENS_STORAGE_KEY, tokens),
+                  writeActivePreviewPorts(activations, txn)
+                ]);
+
+                return {
+                  token: nextToken,
+                  commit: {
+                    portKey,
+                    previousEntry,
+                    previousActivation,
+                    entry,
+                    activation
+                  }
+                };
+              }
+            );
+            committed = exposure.commit;
+
+            assertLeaseActive();
+            await this.deps.assertRuntimeActive(runtime);
+            assertLeaseActive();
+            const token = exposure.token;
+
+            const url = constructPreviewURL({
+              port,
+              sandboxId: sandboxName,
+              effectiveId: sandboxName,
+              hostname: options.hostname,
+              token,
+              normalizeId: this.deps.getNormalizeID()
+            });
+
+            return {
+              url,
+              port,
+              name: options.name
+            };
+          } finally {
+            hold.release();
+          }
         }
-
-        const activations = await readActivePreviewPorts(txn);
-
-        tokens[port.toString()] = { token: nextToken, name: options.name };
-        activations[port.toString()] = runtime.scope({ token: nextToken });
-        await Promise.all([
-          txn.put(PORT_TOKENS_STORAGE_KEY, tokens),
-          writeActivePreviewPorts(activations, txn)
-        ]);
-
-        return nextToken;
-      });
-
-      await this.deps.currentRuntime.assertActive(runtime);
-
-      const url = constructPreviewURL({
-        port,
-        sandboxId: sandboxName,
-        effectiveId: sandboxName,
-        hostname: options.hostname,
-        token,
-        normalizeId: this.deps.getNormalizeID()
-      });
+      );
 
       outcome = 'success';
 
-      return {
-        url,
-        port,
-        name: options.name
-      };
+      return result;
     } catch (error) {
+      if (committed) await this.rollbackExposureIfUnchanged(committed);
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
     } finally {
@@ -185,6 +267,53 @@ export class PreviewService {
         hostname: options.hostname,
         error: caughtError
       });
+    }
+  }
+
+  private async rollbackExposureIfUnchanged(
+    commit: PreviewExposureCommit
+  ): Promise<void> {
+    await this.deps.storage.transaction(async (txn) => {
+      const [tokens, activations] = await Promise.all([
+        readPortTokens(txn),
+        readActivePreviewPorts(txn)
+      ]);
+      if (
+        !samePortTokenEntry(tokens[commit.portKey], commit.entry) ||
+        !isSameActivation(activations[commit.portKey], commit.activation)
+      ) {
+        return;
+      }
+
+      if (commit.previousEntry) tokens[commit.portKey] = commit.previousEntry;
+      else delete tokens[commit.portKey];
+      if (commit.previousActivation) {
+        activations[commit.portKey] = commit.previousActivation;
+      } else {
+        delete activations[commit.portKey];
+      }
+      await Promise.all([
+        txn.put(PORT_TOKENS_STORAGE_KEY, tokens),
+        writeActivePreviewPorts(activations, txn)
+      ]);
+    });
+  }
+
+  private async preflightTokenCollision(
+    port: number,
+    requestedToken: string | undefined
+  ): Promise<void> {
+    const tokens = await readPortTokens(this.deps.storage);
+    const existingEntry = tokens[port.toString()];
+    const candidate = requestedToken ?? existingEntry?.token;
+    if (!candidate) return;
+    const existingPort = Object.entries(tokens).find(
+      ([p, entry]) => entry.token === candidate && p !== port.toString()
+    );
+    if (existingPort) {
+      throw new SandboxSecurityError(
+        `Token '${candidate}' is already in use by port ${existingPort[0]}. Please use a different token.`
+      );
     }
   }
 
@@ -301,11 +430,31 @@ export class PreviewService {
       return this.stalePreviewURLResponse();
     }
 
-    return await this.fetchPreviewIfRunning(
-      proxyRequest,
-      port,
-      validation.runtime
-    );
+    try {
+      const response = await this.deps.runExisting(
+        'preview.forward',
+        async (lease) =>
+          await this.fetchPreviewIfRunning(
+            proxyRequest,
+            port,
+            validation.activation,
+            lease
+          )
+      );
+
+      if (response) return response;
+      await this.clearActivationIfUnchanged(port, validation.activation);
+      return this.stalePreviewURLResponse();
+    } catch (error) {
+      if (
+        error instanceof OperationInterruptedError ||
+        isActivationMismatch(error)
+      ) {
+        await this.clearActivationIfUnchanged(port, validation.activation);
+        return this.stalePreviewURLResponse();
+      }
+      throw error;
+    }
   }
 
   private invalidPreviewTokenResponse(): Response {
@@ -341,34 +490,25 @@ export class PreviewService {
   private async fetchPreviewIfRunning(
     request: Request,
     port: number,
-    runtime: RuntimeIdentity
+    activation: PreviewPortActivation,
+    lease: PreviewForwardingLease & { runtime: RuntimeIdentity }
   ): Promise<Response> {
-    const container = this.deps.getForwardingContainer();
-    const state = await this.deps.getContainerState();
-
-    if (!container?.running || state.status !== 'healthy') {
+    if (!samePreviewRuntime(lease.runtime, activation)) {
+      await this.clearActivationIfUnchanged(port, activation);
       return this.stalePreviewURLResponse();
     }
 
-    if (!(await this.deps.currentRuntime.isActive(runtime))) {
+    const container = this.deps.getForwardingContainer();
+    if (!container?.running) {
       return this.stalePreviewURLResponse();
     }
 
     const tcpPort = container.getTcpPort(port);
 
-    const result = await forwardPreviewRequest(tcpPort, request, {
-      beginForward: () => this.deps.beginForward(),
-      renewActivity: () => this.deps.renewActivity()
-    });
+    const result = await forwardPreviewRequest(tcpPort, request, lease);
 
     if (result.status === 'network-lost') {
-      if (!(await this.deps.currentRuntime.isActive(runtime))) {
-        return this.stalePreviewURLResponse();
-      }
-
-      return new Response('Container suddenly disconnected, try again', {
-        status: 500
-      });
+      return this.stalePreviewURLResponse();
     }
 
     return result.response;
@@ -378,8 +518,10 @@ export class PreviewService {
     port: number,
     token: string
   ): Promise<PreviewURLRuntimeValidation> {
-    const snapshot = await this.readRuntimeSnapshot();
-    const entry = snapshot.tokens[port.toString()];
+    const { tokens, activations } = await this.deps.storage.transaction(
+      async (txn) => readPreviewState(txn)
+    );
+    const entry = tokens[port.toString()];
     if (!entry) {
       return { status: 'invalid' };
     }
@@ -389,25 +531,12 @@ export class PreviewService {
       return { status: 'invalid' };
     }
 
-    const availability = this.getRuntimeAvailability(snapshot);
-    if (availability.status === 'stale') {
-      return availability;
-    }
-
-    const activation = snapshot.activations[port.toString()];
-    if (!activation) {
+    const activation = activations[port.toString()];
+    if (!isPreviewActivation(activation)) {
+      if (activation) await this.clearActivationIfUnchanged(port, activation);
       return {
         status: 'stale',
-        reason: 'missing-activation',
-        containerStatus: snapshot.containerStatus
-      };
-    }
-
-    if (!availability.runtime.owns(activation)) {
-      return {
-        status: 'stale',
-        reason: 'runtime-mismatch',
-        containerStatus: snapshot.containerStatus
+        reason: 'missing-activation'
       };
     }
 
@@ -415,16 +544,29 @@ export class PreviewService {
     if (!activationTokenMatches) {
       this.deps.logger.warn('Preview URL activation token mismatch', {
         port,
-        runtimeIdentityID: availability.runtime.id
+        runtimeIdentityID: activation.runtimeIdentityID
       });
+      await this.clearActivationIfUnchanged(port, activation);
       return {
         status: 'stale',
-        reason: 'token-mismatch',
-        containerStatus: snapshot.containerStatus
+        reason: 'token-mismatch'
       };
     }
 
-    return { status: 'active', runtime: availability.runtime };
+    return { status: 'active', activation };
+  }
+
+  private async clearActivationIfUnchanged(
+    port: number,
+    expected: PreviewPortActivation
+  ): Promise<void> {
+    await this.deps.storage.transaction(async (txn) => {
+      const activations = await readActivePreviewPorts(txn);
+      const current = activations[port.toString()];
+      if (!isSameActivation(current, expected)) return;
+      delete activations[port.toString()];
+      await writeActivePreviewPorts(activations, txn);
+    });
   }
 
   private async getCurrentPreviewPorts(): Promise<CurrentPreviewPort[]> {
@@ -443,7 +585,10 @@ export class PreviewService {
         continue;
       }
 
-      if (!availability.runtime.owns(activation)) {
+      if (
+        !isPreviewActivation(activation) ||
+        !samePreviewRuntime(availability.runtime, activation)
+      ) {
         continue;
       }
 
@@ -465,7 +610,7 @@ export class PreviewService {
       await this.deps.storage.transaction(async (txn) => {
         const [previewState, runtime] = await Promise.all([
           readPreviewState(txn),
-          this.deps.currentRuntime.getStored(txn)
+          this.deps.getStoredRuntime(txn)
         ]);
         return { ...previewState, runtime };
       });
@@ -508,4 +653,63 @@ export class PreviewService {
 
     return { status: 'active', runtime: snapshot.runtime };
   }
+}
+
+function sameRuntime(left: RuntimeIdentity, right: RuntimeIdentity): boolean {
+  return (
+    left.id === right.id &&
+    left.runtimeIncarnationID === right.runtimeIncarnationID
+  );
+}
+
+function samePreviewRuntime(
+  runtime: RuntimeIdentity,
+  activation: PreviewPortActivation
+): boolean {
+  return (
+    runtime.id === activation.runtimeIdentityID &&
+    runtime.runtimeIncarnationID === activation.runtimeIncarnationID
+  );
+}
+
+function samePortTokenEntry(
+  left: PortTokenEntry | undefined,
+  right: PortTokenEntry
+): boolean {
+  return Boolean(
+    left && left.token === right.token && left.name === right.name
+  );
+}
+
+function isPreviewActivation(value: unknown): value is PreviewPortActivation {
+  if (!value || typeof value !== 'object') return false;
+  const activation = value as Partial<
+    Record<keyof PreviewPortActivation, unknown>
+  >;
+  return (
+    typeof activation.runtimeIdentityID === 'string' &&
+    activation.runtimeIdentityID.length > 0 &&
+    typeof activation.runtimeIncarnationID === 'string' &&
+    activation.runtimeIncarnationID.length > 0 &&
+    typeof activation.token === 'string'
+  );
+}
+
+function isSameActivation(
+  left: PreviewPortActivation | undefined,
+  right: PreviewPortActivation
+): boolean {
+  return Boolean(
+    left &&
+    left.runtimeIdentityID === right.runtimeIdentityID &&
+    left.runtimeIncarnationID === right.runtimeIncarnationID &&
+    left.token === right.token
+  );
+}
+
+function isActivationMismatch(error: unknown): boolean {
+  return (
+    error instanceof RuntimeControlProtocolError &&
+    error.context.reason === 'activation-mismatch'
+  );
 }

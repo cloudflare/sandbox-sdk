@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * Named-tunnel behavior tests for the SDK tunnel service.
  *
@@ -28,7 +32,7 @@ import { ErrorCode, RPCTransportError } from '../../src/errors';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   type TunnelsStorage
 } from '../../src/tunnels/rpc-target';
 import { makeFences, makeLogger, makeStorage } from './helpers';
@@ -257,7 +261,7 @@ function makeHandler(opts?: {
     zoneId: string;
   }>;
   configError?: Error;
-  fences?: Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
+  fences?: Pick<TunnelsHost, 'getStoredRuntime' | 'currentLifetime'>;
 }) {
   const { client } = makeClient();
   mockTunnelRun(client);
@@ -299,6 +303,9 @@ function makeHandler(opts?: {
     resumeCleanup: built.resumeCleanup
   };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > get(port, { name }) — named tunnel happy path', () => {
   it('provisions a fresh named tunnel end-to-end', async () => {
@@ -344,37 +351,22 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces interruption without recovery/replay', async () => {
-    // We removed recovery/retry loops from tunnels.get()
+  it('does not consult the transitional runtime fence while provisioning', async () => {
     const cf = makeFakeCloudflare({});
-    let assertCalls = 0;
-    const { client, storage, tunnels } = makeHandler({
+    const assertActive = vi.fn(async () => {
+      throw new RuntimeIdentityInactiveError();
+    });
+    const { client, tunnels } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch,
-      fences: makeFences({
-        currentRuntime: {
-          assertActive: vi.fn(async () => {
-            assertCalls += 1;
-            if (assertCalls === 1) {
-              throw new RuntimeIdentityInactiveError();
-            }
-          })
-        }
-      })
+      fences: makeFences({ currentRuntime: { assertActive } })
     });
     mockNamedSpawn(client);
 
-    await expect(tunnels.get(8080, { name: 'api' })).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: expect.objectContaining({
-        reason: 'runtime_replaced',
-        operation: 'tunnel.get',
-        retryable: false,
-        admitted: 'unknown'
-      })
+    await expect(tunnels.get(8080, { name: 'api' })).resolves.toMatchObject({
+      name: 'api'
     });
-    expect(await storage.get('tunnels')).toBeUndefined();
-    expect(await storage.get('tunnels:meta')).toBeUndefined();
+    expect(assertActive).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
   it('does not spawn or commit when lifetime changes during Cloudflare setup', async () => {
@@ -402,7 +394,7 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
         reason: 'sandbox_lifetime_changed',
         operation: 'tunnel.get',
         retryable: false,
-        admitted: 'unknown'
+        admitted: true
       })
     });
     expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
@@ -687,7 +679,9 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
         optionsHash: 'named:api',
         dnsRecordId: 'kept-dns-id',
         accountId: 'ACCT',
-        zoneId: 'zone-id'
+        zoneId: 'zone-id',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
       }
     });
 
