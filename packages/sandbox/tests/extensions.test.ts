@@ -141,8 +141,19 @@ describe('SandboxExtension', () => {
   void TypeContractExtension;
 
   class EscapeExtension extends SandboxExtension {
+    capturedControl: ExtensionRuntimeControl | undefined;
+    capturedFiles: ExtensionRuntimeControl['files'] | undefined;
+
     constructor(sandbox: SandboxLike) {
       super(sandbox, PKG);
+    }
+
+    captureControl() {
+      return this.withRuntime('escape.capture', async (control) => {
+        this.capturedControl = control;
+        this.capturedFiles = control.files;
+        return { files: control.files };
+      });
     }
 
     escapeControl() {
@@ -248,6 +259,24 @@ describe('SandboxExtension', () => {
     );
   });
 
+  it('revokes captured and nested runtime control handles', async () => {
+    const { sandbox, utils } = makeSandbox();
+    const ext = new EscapeExtension(sandbox);
+
+    const nested = await ext.captureControl();
+
+    await expect(ext.capturedControl?.utils.ping()).rejects.toThrow(
+      /no longer valid outside its runtime callback/
+    );
+    await expect(ext.capturedFiles?.readFile('/tmp/file')).rejects.toThrow(
+      /no longer valid outside its runtime callback/
+    );
+    await expect(nested.files.readFile('/tmp/file')).rejects.toThrow(
+      /no longer valid outside its runtime callback/
+    );
+    expect(utils.ping).not.toHaveBeenCalled();
+  });
+
   it('allows ordinary objects to leave runtime callbacks', async () => {
     const { sandbox } = makeSandbox();
     const ext = new EscapeExtension(sandbox);
@@ -262,7 +291,10 @@ describe('SandboxExtension', () => {
         super(sandbox);
       }
       run() {
-        return this.sidecar();
+        return this.withSidecar<object, object>(
+          'no-package.run',
+          async (api) => api
+        );
       }
       health() {
         return this.sidecarHealth();
@@ -298,22 +330,64 @@ describe('SandboxExtension', () => {
 });
 
 describe('SandboxExtension (sidecar mode)', () => {
+  interface NestedFakeAPI {
+    doNested(input: string): Promise<string>;
+  }
+
   interface FakeAPI {
     do(input: string): Promise<string>;
+    nested?: NestedFakeAPI;
+    getNested?(): Promise<NestedFakeAPI>;
+    plainData?(): Promise<{ nested: { value: string } }>;
   }
 
   function buildExt() {
     const { sandbox, api, scopes } = makeSandbox();
     class Ext extends SandboxExtension {
+      capturedSidecar: FakeAPI | undefined;
+      capturedNestedSidecar: NestedFakeAPI | undefined;
+
       constructor(s: SandboxLike) {
         super(s, PKG);
       }
-      async run(input: string) {
-        const stub = await this.sidecar<FakeAPI>();
-        return stub.do(input);
+      run(input: string) {
+        return this.withSidecar<FakeAPI, string>('fake.run', (stub) =>
+          stub.do(input)
+        );
       }
-      async captureSidecar() {
-        return await this.sidecar<FakeAPI>();
+      captureSidecarCall() {
+        return this.withSidecar<FakeAPI, string>(
+          'fake.capture',
+          async (stub) => {
+            this.capturedSidecar = stub;
+            await stub.do('inside');
+            await expect(stub.do('inside-again')).resolves.toBe(
+              'first:inside-again'
+            );
+            return 'captured';
+          }
+        );
+      }
+      nestedCall() {
+        return this.withSidecar<FakeAPI, string>(
+          'fake.nested',
+          async (stub) => {
+            const nested = await stub.getNested?.();
+            if (!nested) throw new Error('missing nested api');
+            this.capturedNestedSidecar = nested;
+            return await nested.doNested('inside');
+          }
+        );
+      }
+      plainData() {
+        return this.withSidecar<FakeAPI, { nested: { value: string } }>(
+          'fake.plainData',
+          async (stub) => {
+            const data = await stub.plainData?.();
+            if (!data) throw new Error('missing plain data');
+            return data;
+          }
+        );
       }
       health() {
         return this.sidecarHealth();
@@ -341,9 +415,7 @@ describe('SandboxExtension (sidecar mode)', () => {
     expect(result).toBe('did:hi');
 
     expect(api.connect).toHaveBeenCalledTimes(2);
-    expect(scopes.map((scope) => scope.operation)).toEqual([
-      'extension.connect'
-    ]);
+    expect(scopes.map((scope) => scope.operation)).toEqual(['fake.run']);
     const first = api.connect.mock.calls[0][0] as ExtensionConnectRequest;
     const second = api.connect.mock.calls[1][0] as ExtensionConnectRequest;
 
@@ -403,19 +475,43 @@ describe('SandboxExtension (sidecar mode)', () => {
       .mockResolvedValueOnce(firstStub)
       .mockResolvedValueOnce(secondStub);
 
-    const captured = await ext.captureSidecar();
-    await expect(captured.do('a')).resolves.toBe('first:a');
+    await expect(ext.captureSidecarCall()).resolves.toBe('captured');
+    await expect(ext.capturedSidecar?.do('outside')).rejects.toThrow(
+      /no longer valid/
+    );
     firstRuntimeActive = false;
-    await expect(captured.do('again')).rejects.toThrow(/stale sidecar/);
     await expect(ext.run('b')).resolves.toBe('second:b');
 
     expect(api.connect).toHaveBeenCalledTimes(2);
     expect(firstStub.do).toHaveBeenCalledTimes(2);
     expect(secondStub.do).toHaveBeenCalledTimes(1);
     expect(scopes.map((scope) => scope.operation)).toEqual([
-      'extension.connect',
-      'extension.connect'
+      'fake.capture',
+      'fake.run'
     ]);
+  });
+
+  it('revokes nested sidecar remotes and detaches plain data results', async () => {
+    const { ext, api } = buildExt();
+    const sourceData = { nested: { value: 'before' } };
+    const nestedStub = {
+      doNested: vi.fn(async (input: string) => `nested:${input}`)
+    };
+    const fakeStub: FakeAPI = {
+      do: vi.fn(async (s: string) => `did:${s}`),
+      getNested: vi.fn(async () => nestedStub),
+      plainData: vi.fn(async () => sourceData)
+    };
+    api.connect.mockResolvedValue(fakeStub);
+
+    await expect(ext.nestedCall()).resolves.toBe('nested:inside');
+    await expect(
+      ext.capturedNestedSidecar?.doNested('outside')
+    ).rejects.toThrow(/no longer valid/);
+
+    const detached = await ext.plainData();
+    sourceData.nested.value = 'after';
+    expect(detached).toEqual({ nested: { value: 'before' } });
   });
 
   it('retries cleanly after a failed connect', async () => {
@@ -429,8 +525,8 @@ describe('SandboxExtension (sidecar mode)', () => {
     await expect(ext.run('b')).resolves.toBe('did:b');
     expect(api.connect).toHaveBeenCalledTimes(2);
     expect(scopes.map((scope) => scope.operation)).toEqual([
-      'extension.connect',
-      'extension.connect'
+      'fake.run',
+      'fake.run'
     ]);
   });
 
@@ -467,9 +563,9 @@ describe('SandboxExtension (sidecar mode)', () => {
     expect(api.connect).toHaveBeenCalledTimes(2);
     expect(api.stop).toHaveBeenCalledTimes(1);
     expect(scopes.map((scope) => scope.operation)).toEqual([
-      'extension.connect',
+      'fake.run',
       'extension.stop',
-      'extension.connect'
+      'fake.run'
     ]);
   });
 });

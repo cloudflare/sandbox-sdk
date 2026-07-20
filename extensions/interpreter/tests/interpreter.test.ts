@@ -36,10 +36,18 @@ function makeSandbox(): { sandbox: SandboxLike; api: ExtensionsApiMock } {
     })),
     stop: vi.fn(async () => {})
   };
+  const unusedDomain = {};
   const runtimeCall = (async (_operation, call) =>
     await call({
-      extensions: api as unknown as SandboxExtensionsAPI
-    } as ExtensionRuntimeControl)) as ExtensionRuntimeCall;
+      files: unusedDomain,
+      ports: unusedDomain,
+      backup: unusedDomain,
+      watch: unusedDomain,
+      tunnels: unusedDomain,
+      terminals: unusedDomain,
+      extensions: api,
+      utils: unusedDomain
+    } as unknown as ExtensionRuntimeControl)) as ExtensionRuntimeCall;
   return {
     sandbox: {
       [sandboxRuntimeCall]: runtimeCall
@@ -79,6 +87,7 @@ describe('withInterpreter', () => {
       createContext: vi.fn(async () => RAW_CONTEXT),
       listContexts: vi.fn(async () => []),
       deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
       runCode: vi.fn(async () => {})
     };
     api.connect
@@ -121,6 +130,7 @@ describe('withInterpreter', () => {
       createContext: vi.fn(async () => RAW_CONTEXT),
       listContexts: vi.fn(async () => []),
       deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
       runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
         await onEvent({ type: 'stdout', text: 'hello\n' });
         await onEvent({ type: 'result', text: '42', metadata: {} });
@@ -158,6 +168,7 @@ describe('withInterpreter', () => {
       createContext: vi.fn(async () => RAW_CONTEXT),
       listContexts: vi.fn(async () => []),
       deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
       runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
         await onEvent({ type: 'result', text: '42', metadata: {} });
       })
@@ -196,6 +207,7 @@ describe('withInterpreter', () => {
       createContext: vi.fn(async () => RAW_CONTEXT),
       listContexts: vi.fn(async () => []),
       deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
       runCode: vi.fn(async (_contextId, _code, _language, onEvent) => {
         await onEvent({
           type: 'error',
@@ -231,6 +243,7 @@ describe('withInterpreter', () => {
       createContext: vi.fn(async () => RAW_CONTEXT),
       listContexts: vi.fn(async () => [RAW_CONTEXT]),
       deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
       runCode: vi.fn(async () => {})
     };
     api.connect.mockResolvedValue(stub);
@@ -243,6 +256,83 @@ describe('withInterpreter', () => {
 
     await ext.deleteCodeContext('ctx-1');
     expect(stub.deleteContext).toHaveBeenCalledWith('ctx-1');
+  });
+
+  it('interrupts the active context when stream consumption is canceled', async () => {
+    const { sandbox, api } = makeSandbox();
+    let finishRunCode: (() => void) | undefined;
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {
+        finishRunCode?.();
+      }),
+      runCode: vi.fn(
+        async (_contextId, _code, _language, onEvent) =>
+          await new Promise<void>((resolve) => {
+            finishRunCode = resolve;
+            void onEvent({ type: 'stdout', text: 'hello\n' });
+          })
+      )
+    };
+    api.connect.mockResolvedValue(stub);
+
+    const ext = withInterpreter(sandbox);
+    const stream = await ext.runCodeStream('print("hello")', {
+      context: {
+        id: 'ctx-1',
+        language: 'python',
+        cwd: '/workspace',
+        createdAt: new Date(),
+        lastUsed: new Date()
+      }
+    });
+
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    await reader.cancel();
+
+    expect(stub.interruptContext).toHaveBeenCalledWith('ctx-1');
+    expect(stub.runCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start code after cancellation during sidecar connection', async () => {
+    const { sandbox, api } = makeSandbox();
+    let finishConnect: ((stub: InterpreterSidecarAPI) => void) | undefined;
+    const stub: InterpreterSidecarAPI = {
+      createContext: vi.fn(async () => RAW_CONTEXT),
+      listContexts: vi.fn(async () => []),
+      deleteContext: vi.fn(async () => {}),
+      interruptContext: vi.fn(async () => {}),
+      runCode: vi.fn(async () => {})
+    };
+    api.connect.mockImplementation(
+      async () =>
+        await new Promise<InterpreterSidecarAPI>((resolve) => {
+          finishConnect = resolve;
+        })
+    );
+
+    const ext = withInterpreter(sandbox);
+    const stream = await ext.runCodeStream('while True: pass', {
+      context: {
+        id: 'ctx-1',
+        language: 'python',
+        cwd: '/workspace',
+        createdAt: new Date(),
+        lastUsed: new Date()
+      }
+    });
+
+    await vi.waitFor(() => expect(finishConnect).toBeDefined());
+    await stream.cancel();
+    finishConnect?.(stub);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(stub.runCode).not.toHaveBeenCalled();
+    expect(stub.interruptContext).not.toHaveBeenCalled();
   });
 
   it('returns an Interpreter instance from the factory', () => {

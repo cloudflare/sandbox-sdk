@@ -8,7 +8,7 @@
  * - No sidecar? Extend {@link SandboxExtension} and use `this.exec()` or
  *   `this.withRuntime()` for scoped control APIs. Don't pass a package.
  * - Need a container sidecar? Pass an {@link ExtensionPackage} to `super()`.
- *   Then call {@link SandboxExtension.sidecar} to obtain the sidecar's typed
+ *   Then use {@link SandboxExtension.withSidecar} with the sidecar's typed
  *   capnweb remote main. Calls on that stub stream through capnweb \u2014 callback
  *   parameters round-trip across both the DO\u2192container and container\u2192sidecar
  *   hops.
@@ -167,9 +167,9 @@ export function createExtensionProcessSandbox(
  *
  * - SDK-only: just drives existing sub-APIs.
  * - Sidecar: pass an {@link ExtensionPackage} to `super(sandbox, pkg)` and
- *   call `this.sidecar<T>()` to get a typed capnweb stub of the sidecar.
+ *   call `this.withSidecar<T>(operation, callback)` to use the typed capnweb stub inside one runtime callback.
  *
- * The sidecar accessor throws a clear error if no package was supplied, so an
+ * The sidecar helper throws a clear error if no package was supplied, so an
  * extension only "becomes" a sidecar extension when it opts in.
  *
  * ```ts
@@ -189,8 +189,9 @@ export function createExtensionProcessSandbox(
  * class MyExt extends SandboxExtension {
  *   constructor(s: SandboxLike) { super(s, { tarball: new Uint8Array(sidecarTarballBytes) }); }
  *   async run(input: string): Promise<string> {
- *     const api = await this.sidecar<MyAPI>();
- *     return api.run(input);
+ *     return this.withSidecar<MyAPI, string>('my-ext.run', (api) =>
+ *       api.run(input)
+ *     );
  *   }
  * }
  * ```
@@ -214,10 +215,15 @@ export abstract class SandboxExtension extends RpcTarget {
     operation: string,
     call: Call & RejectEscapingRuntimeCallback<Call>
   ): Promise<ExtensionRuntimeResult<ExtensionRuntimeCallbackResult<Call>>> {
-    const guardedCall = async (control: ExtensionRuntimeControl) => {
-      const result = await call(control);
-      assertRuntimeControlDidNotEscape(result, control);
-      return result;
+    const guardedCall = async (runtimeControl: ExtensionRuntimeControl) => {
+      const { control, revoke } = scopedRuntimeControl(runtimeControl);
+      try {
+        const result = await call(control);
+        assertRuntimeControlDidNotEscape(result, control);
+        return result;
+      } finally {
+        revoke();
+      }
     };
     return this.#sandbox[sandboxRuntimeCall](
       operation,
@@ -248,20 +254,36 @@ export abstract class SandboxExtension extends RpcTarget {
   }
 
   /**
-   * Return the sidecar's capnweb remote main, provisioning + spawning on
-   * demand. `T` is the typed interface the sidecar exposes (its
-   * `SandboxSidecar` subclass shape). Each call reconnects through the host
-   * so a crashed sidecar can be restarted transparently on the next use.
-   *
-   * Streaming is just a method that takes a callback parameter: capnweb
-   * stubs the callback and routes invocations back through the SDK\u2192container
-   * \u2192sidecar hops.
+   * Provision/connect to the sidecar and use its typed capnweb remote inside
+   * one runtime callback. The remote is invalid after `call` resolves or
+   * rejects, so extension code cannot silently reconnect or keep using an old
+   * runtime's sidecar.
    */
-  protected sidecar<T extends object>(): Promise<T> {
-    // Wrap the synchronous `#requirePackage` check in an async closure so a
-    // missing-package error surfaces as a rejected promise, not a sync throw
-    // -- callers always treat `sidecar()` as awaitable.
-    return (async () => this.#connect(this.#requirePackage()))() as Promise<T>;
+  protected async withSidecar<T extends object, Result>(
+    operation: string,
+    call: (api: T) => Promise<Result>
+  ): Promise<Result> {
+    const pkg = this.#requirePackage();
+    const packageHash = await this.#hashOnce();
+    const scopedCall = async (control: ExtensionRuntimeControl) => {
+      const connected = await this.#connect<T>(
+        control.extensions,
+        pkg,
+        packageHash
+      );
+      const { proxy, revoke } = scopedSidecarRemote<T>(connected);
+      try {
+        const result = await call(proxy);
+        assertSidecarRemoteDidNotEscape(result);
+        return detachPlainData(result) as Result;
+      } finally {
+        revoke();
+      }
+    };
+    return (await this.withRuntime(
+      operation,
+      scopedCall as ExtensionRuntimeCallback
+    )) as Result;
   }
 
   /** Health snapshot for this extension's sidecar. */
@@ -273,8 +295,8 @@ export abstract class SandboxExtension extends RpcTarget {
   }
 
   /**
-   * Stop this extension's sidecar. The next `sidecar()` call will respawn on
-   * demand.
+   * Stop this extension's sidecar. The next `withSidecar()` call will respawn
+   * it on demand.
    */
   protected async stopSidecar(): Promise<void> {
     const hash = await this.#hashOnce();
@@ -285,33 +307,32 @@ export abstract class SandboxExtension extends RpcTarget {
 
   // --- internals -----------------------------------------------------------
 
-  async #connect(pkg: ExtensionPackage): Promise<object> {
-    const packageHash = await this.#hashOnce();
-
-    return await this.withRuntime('extension.connect', async (control) => {
-      const api = control.extensions;
+  async #connect<T extends object>(
+    api: SandboxExtensionsAPI,
+    pkg: ExtensionPackage,
+    packageHash: string
+  ): Promise<T> {
+    try {
+      return (await api.connect({
+        packageHash,
+        bin: pkg.bin,
+        readinessTimeoutMs: pkg.readinessTimeoutMs,
+        allowInstallScripts: pkg.allowInstallScripts
+      })) as T;
+    } catch (error) {
+      if (!isTarballRequiredError(error)) throw error;
       try {
         return (await api.connect({
           packageHash,
+          tarball: pkg.tarball,
           bin: pkg.bin,
           readinessTimeoutMs: pkg.readinessTimeoutMs,
           allowInstallScripts: pkg.allowInstallScripts
-        })) as object;
-      } catch (error) {
-        if (!isTarballRequiredError(error)) throw error;
-        try {
-          return (await api.connect({
-            packageHash,
-            tarball: pkg.tarball,
-            bin: pkg.bin,
-            readinessTimeoutMs: pkg.readinessTimeoutMs,
-            allowInstallScripts: pkg.allowInstallScripts
-          })) as object;
-        } catch (retryError) {
-          throw createSidecarProvisioningError(packageHash, retryError);
-        }
+        })) as T;
+      } catch (retryError) {
+        throw createSidecarProvisioningError(packageHash, retryError);
       }
-    });
+    }
   }
 
   #hashOnce(): Promise<string> {
@@ -361,6 +382,179 @@ function assertRuntimeControlDidNotEscape(
   throw new Error(
     'Sandbox extension runtime callbacks must not return runtime control handles'
   );
+}
+
+function scopedRuntimeControl(target: ExtensionRuntimeControl): {
+  control: ExtensionRuntimeControl;
+  revoke(): void;
+} {
+  let active = true;
+  const inactiveError = () =>
+    new Error(
+      'Sandbox extension runtime control is no longer valid outside its runtime callback'
+    );
+  const wrappedDomains = new WeakMap<object, object>();
+  const scopeDomain = <Domain extends object>(domain: Domain): Domain => {
+    const existing = wrappedDomains.get(domain);
+    if (existing) return existing as Domain;
+    const proxy = new Proxy(domain, {
+      get(domainTarget, property, receiver) {
+        if (!active) return () => Promise.reject(inactiveError());
+        const value = Reflect.get(domainTarget, property, receiver) as unknown;
+        if (typeof value === 'function') {
+          return (...args: unknown[]) => {
+            if (!active) return Promise.reject(inactiveError());
+            const result = Reflect.apply(value, domainTarget, args) as unknown;
+            return scopeRuntimeResult(result);
+          };
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (objectHasCallableMember(value)) return scopeDomain(value);
+          return detachPlainData(value);
+        }
+        return value;
+      }
+    });
+    wrappedDomains.set(domain, proxy);
+    return proxy as Domain;
+  };
+  const scopeRuntimeResult = (result: unknown): unknown => {
+    if (result instanceof Promise) {
+      return result.then(scopeRuntimeResult);
+    }
+    if (typeof result === 'object' && result !== null) {
+      if (objectHasCallableMember(result)) return scopeDomain(result);
+      return detachPlainData(result);
+    }
+    return result;
+  };
+
+  const control: ExtensionRuntimeControl = {
+    files: scopeDomain(target.files),
+    ports: scopeDomain(target.ports),
+    backup: scopeDomain(target.backup),
+    watch: scopeDomain(target.watch),
+    tunnels: scopeDomain(target.tunnels),
+    terminals: scopeDomain(target.terminals),
+    extensions: scopeDomain(target.extensions),
+    utils: scopeDomain(target.utils)
+  };
+  return {
+    control,
+    revoke: () => {
+      active = false;
+    }
+  };
+}
+
+const sidecarRemoteProxies = new WeakSet<object>();
+
+function scopedSidecarRemote<T extends object>(
+  target: T
+): {
+  proxy: T;
+  revoke(): void;
+} {
+  let active = true;
+  const wrappedTargets = new WeakMap<object, object>();
+  const createProxy = <Value extends object>(currentTarget: Value): Value => {
+    const existing = wrappedTargets.get(currentTarget);
+    if (existing) return existing as Value;
+    const proxy = new Proxy(currentTarget, {
+      get(targetObject, property, receiver) {
+        if (!active) {
+          return () =>
+            Promise.reject(
+              new Error(
+                'Sandbox extension sidecar remote is no longer valid outside its runtime callback'
+              )
+            );
+        }
+        const value = Reflect.get(targetObject, property, receiver) as unknown;
+        if (typeof value === 'function') {
+          return (...args: unknown[]) => {
+            if (!active) {
+              return Promise.reject(
+                new Error(
+                  'Sandbox extension sidecar remote is no longer valid outside its runtime callback'
+                )
+              );
+            }
+            const result = Reflect.apply(value, targetObject, args) as unknown;
+            return wrapSidecarResult(result, createProxy);
+          };
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (objectHasCallableMember(value)) return createProxy(value);
+          return detachPlainData(value);
+        }
+        return value;
+      }
+    });
+    wrappedTargets.set(currentTarget, proxy);
+    sidecarRemoteProxies.add(proxy);
+    return proxy as Value;
+  };
+
+  return {
+    proxy: createProxy(target),
+    revoke: () => {
+      active = false;
+    }
+  };
+}
+
+function wrapSidecarResult(
+  result: unknown,
+  wrapObject: <Value extends object>(value: Value) => Value
+): unknown {
+  if (result instanceof Promise) {
+    return result.then((value) => wrapSidecarResult(value, wrapObject));
+  }
+  if (typeof result === 'object' && result !== null) {
+    if (objectHasCallableMember(result)) return wrapObject(result);
+    return detachPlainData(result);
+  }
+  return result;
+}
+
+function objectHasCallableMember(value: object): boolean {
+  if (Array.isArray(value))
+    return value.some((entry) => typeof entry === 'function');
+  let current: object | null = value;
+  while (current && current !== Object.prototype) {
+    for (const property of Reflect.ownKeys(current)) {
+      if (property === 'constructor') continue;
+      const descriptor = Reflect.getOwnPropertyDescriptor(current, property);
+      if (!descriptor) continue;
+      if (typeof descriptor.value === 'function') return true;
+      if (typeof descriptor.get === 'function') return true;
+    }
+    current = Reflect.getPrototypeOf(current);
+  }
+  return false;
+}
+
+function assertSidecarRemoteDidNotEscape(result: unknown): void {
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown): boolean => {
+    if (typeof value !== 'object' || value === null) return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+    if (sidecarRemoteProxies.has(value)) return true;
+    if (Array.isArray(value)) return value.some(visit);
+    return Object.values(value as Record<string, unknown>).some(visit);
+  };
+
+  if (!visit(result)) return;
+  throw new Error(
+    'Sandbox extension sidecar callbacks must not return sidecar remotes'
+  );
+}
+
+function detachPlainData<T>(value: T): T {
+  if (typeof value !== 'object' || value === null) return value;
+  return structuredClone(value) as T;
 }
 
 function isTarballRequiredError(error: unknown): boolean {

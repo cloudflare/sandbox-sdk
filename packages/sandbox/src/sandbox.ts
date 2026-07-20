@@ -59,6 +59,7 @@ import {
 } from './errors';
 import type {
   ExtensionRuntimeCall,
+  ExtensionRuntimeControl,
   HTTPAuthInterceptorParams as GitAuthInterceptorParams
 } from './extensions';
 import { SandboxExtension, sandboxRuntimeCall } from './extensions';
@@ -213,6 +214,21 @@ function retainStream<T>(
   lease: RuntimeLease
 ): ReadableStream<T> {
   return retainedStream(stream, lease).stream;
+}
+
+function extensionRuntimeControl(
+  control: ContainerControlClient
+): ExtensionRuntimeControl {
+  return {
+    files: control.files,
+    ports: control.ports,
+    backup: control.backup,
+    watch: control.watch,
+    tunnels: control.tunnels,
+    terminals: control.terminals,
+    extensions: control.extensions,
+    utils: control.utils
+  };
 }
 
 function runtimeInterrupted(operation: string): OperationInterruptedError {
@@ -2779,17 +2795,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
   }
 
-  private async runLegacyRuntimeCall<T>(
-    operation: string,
-    call: (control: ContainerControlClient) => Promise<T>
-  ): Promise<T> {
-    return await this.runtimeRunner.runWaking(operation, async (lease) =>
-      call(lease.control)
-    );
-  }
-
-  [sandboxRuntimeCall] = ((operation, call) =>
-    this.runLegacyRuntimeCall(operation, call)) as ExtensionRuntimeCall;
+  [sandboxRuntimeCall] = (async (operation, call) =>
+    await this.runWakingComposite(operation, (lease) =>
+      call(extensionRuntimeControl(lease.control))
+    )) as ExtensionRuntimeCall;
 
   async exposePort(
     port: number,
