@@ -533,7 +533,10 @@ console.log('Terminal server on port ' + port);
 
       // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
-        const result = await executor.exec(body.command, {
+        const command = Array.isArray(body.command)
+          ? body.command.join(' ')
+          : body.command;
+        const result = await executor.exec(command, {
           env: body.env,
           cwd: body.cwd,
           timeout: body.timeout
