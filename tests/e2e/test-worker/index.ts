@@ -1371,6 +1371,81 @@ console.log('Echo server on port ' + port);
       }
 
       if (
+        url.pathname === '/api/runtime/control-server-exit' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'echo control-stream-ready; sleep 30'
+        ]);
+        await proc.waitForLog('control-stream-ready', { timeout: 10000 });
+        const abortLogs = new AbortController();
+        const stream = await proc.logs({
+          replay: false,
+          follow: true,
+          signal: abortLogs.signal
+        });
+        const reader = stream.getReader();
+        const pendingRead = reader.read().then(
+          () => ({ originalMessage: 'Stream closed without interruption' }),
+          (error: unknown) => {
+            const errorRecord = asRecord(error);
+            const context = asRecord(errorRecord.context);
+            return {
+              originalMessage:
+                optionalString(context.originalMessage) ??
+                (error instanceof Error ? error.message : String(error))
+            };
+          }
+        );
+
+        try {
+          const marker = `/tmp/control-server-exit-${crypto.randomUUID()}`;
+          const killer = await sandbox.exec([
+            '/bin/bash',
+            '-lc',
+            'echo control-exit-armed; while [ ! -e "$1" ]; do sleep 0.01; done; parent_cmd="$(tr "\\0" " " < /proc/$PPID/cmdline)"; [ "$parent_cmd" = "/container-server/sandbox " ] || { echo "unexpected parent: $parent_cmd" >&2; exit 1; }; kill -KILL "$PPID"',
+            'control-server-exit',
+            marker
+          ]);
+          await killer.waitForLog('control-exit-armed', { timeout: 10000 });
+          await sandbox.writeFile(marker, 'exit');
+
+          const interruption = await withTimeout(
+            pendingRead,
+            10000,
+            'control server exit interruption'
+          );
+          let state = await sandbox.getState();
+          for (let attempt = 0; state.status !== 'stopped'; attempt++) {
+            if (attempt === 999)
+              throw new Error('Control server state did not become stopped');
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            state = await sandbox.getState();
+          }
+          const recovery = await sandbox.exec([
+            'printf',
+            'after-control-server-exit'
+          ]);
+          const output = await recovery.output();
+          return new Response(
+            JSON.stringify({
+              stateStatus: state.status,
+              interruption,
+              recoveryStdout: decodeOutput(output.stdout)
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        } finally {
+          abortLogs.abort();
+          await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
+          await proc.kill().catch(() => undefined);
+        }
+      }
+
+      if (
         url.pathname === '/api/runtime/concurrent-destroy' &&
         request.method === 'POST'
       ) {

@@ -137,6 +137,18 @@ describe('Runtime incarnation lifecycle workflow', () => {
     expect(result.recoveryStdout).toBe('after-interruption');
   }, 120000);
 
+  test('invalidates the runtime when the control server exits', async () => {
+    const response = await post('/api/runtime/control-server-exit');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      stateStatus: 'stopped',
+      interruption: {
+        originalMessage: expect.stringContaining('StaleProcessHandleError')
+      },
+      recoveryStdout: 'after-control-server-exit'
+    });
+  }, 120000);
+
   test('coalesces concurrent destroy and leaves lookup paths non-waking', async () => {
     const activeProcess = await post('/api/process/start', {
       command: ['/bin/bash', '-lc', 'echo destroy-ready; sleep 30']
