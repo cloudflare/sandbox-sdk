@@ -886,6 +886,14 @@ function sanitizeExecOptions(options?: ExecOptions): ExecOptions | undefined {
   return sanitized;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
 function getConcreteExtensionMethod(
   extension: SandboxExtension,
   method: string
@@ -2406,11 +2414,21 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     const argv = validateExecArgv(command);
     const startTime = Date.now();
     const commandText = argv.join(' ');
+    const canMergeEnvironment =
+      options.env === undefined || isPlainObject(options.env);
+    const launchOptions =
+      canMergeEnvironment &&
+      (Object.keys(this.envVars).length > 0 || options.env !== undefined)
+        ? { ...options, env: { ...this.envVars, ...options.env } }
+        : options;
     try {
       const descriptor = await this.runtimeRunner.runWaking(
         'process.start',
         async (lease) => {
-          const status = await lease.control.processes.start(argv, options);
+          const status = await lease.control.processes.start(
+            argv,
+            launchOptions
+          );
           return this.processDescriptor(status, lease.runtime);
         }
       );

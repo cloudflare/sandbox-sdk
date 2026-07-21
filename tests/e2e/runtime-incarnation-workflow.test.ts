@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { stopContainerAndWait } from './helpers/container-lifecycle';
 import {
   cleanupTestSandbox,
   createTestSandbox,
@@ -104,8 +105,7 @@ describe('Runtime incarnation lifecycle workflow', () => {
     expect(terminalResponse.status).toBe(200);
     const terminal = (await terminalResponse.json()) as { id: string };
 
-    const stopResponse = await post('/api/container/stop');
-    expect(stopResponse.status).toBe(200);
+    await stopContainerAndWait(workerUrl, headers);
 
     const processLookup = await get(`/api/process/${process.id}`);
     expect(processLookup.status).toBe(404);
@@ -192,7 +192,7 @@ describe('Runtime incarnation lifecycle workflow', () => {
   }, 120000);
 
   test('cold exec regression completes without startup recursion', async () => {
-    await post('/api/container/stop');
+    await stopContainerAndWait(workerUrl, headers);
     const response = await post('/api/execute', {
       command: ['echo', 'ready']
     });

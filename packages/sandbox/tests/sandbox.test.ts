@@ -596,6 +596,43 @@ describe('Sandbox durable object behavior', () => {
       expect(descriptor.capability.status).toBeTypeOf('function');
     });
 
+    it('overlays per-command env on sandbox env for process launches', async () => {
+      await sandbox.setEnvVars({
+        SANDBOX_ONLY: 'sandbox',
+        SHARED: 'sandbox'
+      });
+
+      await sandbox.exec(['env'], {
+        env: { COMMAND_ONLY: 'command', SHARED: 'command' }
+      });
+
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).toHaveBeenCalledWith(['env'], {
+        env: {
+          SANDBOX_ONLY: 'sandbox',
+          COMMAND_ONLY: 'command',
+          SHARED: 'command'
+        }
+      });
+    });
+
+    it.each([null, []])(
+      'preserves invalid command env for container validation',
+      async (invalidEnv) => {
+        await sandbox.setEnvVars({ SANDBOX_ONLY: 'sandbox' });
+
+        await sandbox.exec(['env'], {
+          // @ts-expect-error Exercise runtime validation of untyped callers.
+          env: invalidEnv
+        });
+
+        expect(
+          asSandboxWithClient(sandbox).client.processes.start
+        ).toHaveBeenCalledWith(['env'], { env: invalidEnv });
+      }
+    );
+
     it('wakes, captures, and pre-validates before launch, then post-fences', async () => {
       const order: string[] = [];
       mockCtx.storage.get.mockImplementation(async (key: string) => {

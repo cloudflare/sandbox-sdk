@@ -274,6 +274,28 @@ async function withTimeout<T>(
   }
 }
 
+async function waitForSandboxStopped(
+  sandbox: Pick<BaseSandbox<Env>, 'getState'>,
+  timeoutMs = 30_000
+): Promise<Awaited<ReturnType<BaseSandbox<Env>['getState']>>> {
+  const deadline = Date.now() + timeoutMs;
+  let state = await sandbox.getState();
+  while (
+    state.status !== 'stopped' &&
+    state.status !== 'stopped_with_code' &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    state = await sandbox.getState();
+  }
+  if (state.status !== 'stopped' && state.status !== 'stopped_with_code') {
+    throw new Error(
+      `Timed out waiting ${timeoutMs}ms for sandbox to stop; last status: ${state.status}`
+    );
+  }
+  return state;
+}
+
 function decodeOutput(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
@@ -1358,6 +1380,7 @@ console.log('Echo server on port ' + port);
           'retained log interruption'
         );
         reader.releaseLock();
+        await waitForSandboxStopped(sandbox);
         const recovery = await sandbox.exec(['printf', 'after-interruption']);
         const output = await recovery.output();
         return new Response(
@@ -1410,20 +1433,14 @@ console.log('Echo server on port ' + port);
             marker
           ]);
           await killer.waitForLog('control-exit-armed', { timeout: 10000 });
-          await sandbox.writeFile(marker, 'exit');
+          await sandbox.writeFile(marker, 'exit').catch(() => undefined);
 
           const interruption = await withTimeout(
             pendingRead,
             10000,
             'control server exit interruption'
           );
-          let state = await sandbox.getState();
-          for (let attempt = 0; state.status !== 'stopped'; attempt++) {
-            if (attempt === 999)
-              throw new Error('Control server state did not become stopped');
-            await new Promise((resolve) => setTimeout(resolve, 10));
-            state = await sandbox.getState();
-          }
+          const state = await waitForSandboxStopped(sandbox);
           const recovery = await sandbox.exec([
             'printf',
             'after-control-server-exit'
@@ -1487,7 +1504,7 @@ console.log('Echo server on port ' + port);
         await (sandbox as unknown as { stop: () => Promise<void> }).stop();
         const response: SuccessWithMessageResponse = {
           success: true,
-          message: 'Container stopped'
+          message: 'Container stop requested'
         };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
