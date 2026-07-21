@@ -252,6 +252,9 @@ describe('documented Devin session status mapping', () => {
     ['terminated', 'stop'],
     ['completed', 'ignore'],
     ['failed', 'ignore'],
+    ['constructor', 'ignore'],
+    ['toString', 'ignore'],
+    ['valueOf', 'ignore'],
     ['', 'ignore'],
     [null, 'ignore'],
     [undefined, 'ignore']

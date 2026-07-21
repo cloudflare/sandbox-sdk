@@ -19,7 +19,7 @@ export const SESSION_COMMANDS: Record<SessionStatus, SessionCommand> = {
 export function sessionCommand(
   status: string | null | undefined
 ): SessionCommand {
-  return status && status in SESSION_COMMANDS
+  return status && Object.hasOwn(SESSION_COMMANDS, status)
     ? SESSION_COMMANDS[status as SessionStatus]
     : 'ignore';
 }
