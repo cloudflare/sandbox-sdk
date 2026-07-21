@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DEVIN_OUTPOST_SESSION_ID:?required}"
+: "${DEVIN_OUTPOST_ID:?required}"
+: "${DEVIN_WORKER_ACCEPTOR_ID:?required}"
+: "${DEVIN_API_TOKEN:?required}"
+: "${DEVIN_API_URL:?required}"
+
+# Restore the most recent suspend checkpoint before Devin claims the session.
+# The helper is temporary and can be removed when native snapshots are public.
+cd /
+/usr/local/bin/devin-checkpoint restore
+mkdir -p /workspace
+cd /workspace
+
+# `devin worker start` claims the session, downloads the matching
+# devin-remote binary, and runs it. This shell remains PID 1 so it can save a
+# checkpoint after Devin exits and forward platform termination signals.
+args=(worker start \
+  --session="$DEVIN_OUTPOST_SESSION_ID" \
+  --outpost="$DEVIN_OUTPOST_ID" \
+  --acceptor-id="$DEVIN_WORKER_ACCEPTOR_ID" \
+  --token="$DEVIN_API_TOKEN" \
+  --api-url="$DEVIN_API_URL")
+
+# Keep the container alive long enough to checkpoint after an un-signaled
+# Devin exit (including sleep). Platform/DO signals are forwarded and skip the
+# checkpoint.
+devin "${args[@]}" &
+devin_pid=$!
+
+terminate() {
+  local signal="$1" status="$2"
+  trap - TERM INT
+  kill "-$signal" "$devin_pid" 2>/dev/null || true
+  wait "$devin_pid" 2>/dev/null || true
+  exit "$status"
+}
+trap 'terminate TERM 143' TERM
+trap 'terminate INT 130' INT
+
+set +e
+wait "$devin_pid"
+status=$?
+set -e
+trap - TERM INT
+
+echo "Devin CLI exited naturally (status=${status}); saving checkpoint"
+if ! /usr/local/bin/devin-checkpoint save; then
+  echo "Checkpoint save failed after Devin exit" >&2
+  exit 1
+fi
+exit "$status"

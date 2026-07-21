@@ -1,0 +1,43 @@
+{
+  "name": "cloudflare-devin-outpost",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Devin Outposts orchestrator on Cloudflare Workers + Durable Object Containers.",
+  "cloudflare": {
+    "bindings": {
+      "DEVIN_OUTPOST_ID": {
+        "description": "Required Devin Outpost ID this Worker should serve."
+      },
+      "DEVIN_API_TOKEN": {
+        "description": "Required Devin service-user token with the Run outpost workers permission."
+      },
+      "DEVIN_API_URL": {
+        "description": "Complete Devin Outposts queue API prefix (default: https://api.devin.ai/opbeta)."
+      },
+      "WORKER_ID_PREFIX": {
+        "description": "Prefix for Devin claim acceptor IDs (default: cf-outpost)."
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "wrangler types --env-file .dev.vars.example --check && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "cf-typegen": "wrangler types --env-file .dev.vars.example"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.102.0"
+  },
+  "license": "MIT"
+}

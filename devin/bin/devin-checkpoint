@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+command="${1:?usage: devin-checkpoint <save|restore>}"
+endpoint="http://checkpoint.internal/checkpoint"
+started_at="$SECONDS"
+
+case "$command" in
+  save)
+    mkdir -p /root /workspace /opt/devin-persistent
+    umask 077
+    archive="$(mktemp /tmp/devin-checkpoint.XXXXXX.tar.zst)"
+    trap 'rm -f "$archive"' EXIT
+    tar -C / -cf - \
+      --numeric-owner --xattrs --acls \
+      --exclude=root/.cache \
+      --exclude=root/.devin/worker/cache \
+      root workspace opt/devin-persistent \
+      | zstd -1 -T0 -q > "$archive"
+    curl --fail --silent --show-error \
+      --header "content-type: application/zstd" \
+      --header "expect:" \
+      --upload-file "$archive" "$endpoint"
+    echo "saved checkpoint in $((SECONDS - started_at))s"
+    ;;
+  restore)
+    status="$(curl --silent --show-error --output /dev/null \
+      --write-out '%{http_code}' --head "$endpoint")"
+    if [[ "$status" == 404 ]]; then
+      echo "no checkpoint found"
+      exit 0
+    fi
+    if [[ "$status" != 200 ]]; then
+      echo "checkpoint lookup failed: HTTP ${status}" >&2
+      exit 1
+    fi
+    umask 077
+    archive="$(mktemp /tmp/devin-checkpoint.XXXXXX.tar.zst)"
+    trap 'rm -f "$archive"' EXIT
+    curl --fail --silent --show-error --output "$archive" "$endpoint"
+    zstd -tq "$archive"
+    mkdir -p /root /workspace /opt/devin-persistent
+    find /root /workspace /opt/devin-persistent -mindepth 1 -maxdepth 1 \
+      -exec rm -rf -- {} +
+    zstd -dcq "$archive" \
+      | tar -C / -xpf - --numeric-owner --xattrs --acls \
+          root workspace opt/devin-persistent
+    echo "restored checkpoint in $((SECONDS - started_at))s"
+    ;;
+  *)
+    echo "usage: devin-checkpoint <save|restore>" >&2
+    exit 2
+    ;;
+esac

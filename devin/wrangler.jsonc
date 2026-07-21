@@ -1,0 +1,38 @@
+/**
+ * Devin Outposts orchestrator on Cloudflare.
+ *
+ * One Durable Object per Devin session; each DO's container binding runs
+ * `devin worker start` in an isolated Linux VM and exits when the session ends.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "devin-outpost",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "DEVIN_OUTPOST_ID": "",
+    "DEVIN_API_URL": "https://api.devin.ai/opbeta",
+    "WORKER_ID_PREFIX": "cf-outpost"
+  },
+  "r2_buckets": [
+    {
+      "binding": "DEVIN_CHECKPOINTS",
+      "bucket_name": "devin-outpost-state"
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "DevinWorker",
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 100
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "DevinWorker", "name": "DevinWorker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DevinWorker"] }]
+}
