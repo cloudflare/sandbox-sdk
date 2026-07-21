@@ -894,6 +894,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   );
 }
 
+function mergeExecEnvironment(
+  sandboxEnv: Record<string, string>,
+  commandEnv: Record<string, string | null>
+): Record<string, string> {
+  const merged = { ...sandboxEnv };
+  for (const [name, value] of Object.entries(commandEnv)) {
+    if (value === null) delete merged[name];
+    else merged[name] = value;
+  }
+  return merged;
+}
+
 function getConcreteExtensionMethod(
   extension: SandboxExtension,
   method: string
@@ -2419,7 +2431,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     const launchOptions =
       canMergeEnvironment &&
       (Object.keys(this.envVars).length > 0 || options.env !== undefined)
-        ? { ...options, env: { ...this.envVars, ...options.env } }
+        ? {
+            ...options,
+            env: mergeExecEnvironment(this.envVars, options.env ?? {})
+          }
         : options;
     try {
       const descriptor = await this.runtimeRunner.runWaking(

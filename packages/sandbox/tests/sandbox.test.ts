@@ -617,6 +617,24 @@ describe('Sandbox durable object behavior', () => {
       });
     });
 
+    it('treats null command env values as unset during overlay', async () => {
+      await sandbox.setEnvVars({
+        REMOVE_ME: 'sandbox',
+        SANDBOX_ONLY: 'sandbox'
+      });
+
+      await sandbox.exec(['env'], {
+        // @ts-expect-error Exercise null compatibility for JSON callers.
+        env: { COMMAND_ONLY: 'command', REMOVE_ME: null }
+      });
+
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).toHaveBeenCalledWith(['env'], {
+        env: { COMMAND_ONLY: 'command', SANDBOX_ONLY: 'sandbox' }
+      });
+    });
+
     it.each([null, []])(
       'preserves invalid command env for container validation',
       async (invalidEnv) => {
