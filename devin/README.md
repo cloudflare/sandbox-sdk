@@ -10,7 +10,7 @@ You need a Cloudflare account, a Devin Outpost ID, and a Devin service-user toke
 
 ### Deploy with one click
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/examples/devin-outpost)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/devin)
 
 The recommended one-click flow prompts for `DEVIN_OUTPOST_ID` and `DEVIN_API_TOKEN`, then provisions the Worker, cron trigger, Durable Object namespace, container application, and R2 checkpoint bucket.
 
@@ -29,7 +29,7 @@ Manual deployment additionally requires Node.js 24 and a running Docker daemon.
 git clone https://github.com/cloudflare/sandbox-sdk.git
 cd sandbox-sdk
 npm install
-cd examples/devin-outpost
+cd devin
 npx wrangler login
 npx wrangler r2 bucket create devin-outpost-state
 ```
