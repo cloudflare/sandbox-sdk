@@ -2202,6 +2202,102 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  // Reproduction for https://github.com/cloudflare/sandbox-sdk/issues/829:
+  // exposePort() succeeds but every request to the preview URL returns
+  // 410 STALE_PREVIEW_URL even while the container is healthy and serving.
+  describe('preview URL staleness after container restart (issue #829)', () => {
+    let storage: Map<string, unknown>;
+
+    beforeEach(async () => {
+      storage = new Map<string, unknown>([
+        ['portTokens', {}],
+        ['currentRuntimeIdentity', { id: 'runtime-1' }],
+        ['activePreviewPorts', {}]
+      ]);
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      await sandbox.setSandboxName('test-sandbox', false);
+    });
+
+    it('forwards preview traffic while the exposing runtime is still current', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: PREVIEW_TEST_TOKEN
+      });
+
+      mockCtx.container.running = true;
+      const tcpFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(200);
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 410 STALE_PREVIEW_URL after a container restart even though the container is healthy and running', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: PREVIEW_TEST_TOKEN
+      });
+      expect(
+        (
+          storage.get('activePreviewPorts') as Record<
+            string,
+            { runtimeIdentityID: string }
+          >
+        )['8080'].runtimeIdentityID
+      ).toBe('runtime-1');
+
+      // Simulate a container (re)start. onStart() mints a brand-new runtime
+      // identity via markStarted() but does NOT migrate the existing preview
+      // activation, which still points at the previous runtime. This runs on
+      // every container start, including when an exec/containerFetch call
+      // wakes a stopped container to check its health.
+      await (sandbox as Sandbox & { onStart(): Promise<void> }).onStart();
+
+      const runtimeAfter = storage.get('currentRuntimeIdentity') as {
+        id: string;
+      };
+      expect(runtimeAfter.id).not.toBe('runtime-1');
+      expect(
+        (
+          storage.get('activePreviewPorts') as Record<
+            string,
+            { runtimeIdentityID: string }
+          >
+        )['8080'].runtimeIdentityID
+      ).toBe('runtime-1');
+
+      // Container is healthy (mock getState() -> 'healthy') and running.
+      mockCtx.container.running = true;
+      const tcpFetch = vi.fn();
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      // Traffic never reached the container even though it was healthy and running.
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('tunnels lifecycle storage', () => {
     function seedMixedTunnelStorage(): Array<{ key: string; value: unknown }> {
       const puts: Array<{ key: string; value: unknown }> = [];
