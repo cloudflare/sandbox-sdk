@@ -255,6 +255,29 @@ function serializeBytes(data: Uint8Array): number[] {
   return Array.from(data);
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timeoutID: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutID = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutID) clearTimeout(timeoutID);
+  }
+}
+
+function decodeOutput(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
 function serializeProcessLogEvent(event: ProcessLogEvent) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     return { ...event, data: serializeBytes(event.data) };
@@ -1309,6 +1332,63 @@ console.log('Echo server on port ' + port);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      if (
+        url.pathname === '/api/runtime/retained-log-interruption' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'echo stream-ready; sleep 30'
+        ]);
+        await proc.waitForLog('stream-ready', { timeout: 10000 });
+        const stream = await proc.logs({ replay: false, follow: true });
+        const reader = stream.getReader();
+        const pendingRead = reader.read().then(
+          () => '',
+          (error: unknown) =>
+            error instanceof Error ? error.name : String(error)
+        );
+        await sandbox.stop();
+        const errorName = await withTimeout(
+          pendingRead,
+          10000,
+          'retained log interruption'
+        );
+        reader.releaseLock();
+        const recovery = await sandbox.exec(['printf', 'after-interruption']);
+        const output = await recovery.output();
+        return new Response(
+          JSON.stringify({
+            interrupted: errorName.length > 0,
+            errorName,
+            recoveryStdout: decodeOutput(output.stdout)
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (
+        url.pathname === '/api/runtime/concurrent-destroy' &&
+        request.method === 'POST'
+      ) {
+        const results = await Promise.allSettled([
+          sandbox.destroy(),
+          sandbox.destroy()
+        ]);
+        const listAfterDestroy = await sandbox.listProcesses();
+        return new Response(
+          JSON.stringify({
+            fulfilled: results.filter((result) => result.status === 'fulfilled')
+              .length,
+            rejected: results.filter((result) => result.status === 'rejected')
+              .length,
+            listAfterDestroy
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
       }
 
       // Cleanup endpoint - destroys the sandbox container

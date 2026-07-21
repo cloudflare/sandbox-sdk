@@ -381,6 +381,8 @@ function retainWebSocketResponse(
   const closeInterrupted = once(() => {
     try {
       webSocket.close?.(1012, 'Runtime replaced');
+    } catch {
+      // The runtime may reject close() after handing the socket to its peer.
     } finally {
       release();
     }

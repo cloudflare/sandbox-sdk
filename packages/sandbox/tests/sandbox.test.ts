@@ -1351,6 +1351,27 @@ describe('Sandbox durable object behavior', () => {
       ]);
     });
 
+    it('releases direct WebSocket authority when peer-owned close throws', async () => {
+      const socket = new FakeSocket();
+      const close = vi.spyOn(socket, 'close').mockImplementation(() => {
+        throw new TypeError('Socket is already owned by its peer');
+      });
+      const response = new Response('WebSocket response');
+      Object.defineProperty(response, 'webSocket', { value: socket });
+      tcpFetch.mockResolvedValueOnce(response);
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await sandbox.fetch(request);
+
+      await expect(sandbox.stop()).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledWith(1012, 'Runtime replaced');
+    });
+
     it('closes direct WebSocket assignment race responses on invalidation', async () => {
       const socket = new FakeSocket();
       const response = new Response('WebSocket response');
