@@ -7,10 +7,16 @@
   "cloudflare": {
     "bindings": {
       "DEVIN_OUTPOST_ID": {
-        "description": "The Devin Outpost ID this Worker should serve."
+        "description": "Required Devin Outpost ID this Worker should serve."
       },
       "DEVIN_API_TOKEN": {
-        "description": "A Devin service-user token with the Run outpost workers permission."
+        "description": "Required Devin service-user token with the Run outpost workers permission."
+      },
+      "DEVIN_API_URL": {
+        "description": "Complete Devin Outposts queue API prefix (default: https://api.devin.ai/opbeta)."
+      },
+      "WORKER_ID_PREFIX": {
+        "description": "Prefix for Devin claim acceptor IDs (default: cf-outpost)."
       }
     }
   },
