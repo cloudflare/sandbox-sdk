@@ -2,9 +2,9 @@
 '@cloudflare/sandbox': minor
 ---
 
-Add the experimental `@cloudflare/sandbox/extensions` framework for attaching higher-level, opt-in APIs to a Sandbox subclass. An extension runs inside the Sandbox and can bring its own container sidecar — a self-contained program shipped as a `.tgz` that starts on first use — so features like the code interpreter live outside the core SDK.
+Add the experimental `@cloudflare/sandbox/extensions` helpers for optional higher-level APIs on a Sandbox subclass. An extension can ship its own helper program as a `.tgz` sidecar that starts on first use, so features like the code interpreter stay out of the core SDK.
 
-Attach a shipped extension to your Sandbox subclass and call it directly:
+Attach a shipped extension and call it directly:
 
 ```ts
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
@@ -14,8 +14,10 @@ export class Sandbox extends BaseSandbox<Env> {
   interpreter = withInterpreter(this);
 }
 
-const context = await sandbox.interpreter.createCodeContext({ language: 'python' });
+const context = await sandbox.interpreter.createCodeContext({
+  language: 'python'
+});
 const result = await sandbox.interpreter.runCode('print("hello")', { context });
 ```
 
-To author your own, extend `SandboxExtension` and export a `withYourExtension(sandbox)` factory; sidecar-backed extensions call their typed methods through `this.withSidecar(...)`. This is experimental — distributing third-party extensions over npm is not wired up yet.
+To write your own, extend `SandboxExtension` and export a `withYourExtension(sandbox)` helper. Sidecar-backed extensions call their methods through `this.withSidecar(...)`. This is experimental; publishing third-party extensions on npm is not set up yet.

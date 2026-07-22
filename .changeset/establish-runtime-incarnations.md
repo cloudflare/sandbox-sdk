@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': minor
 ---
 
-Bind Sandbox operations to the specific container that started them. When a container is replaced (after sleep, eviction, or a crash), previously returned process and terminal handles and other in-flight work now fail fast with a clear error instead of silently resuming against a fresh container and repeating side effects. Re-fetch the handle (for example with `getProcess()`) after a restart to continue. Extension authors must run runtime work inside the scoped `withRuntime()` and `withSidecar()` callbacks rather than holding on to runtime clients or sidecar remotes.
+Keep each sandbox operation on the container that started it. If that container is replaced after sleep, eviction, or a crash, in-flight work and old process or terminal handles fail instead of continuing against the new container. Create or look up handles again after the new container is running. Extension authors should run runtime work inside `withRuntime()` and `withSidecar()`.

@@ -2,8 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Keep filesystem watch and terminal output subscriptions connected when they cross Worker RPC boundaries. Container HTTP and WebSocket proxies now also accept requests whose external URL uses HTTPS by forwarding them over the container runtime's supported HTTP transport. Configured sandbox clients wait for their settings to apply before forwarding the first operation.
-
-Sandbox clients continue to expose the inherited `containerFetch()` overloads and honor `switchPort()` routing for HTTP and WebSocket requests while reserving internal control-plane routes.
-
-Repeated explicit restores now reapply the selected backup instead of returning a stale committed result. Inactivity expiry also stops the container without re-entering the sandbox activity gate.
+Keep filesystem watch and terminal output streams open across Worker to Durable Object calls. HTTPS preview and proxy requests now reach the container over HTTP as expected. Sandbox setup finishes before the first forwarded request runs, repeated restores reapply the chosen backup, and idle expiry stops the container cleanly.
