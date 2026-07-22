@@ -1,2 +1,2 @@
 export { ContainerControlClient } from './client';
-export { RuntimeControlClient } from './runtime-client';
+export { ContainerControlConnection } from './connection';

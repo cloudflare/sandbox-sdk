@@ -5,14 +5,17 @@
  *
  * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
+ * - SandboxBrowser: Isolated base image capacity for browser tests
  * - SandboxPython: Full image with Python (for code interpreter tests)
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
  * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
  * - SandboxMusl: Musl-based Alpine image variant (for musl binary tests)
  *
- * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
+ * Use X-Sandbox-Type or sandboxType to select: 'browser', 'python',
+ * 'opencode', 'standalone', 'musl', or default.
  */
 
+import { switchPort } from '@cloudflare/containers';
 import type { ProcessLogEvent, TerminalOutputEvent } from '@cloudflare/sandbox';
 import {
   Sandbox as BaseSandbox,
@@ -53,6 +56,7 @@ export class Sandbox extends BaseSandbox<Env> {
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
 export { ContainerProxy };
+export { Sandbox as SandboxBrowser };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
@@ -60,6 +64,7 @@ export { Sandbox as SandboxMusl };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  SandboxBrowser: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
@@ -107,6 +112,21 @@ function isSandboxErrorLike(error: unknown): error is SandboxErrorLike {
     typeof error.errorResponse === 'object' &&
     error.errorResponse !== null
   );
+}
+
+function getErrorCode(error: unknown): string | null {
+  if (isSandboxErrorLike(error)) {
+    return error.code ?? error.errorResponse.code ?? null;
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code;
+  }
+  return null;
 }
 
 /**
@@ -255,6 +275,51 @@ function serializeBytes(data: Uint8Array): number[] {
   return Array.from(data);
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timeoutID: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutID = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutID) clearTimeout(timeoutID);
+  }
+}
+
+async function waitForSandboxStopped(
+  sandbox: Pick<BaseSandbox<Env>, 'getState'>,
+  timeoutMs = 30_000
+): Promise<Awaited<ReturnType<BaseSandbox<Env>['getState']>>> {
+  const deadline = Date.now() + timeoutMs;
+  let state = await sandbox.getState();
+  while (
+    state.status !== 'stopped' &&
+    state.status !== 'stopped_with_code' &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    state = await sandbox.getState();
+  }
+  if (state.status !== 'stopped' && state.status !== 'stopped_with_code') {
+    throw new Error(
+      `Timed out waiting ${timeoutMs}ms for sandbox to stop; last status: ${state.status}`
+    );
+  }
+  return state;
+}
+
+function decodeOutput(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
 function serializeProcessLogEvent(event: ProcessLogEvent) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     return { ...event, data: serializeBytes(event.data) };
@@ -284,11 +349,6 @@ export default {
       if (proxyResponse) return proxyResponse;
     }
 
-    // Skip JSON body parsing for streaming endpoints to preserve request.body
-    const isStreamingUpload =
-      url.pathname === '/api/file/write-stream' && request.method === 'PUT';
-    const body = asRecord(isStreamingUpload ? {} : await parseBody(request));
-
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
     const baseSandboxId =
@@ -302,10 +362,33 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
-    // Select sandbox type based on X-Sandbox-Type header
-    const sandboxType = request.headers.get('X-Sandbox-Type');
+    // Query selection lets WebSocket requests choose a sandbox namespace.
+    const sandboxType =
+      request.headers.get('X-Sandbox-Type') ??
+      url.searchParams.get('sandboxType');
+
+    // This page only renders a client that will create the terminal in a later
+    // request. Avoid constructing a Sandbox here because getSandbox() starts
+    // asynchronous configuration, which this response would not await.
+    if (url.pathname === '/terminal-test') {
+      return new Response(
+        getTerminalTestPage(
+          sandboxId,
+          sandboxType === 'browser' ? 'browser' : ''
+        ),
+        { headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+
+    // Skip JSON body parsing for streaming endpoints to preserve request.body
+    const isStreamingUpload =
+      url.pathname === '/api/file/write-stream' && request.method === 'PUT';
+    const body = asRecord(isStreamingUpload ? {} : await parseBody(request));
+
     let sandboxNamespace: DurableObjectNamespace<Sandbox>;
-    if (sandboxType === 'python') {
+    if (sandboxType === 'browser') {
+      sandboxNamespace = env.SandboxBrowser;
+    } else if (sandboxType === 'python') {
       sandboxNamespace = env.SandboxPython;
     } else if (sandboxType === 'opencode') {
       sandboxNamespace = env.SandboxOpencode;
@@ -374,7 +457,7 @@ console.log('Echo server on port ' + port);
       const upgradeHeader = request.headers.get('Upgrade');
       if (upgradeHeader?.toLowerCase() === 'websocket') {
         if (url.pathname === '/ws/echo') {
-          return await sandbox.wsConnect(request, 8080);
+          return await sandbox.fetch(switchPort(request, 8080));
         }
         if (url.pathname === '/ws/code') {
           return await sandbox.wsConnect(request, 8081);
@@ -382,6 +465,10 @@ console.log('Echo server on port ' + port);
         if (url.pathname === '/ws/terminal') {
           return await sandbox.wsConnect(request, 8082);
         }
+      }
+
+      if (url.pathname === '/api/container-fetch') {
+        return await sandbox.containerFetch('http://container/', {}, 8080);
       }
 
       // Health check
@@ -543,39 +630,35 @@ console.log('Echo server on port ' + port);
         ]);
         await oldProcess.waitForLog('admitted');
         const racingWait = oldProcess.waitForExit().then(
-          () => '',
-          (error: unknown) =>
-            error instanceof Error ? error.name : String(error)
+          () => ({ rejected: false, code: null }),
+          (error: unknown) => ({ rejected: true, code: getErrorCode(error) })
         );
         await new Promise((resolve) => setTimeout(resolve, 100));
         await sandbox.destroy();
 
         const stoppedList = await sandbox.listProcesses();
         const stoppedGet = await sandbox.getProcess(oldProcess.id);
-        const replacement = await sandbox.exec(['printf', 'replacement']);
-        await replacement.waitForExit();
 
-        let staleError = '';
+        let staleRejected = false;
+        let staleReasonMatched = false;
         try {
           await oldProcess.status();
         } catch (error) {
-          staleError = error instanceof Error ? error.name : String(error);
+          staleRejected = true;
+          staleReasonMatched =
+            error instanceof Error &&
+            error.message.includes('previous runtime incarnation');
         }
-        const racingError = await racingWait;
-
-        const live = await sandbox.exec(['/bin/bash', '-lc', 'sleep 30']);
-        const recovered = await sandbox.getProcess(live.id);
-        const recoveredStatus = await recovered?.status();
-        await recovered?.kill();
-        await recovered?.waitForExit();
+        const racingResult = await racingWait;
 
         return new Response(
           JSON.stringify({
             stoppedListCount: stoppedList.length,
             stoppedGetFound: stoppedGet !== null,
-            staleError,
-            racingError,
-            recoveredState: recoveredStatus?.state
+            staleRejected,
+            staleReasonMatched,
+            racingRejected: racingResult.rejected,
+            racingCode: racingResult.code
           }),
           { headers: { 'Content-Type': 'application/json' } }
         );
@@ -1311,6 +1394,133 @@ console.log('Echo server on port ' + port);
         });
       }
 
+      if (
+        url.pathname === '/api/runtime/retained-log-interruption' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'echo stream-ready; sleep 30'
+        ]);
+        await proc.waitForLog('stream-ready', { timeout: 10000 });
+        const stream = await proc.logs({ replay: false, follow: true });
+        const reader = stream.getReader();
+        const pendingRead = reader.read().then(
+          () => '',
+          (error: unknown) =>
+            error instanceof Error ? error.name : String(error)
+        );
+        await sandbox.stop();
+        const errorName = await withTimeout(
+          pendingRead,
+          10000,
+          'retained log interruption'
+        );
+        reader.releaseLock();
+        await waitForSandboxStopped(sandbox);
+        const recovery = await sandbox.exec(['printf', 'after-interruption']);
+        const output = await recovery.output();
+        return new Response(
+          JSON.stringify({
+            interrupted: errorName.length > 0,
+            errorName,
+            recoveryStdout: decodeOutput(output.stdout)
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (
+        url.pathname === '/api/runtime/control-server-exit' &&
+        request.method === 'POST'
+      ) {
+        const proc = await sandbox.exec([
+          '/bin/bash',
+          '-lc',
+          'echo control-stream-ready; sleep 30'
+        ]);
+        await proc.waitForLog('control-stream-ready', { timeout: 10000 });
+        const abortLogs = new AbortController();
+        const stream = await proc.logs({
+          replay: false,
+          follow: true,
+          signal: abortLogs.signal
+        });
+        const reader = stream.getReader();
+        const pendingRead = reader.read().then(
+          () => ({ originalMessage: 'Stream closed without interruption' }),
+          (error: unknown) => {
+            const errorRecord = asRecord(error);
+            const context = asRecord(errorRecord.context);
+            return {
+              originalMessage:
+                optionalString(context.originalMessage) ??
+                (error instanceof Error ? error.message : String(error))
+            };
+          }
+        );
+
+        try {
+          const marker = `/tmp/control-server-exit-${crypto.randomUUID()}`;
+          const killer = await sandbox.exec([
+            '/bin/bash',
+            '-lc',
+            'echo control-exit-armed; while [ ! -e "$1" ]; do sleep 0.01; done; parent_cmd="$(tr "\\0" " " < /proc/$PPID/cmdline)"; [ "$parent_cmd" = "/container-server/sandbox " ] || { echo "unexpected parent: $parent_cmd" >&2; exit 1; }; kill -KILL "$PPID"',
+            'control-server-exit',
+            marker
+          ]);
+          await killer.waitForLog('control-exit-armed', { timeout: 10000 });
+          await sandbox.writeFile(marker, 'exit').catch(() => undefined);
+
+          const interruption = await withTimeout(
+            pendingRead,
+            10000,
+            'control server exit interruption'
+          );
+          const state = await waitForSandboxStopped(sandbox);
+          const recovery = await sandbox.exec([
+            'printf',
+            'after-control-server-exit'
+          ]);
+          const output = await recovery.output();
+          return new Response(
+            JSON.stringify({
+              stateStatus: state.status,
+              interruption,
+              recoveryStdout: decodeOutput(output.stdout)
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        } finally {
+          abortLogs.abort();
+          await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
+          await proc.kill().catch(() => undefined);
+        }
+      }
+
+      if (
+        url.pathname === '/api/runtime/concurrent-destroy' &&
+        request.method === 'POST'
+      ) {
+        const results = await Promise.allSettled([
+          sandbox.destroy(),
+          sandbox.destroy()
+        ]);
+        const listAfterDestroy = await sandbox.listProcesses();
+        return new Response(
+          JSON.stringify({
+            fulfilled: results.filter((result) => result.status === 'fulfilled')
+              .length,
+            rejected: results.filter((result) => result.status === 'rejected')
+              .length,
+            listAfterDestroy
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
@@ -1332,19 +1542,10 @@ console.log('Echo server on port ' + port);
         await (sandbox as unknown as { stop: () => Promise<void> }).stop();
         const response: SuccessWithMessageResponse = {
           success: true,
-          message: 'Container stopped'
+          message: 'Container stop requested'
         };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // PTY: Browser test page for Playwright tests
-      if (url.pathname === '/terminal-test') {
-        const terminalId =
-          url.searchParams.get('terminalId') || `browser-test-${Date.now()}`;
-        return new Response(getTerminalTestPage(sandboxId, terminalId), {
-          headers: { 'Content-Type': 'text/html' }
         });
       }
 
@@ -1367,14 +1568,14 @@ console.log('Echo server on port ' + port);
           const terminal = await sandbox.getTerminal(terminalId);
           if (!terminal)
             return new Response('Terminal not found', { status: 404 });
-          return terminal.connect(request, { cols, rows });
+          return await terminal.connect(request, { cols, rows });
         }
         const terminal = await sandbox.createTerminal({
           command: ['bash'],
           cols,
           rows
         });
-        return terminal.connect(request, { cols, rows });
+        return await terminal.connect(request, { cols, rows });
       }
 
       return new Response('Not found', { status: 404 });
@@ -1471,7 +1672,7 @@ console.log('Echo server on port ' + port);
   }
 };
 
-function getTerminalTestPage(sandboxId: string, terminalId: string): string {
+function getTerminalTestPage(sandboxId: string, sandboxType: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1499,9 +1700,11 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
 
     const statusEl = document.getElementById('status');
     const sandboxId = '${sandboxId}';
-    const terminalId = '${terminalId}';
+    const sandboxType = '${sandboxType}';
+    const sandboxQuery = new URLSearchParams({ sandboxId, sandboxType }).toString();
 
     let ws = null;
+    let terminalId = null;
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 10;
 
@@ -1510,10 +1713,34 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
       statusEl.dataset.testid = 'connection-status';
     }
 
-    function connect() {
+    async function connect() {
       updateStatus('connecting');
+      if (!terminalId) {
+        try {
+          const response = await fetch('/api/terminal/create?' + sandboxQuery, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: ['/bin/bash'],
+              cols: term.cols,
+              rows: term.rows
+            })
+          });
+          if (!response.ok) {
+            const detail = await response.text();
+            console.error('Terminal creation failed:', response.status, detail);
+            updateStatus('error');
+            return;
+          }
+          terminalId = (await response.json()).id;
+        } catch (error) {
+          console.error('Terminal creation failed:', error);
+          updateStatus('error');
+          return;
+        }
+      }
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?sandboxId=' + sandboxId;
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?' + sandboxQuery;
       
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';

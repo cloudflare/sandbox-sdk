@@ -166,6 +166,17 @@ describe('ProcessService', () => {
     }
   });
 
+  it('defaults process cwd to the workspace', async () => {
+    const stub = supervisor();
+    const service = new ProcessService({ supervisor: stub, logger });
+
+    await service.start(['pwd']);
+
+    expect(stub.start).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/workspace' })
+    );
+  });
+
   it('validates only argv[0], cwd, environment and timeout before starting', async () => {
     const service = new ProcessService({ supervisor: supervisor(), logger });
     const temp = await mkdtemp(join(tmpdir(), 'process-service-'));

@@ -18,8 +18,11 @@ type MockWebSocket = Pick<
 
 type MockPty = RuntimeTerminalProcess;
 
-const createMockWS = (data: TerminalWSData): MockWebSocket => ({
-  data,
+const createMockWS = (
+  data: Omit<TerminalWSData, 'runtimeIncarnationID'> &
+    Partial<Pick<TerminalWSData, 'runtimeIncarnationID'>>
+): MockWebSocket => ({
+  data: { runtimeIncarnationID: 'runtime-incarnation-test', ...data },
   send: mock(() => 1),
   sendBinary: mock(() => 1),
   close: mock(() => {})

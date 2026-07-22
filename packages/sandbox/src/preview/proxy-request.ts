@@ -42,5 +42,7 @@ function stripPreviewProxyHeaders(source: Headers): Headers {
   for (const header of PREVIEW_PROXY_HEADERS) {
     headers.delete(header);
   }
+  headers.delete('cf-container-target-port');
+  headers.delete('x-sandbox-port-route-token');
   return headers;
 }

@@ -1,23 +1,21 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SandboxWatchAPI, WatchRequest } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
+import type { SandboxAPIDeps } from '@sandbox-container/control-plane';
 import type { WatchService } from '@sandbox-container/services/watch-service';
+import { createActivatedSandboxControlAPI } from './session-helper';
 
-function buildApi(watchService: WatchService): SandboxControlAPI {
-  return new SandboxControlAPI({ watchService } as SandboxAPIDeps);
+async function buildApi(watchService: WatchService) {
+  return createActivatedSandboxControlAPI({ watchService } as SandboxAPIDeps);
 }
 
 describe('SandboxControlAPI watch', () => {
   let watchDirectory: ReturnType<typeof mock>;
   let watch: SandboxWatchAPI;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     watchDirectory = mock();
     const service = { watchDirectory } as unknown as WatchService;
-    watch = buildApi(service).watch;
+    watch = (await buildApi(service)).watch;
   });
 
   it('owns watch streams through a disposable subscription', async () => {

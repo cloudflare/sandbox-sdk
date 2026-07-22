@@ -1,3 +1,4 @@
+import { RpcTarget } from 'cloudflare:workers';
 import { translateRPCError } from '../container-control/rpc-error';
 import type {
   ProcessPullSubscriptionRPC,
@@ -5,9 +6,59 @@ import type {
 } from './rpc-types';
 
 interface RemoteSubscriptionOptions {
+  protocol: 'stream' | 'pull';
   signal?: AbortSignal;
   operation?: string;
   abortError?: () => Error;
+}
+
+/** Keeps a stream local to its Durable Object and exposes pull RPC methods. */
+export class PullSubscriptionTarget<T>
+  extends RpcTarget
+  implements ProcessPullSubscriptionRPC<T>
+{
+  readonly #reader: ReadableStreamDefaultReader<T>;
+  readonly #onRelease: (() => void) | undefined;
+  #released = false;
+
+  constructor(stream: ReadableStream<T>, onRelease?: () => void) {
+    super();
+    this.#reader = stream.getReader();
+    this.#onRelease = onRelease;
+  }
+
+  async next(): Promise<ReadableStreamReadResult<T>> {
+    if (this.#released) return { done: true, value: undefined };
+    try {
+      const result = await this.#reader.read();
+      if (result.done) this.#release();
+      return result;
+    } catch (error) {
+      this.#release();
+      throw error;
+    }
+  }
+
+  async cancel(): Promise<void> {
+    if (this.#released) return;
+    try {
+      await this.#reader.cancel();
+    } finally {
+      this.#release();
+    }
+  }
+
+  [Symbol.dispose](): void {
+    if (this.#released) return;
+    void this.#reader.cancel().catch(() => undefined);
+    this.#release();
+  }
+
+  #release(): void {
+    if (this.#released) return;
+    this.#released = true;
+    this.#onRelease?.();
+  }
 }
 
 /** Exposes a remote Workers RPC subscription as a caller-owned local stream. */
@@ -15,7 +66,7 @@ export async function openRemoteSubscription<T>(
   subscriptionPromise: Promise<
     ProcessSubscriptionRPC<T> | ProcessPullSubscriptionRPC<T>
   >,
-  options: RemoteSubscriptionOptions = {}
+  options: RemoteSubscriptionOptions
 ): Promise<ReadableStream<T>> {
   let subscription:
     | ProcessSubscriptionRPC<T>
@@ -86,14 +137,15 @@ export async function openRemoteSubscription<T>(
 
   let read: () => Promise<ReadableStreamReadResult<T>>;
   let cancelReader: () => void;
-  if ('next' in subscription) {
-    const pullSubscription = subscription;
+  if (options.protocol === 'pull') {
+    const pullSubscription = subscription as ProcessPullSubscriptionRPC<T>;
     read = () => pullSubscription.next();
     cancelReader = () => undefined;
   } else {
+    const streamSubscription = subscription as ProcessSubscriptionRPC<T>;
     let source: ReadableStream<T>;
     try {
-      source = await raceSetup(subscription.stream());
+      source = await raceSetup(streamSubscription.stream());
     } catch (error) {
       release();
       if (signal?.aborted) throw error;

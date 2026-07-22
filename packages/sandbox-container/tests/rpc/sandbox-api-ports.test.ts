@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from 'bun:test';
 import type { Logger, PortWatchEvent } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
+import type { SandboxAPIDeps } from '@sandbox-container/control-plane';
 import type { PortService } from '@sandbox-container/services/port-service';
 import { StreamSubscriptionRPC } from '../../src/control-plane/subscription-rpc';
+import { createActivatedSandboxControlAPI } from './session-helper';
 
 const logger = {
   info: vi.fn(),
@@ -27,7 +25,7 @@ describe('SandboxControlAPI ports', () => {
     const portService = {
       openWatch: vi.fn(() => stream)
     } as unknown as PortService;
-    const api = new SandboxControlAPI({
+    const api = await createActivatedSandboxControlAPI({
       portService,
       logger
     } as unknown as SandboxAPIDeps);

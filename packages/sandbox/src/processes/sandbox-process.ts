@@ -49,6 +49,7 @@ export class SandboxProcessImpl implements SandboxProcess {
   ): Promise<ReadableStream<ProcessLogEvent>> {
     const { signal, ...rpcOptions } = options;
     return openRemoteSubscription(this.capability.openLogs(rpcOptions), {
+      protocol: 'pull',
       signal,
       operation: 'read process logs',
       abortError:
@@ -156,7 +157,11 @@ export class SandboxProcessImpl implements SandboxProcess {
   ): Promise<void> {
     const portStream = await openRemoteSubscription(
       this.capability.openPortWatch(port, options),
-      { operation: `watch port ${port}`, signal: settlementSignal }
+      {
+        operation: `watch port ${port}`,
+        protocol: 'pull',
+        signal: settlementSignal
+      }
     );
     let logStream: ReadableStream<ProcessLogEvent> | undefined;
     let portReader: ReadableStreamDefaultReader<PortWatchEvent> | undefined;
@@ -165,7 +170,11 @@ export class SandboxProcessImpl implements SandboxProcess {
       portReader = portStream.getReader();
       logStream = await openRemoteSubscription(
         this.capability.openLogs({ replay: true, follow: true }),
-        { operation: 'read process logs', signal: settlementSignal }
+        {
+          operation: 'read process logs',
+          protocol: 'pull',
+          signal: settlementSignal
+        }
       );
       logReader = logStream.getReader();
       await waitForReadiness(portReader, logReader, {
@@ -191,7 +200,7 @@ export class SandboxProcessImpl implements SandboxProcess {
   ): Promise<T> {
     const stream = await openRemoteSubscription(
       this.capability.openLogs({ replay: true, follow: true }),
-      { signal, operation: 'read process logs' }
+      { signal, operation: 'read process logs', protocol: 'pull' }
     );
     return this.consume(stream, consume);
   }

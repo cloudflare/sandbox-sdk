@@ -22,6 +22,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.42.0"
+    "@cloudflare/vite-plugin": "^1.46.0"
   }
 }

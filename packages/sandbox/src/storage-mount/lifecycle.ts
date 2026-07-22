@@ -1,34 +1,29 @@
-import type {
-  CurrentRuntimeIdentity,
-  RuntimeIdentity
-} from '../current-runtime-identity';
+import type { RuntimeIdentity, RuntimeIdentityReader } from '../runtime';
 import type {
   CurrentSandboxLifetime,
   SandboxLifetime
 } from '../sandbox-lifetime';
 
 export type MountLifecycleSnapshot = {
-  runtime: RuntimeIdentity | null;
+  runtime: RuntimeIdentity;
   lifetime: SandboxLifetime;
 };
 
 export class MountLifecycle {
   constructor(
-    private readonly currentRuntime: CurrentRuntimeIdentity,
+    private readonly runtimeReader: RuntimeIdentityReader,
     private readonly currentLifetime: CurrentSandboxLifetime
   ) {}
 
-  async capture(): Promise<MountLifecycleSnapshot> {
+  async capture(runtime: RuntimeIdentity): Promise<MountLifecycleSnapshot> {
     return {
-      runtime: await this.currentRuntime.get(),
+      runtime,
       lifetime: await this.currentLifetime.getOrCreate()
     };
   }
 
   async assertCurrent(snapshot: MountLifecycleSnapshot): Promise<void> {
-    if (snapshot.runtime) {
-      await this.currentRuntime.assertActive(snapshot.runtime);
-    }
     await this.currentLifetime.assertCurrent(snapshot.lifetime);
+    await this.runtimeReader.assertActive(snapshot.runtime);
   }
 }

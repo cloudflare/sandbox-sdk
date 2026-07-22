@@ -36,6 +36,9 @@ export function getSuggestion(
     case ErrorCode.STALE_PROCESS_HANDLE:
       return 'The process handle refers to an older runtime process. Reacquire the process by ID before retrying the operation';
 
+    case ErrorCode.STALE_TERMINAL_HANDLE:
+      return 'The terminal handle refers to an older runtime terminal. Reacquire the terminal by ID before retrying the operation';
+
     case ErrorCode.PROCESS_WAIT_TIMEOUT:
       return 'The process did not complete before the timeout. Continue streaming logs or kill the process if it is no longer needed';
 
@@ -74,6 +77,9 @@ export function getSuggestion(
 
     case ErrorCode.GIT_BRANCH_NOT_FOUND:
       return `Branch "${context.branch}" does not exist in the repository. Check the branch name or use the default branch`;
+
+    case ErrorCode.CONTROL_PROTOCOL_INCOMPATIBLE:
+      return 'Refresh the sandbox control session metadata and reconnect with a compatible control protocol';
 
     case ErrorCode.INTERPRETER_NOT_READY:
       return context.retryAfter

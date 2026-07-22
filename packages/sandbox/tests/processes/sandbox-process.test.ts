@@ -15,8 +15,8 @@ import {
 import { ProcessError } from '../../src/errors';
 import { createSandboxProcess } from '../../src/processes';
 import type {
-  ProcessRPCDescriptor,
-  ProcessSubscriptionRPC
+  ProcessPullSubscriptionRPC,
+  ProcessRPCDescriptor
 } from '../../src/processes/rpc-types';
 
 const now = new Date().toISOString();
@@ -39,17 +39,15 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
-function subscription<T>(events: T[]): ProcessSubscriptionRPC<T> {
+function subscription<T>(events: T[]): ProcessPullSubscriptionRPC<T> {
+  const remaining = [...events];
   return {
-    stream: vi.fn(
-      async () =>
-        new ReadableStream<T>({
-          start(controller) {
-            for (const event of events) controller.enqueue(event);
-            controller.close();
-          }
-        })
-    ),
+    next: vi.fn(async (): Promise<ReadableStreamReadResult<T>> => {
+      const value = remaining.shift();
+      return value === undefined
+        ? { done: true, value: undefined }
+        : { done: false, value };
+    }),
     cancel: vi.fn(async () => undefined),
     [Symbol.dispose]: vi.fn()
   };
@@ -204,8 +202,8 @@ describe('SandboxProcessImpl', () => {
   it('waits for capability-scoped port readiness', async () => {
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => ({
-      stream: vi.fn(
-        async () => new ReadableStream<ProcessLogEvent>({ start() {} })
+      next: vi.fn(
+        () => new Promise<ReadableStreamReadResult<ProcessLogEvent>>(() => {})
       ),
       cancel: vi.fn(async () => undefined),
       [Symbol.dispose]: vi.fn()
@@ -230,8 +228,8 @@ describe('SandboxProcessImpl', () => {
 
   it('uses typed local timeout and abort errors without killing the process', async () => {
     const remote = subscription<ProcessLogEvent>([]);
-    remote.stream = vi.fn(
-      async () => new ReadableStream<ProcessLogEvent>({ start() {} })
+    remote.next = vi.fn(
+      () => new Promise<ReadableStreamReadResult<ProcessLogEvent>>(() => {})
     );
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => remote);
@@ -263,7 +261,7 @@ describe('SandboxProcessImpl', () => {
   ])(
     'times out while %s subscription acquisition is pending',
     async (_, wait) => {
-      const pending = deferred<ProcessSubscriptionRPC<ProcessLogEvent>>();
+      const pending = deferred<ProcessPullSubscriptionRPC<ProcessLogEvent>>();
       const remote = subscription<ProcessLogEvent>([]);
       const descriptor = processDescriptor();
       descriptor.capability.openLogs = vi.fn(() => pending.promise);
@@ -279,24 +277,23 @@ describe('SandboxProcessImpl', () => {
     }
   );
 
-  it('aborts logs while stream setup is pending and releases it later', async () => {
-    const pending = deferred<ReadableStream<ProcessLogEvent>>();
+  it('aborts logs while the first pull is pending', async () => {
     const remote = subscription<ProcessLogEvent>([]);
-    remote.stream = vi.fn(() => pending.promise);
+    remote.next = vi.fn(
+      () => new Promise<ReadableStreamReadResult<ProcessLogEvent>>(() => {})
+    );
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => remote);
     const abort = new AbortController();
 
-    const opening = createSandboxProcess(descriptor).logs({
+    const stream = await createSandboxProcess(descriptor).logs({
       signal: abort.signal
     });
+    const reading = stream.getReader().read();
     abort.abort();
-    await expect(opening).rejects.toBeInstanceOf(ProcessAbortedError);
-    pending.resolve(new ReadableStream());
-    await vi.waitFor(() => {
-      expect(remote.cancel).toHaveBeenCalledOnce();
-      expect(remote[Symbol.dispose]).toHaveBeenCalledOnce();
-    });
+    await expect(reading).rejects.toBeInstanceOf(ProcessAbortedError);
+    expect(remote.cancel).toHaveBeenCalledOnce();
+    expect(remote[Symbol.dispose]).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -412,8 +409,8 @@ describe('SandboxProcessImpl', () => {
 
   it('locally aborts logs and cleans up consumer cancellation exactly once', async () => {
     const remote = subscription<ProcessLogEvent>([]);
-    remote.stream = vi.fn(
-      async () => new ReadableStream<ProcessLogEvent>({ start() {} })
+    remote.next = vi.fn(
+      () => new Promise<ReadableStreamReadResult<ProcessLogEvent>>(() => {})
     );
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => remote);
@@ -432,15 +429,9 @@ describe('SandboxProcessImpl', () => {
 
   it('translates late stream errors and releases their subscription', async () => {
     const remote = subscription<ProcessLogEvent>([]);
-    remote.stream = vi.fn(
-      async () =>
-        new ReadableStream<ProcessLogEvent>({
-          start(controller) {
-            controller.enqueue(stdout('data', '1'));
-            controller.error(new Error('late transport failure'));
-          }
-        })
-    );
+    remote.next = vi
+      .fn()
+      .mockRejectedValue(new Error('late transport failure'));
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => remote);
     const reader = (await createSandboxProcess(descriptor).logs()).getReader();
@@ -450,17 +441,14 @@ describe('SandboxProcessImpl', () => {
     expect(remote[Symbol.dispose]).toHaveBeenCalledTimes(1);
   });
 
-  it('releases a subscription when local reader setup fails', async () => {
-    const source = new ReadableStream<ProcessLogEvent>();
-    source.getReader();
+  it('releases a subscription when its first pull fails', async () => {
     const remote = subscription<ProcessLogEvent>([]);
-    remote.stream = vi.fn(async () => source);
+    remote.next = vi.fn().mockRejectedValue(new Error('pull failed'));
     const descriptor = processDescriptor();
     descriptor.capability.openLogs = vi.fn(async () => remote);
+    const reader = (await createSandboxProcess(descriptor).logs()).getReader();
 
-    await expect(
-      createSandboxProcess(descriptor).logs()
-    ).rejects.toBeInstanceOf(RPCTransportError);
+    await expect(reader.read()).rejects.toBeInstanceOf(RPCTransportError);
     expect(remote.cancel).toHaveBeenCalledTimes(1);
     expect(remote[Symbol.dispose]).toHaveBeenCalledTimes(1);
   });

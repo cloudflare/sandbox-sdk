@@ -7,10 +7,12 @@ import { ContainerUnavailableError, ErrorCode } from '../src/errors';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /**
@@ -28,11 +30,11 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(false);
     });
 
-    it('should have a stub available immediately after construction', () => {
+    it('should not expose the RPC stub before activation', () => {
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
-      expect(conn.rpc()).toBeDefined();
+      expect(() => conn.rpc()).toThrow(/not activated/);
     });
   });
 
@@ -66,9 +68,13 @@ describe('ContainerControlConnection', () => {
           })
         }
       });
-      const internals = conn as unknown as { transport: DeferredTransport };
+      const internals = conn as unknown as {
+        transport: DeferredTransport;
+        state: 'active';
+      };
       const activate = vi.spyOn(internals.transport, 'activate');
       const connecting = conn.connect();
+      internals.state = 'active';
       const connectRejected = vi.fn();
       const connectOutcome = connecting.then(
         () => 'resolved',
@@ -167,7 +173,9 @@ describe('ContainerControlConnection', () => {
         }
       });
 
-      // rpc() triggers connect() in the background and returns the stub.
+      const connecting = conn.connect().catch(() => undefined);
+      const internals = conn as unknown as { state: 'active' };
+      internals.state = 'active';
       const stub = conn.rpc();
 
       // Calling a method on the stub queues a send and starts a receive().
@@ -176,11 +184,12 @@ describe('ContainerControlConnection', () => {
       const rpcCall = stub.utils.ping();
 
       await expect(rpcCall).rejects.toThrow();
+      await connecting;
     }, 5000);
   });
 
   describe('rpc', () => {
-    it('should trigger connect lazily when calling rpc()', () => {
+    it('should reject rpc access before activation', () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValue(new Response('Not Found', { status: 404 }));
@@ -188,10 +197,8 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: fetchMock }
       });
 
-      // rpc() returns the stub immediately and triggers connect in the background
-      const stub = conn.rpc();
-      expect(stub).toBeDefined();
-      expect(fetchMock).toHaveBeenCalled();
+      expect(() => conn.rpc()).toThrow(/not activated/);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
@@ -201,13 +208,13 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
-        internals.connected = true;
+        internals.state = 'connected';
         internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
@@ -215,26 +222,80 @@ describe('ContainerControlConnection', () => {
       expect(conn.isConnected()).toBe(true);
     });
 
-    it('should return the same stub before and after connect', async () => {
+    it('should return the same stub after activation', async () => {
       const conn = new ContainerControlConnection({
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'active' | 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
 
       vi.spyOn(internals, 'doConnect').mockImplementation(async () => {
-        internals.connected = true;
+        internals.state = 'connected';
         internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
       });
 
-      // rpc() returns the stub immediately — same reference before and after connect
-      const stubBefore = conn.rpc();
       await conn.connect();
+      internals.state = 'active';
+      const stubBefore = conn.rpc();
       const stubAfter = conn.rpc();
       expect(stubAfter).toBe(stubBefore);
+    });
+
+    it('does not overwrite disconnected state when activation fails after peer close', async () => {
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() }
+      });
+      const activation = deferred<never>();
+      const internals = conn as unknown as {
+        state: 'connected' | 'activating' | 'disconnected';
+        stub: {
+          utils: { activateControlSession: (id: string) => Promise<never> };
+        };
+        onWebSocketClose: () => void;
+      };
+      internals.state = 'connected';
+      internals.stub = {
+        utils: { activateControlSession: () => activation.promise }
+      };
+
+      const activating = conn.activateControlSession('incarnation-1');
+      await Promise.resolve();
+      expect(internals.state).toBe('activating');
+      internals.onWebSocketClose();
+      activation.reject(new Error('Peer closed WebSocket: 1006'));
+
+      await expect(activating).rejects.toThrow('Peer closed WebSocket');
+      expect(internals.state).toBe('disconnected');
+    });
+
+    it('does not overwrite disconnected state when activation fails after peer error', async () => {
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() }
+      });
+      const activation = deferred<never>();
+      const internals = conn as unknown as {
+        state: 'connected' | 'activating' | 'disconnected';
+        stub: {
+          utils: { activateControlSession: (id: string) => Promise<never> };
+        };
+        onWebSocketError: () => void;
+      };
+      internals.state = 'connected';
+      internals.stub = {
+        utils: { activateControlSession: () => activation.promise }
+      };
+
+      const activating = conn.activateControlSession('incarnation-1');
+      await Promise.resolve();
+      expect(internals.state).toBe('activating');
+      internals.onWebSocketError();
+      activation.reject(new Error('WebSocket connection failed.'));
+
+      await expect(activating).rejects.toThrow('WebSocket connection failed');
+      expect(internals.state).toBe('disconnected');
     });
 
     it('should permanently revoke an explicitly disconnected connection', async () => {
@@ -242,7 +303,7 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
@@ -250,7 +311,7 @@ describe('ContainerControlConnection', () => {
       const doConnect = vi
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
-          internals.connected = true;
+          internals.state = 'connected';
           internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
@@ -269,7 +330,7 @@ describe('ContainerControlConnection', () => {
         stub: { fetch: vi.fn() }
       });
       const internals = conn as unknown as {
-        connected: boolean;
+        state: 'connected';
         ws: unknown;
         doConnect: () => Promise<void>;
       };
@@ -277,7 +338,7 @@ describe('ContainerControlConnection', () => {
       const doConnect = vi
         .spyOn(internals, 'doConnect')
         .mockImplementation(async () => {
-          internals.connected = true;
+          internals.state = 'connected';
           internals.ws = { close: vi.fn(), removeEventListener: vi.fn() };
         });
 
@@ -381,107 +442,7 @@ describe('ContainerControlConnection', () => {
     });
   });
 
-  describe('WebSocket upgrade retry', () => {
-    /**
-     * Build a fake successful upgrade Response. Mirrors what
-     * Cloudflare's Container base class returns from `stub.fetch()`:
-     * a Response with `status === 101` and a non-standard `webSocket`
-     * property carrying the WebSocket instance.
-     */
-    function makeUpgradeResponse(): Response {
-      const target = new EventTarget();
-      const ws = Object.assign(target, {
-        send: () => {},
-        close: () => {},
-        accept: () => {}
-      }) as unknown as WebSocket;
-      // The workerd test runtime rejects new Response(null, { status: 101 }),
-      // so synthesize a Response-shaped object exposing only the fields
-      // ContainerControlConnection actually reads (status, statusText,
-      // and the non-standard `webSocket` accessor).
-      return {
-        status: 101,
-        statusText: 'Switching Protocols',
-        webSocket: ws
-      } as unknown as Response;
-    }
-
-    function makeUpgradeFailure(status: number): Response {
-      return new Response('Container upgrade unavailable.', {
-        status,
-        statusText: 'Service Unavailable'
-      });
-    }
-
-    it('retries retryable upgrade responses until success', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(makeUpgradeFailure(500))
-          .mockResolvedValueOnce(makeUpgradeFailure(500))
-          .mockResolvedValueOnce(makeUpgradeResponse());
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          retryTimeoutMs: 60_000
-        });
-
-        const connectPromise = conn.connect();
-        // First attempt fires synchronously.
-        await vi.advanceTimersByTimeAsync(0);
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-
-        // Backoff is 3s for attempt 1, 6s for attempt 2.
-        await vi.advanceTimersByTimeAsync(3_000);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-
-        await vi.advanceTimersByTimeAsync(6_000);
-        await connectPromise;
-
-        expect(fetchMock).toHaveBeenCalledTimes(3);
-        expect(conn.isConnected()).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('surfaces container unavailability once upgrade retry budget is exhausted', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(makeUpgradeFailure(500));
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          // 20s budget. Walk-through with MIN_TIME_FOR_RETRY_MS = 15s and
-          // 3s/6s/12s exponential backoff:
-          //   attempt 1 at t=0   (remaining 20s, retry after 3s)
-          //   attempt 2 at t=3s  (remaining 17s, retry after 6s)
-          //   attempt 3 at t=9s  (remaining 11s < 15s, give up)
-          retryTimeoutMs: 20_000
-        });
-
-        const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toMatchObject({
-          name: 'ContainerUnavailableError',
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'rpc_upgrade_failed', retryable: true }
-        });
-
-        // Run all timers — connect() must settle even with fake timers.
-        await vi.advanceTimersByTimeAsync(60_000);
-        await assertion;
-
-        expect(conn.isConnected()).toBe(false);
-        // Three attempts before remaining < MIN_TIME_FOR_RETRY_MS.
-        expect(fetchMock).toHaveBeenCalledTimes(3);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
+  describe('WebSocket upgrade errors', () => {
     function makeContainerUnavailableResponse(): Response {
       return new Response(
         JSON.stringify({
@@ -505,8 +466,7 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(makeContainerUnavailableResponse());
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
       let thrown: unknown;
@@ -542,8 +502,7 @@ describe('ContainerControlConnection', () => {
         );
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
       await expect(conn.connect()).rejects.toMatchObject({
@@ -560,10 +519,12 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(makeContainerUnavailableResponse());
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
+        stub: { fetch: fetchMock }
       });
 
+      const connecting = conn.connect().catch(() => undefined);
+      const internals = conn as unknown as { state: 'active' };
+      internals.state = 'active';
       const rpcCall = conn.rpc().utils.ping();
 
       await expect(rpcCall).rejects.toMatchObject({
@@ -572,6 +533,7 @@ describe('ContainerControlConnection', () => {
         context: { reason: 'container_starting', retryable: true }
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      await connecting;
     });
 
     it('does not retry terminal upgrade failures', async () => {
@@ -580,125 +542,13 @@ describe('ContainerControlConnection', () => {
         .mockResolvedValue(new Response('Not retryable', { status: 404 }));
 
       const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 120_000
+        stub: { fetch: fetchMock }
       });
 
       await expect(conn.connect()).rejects.toThrow(
         'WebSocket upgrade failed: 404'
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('disables retries when retryTimeoutMs is set to 0', async () => {
-      const fetchMock = vi
-        .fn<(req: Request) => Promise<Response>>()
-        .mockResolvedValue(makeUpgradeFailure(500));
-
-      const conn = new ContainerControlConnection({
-        stub: { fetch: fetchMock },
-        retryTimeoutMs: 0
-      });
-
-      await expect(conn.connect()).rejects.toMatchObject({
-        name: 'ContainerUnavailableError',
-        code: ErrorCode.CONTAINER_UNAVAILABLE,
-        context: { reason: 'rpc_upgrade_failed', retryable: true }
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('uses a default retry budget when retryTimeoutMs is omitted', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValueOnce(makeUpgradeFailure(503))
-          .mockResolvedValueOnce(makeUpgradeResponse());
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock }
-        });
-
-        const connectPromise = conn.connect();
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(3_000);
-        await connectPromise;
-
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(conn.isConnected()).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('respects setRetryTimeoutMs() updates made before connect()', async () => {
-      vi.useFakeTimers();
-      try {
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockResolvedValue(makeUpgradeFailure(503));
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          // Start with a very large budget — would normally allow many retries.
-          retryTimeoutMs: 600_000
-        });
-
-        // Lower the budget so the very first elapsed-time check gives up.
-        conn.setRetryTimeoutMs(1_000);
-
-        const connectPromise = conn.connect();
-        const assertion = expect(connectPromise).rejects.toMatchObject({
-          name: 'ContainerUnavailableError',
-          code: ErrorCode.CONTAINER_UNAVAILABLE,
-          context: { reason: 'rpc_upgrade_failed', retryable: true }
-        });
-
-        await vi.advanceTimersByTimeAsync(60_000);
-        await assertion;
-
-        // Budget too small to satisfy MIN_TIME_FOR_RETRY_MS — no retries.
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('passes a fresh, non-aborted Request to each retry attempt', async () => {
-      vi.useFakeTimers();
-      try {
-        const seenRequests: Request[] = [];
-        const fetchMock = vi
-          .fn<(req: Request) => Promise<Response>>()
-          .mockImplementationOnce(async (req) => {
-            seenRequests.push(req);
-            return makeUpgradeFailure(503);
-          })
-          .mockImplementationOnce(async (req) => {
-            seenRequests.push(req);
-            if (req.signal.aborted) {
-              throw new Error('retry reused an aborted signal');
-            }
-            return makeUpgradeResponse();
-          });
-
-        const conn = new ContainerControlConnection({
-          stub: { fetch: fetchMock },
-          retryTimeoutMs: 60_000
-        });
-
-        const connectPromise = conn.connect();
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(3_000);
-        await connectPromise;
-
-        expect(seenRequests).toHaveLength(2);
-        expect(seenRequests[0]).not.toBe(seenRequests[1]);
-        expect(seenRequests[1].signal.aborted).toBe(false);
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 

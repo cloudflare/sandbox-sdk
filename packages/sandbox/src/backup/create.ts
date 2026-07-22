@@ -1,6 +1,5 @@
 import type { BackupOptions, DirectoryBackup } from '@repo/shared';
 import { type createLogger, logCanonicalEvent } from '@repo/shared';
-import type { ContainerControlClient } from '../container-control';
 import {
   BackupCreateError,
   ErrorCode,
@@ -8,6 +7,7 @@ import {
 } from '../errors';
 import { streamFile } from '../file-stream';
 import { isR2Bucket } from '../storage-mount';
+import type { BackupAttemptLease } from './backup-service';
 import {
   BACKUP_ARCHIVE_OBJECT_NAME,
   BACKUP_CONTAINER_DIR,
@@ -26,7 +26,10 @@ import {
 
 type BackupCreatorDeps = {
   getEnv: () => unknown;
-  getClient: () => ContainerControlClient;
+  runBackupAttempt<T>(
+    operation: string,
+    call: (lease: BackupAttemptLease) => Promise<T>
+  ): Promise<T>;
   logger: ReturnType<typeof createLogger>;
   transfer: BackupTransfer;
 };
@@ -36,10 +39,6 @@ export class BackupCreator {
 
   private get env(): unknown {
     return this.deps.getEnv();
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
   }
 
   private get logger(): ReturnType<typeof createLogger> {
@@ -80,131 +79,89 @@ export class BackupCreator {
     let caughtError: Error | undefined;
 
     try {
-      validateBackupDir(dir, 'BackupOptions.dir');
-      if (name !== undefined) {
-        if (typeof name !== 'string' || name.length > BACKUP_MAX_NAME_LENGTH) {
-          throw new InvalidBackupConfigError({
-            message: `BackupOptions.name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`,
-            code: ErrorCode.INVALID_BACKUP_CONFIG,
-            httpStatus: 400,
-            context: {
-              reason: `name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`
-            },
-            timestamp: new Date().toISOString()
-          });
-        }
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-        if (/[\u0000-\u001f\u007f]/.test(name)) {
-          throw new InvalidBackupConfigError({
-            message: 'BackupOptions.name must not contain control characters',
-            code: ErrorCode.INVALID_BACKUP_CONFIG,
-            httpStatus: 400,
-            context: { reason: 'name must not contain control characters' },
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-      if (ttl <= 0) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.ttl must be a positive number of seconds',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'ttl must be a positive number of seconds' },
-          timestamp: new Date().toISOString()
-        });
-      }
-      if (typeof gitignore !== 'boolean') {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.gitignore must be a boolean',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'gitignore must be a boolean' },
-          timestamp: new Date().toISOString()
-        });
-      }
-      if (
-        !Array.isArray(excludes) ||
-        !excludes.every((e: unknown) => typeof e === 'string')
-      ) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.excludes must be an array of strings',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'excludes must be an array of strings' },
-          timestamp: new Date().toISOString()
-        });
-      }
+      this.validateOptions({ dir, name, ttl, gitignore, excludes });
 
       const resolvedCompression = resolveBackupCompression(compression);
       const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
-      backupId = crypto.randomUUID();
-      const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
+      const currentBackupId = crypto.randomUUID();
+      backupId = currentBackupId;
+      const archivePath = `${BACKUP_CONTAINER_DIR}/${currentBackupId}.sqsh`;
+      const r2Key = `${BACKUP_STORAGE_PREFIX}/${currentBackupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
+      const metaKey = `${BACKUP_STORAGE_PREFIX}/${currentBackupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      const createResult = await this.client.backup.createArchive(
-        dir,
-        archivePath,
-        {
-          gitignore,
-          excludes: normalizedExcludes,
-          compression: resolvedCompression
+      const result = await this.deps.runBackupAttempt(
+        'backup.create',
+        async ({ control }) => {
+          try {
+            const createResult = await control.backup.createArchive(
+              dir,
+              archivePath,
+              {
+                gitignore,
+                excludes: normalizedExcludes,
+                compression: resolvedCompression
+              }
+            );
+
+            if (!createResult.success) {
+              throw new BackupCreateError({
+                message: 'Container failed to create backup archive',
+                code: ErrorCode.BACKUP_CREATE_FAILED,
+                httpStatus: 500,
+                context: { dir, backupId },
+                timestamp: new Date().toISOString()
+              });
+            }
+
+            sizeBytes = createResult.sizeBytes;
+            if (
+              multipart &&
+              createResult.sizeBytes >= BACKUP_MULTIPART_MIN_SIZE
+            ) {
+              await this.transfer.uploadBackupMultipart(
+                archivePath,
+                r2Key,
+                createResult.sizeBytes,
+                currentBackupId,
+                dir,
+                control
+              );
+            } else {
+              await this.transfer.uploadBackupPresigned(
+                archivePath,
+                r2Key,
+                createResult.sizeBytes,
+                currentBackupId,
+                dir,
+                control
+              );
+            }
+
+            const metadata = {
+              id: currentBackupId,
+              dir,
+              name: name || null,
+              sizeBytes: createResult.sizeBytes,
+              ttl,
+              createdAt: new Date().toISOString()
+            };
+            await bucket.put(metaKey, JSON.stringify(metadata));
+
+            outcome = 'success';
+            await control.backup.cleanupArchive(archivePath).catch(() => {});
+            return { id: currentBackupId, dir };
+          } catch (error) {
+            await control.backup.cleanupArchive(archivePath).catch(() => {});
+            await bucket.delete(r2Key).catch(() => {});
+            await bucket.delete(metaKey).catch(() => {});
+            throw error;
+          }
         }
       );
 
-      if (!createResult.success) {
-        throw new BackupCreateError({
-          message: 'Container failed to create backup archive',
-          code: ErrorCode.BACKUP_CREATE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      sizeBytes = createResult.sizeBytes;
-      const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
-      const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-
-      if (multipart && createResult.sizeBytes >= BACKUP_MULTIPART_MIN_SIZE) {
-        await this.transfer.uploadBackupMultipart(
-          archivePath,
-          r2Key,
-          createResult.sizeBytes,
-          backupId,
-          dir
-        );
-      } else {
-        await this.transfer.uploadBackupPresigned(
-          archivePath,
-          r2Key,
-          createResult.sizeBytes,
-          backupId,
-          dir
-        );
-      }
-
-      const metadata = {
-        id: backupId,
-        dir,
-        name: name || null,
-        sizeBytes: createResult.sizeBytes,
-        ttl,
-        createdAt: new Date().toISOString()
-      };
-      await bucket.put(metaKey, JSON.stringify(metadata));
-
-      outcome = 'success';
-      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
-      return { id: backupId, dir };
+      return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      if (backupId) {
-        const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
-        const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
-        const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
-        await bucket.delete(r2Key).catch(() => {});
-        await bucket.delete(metaKey).catch(() => {});
-      }
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {
@@ -216,6 +173,72 @@ export class BackupCreator {
         name,
         sizeBytes,
         error: caughtError
+      });
+    }
+  }
+
+  private validateOptions(options: {
+    dir: string;
+    name: string | undefined;
+    ttl: number;
+    gitignore: boolean;
+    excludes: string[];
+  }): void {
+    validateBackupDir(options.dir, 'BackupOptions.dir');
+    if (options.name !== undefined) {
+      if (
+        typeof options.name !== 'string' ||
+        options.name.length > BACKUP_MAX_NAME_LENGTH
+      ) {
+        throw new InvalidBackupConfigError({
+          message: `BackupOptions.name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: `name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+      if (/[\u0000-\u001f\u007f]/.test(options.name)) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.name must not contain control characters',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'name must not contain control characters' },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    if (options.ttl <= 0) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.ttl must be a positive number of seconds',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'ttl must be a positive number of seconds' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (typeof options.gitignore !== 'boolean') {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.gitignore must be a boolean',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'gitignore must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (
+      !Array.isArray(options.excludes) ||
+      !options.excludes.every((e: unknown) => typeof e === 'string')
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.excludes must be an array of strings',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'excludes must be an array of strings' },
+        timestamp: new Date().toISOString()
       });
     }
   }
@@ -243,7 +266,6 @@ export class BackupCreator {
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
 
-    // Resolve backup bucket from env as an R2 binding
     const envObj = this.env as Record<string, unknown>;
     const bucket = envObj.BACKUP_BUCKET;
     if (!bucket || !isR2Bucket(bucket)) {
@@ -259,159 +281,111 @@ export class BackupCreator {
     }
 
     try {
-      validateBackupDir(dir, 'BackupOptions.dir');
-      if (name !== undefined) {
-        if (typeof name !== 'string' || name.length > BACKUP_MAX_NAME_LENGTH) {
-          throw new InvalidBackupConfigError({
-            message: `BackupOptions.name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`,
-            code: ErrorCode.INVALID_BACKUP_CONFIG,
-            httpStatus: 400,
-            context: {
-              reason: `name must be a string of at most ${BACKUP_MAX_NAME_LENGTH} characters`
-            },
-            timestamp: new Date().toISOString()
-          });
-        }
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-        if (/[\u0000-\u001f\u007f]/.test(name)) {
-          throw new InvalidBackupConfigError({
-            message: 'BackupOptions.name must not contain control characters',
-            code: ErrorCode.INVALID_BACKUP_CONFIG,
-            httpStatus: 400,
-            context: { reason: 'name must not contain control characters' },
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-      if (ttl <= 0) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.ttl must be a positive number of seconds',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'ttl must be a positive number of seconds' },
-          timestamp: new Date().toISOString()
-        });
-      }
-      if (typeof gitignore !== 'boolean') {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.gitignore must be a boolean',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'gitignore must be a boolean' },
-          timestamp: new Date().toISOString()
-        });
-      }
-      if (
-        !Array.isArray(excludes) ||
-        !excludes.every((e: unknown) => typeof e === 'string')
-      ) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.excludes must be an array of strings',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'excludes must be an array of strings' },
-          timestamp: new Date().toISOString()
-        });
-      }
-
+      this.validateOptions({ dir, name, ttl, gitignore, excludes });
       const resolvedCompression = resolveBackupCompression(compression);
-
       const normalizedExcludes = normalizeBackupExcludes(excludes, this.logger);
 
-      backupId = crypto.randomUUID();
-      const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
+      const currentBackupId = crypto.randomUUID();
+      backupId = currentBackupId;
+      const archivePath = `${BACKUP_CONTAINER_DIR}/${currentBackupId}.sqsh`;
+      const r2Key = `${BACKUP_STORAGE_PREFIX}/${currentBackupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
+      const metaKey = `${BACKUP_STORAGE_PREFIX}/${currentBackupId}/${BACKUP_METADATA_OBJECT_NAME}`;
 
-      // Step 1: Create squashfs archive in the container (same as production)
-      const createResult = await this.client.backup.createArchive(
-        dir,
-        archivePath,
-        {
-          gitignore,
-          excludes: normalizedExcludes,
-          compression: resolvedCompression
-        }
-      );
-
-      if (!createResult.success) {
-        throw new BackupCreateError({
-          message: 'Container failed to create backup archive',
-          code: ErrorCode.BACKUP_CREATE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      sizeBytes = createResult.sizeBytes;
-      const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
-      const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-
-      // Step 2: Read archive from container and stream it into R2 via binding.
-      // readFileStream returns SSE-framed base64 chunks, so we pipe it through
-      // streamFile (which decodes SSE frames + base64 on the fly) into a
-      // FixedLengthStream backed by the known archive size. This avoids
-      // buffering the whole archive in Worker memory.
-      const archiveStream = await this.client.files.readFileStream(
-        archivePath,
-        {}
-      );
-      const sseDecoded = new ReadableStream<Uint8Array>({
-        async start(controller) {
+      const result = await this.deps.runBackupAttempt(
+        'backup.create',
+        async ({ control }) => {
           try {
-            for await (const chunk of streamFile(archiveStream)) {
-              if (chunk instanceof Uint8Array) {
-                controller.enqueue(chunk);
+            const createResult = await control.backup.createArchive(
+              dir,
+              archivePath,
+              {
+                gitignore,
+                excludes: normalizedExcludes,
+                compression: resolvedCompression
               }
+            );
+
+            if (!createResult.success) {
+              throw new BackupCreateError({
+                message: 'Container failed to create backup archive',
+                code: ErrorCode.BACKUP_CREATE_FAILED,
+                httpStatus: 500,
+                context: { dir, backupId },
+                timestamp: new Date().toISOString()
+              });
             }
-            controller.close();
-          } catch (err) {
-            controller.error(err);
+
+            sizeBytes = createResult.sizeBytes;
+            const archiveStream = await control.files.readFileStream(
+              archivePath,
+              {}
+            );
+            const fixedStream = new FixedLengthStream(createResult.sizeBytes);
+            const writer = fixedStream.writable.getWriter();
+            const uploadArchive = bucket
+              .put(r2Key, fixedStream.readable)
+              .catch(async (error) => {
+                await writer.abort(error).catch(() => {});
+                throw error;
+              });
+            const decodeAndWrite = (async () => {
+              try {
+                for await (const chunk of streamFile(archiveStream)) {
+                  if (chunk instanceof Uint8Array) {
+                    await writer.write(chunk);
+                  }
+                }
+                await writer.close();
+              } catch (error) {
+                await writer.abort(error).catch(() => {});
+                throw error;
+              }
+            })();
+            const results = await Promise.allSettled([
+              decodeAndWrite,
+              uploadArchive
+            ]);
+            const rejected = [...results]
+              .reverse()
+              .find((result) => result.status === 'rejected');
+            if (rejected) throw rejected.reason;
+
+            const head = await bucket.head(r2Key);
+            if (!head || head.size !== createResult.sizeBytes) {
+              throw new BackupCreateError({
+                message: `Upload verification failed: expected ${createResult.sizeBytes} bytes, got ${head?.size ?? 0}`,
+                code: ErrorCode.BACKUP_CREATE_FAILED,
+                httpStatus: 500,
+                context: { dir, backupId },
+                timestamp: new Date().toISOString()
+              });
+            }
+
+            const metadata = {
+              id: currentBackupId,
+              dir,
+              name: name || null,
+              sizeBytes: createResult.sizeBytes,
+              ttl,
+              createdAt: new Date().toISOString()
+            };
+            await bucket.put(metaKey, JSON.stringify(metadata));
+
+            outcome = 'success';
+            await control.backup.cleanupArchive(archivePath).catch(() => {});
+            return { id: currentBackupId, dir, localBucket: true };
+          } catch (error) {
+            await control.backup.cleanupArchive(archivePath).catch(() => {});
+            await bucket.delete(r2Key).catch(() => {});
+            await bucket.delete(metaKey).catch(() => {});
+            throw error;
           }
         }
-      });
-      const fixedStream = new FixedLengthStream(createResult.sizeBytes);
-      sseDecoded.pipeTo(fixedStream.writable).catch(() => {});
-      await bucket.put(r2Key, fixedStream.readable);
+      );
 
-      // Verify upload — size comes from createArchive result, not the stream.
-      const head = await bucket.head(r2Key);
-      if (!head || head.size !== createResult.sizeBytes) {
-        throw new BackupCreateError({
-          message: `Upload verification failed: expected ${createResult.sizeBytes} bytes, got ${head?.size ?? 0}`,
-          code: ErrorCode.BACKUP_CREATE_FAILED,
-          httpStatus: 500,
-          context: { dir, backupId },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Step 3: Write metadata
-      const metadata = {
-        id: backupId,
-        dir,
-        name: name || null,
-        sizeBytes: createResult.sizeBytes,
-        ttl,
-        createdAt: new Date().toISOString()
-      };
-      await bucket.put(metaKey, JSON.stringify(metadata));
-
-      outcome = 'success';
-
-      // Clean up local archive
-      await this.client.backup.cleanupArchive(archivePath).catch(() => {});
-
-      return { id: backupId, dir, localBucket: true };
+      return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      if (backupId) {
-        const archivePath = `${BACKUP_CONTAINER_DIR}/${backupId}.sqsh`;
-        const r2Key = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_ARCHIVE_OBJECT_NAME}`;
-        const metaKey = `${BACKUP_STORAGE_PREFIX}/${backupId}/${BACKUP_METADATA_OBJECT_NAME}`;
-        await this.client.backup.cleanupArchive(archivePath).catch(() => {});
-        await bucket.delete(r2Key).catch(() => {});
-        await bucket.delete(metaKey).catch(() => {});
-      }
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {

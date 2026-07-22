@@ -2,4 +2,22 @@
 '@cloudflare/sandbox': minor
 ---
 
-Add the experimental `@cloudflare/sandbox/extensions` framework for attaching opt-in SDK extensions and lazily started container sidecars to a Sandbox subclass. Sidecars are distributed as npm-style `.tgz` packages: the SDK ships the bytes, the container provisions by content hash, derives identity from the embedded `package.json`, and `bun add`s the package. Host ↔ sidecar IPC runs over capnweb on a unix socket, so sidecar methods are a typed remote stub via `await this.sidecar<T>()` — streaming is just a typed callback parameter. Sidecar authors get a `@cloudflare/sandbox/sidecar` helper (`SandboxSidecar` + `serveSandboxSidecar`). npm distribution of third-party extensions is not yet wired up; the wire shape is the one a future authoring story will use.
+Add the experimental `@cloudflare/sandbox/extensions` helpers for optional higher-level APIs on a Sandbox subclass. An extension can ship its own helper program as a `.tgz` sidecar that starts on first use, so features like the code interpreter stay out of the core SDK.
+
+Attach a shipped extension and call it directly:
+
+```ts
+import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { withInterpreter } from '@cloudflare/sandbox/interpreter';
+
+export class Sandbox extends BaseSandbox<Env> {
+  interpreter = withInterpreter(this);
+}
+
+const context = await sandbox.interpreter.createCodeContext({
+  language: 'python'
+});
+const result = await sandbox.interpreter.runCode('print("hello")', { context });
+```
+
+To write your own, extend `SandboxExtension` and export a `withYourExtension(sandbox)` helper. Sidecar-backed extensions call their methods through `this.withSidecar(...)`. This is experimental; publishing third-party extensions on npm is not set up yet.

@@ -8,6 +8,7 @@
 
 import type {
   Logger,
+  RuntimeMetadata,
   SandboxAPI,
   SandboxBackupAPI,
   SandboxControlCallback,
@@ -30,18 +31,12 @@ import {
   type RpcTransport
 } from 'capnweb';
 import { createErrorFromResponse } from '../errors/adapter';
-import {
-  fetchWithResponseRetry,
-  isRetryableWebSocketUpgradeResponse
-} from '../response-retry';
 
 // ---------------------------------------------------------------------------
 // Connection manager
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
-const DEFAULT_RETRY_TIMEOUT_MS = 120_000; // 2 minute total budget for upgrade retries
-const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to attempt a retry
 
 /** Stub that can issue a WebSocket-upgrade fetch through the DO's Container base class. */
 export interface ContainerFetchStub {
@@ -99,12 +94,6 @@ export interface ContainerControlConnectionOptions {
   port?: number;
   logger?: Logger;
   /**
-   * Total retry budget (ms) for retryable upgrade responses while the
-   * container is unavailable. Defaults to 120 000 (2 minutes). Set to 0 to
-   * disable retries.
-   */
-  retryTimeoutMs?: number;
-  /**
    * Optional `localMain` exposed to the container side of the capnweb
    * session. The container reaches it via
    * `session.getRemoteMain()` and uses it for control-plane callbacks
@@ -139,13 +128,18 @@ export class ContainerControlConnection {
   private readonly session: RpcSession<SandboxAPI>;
   private readonly transport: DeferredTransport;
   private ws: WebSocket | null = null;
-  private connected = false;
+  private state:
+    | 'disconnected'
+    | 'connecting'
+    | 'connected'
+    | 'activating'
+    | 'active'
+    | 'disposed' = 'disconnected';
   private connectPromise: Promise<void> | null = null;
   private activeUpgradeAbortController: AbortController | null = null;
   private readonly containerStub: ContainerFetchStub;
   private readonly port: number;
   private readonly logger: Logger;
-  private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
   private readonly disposalError = new Error(
     'Container control connection was disconnected'
@@ -156,7 +150,6 @@ export class ContainerControlConnection {
     this.containerStub = options.stub;
     this.port = options.port ?? 3000;
     this.logger = options.logger ?? createNoOpLogger();
-    this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
     this.onClose = options.onClose;
 
     this.transport = new DeferredTransport();
@@ -175,10 +168,38 @@ export class ContainerControlConnection {
    * the WebSocket is established.
    */
   rpc(): RpcStub<SandboxAPI> {
-    if (!this.connected && !this.connectPromise) {
-      this.connect().catch(() => {});
+    if (this.state !== 'active') {
+      throw new Error('Container control connection is not activated');
     }
     return this.stub;
+  }
+
+  async getRuntimeMetadata(): Promise<RuntimeMetadata> {
+    await this.connect();
+    return this.stub.utils.getRuntimeMetadata();
+  }
+
+  async activateControlSession(
+    expectedRuntimeIncarnationID: string
+  ): Promise<RuntimeMetadata> {
+    await this.connect();
+    if (this.state === 'active') return this.stub.utils.getRuntimeMetadata();
+    if (this.state !== 'connected') {
+      throw new Error(
+        'Container control connection cannot activate from current state'
+      );
+    }
+    this.state = 'activating';
+    try {
+      const metadata = await this.stub.utils.activateControlSession(
+        expectedRuntimeIncarnationID
+      );
+      this.state = 'active';
+      return metadata;
+    } catch (error) {
+      if (this.state === 'activating') this.state = 'connected';
+      throw error;
+    }
   }
 
   /**
@@ -191,12 +212,16 @@ export class ContainerControlConnection {
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return (
+      this.state === 'connected' ||
+      this.state === 'activating' ||
+      this.state === 'active'
+    );
   }
 
   async connect(): Promise<void> {
-    if (this.disposed) throw this.disposalError;
-    if (this.connected) return;
+    if (this.state === 'disposed') throw this.disposalError;
+    if (this.isConnected()) return;
 
     if (this.connectPromise) {
       return this.connectPromise;
@@ -211,7 +236,8 @@ export class ContainerControlConnection {
   }
 
   disconnect(): void {
-    if (this.disposed) return;
+    if (this.state === 'disposed') return;
+    this.state = 'disposed';
     this.disposed = true;
     this.activeUpgradeAbortController?.abort();
     this.activeUpgradeAbortController = null;
@@ -228,16 +254,6 @@ export class ContainerControlConnection {
       // Stub may already be disposed
     }
     this.ws = null;
-    this.connected = false;
-  }
-
-  /**
-   * Update the upgrade retry budget without recreating the connection. Takes
-   * effect on the next `connect()`; an in-flight connect uses the value
-   * captured at start.
-   */
-  setRetryTimeoutMs(ms: number): void {
-    this.retryTimeoutMs = ms;
   }
 
   // -----------------------------------------------------------------------
@@ -267,8 +283,8 @@ export class ContainerControlConnection {
    * fail to unbind.
    */
   private onWebSocketClose = (): void => {
-    const wasConnected = this.connected;
-    this.connected = false;
+    const wasConnected = this.isConnected();
+    if (this.state !== 'disposed') this.state = 'disconnected';
     this.ws = null;
     this.logger.debug('ContainerControlConnection WebSocket closed');
     if (wasConnected) this.fireOnClose();
@@ -279,15 +295,16 @@ export class ContainerControlConnection {
    * {@link onWebSocketClose}.
    */
   private onWebSocketError = (): void => {
-    const wasConnected = this.connected;
-    this.connected = false;
+    const wasConnected = this.isConnected();
+    if (this.state !== 'disposed') this.state = 'disconnected';
     this.ws = null;
     if (wasConnected) this.fireOnClose();
   };
 
   private async doConnect(): Promise<void> {
+    this.state = 'connecting';
     try {
-      const response = await this.fetchUpgradeWithRetry();
+      const response = await this.fetchUpgradeAttempt();
 
       if (this.disposed) {
         this.closeUpgradeWebSocket(response);
@@ -304,21 +321,6 @@ export class ContainerControlConnection {
           await this.parseStructuredUpgradeError(response);
         if (structuredError) {
           throw createErrorFromResponse(structuredError);
-        }
-        if (isRetryableWebSocketUpgradeResponse(response)) {
-          const context = {
-            reason: 'rpc_upgrade_failed' as const,
-            retryable: true as const
-          };
-          throw createErrorFromResponse({
-            code: ErrorCode.CONTAINER_UNAVAILABLE,
-            message:
-              'Container was unavailable after exhausting upgrade retry budget.',
-            context,
-            httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
-            timestamp: new Date().toISOString(),
-            suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context)
-          });
         }
         throw new Error(
           `WebSocket upgrade failed: ${response.status} ${response.statusText}`
@@ -340,13 +342,13 @@ export class ContainerControlConnection {
 
       this.ws = ws;
       this.transport.activate(ws);
-      this.connected = true;
+      this.state = 'connected';
 
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
     } catch (error) {
-      this.connected = false;
+      if (!this.disposed) this.state = 'disconnected';
       this.transport.abort(error);
       if (this.disposed) throw this.disposalError;
       this.logger.error(
@@ -425,25 +427,8 @@ export class ContainerControlConnection {
   }
 
   /**
-   * Issue WebSocket upgrade fetches, retrying transient control-plane
-   * unavailability responses until either the upgrade succeeds, a
-   * non-retryable status is returned, or the retry budget runs out.
-   */
-  private async fetchUpgradeWithRetry(): Promise<Response> {
-    return fetchWithResponseRetry(() => this.fetchUpgradeAttempt(), {
-      retryTimeoutMs: this.retryTimeoutMs,
-      minTimeForRetryMs: MIN_TIME_FOR_RETRY_MS,
-      logger: this.logger,
-      retryLogMessage:
-        'ContainerControlConnection upgrade returned retryable status, retrying',
-      shouldRetry: isRetryableWebSocketUpgradeResponse
-    });
-  }
-
-  /**
-   * Single WebSocket-upgrade fetch attempt. Owns its own AbortController so
-   * each retry gets a fresh per-attempt connect timeout independent of the
-   * total retry budget.
+   * Single WebSocket-upgrade fetch attempt. Owns its own AbortController for
+   * the connect timeout.
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
     const controller = new AbortController();

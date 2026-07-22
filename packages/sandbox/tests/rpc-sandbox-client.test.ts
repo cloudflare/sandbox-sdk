@@ -121,7 +121,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     });
 
     await client.connect();
-    const release = client.retainConnection();
+    const release = client.retainRuntimeHold();
 
     vi.advanceTimersByTime(3_000);
     expect(disconnects).toHaveLength(0);
@@ -183,7 +183,7 @@ describe('ContainerControlClient busy/idle tracking', () => {
     expect(disconnects).toHaveLength(1);
   });
 
-  it('waits for a committed stop before acquiring fresh RPC stubs', async () => {
+  it('does not gate domain calls on operation activity hooks', async () => {
     let releaseStop!: () => void;
     const stopSettled = new Promise<void>((resolve) => {
       releaseStop = resolve;
@@ -192,10 +192,6 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
-      onOperationStarted: () => ({
-        beforeCall: stopCommitted ? stopSettled : Promise.resolve(),
-        finish: () => undefined
-      }),
       busyPollIntervalMs: 1_000,
       idleDisconnectMs: 60_000
     });
@@ -207,25 +203,16 @@ describe('ContainerControlClient busy/idle tracking', () => {
     const start = client.processes.start(['echo', 'ok']);
     const terminal = client.terminals.create({ command: ['sh'] });
 
-    await Promise.resolve();
-    expect(rpcGenerations).toHaveLength(0);
-    expect(processStarts).toHaveLength(0);
-    expect(terminalCreates).toHaveLength(0);
-
-    client.disconnect();
-    expect(disconnects).toEqual([0]);
-    connected = true;
-    stopCommitted = false;
-    releaseStop();
     await Promise.all([start, terminal]);
 
-    expect(connectionGenerations).toEqual([0, 1]);
-    expect(rpcGenerations).toEqual([1, 1]);
-    expect(processStarts).toEqual([1]);
-    expect(terminalCreates).toEqual([1]);
+    expect(connectionGenerations).toEqual([0]);
+    expect(rpcGenerations).toEqual([0, 0]);
+    expect(processStarts).toEqual([0]);
+    expect(terminalCreates).toEqual([0]);
+    releaseStop();
   });
 
-  it('reconnects safely after a committed stop rejects', async () => {
+  it('ignores rejected operation activity hooks for domain dispatch', async () => {
     let rejectStop!: (error: Error) => void;
     const stopSettled = new Promise<void>((_resolve, reject) => {
       rejectStop = reject;
@@ -234,10 +221,6 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     const client = new ContainerControlClient({
       stub: { fetch: vi.fn() },
-      onOperationStarted: () => ({
-        beforeCall: stopCommitted ? stopSettled : Promise.resolve(),
-        finish: () => undefined
-      }),
       busyPollIntervalMs: 1_000,
       idleDisconnectMs: 60_000
     });
@@ -247,19 +230,10 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     stopCommitted = true;
     const start = client.processes.start(['echo', 'ok']);
-    await Promise.resolve();
-    expect(processStarts).toHaveLength(0);
+    await expect(start).resolves.toBeDefined();
 
-    client.disconnect();
-    expect(disconnects).toEqual([0]);
-    connected = true;
-    stopCommitted = false;
-    rejectStop(new Error('stop failed'));
-    await expect(start).rejects.toThrow('stop failed');
-
-    await client.processes.start(['echo', 'again']);
-    expect(connectionGenerations).toEqual([0, 1]);
-    expect(processStarts).toEqual([1]);
+    expect(connectionGenerations).toEqual([0]);
+    expect(processStarts).toEqual([0]);
   });
 
   it('fires onSessionIdle on explicit disconnect to avoid leaking inflight', async () => {

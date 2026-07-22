@@ -79,6 +79,15 @@ describe('BackupRestoreOperationStore', () => {
       phase: 'interrupted',
       status: 'interrupted',
       attempt: 2,
+      runtimeIdentityID:
+        'runtime-1' as BackupRestoreOperationRecord['runtimeIdentityID'],
+      runtimeIncarnationID:
+        'incarnation-1' as BackupRestoreOperationRecord['runtimeIncarnationID'],
+      result: {
+        success: true,
+        id: 'backup-1',
+        dir: '/workspace/project'
+      },
       error: {
         code: 'OPERATION_INTERRUPTED',
         message: 'Transport disposed',
@@ -93,8 +102,12 @@ describe('BackupRestoreOperationStore', () => {
       ...record,
       phase: 'validating',
       status: 'running',
+      runtimeIdentityID: undefined,
+      runtimeIncarnationID: undefined,
+      result: undefined,
       error: undefined,
       completedAt: undefined,
+      lastInterruptedAt: undefined,
       updatedAt: '2026-06-15T12:01:00.000Z',
       attempt: 3
     });

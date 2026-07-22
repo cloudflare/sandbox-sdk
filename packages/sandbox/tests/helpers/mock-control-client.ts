@@ -1,5 +1,16 @@
 import { vi } from 'vitest';
+import type { ContainerControlClient } from '../../src/container-control';
 import type { Sandbox } from '../../src/sandbox';
+
+export type SandboxWithClient<Env = unknown> = Sandbox<Env> & {
+  client: ContainerControlClient;
+};
+
+export function asSandboxWithClient<Env = unknown>(
+  sandbox: Sandbox<Env>
+): SandboxWithClient<Env> {
+  return sandbox as SandboxWithClient<Env>;
+}
 
 /**
  * Create a test double for Sandbox's container control client.
@@ -7,7 +18,7 @@ import type { Sandbox } from '../../src/sandbox';
  * Keep this aligned with ContainerControlClient's public surface so tests can
  * override only the methods relevant to the scenario under test.
  */
-export function createMockControlClient(): Sandbox['client'] {
+export function createMockControlClient(): ContainerControlClient {
   return {
     files: {
       readFile: vi.fn(),
@@ -22,7 +33,19 @@ export function createMockControlClient(): Sandbox['client'] {
       exists: vi.fn()
     },
     ports: {
-      openWatch: vi.fn()
+      openWatch: vi.fn(async () => ({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue({ type: 'ready' });
+                controller.close();
+              }
+            })
+        ),
+        cancel: vi.fn(async () => undefined),
+        [Symbol.dispose]: vi.fn()
+      }))
     },
     processes: {
       start: vi.fn(async (command) => ({
@@ -94,8 +117,7 @@ export function createMockControlClient(): Sandbox['client'] {
       }))
     },
     utils: {
-      ping: vi.fn(),
-      getVersion: vi.fn()
+      ping: vi.fn()
     },
     workspace: {
       createArchive: vi.fn(async () => ({ archivePath: '/tmp/archive.tar' })),
@@ -131,9 +153,8 @@ export function createMockControlClient(): Sandbox['client'] {
       terminate: vi.fn(),
       hasActive: vi.fn()
     },
-    setRetryTimeoutMs: vi.fn(),
     isWebSocketConnected: vi.fn(),
     connect: vi.fn(),
     disconnect: vi.fn()
-  } as unknown as Sandbox['client'];
+  } as unknown as ContainerControlClient;
 }

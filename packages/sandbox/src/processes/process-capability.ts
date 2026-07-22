@@ -20,10 +20,11 @@ import type {
 
 export interface ProcessCapabilityRuntime {
   readonly id: string;
+  readonly runtimeIncarnationID: string;
 }
 
 export interface ProcessCapabilityControl {
-  retainConnection(): () => void;
+  retainRuntimeHold(): () => void;
   getProcess(id: string): Promise<ProcessStatus | null>;
   openLogs(
     id: string,
@@ -86,7 +87,7 @@ export class ProcessCapabilityTarget extends RpcTarget {
       this.#runtime,
       'process.logs.open',
       async (control) => {
-        const releaseConnection = control.retainConnection();
+        const releaseConnection = control.retainRuntimeHold();
         try {
           this.#verifiedStatus(await control.getProcess(this.#id));
           return {
@@ -118,7 +119,7 @@ export class ProcessCapabilityTarget extends RpcTarget {
       this.#runtime,
       'process.port.open',
       async (control) => {
-        const releaseConnection = control.retainConnection();
+        const releaseConnection = control.retainRuntimeHold();
         try {
           this.#verifiedStatus(await control.getProcess(this.#id));
           return {

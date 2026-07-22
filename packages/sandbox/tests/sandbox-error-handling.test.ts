@@ -1,6 +1,66 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
 
+const controlConnectionMockState = vi.hoisted(() => ({
+  activated: false
+}));
+
+const containerMockState = vi.hoisted(() => ({
+  startAndWaitForPorts: vi.fn(async (_options?: unknown) => undefined)
+}));
+
+vi.mock('../src/container-control/connection', () => ({
+  ContainerControlConnection: class {
+    isConnected() {
+      return true;
+    }
+    getStats() {
+      return { imports: 1, exports: 1 };
+    }
+    disconnect() {
+      controlConnectionMockState.activated = false;
+    }
+    async connect() {}
+    async getRuntimeMetadata() {
+      return {
+        runtimeIncarnationID: 'test-incarnation',
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
+    async activateControlSession(expectedRuntimeIncarnationID: string) {
+      controlConnectionMockState.activated = true;
+      return {
+        runtimeIncarnationID: expectedRuntimeIncarnationID,
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
+    rpc() {
+      if (!controlConnectionMockState.activated) {
+        throw new Error('control session must be activated before rpc()');
+      }
+      return {
+        ports: {
+          openWatch: vi.fn(async () => ({
+            stream: vi.fn(
+              async () =>
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue({ type: 'ready' });
+                    controller.close();
+                  }
+                })
+            ),
+            cancel: vi.fn(async () => undefined),
+            [Symbol.dispose]: vi.fn()
+          }))
+        }
+      };
+    }
+  }
+}));
+
 vi.mock('@cloudflare/containers', () => {
   const MockContainer = class Container {
     ctx: any;
@@ -19,8 +79,8 @@ vi.mock('@cloudflare/containers', () => {
       // Return unhealthy so containerFetch() enters the startup path
       return { status: 'unhealthy' };
     }
-    async startAndWaitForPorts() {
-      // Will be spied on in tests
+    async startAndWaitForPorts(...args: unknown[]) {
+      return containerMockState.startAndWaitForPorts(args[0]);
     }
   };
 
@@ -64,7 +124,7 @@ describe('Sandbox.containerFetch() error classification', () => {
   let sandbox: Sandbox;
   let mockCtx: Partial<DurableObjectState<{}>>;
   let mockEnv: any;
-  let startAndWaitSpy: ReturnType<typeof vi.spyOn>;
+  let startAndWaitSpy: typeof containerMockState.startAndWaitForPorts;
 
   // All 11 transient patterns from sandbox.ts isTransientStartupError()
   // Each pattern maps to a real error source
@@ -120,14 +180,22 @@ describe('Sandbox.containerFetch() error classification', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    containerMockState.startAndWaitForPorts.mockResolvedValue(undefined);
+
+    const storageData = new Map<string, unknown>();
 
     // Mock DurableObjectState
     mockCtx = {
       storage: {
-        get: vi.fn().mockResolvedValue(null),
-        put: vi.fn().mockResolvedValue(undefined),
-        delete: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue(new Map())
+        get: vi.fn(async (key: string) => storageData.get(key) ?? null),
+        put: vi.fn(async (key: string, value: unknown) => {
+          storageData.set(key, value);
+        }),
+        delete: vi.fn(async (key: string) => {
+          storageData.delete(key);
+        }),
+        list: vi.fn().mockResolvedValue(new Map()),
+        transaction: vi.fn(async (closure) => closure(mockCtx.storage))
       } as any,
       blockConcurrencyWhile: vi
         .fn()
@@ -135,6 +203,14 @@ describe('Sandbox.containerFetch() error classification', () => {
           <T>(callback: () => Promise<T>): Promise<T> => callback()
         ),
       waitUntil: vi.fn(),
+      container: {
+        running: false,
+        getTcpPort: vi.fn(() => ({
+          fetch: vi.fn(async () => new Response('Mock TCP port fetch')),
+          connect: vi.fn()
+        }))
+      } as unknown as DurableObjectState<{}>['container'],
+      abort: vi.fn(),
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -155,8 +231,13 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
 
-    // Spy on startAndWaitForPorts - this is what throws errors during startup
-    startAndWaitSpy = vi.spyOn(sandbox as any, 'startAndWaitForPorts');
+    // Physical lifecycle establishment surfaces startup failures for direct forwarding.
+    startAndWaitSpy = containerMockState.startAndWaitForPorts;
+    startAndWaitSpy.mockImplementation(async () => {
+      const container = mockCtx.container as { running: boolean };
+      container.running = true;
+      await sandbox.onStart();
+    });
   });
 
   afterEach(() => {
@@ -464,6 +545,9 @@ describe('Sandbox.containerFetch() error classification', () => {
       vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
         status: 'healthy'
       });
+      (
+        sandbox as unknown as { ctx: { container: { running: boolean } } }
+      ).ctx.container.running = true;
 
       // Mock parent containerFetch to return success
       const parentContainerFetch = vi
@@ -479,7 +563,6 @@ describe('Sandbox.containerFetch() error classification', () => {
         3000
       );
 
-      // startAndWaitForPorts should NOT be called when healthy
       expect(startAndWaitSpy).not.toHaveBeenCalled();
       expect(response.status).toBe(200);
 
@@ -492,8 +575,9 @@ describe('Sandbox.containerFetch() error classification', () => {
       vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
         status: 'healthy'
       });
-      (sandbox as any).ctx.container = { running: false };
-      startAndWaitSpy.mockResolvedValueOnce(undefined);
+      (
+        sandbox as unknown as { ctx: { container: { running: boolean } } }
+      ).ctx.container.running = false;
 
       const parentContainerFetch = vi
         .spyOn(
@@ -524,7 +608,9 @@ describe('Sandbox.containerFetch() error classification', () => {
       vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
         status: 'healthy'
       });
-      (sandbox as any).ctx.container = { running: false };
+      (
+        sandbox as unknown as { ctx: { container: { running: boolean } } }
+      ).ctx.container.running = false;
       const abortSpy = vi.fn();
       (sandbox as any).ctx.abort = abortSpy;
       startAndWaitSpy.mockRejectedValueOnce(

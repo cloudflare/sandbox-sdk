@@ -13,9 +13,8 @@ import {
 /**
  * Reconcile storage with a fresh container.
  *
- * Called from `Sandbox.onStart()` after every container restart. The
- * `cloudflared` processes the container was running all died with it, so
- * any stored record is not currently backed by a running tunnel.
+ * Called after a proven runtime replacement or stop. The old runtime's
+ * `cloudflared` processes no longer back any stored tunnel record.
  *
  * Quick tunnels are dropped because the `*.trycloudflare.com` URL is bound
  * to the dead process. Named tunnels keep private metadata so a later

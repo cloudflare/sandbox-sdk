@@ -176,6 +176,33 @@ export class SidecarProcessLifecycle {
       const cleanup = () => {
         if (timer) clearTimeout(timer);
         process.process.stdout?.removeListener('data', responseHandler);
+        process.process.stdout?.removeListener('close', closeHandler);
+        process.process.removeListener('error', errorHandler);
+        process.process.removeListener('exit', exitHandler);
+      };
+
+      const fail = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      const errorHandler = (error: Error) => {
+        fail(error);
+      };
+
+      const exitHandler = (
+        code: number | null,
+        signal: NodeJS.Signals | null
+      ) => {
+        fail(
+          new Error(
+            `Interpreter executor exited during execution (${signal ?? code ?? 'unknown'})`
+          )
+        );
+      };
+
+      const closeHandler = () => {
+        fail(new Error('Interpreter executor output closed during execution'));
       };
 
       if (timeout !== undefined) {
@@ -206,7 +233,12 @@ export class SidecarProcessLifecycle {
       };
 
       process.process.stdout?.on('data', responseHandler);
-      process.process.stdin?.write(`${request}\n`);
+      process.process.stdout?.once('close', closeHandler);
+      process.process.once('error', errorHandler);
+      process.process.once('exit', exitHandler);
+      process.process.stdin?.write(`${request}\n`, (error) => {
+        if (error) fail(error);
+      });
     });
   }
 

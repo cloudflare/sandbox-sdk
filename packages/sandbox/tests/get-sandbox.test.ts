@@ -6,9 +6,9 @@ import { getSandbox, type Sandbox } from '../src/sandbox';
 // Mock the Container module
 vi.mock('@cloudflare/containers', () => ({
   switchPort: vi.fn((request: Request, port: number) => {
-    const url = new URL(request.url);
-    url.pathname = `/proxy/${port}${url.pathname}`;
-    return new Request(url, request);
+    const headers = new Headers(request.headers);
+    headers.set('cf-container-target-port', String(port));
+    return new Request(request, { headers });
   }),
   Container: class Container {
     ctx: any;
@@ -54,6 +54,8 @@ describe('getSandbox', () => {
           return Promise.resolve();
         }
       ),
+      containerFetch: vi.fn(async () => new Response('container response')),
+      authorizePortRequest: vi.fn(async () => 'route-token'),
       setSandboxName: vi.fn(),
       setSleepAfter: vi.fn((value: string | number) => {
         mockStub.sleepAfter = value;
@@ -78,6 +80,154 @@ describe('getSandbox', () => {
         normalizeId: undefined
       }
     });
+  });
+
+  it('exposes containerFetch but not internal port authorization', async () => {
+    const sandbox = getSandbox({} as any, 'test-sandbox');
+    const internal = sandbox as unknown as Record<string, unknown>;
+
+    expect(internal.containerFetch).toBeTypeOf('function');
+    expect(internal.authorizePortRequest).toBeUndefined();
+
+    const request = new Request('https://example.com/data');
+    await sandbox.containerFetch(request, 8080);
+    await sandbox.containerFetch(
+      'https://example.com/data',
+      { method: 'POST' },
+      8081
+    );
+
+    expect(mockStub.containerFetch).toHaveBeenNthCalledWith(1, request, 8080);
+    expect(mockStub.containerFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://example.com/data',
+      { method: 'POST' },
+      8081
+    );
+  });
+
+  it('authorizes switchPort requests across the Sandbox RPC boundary', async () => {
+    mockStub.fetch = vi.fn(async () => new Response('forwarded'));
+    const sandbox = getSandbox({} as any, 'test-sandbox');
+    const request = new Request('https://example.com/ws', {
+      headers: { 'cf-container-target-port': '8080' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(mockStub.authorizePortRequest).toHaveBeenCalledWith(8080, '/ws');
+    const forwarded = mockStub.fetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.get('cf-container-target-port')).toBe('8080');
+    expect(forwarded.headers.get('x-sandbox-port-route-token')).toBe(
+      'route-token'
+    );
+  });
+
+  it('preserves switchPort routing to the inherited default port', async () => {
+    mockStub.fetch = vi.fn(async () => new Response('forwarded'));
+    const sandbox = getSandbox({} as any, 'test-sandbox');
+    const request = new Request('https://example.com/app', {
+      headers: { 'cf-container-target-port': '3000' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(mockStub.authorizePortRequest).toHaveBeenCalledWith(3000, '/app');
+  });
+
+  it('does not expose token creation internals', () => {
+    const sandbox = getSandbox({} as any, 'test-sandbox');
+    const internal = sandbox as unknown as Record<string, unknown>;
+
+    expect(internal.createPortRequestToken).toBeUndefined();
+  });
+
+  it('forwards native watch streams', async () => {
+    const bytes = new TextEncoder().encode('data: watching\n\n');
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      }
+    });
+    mockStub.watch = vi.fn().mockResolvedValue(stream);
+
+    const sandbox = getSandbox({} as any, 'watch-sandbox');
+    const result = await sandbox.watch('/workspace');
+    const reader = result.getReader();
+
+    await expect(reader.read()).resolves.toEqual({ done: false, value: bytes });
+    await expect(reader.read()).resolves.toEqual({
+      done: true,
+      value: undefined
+    });
+    expect(mockStub.watch).toHaveBeenCalledWith('/workspace', {});
+  });
+
+  it('applies configuration before forwarding operations', async () => {
+    let resolveConfiguration!: () => void;
+    mockStub.configure = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfiguration = resolve;
+        })
+    );
+    mockStub.writeFile = vi.fn(async () => {});
+
+    const sandbox = getSandbox({} as any, 'configured-sandbox', {
+      keepAlive: true
+    });
+    const write = sandbox.writeFile('/workspace/file.txt', 'content');
+
+    expect(mockStub.writeFile).not.toHaveBeenCalled();
+    resolveConfiguration();
+    await write;
+    expect(mockStub.writeFile).toHaveBeenCalledOnce();
+  });
+
+  it('does not forward operations when configuration fails', async () => {
+    mockStub.configure = vi.fn().mockRejectedValue(new Error('config failed'));
+    mockStub.writeFile = vi.fn(async () => {});
+
+    const sandbox = getSandbox({} as any, 'configured-sandbox', {
+      keepAlive: true
+    });
+
+    await expect(
+      sandbox.writeFile('/workspace/file.txt', 'content')
+    ).rejects.toThrow('config failed');
+    expect(mockStub.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('shares pending configuration failures across clients', async () => {
+    let rejectConfiguration!: (error: Error) => void;
+    mockStub.configure = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectConfiguration = reject;
+        })
+    );
+    mockStub.writeFile = vi.fn(async () => {});
+    const mockNamespace = {} as any;
+
+    const first = getSandbox(mockNamespace, 'configured-sandbox', {
+      keepAlive: true
+    });
+    const second = getSandbox(mockNamespace, 'configured-sandbox', {
+      keepAlive: true
+    });
+    const firstWrite = first.writeFile('/workspace/first.txt', 'first');
+    const secondWrite = second.writeFile('/workspace/second.txt', 'second');
+
+    expect(mockStub.configure).toHaveBeenCalledOnce();
+    expect(mockStub.writeFile).not.toHaveBeenCalled();
+    const rejectedWrites = Promise.all([
+      expect(firstWrite).rejects.toThrow('config failed'),
+      expect(secondWrite).rejects.toThrow('config failed')
+    ]);
+    rejectConfiguration(new Error('config failed'));
+    await rejectedWrites;
+    expect(mockStub.writeFile).not.toHaveBeenCalled();
   });
 
   it('maps Durable Object code-update resets to OperationInterruptedError for enhanced methods', async () => {
@@ -235,11 +385,15 @@ describe('getSandbox', () => {
 
   it('should only configure fields that changed on later calls', async () => {
     const mockNamespace = {} as any;
+    mockStub.listProcesses = vi.fn(async () => []);
 
     getSandbox(mockNamespace, 'test-sandbox');
     await Promise.resolve();
 
-    getSandbox(mockNamespace, 'test-sandbox', { sleepAfter: '5m' });
+    const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+      sleepAfter: '5m'
+    });
+    await sandbox.listProcesses();
 
     expect(mockStub.configure).toHaveBeenNthCalledWith(1, {
       sandboxName: {
@@ -286,7 +440,7 @@ describe('getSandbox', () => {
       expect(response).toBe(expectedResponse);
     });
 
-    it('should pass through non-enhanced methods to the stub', () => {
+    it('should pass through non-enhanced methods to the stub', async () => {
       // RPC methods like exec, writeFile, etc. are accessed via target[prop]
       // and dispatched through JSRPC which doesn't need this binding.
       mockStub.validatePortToken = vi.fn().mockResolvedValue(true);
@@ -294,7 +448,7 @@ describe('getSandbox', () => {
       const mockNamespace = {} as any;
       const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
-      sandbox.validatePortToken(8080, 'token123');
+      await sandbox.validatePortToken(8080, 'token123');
       expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
     });
 
@@ -425,8 +579,15 @@ describe('getSandbox', () => {
         return new Response(null, { status: 200 });
       });
       mockStub.createTerminal = vi.fn(async () => ({
-        id: 'terminal-a',
-        connect: (request: Request) => mockStub.fetch(request)
+        snapshot: {
+          id: 'terminal-a',
+          command: ['bash'],
+          status: 'running'
+        },
+        runtimeIncarnationID: 'runtime-a',
+        capability: {
+          authorizeConnection: vi.fn(async () => 'terminal-route-token')
+        }
       }));
 
       const mockNamespace = {} as any;
@@ -443,17 +604,97 @@ describe('getSandbox', () => {
         command: ['bash']
       });
       expect(mockStub.fetch).toHaveBeenCalledOnce();
-      expect(proxiedRequest?.url).toBe('https://example.com/terminal');
+      const proxiedURL = new URL(proxiedRequest!.url);
+      expect(proxiedURL.pathname).toBe('/ws/terminal');
+      expect(proxiedRequest?.headers.get('cf-container-target-port')).toBe(
+        '3000'
+      );
+      expect(proxiedURL.searchParams.get('terminalId')).toBe('terminal-a');
+      expect(proxiedURL.searchParams.get('runtimeIncarnationID')).toBe(
+        'runtime-a'
+      );
+    });
+
+    it('reconstructs terminal output from a pull subscription', async () => {
+      const event = {
+        type: 'data' as const,
+        terminalId: 'terminal-a',
+        cursor: '1',
+        timestamp: new Date().toISOString(),
+        data: new Uint8Array([65])
+      };
+      const next = vi
+        .fn()
+        .mockResolvedValueOnce({ done: false, value: event })
+        .mockResolvedValueOnce({ done: true, value: undefined });
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      const dispose = vi.fn();
+      mockStub.createTerminal = vi.fn(async () => ({
+        snapshot: {
+          id: 'terminal-a',
+          command: ['bash'],
+          status: 'running'
+        },
+        runtimeIncarnationID: 'runtime-a',
+        capability: {
+          openOutput: vi.fn(async () => ({
+            next,
+            cancel,
+            [Symbol.dispose]: dispose
+          }))
+        }
+      }));
+
+      const sandbox = getSandbox({} as any, 'test-sandbox');
+      const terminal = await sandbox.createTerminal({ command: ['bash'] });
+      const reader = (await terminal.output()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: event
+      });
+      await expect(reader.read()).resolves.toEqual({
+        done: true,
+        value: undefined
+      });
+      expect(next).toHaveBeenCalledTimes(2);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(Object.keys(terminal)).toEqual([
+        'id',
+        'getSnapshot',
+        'write',
+        'resize',
+        'output',
+        'waitForExit',
+        'interrupt',
+        'terminate',
+        'connect'
+      ]);
+      expect('openOutput' in terminal).toBe(false);
+      expect('runtimeIncarnationID' in terminal).toBe(false);
     });
 
     it('gets and lists terminal handles by snapshot', async () => {
       mockStub.getTerminal = vi.fn(async () => ({
-        id: 'terminal-a',
-        command: ['bash'],
-        status: 'running'
+        snapshot: {
+          id: 'terminal-a',
+          command: ['bash'],
+          status: 'running'
+        },
+        runtimeIncarnationID: 'runtime-a',
+        capability: {}
       }));
       mockStub.listTerminals = vi.fn(async () => [
-        { id: 'terminal-a', command: ['bash'], status: 'running' }
+        {
+          snapshot: {
+            id: 'terminal-a',
+            command: ['bash'],
+            status: 'running'
+          },
+          runtimeIncarnationID: 'runtime-a',
+          capability: {}
+        }
       ]);
 
       const mockNamespace = {} as any;
@@ -470,11 +711,16 @@ describe('getSandbox', () => {
 
     it('forwards terminal interrupt and terminate through handle methods', async () => {
       mockStub.getTerminal = vi.fn(async () => ({
-        id: 'terminal-a',
-        command: ['bash'],
-        status: 'running',
-        interrupt: vi.fn(),
-        terminate: vi.fn()
+        snapshot: {
+          id: 'terminal-a',
+          command: ['bash'],
+          status: 'running'
+        },
+        runtimeIncarnationID: 'runtime-a',
+        capability: {
+          interrupt: vi.fn(),
+          terminate: vi.fn()
+        }
       }));
 
       const mockNamespace = {} as any;

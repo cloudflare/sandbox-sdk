@@ -51,6 +51,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.OPERATION_INTERRUPTED]: 409,
   [ErrorCode.STALE_PROCESS_HANDLE]: 409,
+  [ErrorCode.STALE_TERMINAL_HANDLE]: 409,
   [ErrorCode.PROCESS_EXITED_BEFORE_LOG]: 409,
 
   // 410 Gone
@@ -77,6 +78,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
   [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
   [ErrorCode.CONTAINER_UNAVAILABLE]: 503,
+  [ErrorCode.CONTROL_PROTOCOL_INCOMPATIBLE]: 503,
   [ErrorCode.RPC_TRANSPORT_ERROR]: 503,
 
   // 408 Request Timeout

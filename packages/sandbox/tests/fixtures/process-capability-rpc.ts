@@ -44,7 +44,7 @@ class CleanLogSubscription
 }
 
 class CapabilityControl implements ProcessCapabilityControl {
-  retainConnection(): () => void {
+  retainRuntimeHold(): () => void {
     return () => undefined;
   }
 
@@ -103,7 +103,10 @@ export class ProcessCapabilityRPCTestDO extends DurableObject {
       capability: new ProcessCapabilityTarget({
         id: status.id,
         pid: status.pid,
-        runtime: { id: 'runtime-test' },
+        runtime: {
+          id: 'runtime-test',
+          runtimeIncarnationID: 'incarnation-test'
+        },
         lifecycle: new CapabilityLifecycle()
       })
     });

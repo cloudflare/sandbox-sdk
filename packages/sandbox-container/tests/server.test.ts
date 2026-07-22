@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import {
   registerShutdownHandlers,
+  startServer,
   webSocketUpgradeFailedResponse
 } from '../src/server';
 
@@ -13,10 +14,58 @@ describe('server WebSocket upgrade failures', () => {
   });
 });
 
+describe('terminal WebSocket runtime fencing', () => {
+  const runtimeIncarnationID = '00000000-0000-4000-8000-000000000001';
+  const originalRandomUUID = crypto.randomUUID;
+  let cleanup: (() => Promise<void>) | undefined;
+
+  beforeAll(async () => {
+    crypto.randomUUID = (() =>
+      runtimeIncarnationID) as typeof crypto.randomUUID;
+    const server = await startServer();
+    cleanup = server.cleanup;
+    crypto.randomUUID = originalRandomUUID;
+  });
+
+  afterAll(async () => {
+    crypto.randomUUID = originalRandomUUID;
+    await cleanup?.();
+  });
+
+  it('rejects missing runtime incarnation before upgrade', async () => {
+    const response = await fetch(
+      'http://localhost:3000/ws/terminal?terminalId=terminal-1',
+      {
+        headers: { Upgrade: 'websocket' }
+      }
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it('rejects mismatched runtime incarnation before upgrade', async () => {
+    const response = await fetch(
+      'http://localhost:3000/ws/terminal?terminalId=terminal-1&runtimeIncarnationID=other',
+      { headers: { Upgrade: 'websocket' } }
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it('accepts matching runtime incarnation through pre-upgrade validation', async () => {
+    const response = await fetch(
+      `http://localhost:3000/ws/terminal?terminalId=terminal-1&runtimeIncarnationID=${runtimeIncarnationID}`,
+      { headers: { Upgrade: 'websocket' } }
+    );
+
+    expect(response.status).not.toBe(409);
+  });
+});
+
 describe('registerShutdownHandlers', () => {
   const originalExit = process.exit;
 
-  afterEach(() => {
+  afterAll(() => {
     process.removeAllListeners('SIGTERM');
     process.removeAllListeners('SIGINT');
     process.exit = originalExit;

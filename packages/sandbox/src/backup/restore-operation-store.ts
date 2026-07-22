@@ -1,4 +1,5 @@
-import type { RuntimeIdentityID } from '../current-runtime-identity';
+import type { RuntimeIncarnationID } from '../runtime';
+import type { RuntimeIdentityID } from '../runtime/types';
 import type { SandboxLifetimeID } from '../sandbox-lifetime';
 
 export type BackupRestoreOperationStatus =
@@ -41,6 +42,7 @@ export type BackupRestoreOperationRecord = {
   phase: BackupRestoreOperationPhase;
   status: BackupRestoreOperationStatus;
   runtimeIdentityID?: RuntimeIdentityID;
+  runtimeIncarnationID?: RuntimeIncarnationID;
   payload: BackupRestoreOperationPayload;
   result?: BackupRestoreOperationResult;
   error?: BackupRestoreOperationError;
@@ -100,8 +102,12 @@ export function nextBackupRestoreAttempt(
     ...record,
     phase: 'validating',
     status: 'running',
+    runtimeIdentityID: undefined,
+    runtimeIncarnationID: undefined,
     error: undefined,
+    result: undefined,
     completedAt: undefined,
+    lastInterruptedAt: undefined,
     updatedAt: now,
     attempt: (record.attempt ?? 0) + 1
   };

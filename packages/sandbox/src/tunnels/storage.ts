@@ -1,5 +1,6 @@
 import type { NamedTunnelInfo, TunnelInfo, TunnelOptions } from '@repo/shared';
-import type { RuntimeIdentityID } from '../current-runtime-identity';
+import type { RuntimeIncarnationID } from '../runtime';
+import type { RuntimeIdentityID } from '../runtime/types';
 import type { SandboxLifetimeID } from '../sandbox-lifetime';
 
 /** DO storage key for the `port → TunnelInfo` map. */
@@ -22,6 +23,8 @@ export interface TunnelMetaEntry {
   dnsRecordId?: string;
   /** Runtime identity that owns the current cloudflared process. */
   runtimeIdentityID?: RuntimeIdentityID;
+  /** Exact runtime incarnation that owns the current cloudflared process. */
+  runtimeIncarnationID?: RuntimeIncarnationID;
   /** Sandbox lifetime that owns this tunnel record. */
   sandboxLifetimeID?: SandboxLifetimeID;
   /** Runtime-local cloudflared run that owns current process callbacks. */
@@ -146,7 +149,8 @@ export async function updatePortState(
   storage: TunnelsStorage,
   port: number,
   updater: (
-    state: Readonly<TunnelPortState>
+    state: Readonly<TunnelPortState>,
+    txn: TunnelsStorageTxn
   ) =>
     | TunnelPortStatePatch
     | undefined
@@ -164,7 +168,7 @@ export async function updatePortState(
       meta: meta[portKey],
       cleanup: cleanup[portKey]
     };
-    const patch = await updater(state);
+    const patch = await updater(state, txn);
 
     const writes: Array<Promise<void>> = [];
     if (patch && 'info' in patch && patch.info !== state.info) {

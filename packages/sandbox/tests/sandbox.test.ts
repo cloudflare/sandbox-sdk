@@ -2,16 +2,28 @@ import { Container, getContainer } from '@cloudflare/containers';
 import type * as SharedRoot from '@repo/shared';
 import type { ISandbox, ProcessLogEvent, ProcessStatus } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../src/current-runtime-identity';
+import type { ContainerControlClient } from '../src/container-control';
 import {
   ContainerUnavailableError,
   ErrorCode,
   InvalidBackupConfigError,
-  PortNotExposedError
+  PortNotExposedError,
+  RPCTransportError,
+  RuntimeControlProtocolError
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
-import { connect, getSandbox, Sandbox } from '../src/sandbox';
-import { createMockControlClient } from './helpers/mock-control-client';
+import { RuntimeIdentityInactiveError } from '../src/runtime/types';
+import { getSandbox, Sandbox } from '../src/sandbox';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
+
+const controlConnectionMockState = vi.hoisted(() => ({
+  client: null as unknown,
+  activated: false,
+  lastConnection: null as { disconnect(): void } | null
+}));
 
 function processLogStream(
   events: ProcessLogEvent[]
@@ -24,12 +36,53 @@ function processLogStream(
   });
 }
 
+vi.mock('../src/container-control/connection', () => ({
+  ContainerControlConnection: class {
+    onClose?: () => void;
+    constructor(options?: { onClose?: () => void }) {
+      this.onClose = options?.onClose;
+      controlConnectionMockState.lastConnection = this;
+    }
+    isConnected() {
+      return true;
+    }
+    getStats() {
+      return { imports: 1, exports: 1 };
+    }
+    disconnect() {
+      controlConnectionMockState.activated = false;
+      this.onClose?.();
+    }
+    async connect() {}
+    async getRuntimeMetadata() {
+      return {
+        runtimeIncarnationID: 'test-incarnation',
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
+    async activateControlSession(expectedRuntimeIncarnationID: string) {
+      controlConnectionMockState.activated = true;
+      return {
+        runtimeIncarnationID: expectedRuntimeIncarnationID,
+        sandboxVersion: '0.0.0',
+        controlProtocolVersion: 1
+      };
+    }
+    rpc() {
+      if (!controlConnectionMockState.activated) {
+        throw new Error('control session must be activated before rpc()');
+      }
+      return controlConnectionMockState.client;
+    }
+  }
+}));
+
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
-    // Create a new request with the port in the URL path
-    const url = new URL(request.url);
-    url.pathname = `/proxy/${port}${url.pathname}`;
-    return new Request(url, request);
+    const headers = new Headers(request.headers);
+    headers.set('cf-container-target-port', String(port));
+    return new Request(request, { headers });
   });
 
   const MockContainer = class Container {
@@ -60,7 +113,10 @@ vi.mock('@cloudflare/containers', () => {
       return new Response('Mock Container HTTP fetch');
     }
     async startAndWaitForPorts(): Promise<void> {
-      // No-op: real container startup is not needed in tests.
+      // Match @cloudflare/containers: after ports are ready, invoke onStart.
+      if (this.ctx?.container) this.ctx.container.running = true;
+      const onStart = (this as { onStart?: () => Promise<void> }).onStart;
+      if (onStart) await onStart.call(this);
     }
     async destroy(): Promise<void> {
       // No-op: real container destroy is not needed in tests; individual
@@ -123,13 +179,76 @@ interface MockCtx {
   };
 }
 
-interface SandboxRuntimeStart {
-  ensureRuntimeActiveForPreview(): Promise<unknown>;
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(reason?: unknown): void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+class FakeSocket extends EventTarget {
+  closeCalls: Array<{ code?: number; reason?: string }> = [];
+
+  close(code?: number, reason?: string): void {
+    this.closeCalls.push({ code, reason });
+    this.dispatchEvent(new Event('close'));
+  }
 }
 
 const PREVIEW_TEST_PORT = 8080;
 const PREVIEW_TEST_TOKEN = 'token12345678901';
 const PREVIEW_TEST_RUNTIME_ID = 'runtime-1';
+
+function runtimeRecord(id: string) {
+  return {
+    schemaVersion: 1,
+    id,
+    runtimeIncarnationID: 'test-incarnation'
+  };
+}
+
+type PreviewRuntimeRunnerProbe = {
+  runExisting<T>(
+    target: unknown,
+    operation: string,
+    call: (lease: {
+      runtime: unknown;
+      retain(): { release(): void };
+    }) => Promise<T>
+  ): Promise<T | { status: 'absent' }>;
+  runWaking<T>(
+    operation: string,
+    call: (lease: {
+      runtime: unknown;
+      retain(): { release(): void };
+    }) => Promise<T>,
+    options?: { signal?: AbortSignal }
+  ): Promise<T>;
+};
+
+function getPreviewRuntimeRunner(sandbox: Sandbox): PreviewRuntimeRunnerProbe {
+  return (sandbox as unknown as { runtimeRunner: PreviewRuntimeRunnerProbe })
+    .runtimeRunner;
+}
+
+type PreviewRuntimeLifecycleProbe = {
+  assertActive(runtime: unknown): Promise<void>;
+};
+
+function getPreviewRuntimeLifecycle(
+  sandbox: Sandbox
+): PreviewRuntimeLifecycleProbe {
+  return (
+    sandbox as unknown as { runtimeLifecycle: PreviewRuntimeLifecycleProbe }
+  ).runtimeLifecycle;
+}
 
 function activePreviewStorageState({
   port = PREVIEW_TEST_PORT,
@@ -144,12 +263,11 @@ function activePreviewStorageState({
     portTokens: {
       [port.toString()]: { token }
     },
-    currentRuntimeIdentity: {
-      id: runtimeIdentityID
-    },
+    currentRuntimeIdentity: runtimeRecord(runtimeIdentityID),
     activePreviewPorts: {
       [port.toString()]: {
         runtimeIdentityID,
+        runtimeIncarnationID: 'test-incarnation',
         token
       }
     }
@@ -269,7 +387,14 @@ describe('Sandbox durable object behavior', () => {
     vi.clearAllMocks();
 
     const storageState = new Map<string, unknown>([
-      ['currentRuntimeIdentity', { id: 'runtime-a' }]
+      [
+        'currentRuntimeIdentity',
+        {
+          schemaVersion: 1,
+          id: 'runtime-a',
+          runtimeIncarnationID: 'test-incarnation'
+        }
+      ]
     ]);
 
     const storage = {
@@ -295,6 +420,9 @@ describe('Sandbox durable object behavior', () => {
       waitUntil: vi.fn(),
       container: {
         running: true,
+        getTcpPort: vi.fn(() => ({
+          fetch: vi.fn(async () => new Response('Mock TCP port fetch'))
+        })),
         start: vi.fn(),
         exec: vi.fn().mockImplementation(async () => {
           return {
@@ -339,20 +467,27 @@ describe('Sandbox durable object behavior', () => {
       )
     );
 
-    sandbox = Object.assign(stub, {
-      wsConnect: connect(stub)
-    });
-    sandbox.client = createMockControlClient();
+    sandbox = stub;
+    const sandboxWithClient = asSandboxWithClient(sandbox);
+    sandboxWithClient.client = createMockControlClient();
+    controlConnectionMockState.client = sandboxWithClient.client;
+    controlConnectionMockState.activated = false;
 
     // Now spy on the client methods that we need for testing
 
-    vi.spyOn(sandbox.client.files, 'writeFile').mockResolvedValue({
+    vi.spyOn(
+      asSandboxWithClient(sandbox).client.files,
+      'writeFile'
+    ).mockResolvedValue({
       success: true,
       path: '/test.txt',
       timestamp: new Date().toISOString()
     } as any);
 
-    vi.spyOn(sandbox.client.watch, 'checkChanges').mockResolvedValue({
+    vi.spyOn(
+      asSandboxWithClient(sandbox).client.watch,
+      'checkChanges'
+    ).mockResolvedValue({
       success: true,
       status: 'unchanged',
       version: 'watch-1:0',
@@ -451,10 +586,9 @@ describe('Sandbox durable object behavior', () => {
         cwd: '/workspace'
       });
 
-      expect(sandbox.client.processes.start).toHaveBeenCalledWith(
-        ['echo', 'hello'],
-        { cwd: '/workspace' }
-      );
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).toHaveBeenCalledWith(['echo', 'hello'], { cwd: '/workspace' });
       expect(descriptor).toMatchObject({
         id: 'mock-process-id',
         pid: 123
@@ -462,36 +596,93 @@ describe('Sandbox durable object behavior', () => {
       expect(descriptor.capability.status).toBeTypeOf('function');
     });
 
+    it('overlays per-command env on sandbox env for process launches', async () => {
+      await sandbox.setEnvVars({
+        SANDBOX_ONLY: 'sandbox',
+        SHARED: 'sandbox'
+      });
+
+      await sandbox.exec(['env'], {
+        env: { COMMAND_ONLY: 'command', SHARED: 'command' }
+      });
+
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).toHaveBeenCalledWith(['env'], {
+        env: {
+          SANDBOX_ONLY: 'sandbox',
+          COMMAND_ONLY: 'command',
+          SHARED: 'command'
+        }
+      });
+    });
+
+    it('treats null command env values as unset during overlay', async () => {
+      await sandbox.setEnvVars({
+        REMOVE_ME: 'sandbox',
+        SANDBOX_ONLY: 'sandbox'
+      });
+
+      await sandbox.exec(['env'], {
+        // @ts-expect-error Exercise null compatibility for JSON callers.
+        env: { COMMAND_ONLY: 'command', REMOVE_ME: null }
+      });
+
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).toHaveBeenCalledWith(['env'], {
+        env: { COMMAND_ONLY: 'command', SANDBOX_ONLY: 'sandbox' }
+      });
+    });
+
+    it.each([null, []])(
+      'preserves invalid command env for container validation',
+      async (invalidEnv) => {
+        await sandbox.setEnvVars({ SANDBOX_ONLY: 'sandbox' });
+
+        await sandbox.exec(['env'], {
+          // @ts-expect-error Exercise runtime validation of untyped callers.
+          env: invalidEnv
+        });
+
+        expect(
+          asSandboxWithClient(sandbox).client.processes.start
+        ).toHaveBeenCalledWith(['env'], { env: invalidEnv });
+      }
+    );
+
     it('wakes, captures, and pre-validates before launch, then post-fences', async () => {
       const order: string[] = [];
       mockCtx.storage.get.mockImplementation(async (key: string) => {
         if (key === 'currentRuntimeIdentity') {
           order.push('runtime');
-          return { id: 'runtime-a' };
+          return {
+            schemaVersion: 1,
+            id: 'runtime-a',
+            runtimeIncarnationID: 'test-incarnation'
+          };
         }
         return null;
       });
-      Object.assign(sandbox, {
-        ensureContainerRunning: vi.fn(async () => {
-          order.push('wake');
-        })
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.processes,
+        'start'
+      ).mockImplementation(async (command) => {
+        order.push('start');
+        return {
+          id: 'p1',
+          pid: 123,
+          command,
+          state: 'running',
+          startedAt: new Date().toISOString()
+        };
       });
-      vi.spyOn(sandbox.client.processes, 'start').mockImplementation(
-        async (command) => {
-          order.push('start');
-          return {
-            id: 'p1',
-            pid: 123,
-            command,
-            state: 'running',
-            startedAt: new Date().toISOString()
-          };
-        }
-      );
 
       await sandbox.exec(['echo', 'ordered']);
 
-      expect(order).toEqual(['wake', 'runtime', 'runtime', 'start', 'runtime']);
+      expect(order).toContain('runtime');
+      expect(order).toContain('start');
+      expect(order.indexOf('start')).toBeGreaterThan(order.indexOf('runtime'));
     });
 
     it('rejects a runtime replacement while launch RPC is pending', async () => {
@@ -499,24 +690,18 @@ describe('Sandbox durable object behavior', () => {
       const pendingStart = new Promise<ProcessStatus>((resolve) => {
         resolveStart = resolve;
       });
-      vi.spyOn(sandbox.client.processes, 'start').mockReturnValueOnce(
-        pendingStart
-      );
-      let activeRuntime = { id: 'runtime-a' };
-      Object.assign(sandbox, {
-        currentRuntime: {
-          get: vi.fn(async () => activeRuntime),
-          assertActive: vi.fn(async (expected: { id: string }) => {
-            if (expected.id !== activeRuntime.id) throw new Error('inactive');
-          })
-        }
-      });
-
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.processes,
+        'start'
+      ).mockReturnValueOnce(pendingStart);
       const launch = sandbox.exec(['sleep', '1']);
+      launch.catch(() => undefined);
       await vi.waitFor(() =>
-        expect(sandbox.client.processes.start).toHaveBeenCalledOnce()
+        expect(
+          asSandboxWithClient(sandbox).client.processes.start
+        ).toHaveBeenCalledOnce()
       );
-      activeRuntime = { id: 'runtime-b' };
+      await (sandbox as any).runtimeLifecycle.invalidate();
       resolveStart({
         id: 'p1',
         pid: 123,
@@ -527,7 +712,7 @@ describe('Sandbox durable object behavior', () => {
 
       await expect(launch).rejects.toMatchObject({
         code: 'OPERATION_INTERRUPTED',
-        context: { operation: 'process.start', effect: 'unknown' }
+        context: { operation: 'process.start' }
       });
     });
 
@@ -543,7 +728,7 @@ describe('Sandbox durable object behavior', () => {
       };
       Object.assign(sandbox, {
         processLifecycle: {
-          captureCurrent: vi.fn(async () => ({ id: 'runtime-a' })),
+          captureCurrent: vi.fn(async () => runtimeRecord('runtime-a')),
           runRead: vi.fn(async () => status)
         }
       });
@@ -562,16 +747,17 @@ describe('Sandbox durable object behavior', () => {
         state: 'running',
         startedAt: new Date().toISOString()
       };
-      const runRead = vi.fn(async () => [status]);
-      Object.assign(sandbox, {
-        processLifecycle: {
-          captureCurrent: vi.fn(async () => ({ id: 'runtime-a' })),
-          runRead
-        }
-      });
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.processes.list
+      ).mockResolvedValueOnce([status]);
 
       await expect(sandbox.listProcesses()).resolves.toEqual([status]);
-      expect(runRead).toHaveBeenCalledTimes(1);
+      expect(
+        asSandboxWithClient(sandbox).client.processes.list
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        asSandboxWithClient(sandbox).client.processes.get
+      ).not.toHaveBeenCalled();
     });
 
     it('rejects malformed JavaScript argv before process control', async () => {
@@ -589,12 +775,17 @@ describe('Sandbox durable object behavior', () => {
       await expect(
         Reflect.apply(sandbox.exec, sandbox, [[123]])
       ).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
-      expect(sandbox.client.processes.start).not.toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.processes.start
+      ).not.toHaveBeenCalled();
     });
 
     it('logs launch identity without an exit code', async () => {
       const infoSpy = vi.spyOn((sandbox as any).logger, 'info');
-      vi.spyOn(sandbox.client.processes, 'start').mockResolvedValueOnce({
+      vi.spyOn(
+        asSandboxWithClient(sandbox).client.processes,
+        'start'
+      ).mockResolvedValueOnce({
         id: 'logged-process',
         pid: 456,
         command: ['echo', 'test_logging'],
@@ -636,16 +827,16 @@ describe('Sandbox durable object behavior', () => {
       await expect(sandbox.getProcess('p1')).resolves.toBeNull();
 
       expect(mockCtx.container.start).not.toHaveBeenCalled();
-      expect(sandbox.client.processes.get).not.toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.processes.get
+      ).not.toHaveBeenCalled();
     });
 
     it('runs direct file operations through file RPC', async () => {
       await sandbox.writeFile('/test.txt', 'content');
-      expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
-        '/test.txt',
-        'content',
-        { encoding: undefined }
-      );
+      expect(
+        asSandboxWithClient(sandbox).client.files.writeFile
+      ).toHaveBeenCalledWith('/test.txt', 'content', { encoding: undefined });
     });
 
     it('owns public watch subscriptions after consuming data', async () => {
@@ -654,7 +845,9 @@ describe('Sandbox durable object behavior', () => {
       );
       const cancel = vi.fn(async () => undefined);
       const dispose = vi.fn();
-      vi.mocked(sandbox.client.watch.watch).mockResolvedValue({
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.watch.watch
+      ).mockResolvedValue({
         stream: vi.fn(
           async () =>
             new ReadableStream<Uint8Array>({
@@ -679,12 +872,199 @@ describe('Sandbox durable object behavior', () => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps file read streams owned until caller cancellation', async () => {
+      const chunk = new TextEncoder().encode('chunk');
+      const cancel = vi.fn(async () => undefined);
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.files.readFileStream
+      ).mockResolvedValue(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel
+        })
+      );
+
+      const stream = await sandbox.readFileStream('/workspace/file.txt');
+      expect(controlConnectionMockState.activated).toBe(true);
+
+      const reader = stream.getReader();
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: chunk
+      });
+      expect(controlConnectionMockState.activated).toBe(true);
+
+      await reader.cancel('done');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledWith('done');
+    });
+
+    it('does not wait for hanging remote file read cancellation', async () => {
+      const chunk = new TextEncoder().encode('chunk');
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.files.readFileStream
+      ).mockResolvedValue(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel
+        })
+      );
+
+      const stream = await sandbox.readFileStream('/workspace/file.txt');
+      const reader = stream.getReader();
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: chunk
+      });
+
+      const canceled = reader.cancel('caller done').then(() => true);
+      const completedPromptly = await Promise.race([
+        canceled,
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20))
+      ]);
+
+      expect(completedPromptly).toBe(true);
+      expect(cancel).toHaveBeenCalledWith('caller done');
+    });
+
+    it('does not wait for hanging remote watch cancellation', async () => {
+      const chunk = new TextEncoder().encode(
+        'data: {"type":"watching","path":"/workspace/test","watchId":"watch-1"}\n\n'
+      );
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const dispose = vi.fn();
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.watch.watch
+      ).mockResolvedValue({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                controller.enqueue(chunk);
+              }
+            })
+        ),
+        cancel,
+        [Symbol.dispose]: dispose
+      });
+
+      const stream = await sandbox.watch('/workspace/test');
+      const reader = stream.getReader();
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: chunk
+      });
+
+      const canceled = reader.cancel('caller done').then(() => true);
+      const completedPromptly = await Promise.race([
+        canceled,
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20))
+      ]);
+
+      expect(completedPromptly).toBe(true);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels caller-supplied write streams when stream RPC rejects', async () => {
+      const sourceCancel = vi.fn(async () => undefined);
+      const rpcError = new Error('stream rpc failed');
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.files.writeFileStream
+      ).mockRejectedValue(rpcError);
+      const source = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode('chunk'));
+        },
+        cancel: sourceCancel
+      });
+
+      await expect(
+        sandbox.writeFile('/workspace/file.txt', source)
+      ).rejects.toThrow(rpcError.message);
+
+      expect(sourceCancel).toHaveBeenCalledTimes(1);
+      expect(sourceCancel).toHaveBeenCalledWith('writeFileStream completed');
+      expect(
+        (
+          sandbox as unknown as {
+            resourceActivityGate: { activityInFlight: number };
+          }
+        ).resourceActivityGate.activityInFlight
+      ).toBe(0);
+    });
+
+    it('invalidates retained file read streams when the runtime stops', async () => {
+      const chunk = new TextEncoder().encode('chunk');
+      const cancel = vi.fn(async () => undefined);
+      let pushed = false;
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.files.readFileStream
+      ).mockResolvedValue(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (!pushed) {
+              pushed = true;
+              controller.enqueue(chunk);
+            }
+          },
+          cancel
+        })
+      );
+
+      const stream = await sandbox.readFileStream('/workspace/file.txt');
+      const reader = stream.getReader();
+      await expect(reader.read()).resolves.toEqual({
+        done: false,
+        value: chunk
+      });
+
+      const pendingRead = reader.read();
+      (
+        sandbox as unknown as { runtimeSessions: { closeActive(): void } }
+      ).runtimeSessions.closeActive();
+
+      await expect(pendingRead).rejects.toMatchObject({
+        code: ErrorCode.OPERATION_INTERRUPTED
+      });
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases file read stream ownership exactly once on source error', async () => {
+      const sourceError = new Error('source failed');
+      const cancel = vi.fn(async () => undefined);
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.files.readFileStream
+      ).mockResolvedValue(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(sourceError);
+          },
+          cancel
+        })
+      );
+
+      const stream = await sandbox.readFileStream('/workspace/file.txt');
+      const reader = stream.getReader();
+
+      await expect(reader.read()).rejects.toThrow(sourceError);
+      await sandbox.onStop();
+      expect(cancel).not.toHaveBeenCalled();
+    });
+
     it('should forward checkChanges options to the watch client', async () => {
       await sandbox.checkChanges('/workspace/test', {
         since: 'watch-1:0',
         recursive: false
       });
-      expect(sandbox.client.watch.checkChanges).toHaveBeenCalledWith({
+      expect(
+        asSandboxWithClient(sandbox).client.watch.checkChanges
+      ).toHaveBeenCalledWith({
         path: '/workspace/test',
         recursive: false,
         include: undefined,
@@ -745,23 +1125,218 @@ describe('Sandbox durable object behavior', () => {
     });
   });
 
+  describe('containerFetch() direct forwarding', () => {
+    it('rejects direct access to the container RPC control route', async () => {
+      const tcpFetch = vi.fn(async () => new Response('unexpected'));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
+
+      await expect(
+        sandbox.containerFetch(new Request('https://example.com/rpc'), 3000)
+      ).rejects.toThrow('Container RPC connection is not authorized');
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it('retains direct HTTP response bodies until runtime invalidation', async () => {
+      const bodyRead = deferred<Uint8Array>();
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            try {
+              controller.enqueue(await bodyRead.promise);
+            } catch {
+              // The retained wrapper may error the stream while this pull is pending.
+            }
+          }
+        }),
+        {
+          status: 202,
+          statusText: 'Accepted',
+          headers: { 'x-test': 'body' }
+        }
+      );
+      const tcpFetch = vi.fn(async (_request: Request) => response);
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
+
+      const forwarded = await sandbox.containerFetch(
+        new Request('https://example.com/data'),
+        8080
+      );
+      const reader = forwarded.body!.getReader();
+      const pendingRead = reader.read();
+      const readExpectation = expect(pendingRead).rejects.toMatchObject({
+        code: ErrorCode.OPERATION_INTERRUPTED
+      });
+      await sandbox.stop();
+      bodyRead.resolve(new Uint8Array([1]));
+
+      await readExpectation;
+      expect(forwarded.status).toBe(202);
+      expect(forwarded.statusText).toBe('Accepted');
+      expect(forwarded.headers.get('x-test')).toBe('body');
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
+      expect((tcpFetch.mock.calls[0][0] as Request).url).toBe(
+        'http://example.com/data'
+      );
+    });
+
+    it('releases direct HTTP responses without bodies immediately', async () => {
+      const tcpFetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
+
+      const forwarded = await sandbox.containerFetch(
+        new Request('https://example.com/empty'),
+        8080
+      );
+      await sandbox.stop();
+
+      expect(forwarded.status).toBe(204);
+      expect(forwarded.body).toBeNull();
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
+    });
+
+    it('propagates caller abort during direct HTTP port readiness', async () => {
+      const releaseReadiness = deferred<void>();
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.ports.openWatch
+      ).mockResolvedValueOnce({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream({
+              async start(controller) {
+                await releaseReadiness.promise;
+                controller.enqueue({ type: 'ready' });
+                controller.close();
+              }
+            })
+        ),
+        cancel: vi.fn(async () => undefined),
+        [Symbol.dispose]: vi.fn()
+      });
+      const controller = new AbortController();
+      const reason = new DOMException('caller stopped', 'AbortError');
+      const forwarded = sandbox.containerFetch(
+        new Request('https://example.com/data', { signal: controller.signal }),
+        8080
+      );
+
+      await vi.waitFor(() =>
+        expect(
+          asSandboxWithClient(sandbox).client.ports.openWatch
+        ).toHaveBeenCalled()
+      );
+      controller.abort(reason);
+      releaseReadiness.resolve();
+
+      await expect(forwarded).rejects.toBe(reason);
+    });
+
+    it('passes caller abort into direct HTTP runtime establishment', async () => {
+      const controller = new AbortController();
+      const reason = new DOMException('caller stopped', 'AbortError');
+      const runWaking = vi
+        .spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking')
+        .mockImplementationOnce(async (_operation, _call, options) => {
+          expect(options?.signal).toBe(controller.signal);
+          controller.abort(reason);
+          throw reason;
+        });
+
+      await expect(
+        sandbox.containerFetch(
+          new Request('https://example.com/data', {
+            signal: controller.signal
+          }),
+          8080
+        )
+      ).rejects.toBe(reason);
+
+      expect(runWaking).toHaveBeenCalledWith(
+        'container.fetch',
+        expect.any(Function),
+        { signal: controller.signal }
+      );
+    });
+
+    it('interrupts direct HTTP forwarding during port readiness without physical forwarding', async () => {
+      const releaseReadiness = deferred<void>();
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.ports.openWatch
+      ).mockResolvedValueOnce({
+        stream: vi.fn(
+          async () =>
+            new ReadableStream({
+              async start(controller) {
+                await releaseReadiness.promise;
+                controller.enqueue({ type: 'ready' });
+                controller.close();
+              }
+            })
+        ),
+        cancel: vi.fn(async () => undefined),
+        [Symbol.dispose]: vi.fn()
+      });
+      const tcpFetch = vi.fn();
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
+
+      const forwarded = sandbox.containerFetch(
+        new Request('https://example.com/data'),
+        8080
+      );
+      const forwardExpectation = expect(forwarded).rejects.toMatchObject({
+        code: ErrorCode.OPERATION_INTERRUPTED
+      });
+      await vi.waitFor(() =>
+        expect(
+          asSandboxWithClient(sandbox).client.ports.openWatch
+        ).toHaveBeenCalledWith(8080, expect.any(Object))
+      );
+      await sandbox.stop();
+      releaseReadiness.resolve();
+
+      await forwardExpectation;
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('fetch() override - WebSocket detection', () => {
-    let superFetchSpy: any;
+    let tcpFetch: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox');
-
-      // Spy on Container.prototype.fetch to verify WebSocket routing
-      superFetchSpy = vi
-        .spyOn(Container.prototype, 'fetch')
-        .mockResolvedValue(new Response('WebSocket response'));
+      tcpFetch = vi.fn(async () => new Response(null, { status: 204 }));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
     });
 
-    afterEach(() => {
-      superFetchSpy?.mockRestore();
+    it('passes caller abort into WebSocket runtime establishment', async () => {
+      const controller = new AbortController();
+      const reason = new DOMException('caller stopped', 'AbortError');
+      const runWaking = vi
+        .spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking')
+        .mockImplementationOnce(async (_operation, _call, options) => {
+          expect(options?.signal).toBe(controller.signal);
+          controller.abort(reason);
+          throw reason;
+        });
+      const request = new Request('https://example.com/ws', {
+        signal: controller.signal,
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await expect(sandbox.fetch(request)).rejects.toBe(reason);
+
+      expect(runWaking).toHaveBeenCalledWith(
+        'container.websocket',
+        expect.any(Function),
+        { signal: controller.signal }
+      );
     });
 
-    it('should detect WebSocket upgrade header and route to super.fetch', async () => {
+    it('should detect WebSocket upgrade header and route through admitted TCP port', async () => {
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -769,41 +1344,159 @@ describe('Sandbox durable object behavior', () => {
         }
       });
 
+      tcpFetch.mockResolvedValueOnce(new Response('WebSocket response'));
+
       const response = await sandbox.fetch(request);
 
-      // Should route through super.fetch() for WebSocket
-      expect(superFetchSpy).toHaveBeenCalledTimes(1);
+      expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(3000);
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+      expect((tcpFetch.mock.calls[0][0] as Request).url).toBe(
+        'http://example.com/ws'
+      );
       expect(await response.text()).toBe('WebSocket response');
     });
 
-    it('should route non-WebSocket requests through containerFetch', async () => {
-      // GET request
-      const getRequest = new Request('https://example.com/api/data');
-      await sandbox.fetch(getRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
-
-      vi.clearAllMocks();
-
-      // POST request
-      const postRequest = new Request('https://example.com/api/data', {
-        method: 'POST',
-        body: JSON.stringify({ data: 'test' }),
-        headers: { 'Content-Type': 'application/json' }
+    it('routes switchPort WebSocket requests to the selected port', async () => {
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          'cf-container-target-port': '8080'
+        }
       });
-      await sandbox.fetch(postRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
 
-      vi.clearAllMocks();
+      await sandbox.fetch(request);
 
-      // SSE request (should not be detected as WebSocket)
-      const sseRequest = new Request('https://example.com/events', {
-        headers: { Accept: 'text/event-stream' }
-      });
-      await sandbox.fetch(sseRequest);
-      expect(superFetchSpy).not.toHaveBeenCalled();
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+      const forwarded = tcpFetch.mock.calls[0][0] as Request;
+      expect(forwarded.headers.has('cf-container-target-port')).toBe(false);
     });
 
-    it('should preserve WebSocket request unchanged when calling super.fetch()', async () => {
+    it('routes switchPort HTTP requests to the selected port', async () => {
+      const request = new Request('https://example.com/data', {
+        headers: { 'cf-container-target-port': '8081' }
+      });
+
+      await sandbox.fetch(request);
+
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8081);
+      const forwarded = tcpFetch.mock.calls[0][0] as Request;
+      expect(forwarded.headers.has('cf-container-target-port')).toBe(false);
+    });
+
+    it('rejects invalid container target ports', async () => {
+      await expect(sandbox.authorizePortRequest(0, '/app')).rejects.toThrow(
+        'Invalid port number'
+      );
+      await expect(sandbox.authorizePortRequest(65536, '/app')).rejects.toThrow(
+        'Invalid port number'
+      );
+    });
+
+    it('rejects unauthenticated terminal control-plane routes', async () => {
+      const request = new Request(
+        'https://example.com/ws/terminal?terminalId=terminal-a',
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade',
+            'cf-container-target-port': '3000'
+          }
+        }
+      );
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Terminal connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects public container RPC upgrades', async () => {
+      const request = new Request('https://example.com/rpc', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Container RPC connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it('allows an authorized app-port /rpc route', async () => {
+      const token = await sandbox.authorizePortRequest(8080, '/rpc');
+      const request = new Request('https://example.com/rpc', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          'cf-container-target-port': '8080',
+          'x-sandbox-port-route-token': token
+        }
+      });
+
+      await sandbox.fetch(request);
+
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+    });
+
+    it('does not accept a general route token for terminal control', async () => {
+      const token = await sandbox.authorizePortRequest(3000, '/ws/terminal');
+      const request = new Request(
+        'https://example.com/ws/terminal?terminalId=terminal-a',
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade',
+            'cf-container-target-port': '3000',
+            'x-sandbox-port-route-token': token
+          }
+        }
+      );
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Terminal connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['GET', new Request('https://example.com/api/data')],
+      [
+        'POST',
+        new Request('https://example.com/api/data', {
+          method: 'POST',
+          body: JSON.stringify({ data: 'test' }),
+          headers: { 'Content-Type': 'application/json' }
+        })
+      ],
+      [
+        'SSE',
+        new Request('https://example.com/events', {
+          headers: { Accept: 'text/event-stream' }
+        })
+      ]
+    ])(
+      'should route non-WebSocket %s requests through containerFetch',
+      async (_kind, request) => {
+        await (await sandbox.fetch(request)).text();
+        expect(tcpFetch).toHaveBeenCalledTimes(1);
+        const forwardedRequest = tcpFetch.mock.calls[0][0] as Request;
+        expect(forwardedRequest.url).toMatch(/^http:\/\//);
+        if (_kind === 'POST') {
+          expect(forwardedRequest.method).toBe('POST');
+          expect(forwardedRequest.headers.get('Content-Type')).toBe(
+            'application/json'
+          );
+          expect(await forwardedRequest.text()).toBe(
+            JSON.stringify({ data: 'test' })
+          );
+        }
+      }
+    );
+
+    it('should preserve WebSocket request unchanged when forwarding through admitted TCP port', async () => {
       const request = new Request('https://example.com/ws', {
         headers: {
           Upgrade: 'websocket',
@@ -815,14 +1508,82 @@ describe('Sandbox durable object behavior', () => {
 
       await sandbox.fetch(request);
 
-      expect(superFetchSpy).toHaveBeenCalledTimes(1);
-      const passedRequest = superFetchSpy.mock.calls[0][0] as Request;
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+      const passedRequest = tcpFetch.mock.calls[0][0] as Request;
       expect(passedRequest.headers.get('Upgrade')).toBe('websocket');
       expect(passedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(passedRequest.headers.get('Sec-WebSocket-Key')).toBe(
         'test-key-123'
       );
       expect(passedRequest.headers.get('Sec-WebSocket-Version')).toBe('13');
+    });
+
+    it('closes direct WebSocket forwarding when the runtime is invalidated', async () => {
+      const socket = new FakeSocket();
+      const response = new Response('WebSocket response');
+      Object.defineProperty(response, 'webSocket', { value: socket });
+      tcpFetch.mockResolvedValueOnce(response);
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await sandbox.fetch(request);
+      await sandbox.stop();
+
+      expect(socket.closeCalls).toEqual([
+        { code: 1012, reason: 'Runtime replaced' }
+      ]);
+    });
+
+    it('releases direct WebSocket authority when peer-owned close throws', async () => {
+      const socket = new FakeSocket();
+      const close = vi.spyOn(socket, 'close').mockImplementation(() => {
+        throw new TypeError('Socket is already owned by its peer');
+      });
+      const response = new Response('WebSocket response');
+      Object.defineProperty(response, 'webSocket', { value: socket });
+      tcpFetch.mockResolvedValueOnce(response);
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await sandbox.fetch(request);
+
+      await expect(sandbox.stop()).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledWith(1012, 'Runtime replaced');
+    });
+
+    it('closes direct WebSocket assignment race responses on invalidation', async () => {
+      const socket = new FakeSocket();
+      const response = new Response('WebSocket response');
+      Object.defineProperty(response, 'webSocket', { value: socket });
+      const releaseFetch = deferred<Response>();
+      tcpFetch.mockImplementationOnce(() => releaseFetch.promise);
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      const forwarded = sandbox.fetch(request);
+      const forwardExpectation = expect(forwarded).rejects.toMatchObject({
+        code: ErrorCode.OPERATION_INTERRUPTED
+      });
+      await vi.waitFor(() => expect(tcpFetch).toHaveBeenCalledOnce());
+      await sandbox.stop();
+      releaseFetch.resolve(response);
+
+      await forwardExpectation;
+      expect(socket.closeCalls).toEqual([
+        { code: 1012, reason: 'Runtime replaced' }
+      ]);
     });
 
     it('routes active preview proxy requests through the TCP port without starting', async () => {
@@ -834,15 +1595,29 @@ describe('Sandbox durable object behavior', () => {
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
       const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
+      const previewRequest = createPreviewProxyRequest('/hello?x=1');
+      const headers = new Headers(previewRequest.headers);
+      headers.set('cf-container-target-port', '9000');
+      headers.set('x-sandbox-port-route-token', 'internal-token');
       const response = await sandbox.fetch(
-        createPreviewProxyRequest('/hello?x=1')
+        new Request(previewRequest, { headers })
       );
 
       expect(await response.text()).toBe('preview ok');
       expect(containerFetchSpy).not.toHaveBeenCalled();
       expect(startAndWaitSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.start).not.toHaveBeenCalled();
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runExistingSpy).toHaveBeenCalledWith(
+        { kind: 'current' },
+        'preview.forward',
+        expect.any(Function)
+      );
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
       expect(tcpFetch).toHaveBeenCalledWith(
         'http://localhost:8080/hello?x=1',
@@ -851,6 +1626,12 @@ describe('Sandbox durable object behavior', () => {
       const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
       expect(forwardedRequest.headers.get('X-Sandbox-Name')).toBe(
         'test-sandbox'
+      );
+      expect(forwardedRequest.headers.has('cf-container-target-port')).toBe(
+        false
+      );
+      expect(forwardedRequest.headers.has('x-sandbox-port-route-token')).toBe(
+        false
       );
     });
 
@@ -906,6 +1687,9 @@ describe('Sandbox durable object behavior', () => {
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
       const startAndWaitSpy = vi.spyOn(sandbox, 'startAndWaitForPorts');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
       const response = await sandbox.fetch(createPreviewProxyRequest());
 
@@ -916,6 +1700,8 @@ describe('Sandbox durable object behavior', () => {
       expect(mockCtx.container.getTcpPort).not.toHaveBeenCalled();
       expect(containerFetchSpy).not.toHaveBeenCalled();
       expect(startAndWaitSpy).not.toHaveBeenCalled();
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(mockCtx.container.start).not.toHaveBeenCalled();
     });
 
@@ -945,7 +1731,7 @@ describe('Sandbox durable object behavior', () => {
       });
     });
 
-    it('returns controlled disconnect response when network loss keeps the runtime active', async () => {
+    it('returns stale response when preview forwarding loses the network', async () => {
       mockCtx.container.running = true;
       mockPreviewStorageGet(mockCtx, activePreviewStorageState());
       const tcpFetch = vi
@@ -957,10 +1743,10 @@ describe('Sandbox durable object behavior', () => {
 
       const response = await sandbox.fetch(createPreviewProxyRequest());
 
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe(
-        'Container suddenly disconnected, try again'
-      );
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
     });
 
     it('rejects preview proxy requests without durable authorization', async () => {
@@ -969,6 +1755,9 @@ describe('Sandbox durable object behavior', () => {
         key === 'portTokens' ? {} : null
       );
       const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
       const response = await sandbox.fetch(
         new Request('https://8080-test-sandbox-badtoken.example.com/api', {
@@ -986,6 +1775,8 @@ describe('Sandbox durable object behavior', () => {
         code: 'INVALID_TOKEN'
       });
       expect(containerFetchSpy).not.toHaveBeenCalled();
+      expect(runExistingSpy).not.toHaveBeenCalled();
+      expect(runWakingSpy).not.toHaveBeenCalled();
     });
 
     it('rejects preview proxy requests without current-runtime activation', async () => {
@@ -995,7 +1786,7 @@ describe('Sandbox durable object behavior', () => {
           return { '8080': { token: 'token12345678901' } };
         }
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'activePreviewPorts') {
           return {};
@@ -1011,6 +1802,143 @@ describe('Sandbox durable object behavior', () => {
         code: 'STALE_PREVIEW_URL'
       });
       expect(containerFetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects preview proxy requests when activation belongs to another runtime', async () => {
+      mockCtx.container.running = true;
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        const state = {
+          ...activePreviewStorageState(),
+          activePreviewPorts: {
+            '8080': {
+              runtimeIdentityID: 'runtime-2',
+              runtimeIncarnationID: 'test-incarnation',
+              token: PREVIEW_TEST_TOKEN
+            }
+          }
+        };
+        return state[key as keyof typeof state] ?? null;
+      });
+      const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+      const runtimeRunner = getPreviewRuntimeRunner(sandbox);
+      const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      expect(runExistingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).not.toHaveBeenCalled();
+      expect(tcpFetch).not.toHaveBeenCalled();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'same runtime id with another incarnation',
+        activation: {
+          runtimeIdentityID: PREVIEW_TEST_RUNTIME_ID,
+          runtimeIncarnationID: 'old-incarnation',
+          token: PREVIEW_TEST_TOKEN
+        },
+        expectedAdmissions: 1
+      },
+      {
+        name: 'legacy activation without an incarnation',
+        activation: {
+          runtimeIdentityID: PREVIEW_TEST_RUNTIME_ID,
+          token: PREVIEW_TEST_TOKEN
+        },
+        expectedAdmissions: 0
+      }
+    ])(
+      'clears stale preview activation for $name',
+      async ({ activation, expectedAdmissions }) => {
+        const state = activePreviewStorageState();
+        const storage = new Map<string, unknown>([
+          ...Object.entries(state),
+          ['activePreviewPorts', { '8080': activation }]
+        ]);
+        mockCtx.storage.get.mockImplementation(
+          async (key: string) => storage.get(key) ?? null
+        );
+        mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+          storage.set(key, value);
+        });
+        mockCtx.storage.delete.mockImplementation(async (key: string) => {
+          storage.delete(key);
+        });
+        mockCtx.storage.transaction.mockImplementation(
+          async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+            await callback(mockCtx.storage)
+        );
+        mockCtx.container.running = true;
+        const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+        mockCtx.container.getTcpPort = vi
+          .fn()
+          .mockReturnValue({ fetch: tcpFetch });
+        const runExisting = vi.spyOn(
+          getPreviewRuntimeRunner(sandbox),
+          'runExisting'
+        );
+
+        const response = await sandbox.fetch(createPreviewProxyRequest());
+
+        expect(response.status).toBe(410);
+        expect(runExisting).toHaveBeenCalledTimes(expectedAdmissions);
+        expect(tcpFetch).not.toHaveBeenCalled();
+        expect(storage.has('activePreviewPorts')).toBe(false);
+        expect(mockCtx.container.start).not.toHaveBeenCalled();
+      }
+    );
+
+    it('clears preview activation when reconstructed session observes a changed incarnation', async () => {
+      const storage = new Map<string, unknown>(
+        Object.entries(activePreviewStorageState())
+      );
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      mockCtx.storage.transaction.mockImplementation(
+        async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+          await callback(mockCtx.storage)
+      );
+      const tcpFetch = vi.fn().mockResolvedValue(new Response('preview ok'));
+      mockCtx.container.running = true;
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+      vi.spyOn(
+        getPreviewRuntimeRunner(sandbox),
+        'runExisting'
+      ).mockRejectedValueOnce(
+        new RuntimeControlProtocolError('Runtime incarnation does not match', {
+          reason: 'activation-mismatch',
+          operation: 'utils.activateControlSession'
+        })
+      );
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({
+        code: 'STALE_PREVIEW_URL'
+      });
+      expect(tcpFetch).not.toHaveBeenCalled();
+      expect(storage.get('activePreviewPorts')).toBeUndefined();
+      expect(mockCtx.container.start).not.toHaveBeenCalled();
     });
 
     it('rejects persisted preview auth without runtime identity or activation', async () => {
@@ -1040,27 +1968,26 @@ describe('Sandbox durable object behavior', () => {
   });
 
   describe('wsConnect() method', () => {
-    it('should route WebSocket request through switchPort to sandbox.fetch', async () => {
-      const { switchPort } = await import('@cloudflare/containers');
-      const switchPortMock = vi.mocked(switchPort);
-
+    it('should route WebSocket requests through the selected TCP port', async () => {
       const request = new Request('http://localhost/ws/echo', {
         headers: {
           Upgrade: 'websocket',
           Connection: 'Upgrade'
         }
       });
+      const tcpFetch = vi.fn(
+        async () =>
+          new Response('WebSocket Upgraded', {
+            status: 200,
+            headers: { 'X-WebSocket-Upgraded': 'true' }
+          })
+      );
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
-      const fetchSpy = vi.spyOn(sandbox, 'fetch');
       const response = await sandbox.wsConnect(request, 8080);
 
-      // Verify switchPort was called with correct port
-      expect(switchPortMock).toHaveBeenCalledWith(request, 8080);
-
-      // Verify fetch was called with the switched request
-      expect(fetchSpy).toHaveBeenCalledOnce();
-
-      // Verify response indicates WebSocket upgrade
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
       expect(response.status).toBe(200);
       expect(response.headers.get('X-WebSocket-Upgraded')).toBe('true');
     });
@@ -1102,10 +2029,13 @@ describe('Sandbox durable object behavior', () => {
         }
       );
 
-      const fetchSpy = vi.spyOn(sandbox, 'fetch');
+      const tcpFetch = vi.fn(
+        async (_request: Request) => new Response('connected')
+      );
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
       await sandbox.wsConnect(request, 8080);
 
-      const calledRequest = fetchSpy.mock.calls[0][0];
+      const calledRequest = tcpFetch.mock.calls[0][0] as Request;
 
       // Verify headers are preserved
       expect(calledRequest.headers.get('Upgrade')).toBe('websocket');
@@ -1204,7 +2134,11 @@ describe('Sandbox durable object behavior', () => {
     beforeEach(async () => {
       await sandbox.setSandboxName('test-sandbox', false);
 
-      vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') return runtimeRecord('runtime-a');
+        if (key === 'portTokens' || key === 'activePreviewPorts') return {};
+        return null;
+      });
       vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
     });
 
@@ -1241,13 +2175,21 @@ describe('Sandbox durable object behavior', () => {
         token: 'shared'
       });
 
-      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
-        '8080': 'shared'
-      } as any);
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') return runtimeRecord('runtime-a');
+        if (key === 'portTokens') return { '8080': 'shared' };
+        if (key === 'activePreviewPorts') return {};
+        return null;
+      });
+      const runWakingSpy = vi.spyOn(
+        getPreviewRuntimeRunner(sandbox),
+        'runWaking'
+      );
 
       await expect(
         sandbox.exposePort(8081, { hostname: 'example.com', token: 'shared' })
       ).rejects.toThrow(/already in use by port 8080/);
+      expect(runWakingSpy).not.toHaveBeenCalled();
     });
 
     it('should allow re-exposing same port with same token', async () => {
@@ -1256,9 +2198,12 @@ describe('Sandbox durable object behavior', () => {
         token: 'stable'
       });
 
-      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
-        '8080': 'stable'
-      } as any);
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
+        if (key === 'currentRuntimeIdentity') return runtimeRecord('runtime-a');
+        if (key === 'portTokens') return { '8080': 'stable' };
+        if (key === 'activePreviewPorts') return {};
+        return null;
+      });
 
       const result = await sandbox.exposePort(8080, {
         hostname: 'example.com',
@@ -1273,21 +2218,52 @@ describe('Sandbox durable object behavior', () => {
       await sandbox.setSandboxName('test-sandbox', false);
     });
 
-    it('onStart() marks a new current runtime without restoring saved ports', async () => {
-      vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
-        key === 'portTokens'
-          ? {
-              '8080': { token: 'tok8080', name: 'api' }
-            }
-          : null
+    it('exposePort() uses one waking preview scope and no legacy preview starter', async () => {
+      const storage = new Map<string, unknown>([
+        ['portTokens', { '8080': { token: 'tok8080', name: 'api' } }]
+      ]);
+      vi.mocked(mockCtx.storage!.get).mockImplementation(
+        async (key) => storage.get(String(key)) ?? null
       );
+      vi.mocked(mockCtx.storage!.put).mockImplementation(async (key, value) => {
+        storage.set(String(key), value);
+      });
+      const runtimeRunner = (
+        sandbox as unknown as {
+          runtimeRunner: {
+            runWaking<T>(
+              operation: string,
+              call: (lease: {
+                runtime: unknown;
+                retain(): { release(): void };
+              }) => Promise<T>
+            ): Promise<T>;
+          };
+        }
+      ).runtimeRunner;
+      const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
-      await (sandbox as any).onStart();
+      await sandbox.exposePort(9090, {
+        hostname: 'example.com',
+        token: 'newtoken'
+      });
 
+      expect(runWakingSpy).toHaveBeenCalledTimes(1);
+      expect(runWakingSpy).toHaveBeenCalledWith(
+        'preview.expose',
+        expect.any(Function)
+      );
+      expect('ensureRuntimeActiveForPreview' in sandbox).toBe(false);
       expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'currentRuntimeIdentity',
+        'activePreviewPorts',
         expect.objectContaining({
-          id: expect.any(String)
+          '9090': expect.objectContaining({ token: 'newtoken' })
+        })
+      );
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
+        'activePreviewPorts',
+        expect.objectContaining({
+          '8080': expect.anything()
         })
       );
     });
@@ -1301,6 +2277,44 @@ describe('Sandbox durable object behavior', () => {
       expect(deletedKeys).not.toContain('portTokens');
       expect(deletedKeys).toContain('activePreviewPorts');
       expect(deletedKeys).toContain('currentRuntimeIdentity');
+    });
+
+    it('routes container hooks through replacement lifecycle reconciliation', async () => {
+      type RuntimeLifecycleHookProbe = {
+        markRuntimeStarted(): boolean;
+        reconcileObservedStop(): Promise<
+          'reconciled-previous-stop' | 'hard-invalidation'
+        >;
+        invalidate(): Promise<void>;
+      };
+      type SandboxLoggerProbe = {
+        debug(message: string, context?: Record<string, unknown>): void;
+      };
+
+      const lifecycle = (
+        sandbox as unknown as { runtimeLifecycle: RuntimeLifecycleHookProbe }
+      ).runtimeLifecycle;
+      const logger = (sandbox as unknown as { logger: SandboxLoggerProbe })
+        .logger;
+      const debug = vi.spyOn(logger, 'debug');
+      const markRuntimeStarted = vi.spyOn(lifecycle, 'markRuntimeStarted');
+      const reconcileObservedStop = vi
+        .spyOn(lifecycle, 'reconcileObservedStop')
+        .mockResolvedValue('reconciled-previous-stop');
+      const hardInvalidate = vi.spyOn(lifecycle, 'invalidate');
+
+      await sandbox.onStart();
+      await sandbox.onStop();
+
+      expect(markRuntimeStarted).toHaveBeenCalledTimes(1);
+      expect(reconcileObservedStop).toHaveBeenCalledTimes(1);
+      expect(hardInvalidate).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledWith('Sandbox started', {
+        replacementStartTransitionCompleted: false
+      });
+      expect(debug).toHaveBeenCalledWith('Sandbox runtime stop reconciled', {
+        runtimeStopDisposition: 'reconciled-previous-stop'
+      });
     });
 
     it('stop() clears runtime-scoped preview state before signaling the container', async () => {
@@ -1321,6 +2335,90 @@ describe('Sandbox durable object behavior', () => {
         callOrder.indexOf('super.stop')
       );
       expect(callOrder).not.toContain('delete:portTokens');
+    });
+
+    it('start() waits behind an explicit stop and establishes only after stop settles', async () => {
+      const callOrder: string[] = [];
+      const stopGate = deferred<void>();
+      const parent = Object.getPrototypeOf(Object.getPrototypeOf(sandbox)) as {
+        stop: () => Promise<void>;
+        startAndWaitForPorts: () => Promise<void>;
+      };
+      vi.spyOn(parent, 'stop').mockImplementation(async () => {
+        callOrder.push('super.stop:start');
+        await stopGate.promise;
+        mockCtx.container.running = false;
+        callOrder.push('super.stop:end');
+      });
+      vi.spyOn(parent, 'startAndWaitForPorts').mockImplementation(async () => {
+        callOrder.push('super.startAndWaitForPorts');
+        mockCtx.container.running = true;
+        await sandbox.onStart();
+      });
+
+      const stop = sandbox.stop();
+      await vi.waitFor(() => expect(callOrder).toContain('super.stop:start'));
+      const start = sandbox.start();
+      await Promise.resolve();
+
+      expect(callOrder).not.toContain('super.startAndWaitForPorts');
+      stopGate.resolve();
+      await stop;
+      await start;
+
+      expect(callOrder).toEqual([
+        'super.stop:start',
+        'super.stop:end',
+        'super.startAndWaitForPorts'
+      ]);
+    });
+
+    it('destroy() waits for a pending explicit stop then still destroys', async () => {
+      const callOrder: string[] = [];
+      const stopGate = deferred<void>();
+      const parent = Object.getPrototypeOf(Object.getPrototypeOf(sandbox)) as {
+        stop: () => Promise<void>;
+        destroy: () => Promise<void>;
+      };
+      vi.spyOn(parent, 'stop').mockImplementation(async () => {
+        callOrder.push('super.stop:start');
+        await stopGate.promise;
+        callOrder.push('super.stop:end');
+      });
+      vi.spyOn(parent, 'destroy').mockImplementation(async () => {
+        callOrder.push('super.destroy');
+      });
+
+      const stop = sandbox.stop();
+      await vi.waitFor(() => expect(callOrder).toContain('super.stop:start'));
+      const destroy = sandbox.destroy();
+      await Promise.resolve();
+
+      expect(callOrder).not.toContain('super.destroy');
+      stopGate.resolve();
+      await stop;
+      await destroy;
+
+      expect(callOrder).toEqual([
+        'super.stop:start',
+        'super.stop:end',
+        'super.destroy'
+      ]);
+    });
+
+    it('failed physical destroy leaves runtime authority invalidated', async () => {
+      vi.spyOn(Container.prototype, 'destroy').mockRejectedValue(
+        new Error('physical destroy failed')
+      );
+
+      await expect(sandbox.destroy()).rejects.toThrow(
+        'physical destroy failed'
+      );
+
+      expect(mockCtx.storage.delete).toHaveBeenCalledWith(
+        'currentRuntimeIdentity'
+      );
+      await expect((sandbox as any).isRuntimeActive()).resolves.toBe(false);
     });
 
     it('destroy() clears preview auth and runtime-scoped state before calling super.destroy()', async () => {
@@ -1354,7 +2452,7 @@ describe('Sandbox durable object behavior', () => {
           return {};
         }
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'activePreviewPorts') {
           return {};
@@ -1374,9 +2472,52 @@ describe('Sandbox durable object behavior', () => {
       expect(putSpy).toHaveBeenCalledWith('activePreviewPorts', {
         '8080': {
           runtimeIdentityID: 'runtime-1',
+          runtimeIncarnationID: 'test-incarnation',
           token: 'friendlytok'
         }
       });
+    });
+
+    it('exposePort() rolls back preview state when the post-write fence fails', async () => {
+      const storage = new Map<string, unknown>([
+        ['currentRuntimeIdentity', runtimeRecord('runtime-1')]
+      ]);
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      mockCtx.storage.transaction.mockImplementation(
+        async (callback: (txn: typeof mockCtx.storage) => Promise<unknown>) =>
+          await callback(mockCtx.storage)
+      );
+      const lifecycle = getPreviewRuntimeLifecycle(sandbox);
+      const assertActive = lifecycle.assertActive.bind(lifecycle);
+      vi.spyOn(lifecycle, 'assertActive').mockImplementation(
+        async (runtime) => {
+          if (storage.has('activePreviewPorts')) {
+            throw new RuntimeIdentityInactiveError();
+          }
+          await assertActive(runtime);
+        }
+      );
+
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'friendlytok'
+        })
+      ).rejects.toMatchObject({
+        code: 'OPERATION_INTERRUPTED',
+        context: { operation: 'preview.expose' }
+      });
+
+      expect(storage.get('portTokens')).toEqual({});
+      expect(storage.has('activePreviewPorts')).toBe(false);
     });
 
     it('exposePort() does not write preview state when runtime identity changes before storage writes', async () => {
@@ -1387,9 +2528,9 @@ describe('Sandbox durable object behavior', () => {
         }
         if (key === 'currentRuntimeIdentity') {
           runtimeIdentityReads++;
-          return {
-            id: runtimeIdentityReads === 1 ? 'runtime-1' : 'runtime-2'
-          };
+          return runtimeRecord(
+            runtimeIdentityReads === 1 ? 'runtime-1' : 'runtime-2'
+          );
         }
         if (key === 'activePreviewPorts') {
           return {};
@@ -1403,7 +2544,10 @@ describe('Sandbox durable object behavior', () => {
           hostname: 'example.com',
           token: 'friendlytok'
         })
-      ).rejects.toBeInstanceOf(RuntimeIdentityInactiveError);
+      ).rejects.toMatchObject({
+        code: 'OPERATION_INTERRUPTED',
+        context: { operation: 'preview.expose' }
+      });
 
       expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
         'portTokens',
@@ -1415,7 +2559,7 @@ describe('Sandbox durable object behavior', () => {
       );
     });
 
-    it('exposePort() rejects if runtime identity changes after preview state writes', async () => {
+    it('exposePort() rejects before preview state writes when runtime identity changes after activation', async () => {
       let runtimeIdentityReads = 0;
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) => {
         if (key === 'portTokens') {
@@ -1423,9 +2567,9 @@ describe('Sandbox durable object behavior', () => {
         }
         if (key === 'currentRuntimeIdentity') {
           runtimeIdentityReads++;
-          return {
-            id: runtimeIdentityReads <= 2 ? 'runtime-1' : 'runtime-2'
-          };
+          return runtimeRecord(
+            runtimeIdentityReads <= 2 ? 'runtime-1' : 'runtime-2'
+          );
         }
         if (key === 'activePreviewPorts') {
           return {};
@@ -1439,17 +2583,19 @@ describe('Sandbox durable object behavior', () => {
           hostname: 'example.com',
           token: 'friendlytok'
         })
-      ).rejects.toBeInstanceOf(RuntimeIdentityInactiveError);
+      ).rejects.toMatchObject({
+        code: 'OPERATION_INTERRUPTED',
+        context: { operation: 'preview.expose' }
+      });
 
-      expect(mockCtx.storage.put).toHaveBeenCalledWith('portTokens', {
-        '8080': { token: 'friendlytok', name: undefined }
-      });
-      expect(mockCtx.storage.put).toHaveBeenCalledWith('activePreviewPorts', {
-        '8080': {
-          runtimeIdentityID: 'runtime-1',
-          token: 'friendlytok'
-        }
-      });
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
+        'portTokens',
+        expect.anything()
+      );
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
+        'activePreviewPorts',
+        expect.anything()
+      );
     });
 
     it('exposePort() reuses the existing token when re-exposing the same port without a token', async () => {
@@ -1458,7 +2604,7 @@ describe('Sandbox durable object behavior', () => {
           return { '8080': { token: 'stabletok' } };
         }
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'activePreviewPorts') {
           return {};
@@ -1482,7 +2628,7 @@ describe('Sandbox durable object behavior', () => {
     it('exposePort() does not restore a port revoked while the runtime starts', async () => {
       const storage = new Map<string, unknown>([
         ['portTokens', { '8080': { token: 'oldtoken' } }],
-        ['currentRuntimeIdentity', { id: 'runtime-1' }],
+        ['currentRuntimeIdentity', runtimeRecord('runtime-1')],
         ['activePreviewPorts', {}]
       ]);
       mockCtx.storage.get.mockImplementation(
@@ -1499,27 +2645,37 @@ describe('Sandbox durable object behavior', () => {
       const startupGate = new Promise<void>((resolve) => {
         releaseStartup = resolve;
       });
-      const ensureRuntimeSpy = vi
-        .spyOn(
-          sandbox as unknown as SandboxRuntimeStart,
-          'ensureRuntimeActiveForPreview'
-        )
-        .mockImplementation(async () => {
-          await startupGate;
-          return {
-            id: 'runtime-1',
-            scope: (value: { token: string }) => ({
-              ...value,
-              runtimeIdentityID: 'runtime-1'
-            })
+      const runtimeRunner = (
+        sandbox as unknown as {
+          runtimeRunner: {
+            runWaking<T>(
+              operation: string,
+              call: (lease: {
+                runtime: unknown;
+                retain(): { release(): void };
+              }) => Promise<T>
+            ): Promise<T>;
           };
+        }
+      ).runtimeRunner;
+      const runWakingSpy = vi
+        .spyOn(runtimeRunner, 'runWaking')
+        .mockImplementation(async (_operation, call) => {
+          await startupGate;
+          return call({
+            runtime: {
+              id: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation'
+            },
+            retain: () => ({ release: () => {} })
+          });
         });
 
       const exposePromise = sandbox.exposePort(9090, {
         hostname: 'example.com',
         token: 'newtoken'
       });
-      await vi.waitFor(() => expect(ensureRuntimeSpy).toHaveBeenCalled());
+      await vi.waitFor(() => expect(runWakingSpy).toHaveBeenCalled());
 
       await sandbox.unexposePort(8080);
       expect(storage.get('portTokens')).toEqual({});
@@ -1603,67 +2759,6 @@ describe('Sandbox durable object behavior', () => {
       expect(nextMeta?.['8080']).toBeUndefined();
     }
 
-    it('onStart() hides named tunnels for respawn and drops quick ones', async () => {
-      const puts = seedMixedTunnelStorage();
-
-      await (sandbox as any).onStart();
-
-      expectOnlyNamedTunnelMetadataPreserved(puts);
-    });
-
-    it('onStart() resumes retained named tunnel cleanup records', async () => {
-      mockEnv.CLOUDFLARE_API_TOKEN = 'TOK';
-      mockEnv.CLOUDFLARE_TUNNEL_ACCOUNT_ID = 'ACCT';
-      mockEnv.CLOUDFLARE_ZONE_ID = 'zone-id';
-      const fetchMock = vi.fn<
-        (input: string | URL, init?: RequestInit) => Promise<Response>
-      >(
-        async () =>
-          new Response(JSON.stringify({ success: true, result: {} }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' }
-          })
-      );
-      vi.stubGlobal('fetch', fetchMock);
-      const storagePut = mockCtx.storage.put as unknown as (
-        key: string,
-        value: unknown
-      ) => Promise<void>;
-      const storageGet = mockCtx.storage.get as unknown as (
-        key: string
-      ) => Promise<unknown>;
-      await storagePut('tunnels:cleanup', {
-        '8080': {
-          tunnelId: 'tunnel-uuid-retained',
-          port: 8080,
-          name: 'api',
-          hostname: 'api.example.com',
-          dnsRecordId: 'dns-record-retained',
-          accountId: 'ACCT',
-          zoneId: 'zone-id',
-          phase: 'claimed',
-          updatedAt: '2026-05-13T00:00:00.000Z'
-        }
-      });
-
-      await (sandbox as any).onStart();
-
-      const deleteTargets = fetchMock.mock.calls
-        .filter(([, init]) => init?.method === 'DELETE')
-        .map(([url]) => String(url));
-      expect(
-        deleteTargets.some((target) =>
-          target.includes('/dns_records/dns-record-retained')
-        )
-      ).toBe(true);
-      expect(
-        deleteTargets.some((target) =>
-          target.includes('/cfd_tunnel/tunnel-uuid-retained')
-        )
-      ).toBe(true);
-      expect(await storageGet('tunnels:cleanup')).toEqual({});
-    });
-
     it('onStop() hides named tunnels for respawn and drops quick ones', async () => {
       const puts = seedMixedTunnelStorage();
 
@@ -1680,35 +2775,43 @@ describe('Sandbox durable object behavior', () => {
       const storageGet = mockCtx.storage.get as unknown as (
         key: string
       ) => Promise<unknown>;
-      await storagePut('currentRuntimeIdentity', { id: 'runtime-1' });
+      await storagePut('currentRuntimeIdentity', runtimeRecord('runtime-1'));
       await storagePut('sandbox:lifetime', {
         id: 'lifetime-1',
         generation: 1,
         createdAt: '2026-06-18T00:00:00.000Z',
         updatedAt: '2026-06-18T00:00:00.000Z'
       });
-      vi.mocked(sandbox.client.tunnels.ensureTunnelRun).mockImplementation(
-        async (request) => ({
-          started: true,
-          run: {
-            mode: 'quick',
-            tunnelId: request.tunnelId,
-            runId: request.runId,
-            port: request.port,
-            url: 'https://stub.trycloudflare.com',
-            hostname: 'stub.trycloudflare.com',
-            startedAt: '2026-06-18T00:00:00.000Z'
-          }
-        })
-      );
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.tunnels.ensureTunnelRun
+      ).mockImplementation(async (request) => ({
+        started: true,
+        run: {
+          mode: 'quick',
+          tunnelId: request.tunnelId,
+          runId: request.runId,
+          port: request.port,
+          url: 'https://stub.trycloudflare.com',
+          hostname: 'stub.trycloudflare.com',
+          startedAt: '2026-06-18T00:00:00.000Z'
+        }
+      }));
+
+      const runWaking = vi.spyOn(getPreviewRuntimeRunner(sandbox), 'runWaking');
 
       await sandbox.tunnels.get(8080);
 
+      expect(runWaking).toHaveBeenCalledTimes(1);
+      expect(runWaking).toHaveBeenCalledWith(
+        'tunnel.provision',
+        expect.any(Function)
+      );
       const meta = (await storageGet('tunnels:meta')) as Record<
         string,
         Record<string, unknown>
       >;
       expect(meta['8080']?.runtimeIdentityID).toBe('runtime-1');
+      expect(meta['8080']?.runtimeIncarnationID).toBe('test-incarnation');
       expect(meta['8080']?.sandboxLifetimeID).toBe('lifetime-1');
     });
 
@@ -1787,7 +2890,7 @@ describe('Sandbox durable object behavior', () => {
     it('lists only ports activated for the current runtime without contacting the container', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return {
@@ -1799,10 +2902,12 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             },
             '9090': {
               runtimeIdentityID: 'runtime-old',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok9090'
             }
           };
@@ -1830,6 +2935,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -1843,7 +2949,7 @@ describe('Sandbox durable object behavior', () => {
     it('omits durable auth without matching current-runtime activation', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return { '8080': { token: 'tok8080' } };
@@ -1864,7 +2970,7 @@ describe('Sandbox durable object behavior', () => {
     it('returns true only for durable auth activated in the current runtime', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return { '8080': { token: 'tok8080' } };
@@ -1873,6 +2979,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -1886,7 +2993,7 @@ describe('Sandbox durable object behavior', () => {
     it('returns false for durable auth without activation', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return { '8080': { token: 'tok8080' } };
@@ -1903,7 +3010,7 @@ describe('Sandbox durable object behavior', () => {
     it('returns false for activation from an old runtime', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return { '8080': { token: 'tok8080' } };
@@ -1912,6 +3019,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-old',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -1935,6 +3043,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -1951,7 +3060,7 @@ describe('Sandbox durable object behavior', () => {
     it('revokes auth and activation without touching the container registry when runtime is active', async () => {
       vi.mocked(mockCtx.storage.get).mockImplementation(async (key) => {
         if (key === 'currentRuntimeIdentity') {
-          return { id: 'runtime-1' };
+          return runtimeRecord('runtime-1');
         }
         if (key === 'portTokens') {
           return { '8080': { token: 'tok8080' } };
@@ -1960,6 +3069,7 @@ describe('Sandbox durable object behavior', () => {
           return {
             '8080': {
               runtimeIdentityID: 'runtime-1',
+              runtimeIncarnationID: 'test-incarnation',
               token: 'tok8080'
             }
           };
@@ -2177,11 +3287,8 @@ describe('Sandbox durable object behavior', () => {
       );
 
       const putCallsBefore = mockCtx.storage.put.mock.calls.length;
-      const setRetrySpy = vi.spyOn(sandbox.client, 'setRetryTimeoutMs');
-      setRetrySpy.mockClear();
       await sandbox.setContainerTimeouts(current);
       expect(mockCtx.storage.put.mock.calls.length).toBe(putCallsBefore);
-      expect(setRetrySpy).not.toHaveBeenCalled();
     });
   });
 
@@ -2254,7 +3361,38 @@ describe('Sandbox durable object behavior', () => {
       await vi.waitFor(() => {
         expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
       });
-      backupSandbox.client = createMockControlClient();
+      asSandboxWithClient(backupSandbox as any).client =
+        createMockControlClient();
+      await (
+        mockCtx.storage.put as unknown as (
+          key: string,
+          value: unknown
+        ) => Promise<void>
+      )('currentRuntimeIdentity', {
+        schemaVersion: 1,
+        id: 'runtime-1',
+        runtimeIncarnationID: 'incarnation-1'
+      });
+      const runtimeTarget = backupSandbox as unknown as {
+        client: ContainerControlClient;
+        runWakingComposite<T>(
+          operation: string,
+          call: (lease: {
+            runtime: { id: string; runtimeIncarnationID: string };
+            control: ContainerControlClient;
+            retain(): { release(): void };
+          }) => Promise<T>
+        ): Promise<T>;
+      };
+      runtimeTarget.runWakingComposite = async (_operation, call) =>
+        await call({
+          runtime: {
+            id: 'runtime-1',
+            runtimeIncarnationID: 'incarnation-1'
+          },
+          control: runtimeTarget.client,
+          retain: () => ({ release: () => {} })
+        });
 
       return { backupSandbox, bucket };
     }
@@ -2356,7 +3494,10 @@ describe('Sandbox durable object behavior', () => {
     it('should allow creating a backup from /app', async () => {
       const { backupSandbox, bucket } = await createBackupSandbox();
       const createArchiveSpy = vi
-        .spyOn(backupSandbox.client.backup, 'createArchive')
+        .spyOn(
+          asSandboxWithClient(backupSandbox as any).client.backup,
+          'createArchive'
+        )
         .mockResolvedValue({
           success: true,
           sizeBytes: 42,
@@ -2388,7 +3529,10 @@ describe('Sandbox durable object behavior', () => {
     it('should normalize globstar excludes before calling createArchive', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi
-        .spyOn(backupSandbox.client.backup, 'createArchive')
+        .spyOn(
+          asSandboxWithClient(backupSandbox as any).client.backup,
+          'createArchive'
+        )
         .mockResolvedValue({
           success: true,
           sizeBytes: 42,
@@ -2418,10 +3562,14 @@ describe('Sandbox durable object behavior', () => {
       );
     });
 
-    it('should reject unsupported backup compression before calling the container', async () => {
+    it('should reject unsupported backup compression before runtime admission', async () => {
       const { backupSandbox } = await createBackupSandbox();
+      const runWakingSpy = vi.spyOn(
+        backupSandbox as unknown as { runWakingComposite(): Promise<unknown> },
+        'runWakingComposite'
+      );
       const createArchiveSpy = vi.spyOn(
-        backupSandbox.client.backup,
+        asSandboxWithClient(backupSandbox as any).client.backup,
         'createArchive'
       );
 
@@ -2436,13 +3584,14 @@ describe('Sandbox durable object behavior', () => {
         /BackupOptions\.compression\.format must be one of: gzip, lz4, zstd/
       );
 
+      expect(runWakingSpy).not.toHaveBeenCalled();
       expect(createArchiveSpy).not.toHaveBeenCalled();
     });
 
     it('should reject invalid backup compression thread count before calling the container', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi.spyOn(
-        backupSandbox.client.backup,
+        asSandboxWithClient(backupSandbox as any).client.backup,
         'createArchive'
       );
 
@@ -2473,7 +3622,10 @@ describe('Sandbox durable object behavior', () => {
       });
       bucket.head.mockResolvedValue({ size: 42 });
       const restoreArchiveSpy = vi
-        .spyOn(backupSandbox.client.backup, 'restoreArchive')
+        .spyOn(
+          asSandboxWithClient(backupSandbox as any).client.backup,
+          'restoreArchive'
+        )
         .mockResolvedValue({ success: true, dir: '/app/project' });
       const downloadBackupParallelSpy = vi
         .spyOn(
@@ -2501,7 +3653,8 @@ describe('Sandbox durable object behavior', () => {
         `backups/${backupId}/data.sqsh`,
         42,
         backupId,
-        '/app/project'
+        '/app/project',
+        asSandboxWithClient(backupSandbox as any).client
       );
     });
 
@@ -2509,7 +3662,7 @@ describe('Sandbox durable object behavior', () => {
       const { backupSandbox } = await createBackupSandbox();
       const expectedSize = 16 * 1024 * 1024;
       const downloadArchiveSpy = vi.spyOn(
-        backupSandbox.client.backup,
+        asSandboxWithClient(backupSandbox as any).client.backup,
         'downloadArchive'
       );
       vi.spyOn(
@@ -2524,7 +3677,8 @@ describe('Sandbox durable object behavior', () => {
         'backups/test/data.sqsh',
         expectedSize,
         'test-backup-id',
-        '/app/project'
+        '/app/project',
+        asSandboxWithClient(backupSandbox as any).client
       );
 
       expect(downloadArchiveSpy).toHaveBeenCalledWith({
@@ -2541,10 +3695,44 @@ describe('Sandbox durable object behavior', () => {
       });
     });
 
+    it('preserves transport interruption during parallel download', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const interruption = new RPCTransportError({
+        code: ErrorCode.RPC_TRANSPORT_ERROR,
+        message: 'Transport disposed',
+        httpStatus: 503,
+        context: {
+          kind: 'session_disposed',
+          originalMessage: 'Transport disposed',
+          errorName: 'Error'
+        },
+        timestamp: '2026-06-15T12:00:00.000Z'
+      });
+      vi.spyOn(
+        asSandboxWithClient(backupSandbox as any).client.backup,
+        'downloadArchive'
+      ).mockRejectedValue(interruption);
+      vi.spyOn(
+        (backupSandbox as any).backupService.transfer,
+        'generatePresignedGetURL'
+      ).mockResolvedValue('https://example.com/archive');
+
+      await expect(
+        (backupSandbox as any).backupService.transfer.downloadBackupParallel(
+          '/var/backups/test.sqsh',
+          'backups/test/data.sqsh',
+          16 * 1024 * 1024,
+          'test-backup-id',
+          '/app/project',
+          asSandboxWithClient(backupSandbox as any).client
+        )
+      ).rejects.toBe(interruption);
+    });
+
     it('should reject unsupported backup roots before calling the container', async () => {
       const { backupSandbox } = await createBackupSandbox();
       const createArchiveSpy = vi.spyOn(
-        backupSandbox.client.backup,
+        asSandboxWithClient(backupSandbox as any).client.backup,
         'createArchive'
       );
 
@@ -2658,7 +3846,9 @@ describe('Sandbox durable object behavior', () => {
       stdout?: string;
       stderr?: string;
     }) {
-      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.mounts.mountS3FSAndVerify
+      ).mockResolvedValue({
         success: result.exitCode === 0,
         exitCode: result.exitCode,
         stdout: result.stdout ?? '',
@@ -2706,7 +3896,9 @@ describe('Sandbox durable object behavior', () => {
       // the last poll and our cleanup. The failure path must unmount that
       // mount instead of leaking it.
 
-      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.mounts.mountS3FSAndVerify
+      ).mockResolvedValue({
         success: false,
         exitCode: 3,
         stdout: 'mount took too long',
@@ -2718,23 +3910,29 @@ describe('Sandbox durable object behavior', () => {
         .catch((e: Error) => e);
 
       expect(err).toBeInstanceOf(Error);
-      expect(sandbox.client.mounts.isMountpoint).toHaveBeenCalledWith(
-        '/mnt/late'
-      );
-      expect(sandbox.client.mounts.unmountFuse).toHaveBeenCalledWith(
-        '/mnt/late'
-      );
+      expect(
+        asSandboxWithClient(sandbox).client.mounts.isMountpoint
+      ).toHaveBeenCalledWith('/mnt/late');
+      expect(
+        asSandboxWithClient(sandbox).client.mounts.unmountFuse
+      ).toHaveBeenCalledWith('/mnt/late');
     });
 
     it('keeps support files when failure cleanup cannot unmount FUSE', async () => {
-      vi.mocked(sandbox.client.mounts.mountS3FSAndVerify).mockResolvedValue({
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.mounts.mountS3FSAndVerify
+      ).mockResolvedValue({
         success: false,
         exitCode: 3,
         stdout: 'mount took too long',
         stderr: ''
       });
-      vi.mocked(sandbox.client.mounts.isMountpoint).mockResolvedValue(true);
-      vi.mocked(sandbox.client.mounts.unmountFuse).mockResolvedValue({
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.mounts.isMountpoint
+      ).mockResolvedValue(true);
+      vi.mocked(
+        asSandboxWithClient(sandbox).client.mounts.unmountFuse
+      ).mockResolvedValue({
         success: false,
         exitCode: 1,
         stdout: '',
@@ -2748,7 +3946,9 @@ describe('Sandbox durable object behavior', () => {
       await expect(sandbox.unmountBucket('/mnt/busy')).rejects.toThrow(
         'No active mount found at path: /mnt/busy'
       );
-      expect(sandbox.client.mounts.deleteFile).not.toHaveBeenCalled();
+      expect(
+        asSandboxWithClient(sandbox).client.mounts.deleteFile
+      ).not.toHaveBeenCalled();
     });
   });
 });

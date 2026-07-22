@@ -1,0 +1,24 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "sandbox-reconstruction-harness",
+  "main": "worker.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [
+    {
+      "class_name": "ReconstructionSandbox",
+      "image": "../Dockerfile",
+      "image_build_context": "../../..",
+      "name": "sandbox-reconstruction-harness",
+      "max_instances": 2
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "Sandbox", "class_name": "ReconstructionSandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ReconstructionSandbox"] }
+  ]
+}

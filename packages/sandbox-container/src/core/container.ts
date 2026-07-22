@@ -43,7 +43,10 @@ export class Container {
   // Updated on every session open so tunnel exits and other future
   // container→DO events route to the current peer. Cleared by the WS
   // close handler. `null` between connections.
-  private controlCallback: SandboxControlCallback | null = null;
+  private controlCallback: {
+    connectionID: string;
+    callback: SandboxControlCallback;
+  } | null = null;
 
   get<T extends keyof Dependencies>(key: T): Dependencies[T] {
     if (!this.initialized) {
@@ -69,17 +72,26 @@ export class Container {
   }
 
   /**
-   * Set / clear the DO-side control callback exposed via the current
-   * capnweb session's remote main. Called from `server.ts` on each
-   * `capnweb` WS open (with the new peer) and on close (with `null`).
+   * Store the DO-side control callback after a capnweb session activates.
+   * Close handling supplies the connection ID so stale sessions cannot clear
+   * a callback registered by a newer activated session.
    */
-  setControlCallback(cb: SandboxControlCallback | null): void {
-    this.controlCallback = cb;
+  setControlCallback(
+    connectionID: string,
+    callback: SandboxControlCallback
+  ): void {
+    this.controlCallback = { connectionID, callback };
+  }
+
+  clearControlCallback(connectionID: string): void {
+    if (this.controlCallback?.connectionID === connectionID) {
+      this.controlCallback = null;
+    }
   }
 
   /** Returns the current peer's control callback or `null`. */
   getControlCallback(): SandboxControlCallback | null {
-    return this.controlCallback;
+    return this.controlCallback?.callback ?? null;
   }
 
   async initialize(): Promise<void> {

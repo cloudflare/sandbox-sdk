@@ -156,7 +156,7 @@ export const LIFECYCLEPaths = {
       operationId: 'shutdownPrewarmed',
       summary: 'Shutdown pre-warmed containers',
       description:
-        'Stops all idle (unassigned) warm containers. Does not affect containers assigned to sandbox instances.',
+        'Destroys all idle (unassigned) warm containers. Does not affect containers assigned to sandbox instances.',
       'x-codeSamples': [
         {
           lang: 'curl',
@@ -168,7 +168,7 @@ export const LIFECYCLEPaths = {
       ],
       responses: {
         '200': {
-          description: 'All pre-warmed containers stopped.',
+          description: 'All pre-warmed containers destroyed.',
           content: {
             'application/json': {
               schema: { $ref: '#/components/schemas/OkResponse' }

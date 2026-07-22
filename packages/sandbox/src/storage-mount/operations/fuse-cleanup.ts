@@ -4,10 +4,16 @@ export async function unmountFuseIfMountedForCleanup(
   context: BucketMountOperationContext,
   mountPath: string
 ): Promise<boolean> {
-  const mounts = context.getMounts();
-  if (!(await mounts.isMountpoint(mountPath))) return true;
+  const isMountpoint = await context.runRuntimeCall(
+    'mount.cleanup.isMountpoint',
+    (control) => control.mounts.isMountpoint(mountPath)
+  );
+  if (!isMountpoint) return true;
 
-  const result = await mounts.unmountFuse(mountPath);
+  const result = await context.runRuntimeCall(
+    'mount.cleanup.unmountFuse',
+    (control) => control.mounts.unmountFuse(mountPath)
+  );
   if (result.success) return true;
 
   context.logger.warn('FUSE mount cleanup unmount failed', {

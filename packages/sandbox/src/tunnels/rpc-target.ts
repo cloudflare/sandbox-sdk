@@ -46,11 +46,25 @@ export function createTunnelsHandle(host: TunnelServiceHost): TunnelsHandle {
 
   return {
     tunnels,
-    handleTunnelExit: (id, port, exitCode, tunnelRunId) =>
-      service.onTunnelExit(id, port, exitCode, tunnelRunId),
+    handleTunnelExit: (
+      id,
+      port,
+      exitCode,
+      tunnelRunId,
+      runtime,
+      isSessionCurrent
+    ) =>
+      service.onTunnelExit(
+        id,
+        port,
+        exitCode,
+        tunnelRunId,
+        runtime,
+        isSessionCurrent
+      ),
     destroyAll: () => service.destroyAll(),
+    destroyAllRuntimeRuns: () => service.destroyAllRuntimeRuns(),
     resumeCleanup: () => service.resumeCleanup(),
-    onRuntimeStart: () => service.onRuntimeStart(),
     onRuntimeStop: () => service.onRuntimeStop(),
     clearDurableStateAfterDestroy: () => service.clearDurableStateAfterDestroy()
   };

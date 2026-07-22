@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * SDK tunnel service unit tests.
  *
@@ -15,12 +19,12 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   pruneTunnelsForRestart,
   type TunnelsHandler,
   type TunnelsStorage
@@ -139,17 +143,59 @@ type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
 
 function makeHandler(extra: Partial<TunnelsHost> = {}) {
   const { client } = makeClient();
+  const runtimeCalls: Array<{ operation: string; control: MockTunnelsClient }> =
+    [];
   const { storage: providedStorage, ...rest } = extra;
   const storage =
     (providedStorage as TunnelsStorage | undefined) ?? makeStorage();
+  const runRuntimeCall = (async (operation, call) => {
+    const control = {
+      ensureTunnelRun: client.tunnels.ensureTunnelRun,
+      stopTunnelRun: client.tunnels.stopTunnelRun
+    };
+    runtimeCalls.push({ operation, control });
+    return await call(
+      control as unknown as Parameters<
+        Parameters<TunnelsHost['runRuntimeCall']>[1]
+      >[0]
+    );
+  }) as TunnelsHost['runRuntimeCall'];
   const { tunnels, handleTunnelExit } = createTunnelsHandle({
-    client: client as unknown as TunnelsHost['client'],
+    runProvision: (call) =>
+      runRuntimeCall('tunnel.provision', (control) =>
+        call({
+          runtime: {
+            id: 'runtime-1',
+            runtimeIncarnationID: 'inc-1'
+          } as Parameters<
+            Parameters<NonNullable<TunnelsHost['runProvision']>>[0]
+          >[0]['runtime'],
+          tunnels: control,
+          retain: () => ({ release: () => {} })
+        })
+      ),
+    runRuntimeCall,
+    getStoredRuntime: async () =>
+      ({
+        id: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      }) as Awaited<ReturnType<NonNullable<TunnelsHost['getStoredRuntime']>>>,
     storage,
     logger: makeLogger(),
     ...rest
-  } as unknown as TunnelsHost);
-  return { client, storage, handler: tunnels, tunnels, handleTunnelExit };
+  });
+  return {
+    client,
+    storage,
+    handler: tunnels,
+    tunnels,
+    handleTunnelExit,
+    runtimeCalls
+  };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > get', () => {
   let warn: ReturnType<typeof vi.spyOn>;
@@ -194,37 +240,42 @@ describe('tunnel service > get', () => {
     const metaPut = putCalls.find(([key]) => key === 'tunnels:meta');
     expect(tunnelsPut?.[1]).toEqual({ '8080': info });
     expect(metaPut?.[1]).toEqual({
-      '8080': { optionsHash: 'v1:quick', tunnelRunId: request.runId }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1',
+        tunnelRunId: request.runId
+      }
     });
   });
 
-  it('replays the same quick run request when the first call loses RPC transport', async () => {
+  it('surfaces RPC transport loss without replaying the tunnel run', async () => {
     const { client, handler } = makeHandler();
-    client.tunnels.ensureTunnelRun
-      .mockRejectedValueOnce(createDisposedRPCError())
-      .mockImplementationOnce(async (request) => ({
-        started: false,
-        run: {
-          ...request,
-          url: 'https://stub.trycloudflare.com',
-          hostname: 'stub.trycloudflare.com',
-          startedAt: '2026-05-13T00:00:00.000Z'
-        }
-      }));
+    const error = createDisposedRPCError();
+    client.tunnels.ensureTunnelRun.mockRejectedValueOnce(error);
 
-    const info = await handler.get(8080);
+    await expect(handler.get(8080)).rejects.toBe(error);
 
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
-    const second = client.tunnels.ensureTunnelRun.mock.calls[1][0];
-    expect(second).toEqual(first);
-    expect(info).toEqual({
-      id: first.tunnelId,
-      port: 8080,
-      url: 'https://stub.trycloudflare.com',
-      hostname: 'stub.trycloudflare.com',
-      createdAt: '2026-05-13T00:00:00.000Z'
-    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses fresh runtime callback controls for sequential tunnel runs', async () => {
+    const { client, handler, runtimeCalls } = makeHandler();
+    mockEnsureQuick(client.tunnels, (tunnelId, port, runId) =>
+      makeRecord({ id: tunnelId, port, createdAt: runId })
+    );
+
+    await handler.get(8080);
+    await handler.destroy(8080);
+    await handler.get(8080);
+
+    expect(runtimeCalls.map((call) => call.operation)).toEqual([
+      'tunnel.provision',
+      'tunnel.destroy',
+      'tunnel.provision'
+    ]);
+    expect(runtimeCalls[0].control).not.toBe(runtimeCalls[1].control);
+    expect(runtimeCalls[1].control).not.toBe(runtimeCalls[2].control);
   });
 
   it('records runtime and sandbox lifetime ownership for quick tunnels', async () => {
@@ -261,12 +312,21 @@ describe('tunnel service > get', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     await storage.put('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-1' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
+      }
     });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger(),
       ...makeFences()
@@ -301,16 +361,18 @@ describe('tunnel service > get', () => {
     await expect(storage.get('tunnels')).resolves.toEqual({ '8080': fresh });
   });
 
-  it('captures runtime after spawn when no active runtime exists before RPC', async () => {
+  it('persists the admitted lease runtime instead of a discovery snapshot', async () => {
     const getRuntime = vi
       .fn()
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ id: 'runtime-after-rpc' });
-    const markStarted = vi.fn(async () => ({ id: 'runtime-created-early' }));
+    const unexpectedPublisher = vi.fn(async () => ({
+      id: 'runtime-created-early'
+    }));
     const { client, storage, handler } = makeHandler({
       currentRuntime: {
         get: getRuntime,
-        markStarted,
+        unexpectedPublisher,
         assertActive: vi.fn(async () => {})
       },
       currentLifetime: makeFences().currentLifetime
@@ -322,81 +384,47 @@ describe('tunnel service > get', () => {
     await handler.get(8080);
 
     expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
-    expect(markStarted).not.toHaveBeenCalled();
+    expect(unexpectedPublisher).not.toHaveBeenCalled();
     const meta =
       await storage.get<Record<string, Record<string, unknown>>>(
         'tunnels:meta'
       );
-    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-after-rpc');
+    expect(meta?.['8080']?.runtimeIdentityID).toBe('runtime-1');
+    expect(meta?.['8080']?.runtimeIncarnationID).toBe('inc-1');
   });
 
-  it('does not commit when runtime is unavailable after spawn', async () => {
+  it('does not use a separate runtime discovery after admission', async () => {
+    const getRuntime = vi.fn(async () => null);
     const { client, storage, handler } = makeHandler({
-      currentRuntime: {
-        get: vi.fn(async () => null),
-        assertActive: vi.fn(async () => {})
-      },
+      currentRuntime: { get: getRuntime },
       currentLifetime: makeFences().currentLifetime
     } as unknown as Partial<TunnelsHost>);
     mockEnsureQuick(client.tunnels, async (id, port) =>
       makeRecord({ id, port })
     );
 
-    let caught: unknown;
-    try {
-      await handler.get(8080);
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toMatchObject({ name: 'OperationInterruptedError' });
-    expect((caught as { code?: unknown }).code).toBe(
-      ErrorCode.OPERATION_INTERRUPTED
-    );
-    expect((caught as { context?: unknown }).context).toMatchObject({
-      operation: 'tunnel.get',
-      reason: 'recovery_exhausted',
-      admitted: true,
-      retryable: true
-    });
-    await expect(storage.get('tunnels')).resolves.toBeUndefined();
+    await expect(handler.get(8080)).resolves.toMatchObject({ port: 8080 });
+    expect(getRuntime).not.toHaveBeenCalled();
+    await expect(storage.get('tunnels')).resolves.toBeDefined();
   });
 
-  it('recovers quick get() after runtime replacement during spawn', async () => {
-    const second = makeRecord({
-      id: 'quick-second00second',
-      port: 8080,
-      url: 'https://second.trycloudflare.com',
-      hostname: 'second.trycloudflare.com'
-    });
+  it('surfaces runtime replacement during spawn without recovery/retry', async () => {
     const { client, handler } = makeHandler(
       makeFences({
         currentRuntime: {
-          // First attempt's post-spawn fence reports a replaced runtime;
-          // the retry runs clean.
-          assertActive: vi
-            .fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(new RuntimeIdentityInactiveError())
-            .mockResolvedValue(undefined)
+          assertActive: vi.fn(async () => {
+            throw new RuntimeIdentityInactiveError();
+          })
         }
       })
     );
-    client.tunnels.ensureTunnelRun
-      .mockImplementationOnce(async (request) =>
-        ensureQuickResult(request, makeRecord({ id: 'quick-first000first' }))
-      )
-      .mockImplementationOnce(async (request) =>
-        ensureQuickResult(request, second)
-      );
+    client.tunnels.ensureTunnelRun.mockImplementationOnce(async (request) => {
+      throw new RuntimeIdentityInactiveError();
+    });
 
-    const info = await handler.get(8080);
-
-    expect(info).toEqual(second);
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const firstRequest = client.tunnels.ensureTunnelRun.mock.calls[0][0];
-    const secondRequest = client.tunnels.ensureTunnelRun.mock.calls[1][0];
-    expect(secondRequest).toEqual(firstRequest);
+    await expect(handler.get(8080)).rejects.toBeInstanceOf(
+      RuntimeIdentityInactiveError
+    );
   });
 
   it('surfaces sandbox lifetime changes as non-retryable operation interruptions', async () => {
@@ -425,41 +453,21 @@ describe('tunnel service > get', () => {
     });
   });
 
-  it('bounds runtime-replacement recovery and never commits a partial record', async () => {
-    // Every post-spawn fence reports a replaced runtime, so recovery can
-    // never converge. The operation surfaces recovery_exhausted and
-    // leaves storage empty so no orphaned tunnel record persists.
-    let assertCalls = 0;
+  it('does not consult transitional runtime assertions', async () => {
+    const assertActive = vi.fn(async () => {
+      throw new RuntimeIdentityInactiveError();
+    });
     const { client, storage, handler } = makeHandler(
-      makeFences({
-        currentRuntime: {
-          assertActive: vi.fn(async () => {
-            assertCalls += 1;
-            if (assertCalls % 2 === 0) {
-              throw new RuntimeIdentityInactiveError();
-            }
-          })
-        }
-      })
+      makeFences({ currentRuntime: { assertActive } })
     );
     mockEnsureQuick(client.tunnels, async (id, port) =>
       makeRecord({ id, port })
     );
 
-    await expect(handler.get(8080)).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: expect.objectContaining({
-        reason: 'recovery_exhausted',
-        operation: 'tunnel.get',
-        retryable: true,
-        admitted: true,
-        recoveryAttempts: 2,
-        maxRecoveryAttempts: 2
-      })
-    });
-    expect(await storage.get('tunnels')).toBeUndefined();
-    expect(await storage.get('tunnels:meta')).toBeUndefined();
+    await expect(handler.get(8080)).resolves.toMatchObject({ port: 8080 });
+    expect(assertActive).not.toHaveBeenCalled();
+    expect(await storage.get('tunnels')).toBeDefined();
+    expect(await storage.get('tunnels:meta')).toBeDefined();
   });
 
   it('refreshes a quick cache hit owned by an old runtime', async () => {
@@ -473,16 +481,15 @@ describe('tunnel service > get', () => {
       '8080': makeRecord({ id: 'quick-stale0000stale' })
     });
     await (storage.put as StoragePutMock)('tunnels:meta', {
-      '8080': { optionsHash: 'v1:quick', runtimeIdentityID: 'runtime-old' }
+      '8080': {
+        optionsHash: 'v1:quick',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'old-incarnation'
+      }
     });
     const { client, handler } = makeHandler({
       storage,
-      ...makeFences({
-        currentRuntime: {
-          get: vi.fn(async () => ({ id: 'runtime-new' })),
-          markStarted: vi.fn(async () => ({ id: 'runtime-new' }))
-        }
-      })
+      ...makeFences()
     });
     mockEnsureQuick(client.tunnels, async () => fresh);
 
@@ -497,9 +504,14 @@ describe('tunnel service > get', () => {
     const { client } = makeClient();
     const storage = makeStorage({ '8080': record });
     const { tunnels: handler } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger()
     });

@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
-    "@cloudflare/vite-plugin": "^1.42.0",
+    "@cloudflare/vite-plugin": "^1.46.0",
     "@react-router/dev": "^7.15.0",
     "@tailwindcss/vite": "^4.1.17",
     "@types/node": "^24.10.1",

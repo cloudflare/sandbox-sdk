@@ -32,13 +32,20 @@ export async function unmountBucketOperation(
     }
 
     if (mountInfo.mountType === 'local-sync') {
-      await mountInfo.syncManager.stop();
+      if (context.s3fsHost) {
+        await mountInfo.syncManager.stop();
+      } else {
+        mountInfo.syncManager.interrupt();
+      }
       mountInfo.mounted = false;
       context.registry.delete(mountPath);
     } else {
       let unmounted = !mountInfo.mounted;
-      if (mountInfo.mounted) {
-        const result = await context.getMounts().unmountFuse(mountPath);
+      if (mountInfo.mounted && context.s3fsHost) {
+        const result = await context.runRuntimeCall(
+          'mount.unmountFuse',
+          (control) => control.mounts.unmountFuse(mountPath)
+        );
         if (!result.success) {
           const stderr = result.stderr || 'unknown error';
           throw new BucketUnmountError(
@@ -47,6 +54,9 @@ export async function unmountBucketOperation(
         }
         mountInfo.mounted = false;
         unmounted = true;
+      } else if (mountInfo.mounted) {
+        mountInfo.mounted = false;
+        unmounted = false;
       }
 
       if (mountInfo.mountType === 'r2-egress') {
@@ -70,16 +80,22 @@ export async function unmountBucketOperation(
       context.registry.delete(mountPath);
 
       try {
-        const cleanup = await context.getMounts().removeMountDirectory({
-          path: mountPath,
-          onlyIfNotMountpoint: true
-        });
-        if (!cleanup.success) {
-          context.logger.warn('mount directory removal failed', {
-            mountPath,
-            exitCode: cleanup.exitCode,
-            stderr: cleanup.stderr
-          });
+        if (context.s3fsHost) {
+          const cleanup = await context.runRuntimeCall(
+            'mount.removeMountDirectory',
+            (control) =>
+              control.mounts.removeMountDirectory({
+                path: mountPath,
+                onlyIfNotMountpoint: true
+              })
+          );
+          if (!cleanup.success) {
+            context.logger.warn('mount directory removal failed', {
+              mountPath,
+              exitCode: cleanup.exitCode,
+              stderr: cleanup.stderr
+            });
+          }
         }
       } catch (err) {
         context.logger.warn('mount directory removal failed', {
@@ -88,14 +104,11 @@ export async function unmountBucketOperation(
         });
       }
 
-      if (unmounted) {
-        await deletePasswordFile(
-          context.getS3FSHost(),
-          mountInfo.passwordFilePath
-        );
+      if (unmounted && context.s3fsHost) {
+        await deletePasswordFile(context.s3fsHost, mountInfo.passwordFilePath);
         if (mountInfo.additionalHeaderFilePath) {
           await deleteAdditionalHeaderFile(
-            context.getS3FSHost(),
+            context.s3fsHost,
             mountInfo.additionalHeaderFilePath
           );
         }

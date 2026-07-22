@@ -23,6 +23,8 @@
   "include": [
     "src/**/*.ts",
     "tests/**/*.ts",
+    "tests-harness/**/*.ts",
+    "vitest.harness.config.ts",
     "../../extensions/*/src/**/*.ts",
     "../../extensions/*/tests/**/*.ts"
   ],

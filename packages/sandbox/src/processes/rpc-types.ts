@@ -26,15 +26,11 @@ export interface ProcessCapabilityRPC {
   status(): Promise<ProcessStatus>;
   openLogs(
     options?: ProcessLogsRPCOptions
-  ): Promise<
-    ProcessLogSubscriptionRPC | ProcessPullSubscriptionRPC<ProcessLogEvent>
-  >;
+  ): Promise<ProcessPullSubscriptionRPC<ProcessLogEvent>>;
   openPortWatch(
     port: number,
     options?: PortWatchRPCOptions
-  ): Promise<
-    ProcessPortSubscriptionRPC | ProcessPullSubscriptionRPC<PortWatchEvent>
-  >;
+  ): Promise<ProcessPullSubscriptionRPC<PortWatchEvent>>;
   kill(signal: number): Promise<void>;
 }
 
