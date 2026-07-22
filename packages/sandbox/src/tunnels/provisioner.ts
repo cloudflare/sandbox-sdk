@@ -5,7 +5,6 @@ import type {
   QuickTunnelInfo,
   SandboxTunnelsAPI
 } from '@repo/shared';
-import { RPCTransportError } from '../errors';
 import {
   createTunnel,
   findTunnelByName,
@@ -21,12 +20,7 @@ import {
   type TunnelMetaEntry
 } from './storage';
 
-interface TunnelsRPCClient {
-  tunnels: SandboxTunnelsAPI;
-}
-
 export interface TunnelProvisionerHost {
-  client: TunnelsRPCClient;
   sandboxId?: string;
   getNamedTunnelConfig?: () => Promise<{
     token: string;
@@ -53,10 +47,6 @@ function createQuickTunnelId(): string {
   return `quick-${randomId()}`;
 }
 
-// Replays use the same request so container runId idempotency can resolve
-// an ambiguous transport failure.
-const TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS = 1;
-
 export class TunnelProvisioner {
   readonly #host: TunnelProvisionerHost;
   #zoneNamePromise: Promise<string> | null = null;
@@ -66,11 +56,12 @@ export class TunnelProvisioner {
   }
 
   async provisionQuickTunnel(
+    tunnels: SandboxTunnelsAPI,
     port: number,
     tunnelRunId: string,
     tunnelId = createQuickTunnelId()
   ): Promise<QuickTunnelInfo> {
-    const result = await this.#ensureTunnelRun({
+    const result = await this.#ensureTunnelRun(tunnels, {
       mode: 'quick',
       tunnelId,
       runId: tunnelRunId,
@@ -196,10 +187,11 @@ export class TunnelProvisioner {
   }
 
   async startNamedTunnelRun(
+    tunnels: SandboxTunnelsAPI,
     prepared: PreparedNamedTunnel,
     tunnelRunId: string
   ): Promise<void> {
-    const result = await this.#ensureTunnelRun({
+    const result = await this.#ensureTunnelRun(tunnels, {
       mode: 'named',
       tunnelId: prepared.tunnelId,
       runId: tunnelRunId,
@@ -216,22 +208,10 @@ export class TunnelProvisioner {
   }
 
   async #ensureTunnelRun(
+    tunnels: SandboxTunnelsAPI,
     request: EnsureTunnelRunRequest
   ): Promise<EnsureTunnelRunResult> {
-    let replays = 0;
-    while (true) {
-      try {
-        return await this.#host.client.tunnels.ensureTunnelRun(request);
-      } catch (error) {
-        if (
-          !(error instanceof RPCTransportError) ||
-          replays >= TUNNEL_RUN_TRANSPORT_REPLAY_ATTEMPTS
-        ) {
-          throw error;
-        }
-        replays += 1;
-      }
-    }
+    return await tunnels.ensureTunnelRun(request);
   }
 
   async #getZoneName(config: {

@@ -5,7 +5,10 @@ import { cleanupBucketMountsForDestroy } from '../src/storage-mount/lifecycle-cl
 import type { MountOutboundHost } from '../src/storage-mount/outbound';
 import { MountRegistry } from '../src/storage-mount/registry';
 import type { S3FSHost } from '../src/storage-mount/s3fs';
-import type { R2BindingMountInfo } from '../src/storage-mount/types';
+import type {
+  LocalSyncMountInfo,
+  R2BindingMountInfo
+} from '../src/storage-mount/types';
 
 function createLogger(): Logger {
   return {
@@ -63,7 +66,35 @@ function createR2Mount(mountPath: string): R2BindingMountInfo {
 }
 
 describe('bucket mount destroy lifecycle cleanup', () => {
-  it('preserves failed FUSE unmounts for a later destroy cleanup retry', async () => {
+  it('interrupts local sync without waiting for a hung stop', async () => {
+    const logger = createLogger();
+    const stop = vi.fn(() => new Promise<void>(() => {}));
+    const interrupt = vi.fn();
+    const registry = new MountRegistry();
+    registry.set('/mnt/local', {
+      mountId: 'mount-local',
+      mountType: 'local-sync',
+      bucket: 'MY_BUCKET',
+      mountPath: '/mnt/local',
+      mounted: true,
+      syncManager: { stop, interrupt }
+    } as unknown as LocalSyncMountInfo);
+
+    const result = await cleanupBucketMountsForDestroy({
+      registry,
+      logger,
+      s3fsHost: null,
+      getOutboundHost: () => createOutboundHost(logger),
+      runMountOperation: (operation) => operation()
+    });
+
+    expect(result).toEqual({ mountsProcessed: 1, mountFailures: 0 });
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+    expect(registry.activeMounts.size).toBe(0);
+  });
+
+  it('clears logical destroy state even when physical FUSE unmount fails', async () => {
     const logger = createLogger();
     const unmountFuse = vi
       .fn<(path: string) => Promise<MountCommandResult>>()
@@ -72,9 +103,10 @@ describe('bucket mount destroy lifecycle cleanup', () => {
       .mockResolvedValue(mountResult());
     const deleteFile = vi.fn(async () => undefined);
     const s3fsHost: S3FSHost = {
-      client: {
-        mounts: { unmountFuse, deleteFile }
-      } as unknown as ContainerControlClient,
+      runRuntimeCall: async (_operation, call) =>
+        call({
+          mounts: { unmountFuse, deleteFile }
+        } as unknown as ContainerControlClient),
       logger
     };
     const outboundHost = createOutboundHost(logger);
@@ -85,28 +117,15 @@ describe('bucket mount destroy lifecycle cleanup', () => {
     const firstResult = await cleanupBucketMountsForDestroy({
       registry,
       logger,
-      getS3FSHost: () => s3fsHost,
+      s3fsHost,
       getOutboundHost: () => outboundHost,
       runMountOperation
     });
 
     expect(firstResult).toEqual({ mountsProcessed: 1, mountFailures: 1 });
-    expect(registry.has('/mnt/r2')).toBe(true);
-    expect(registry.get('/mnt/r2')?.mounted).toBe(true);
-    expect(unmountFuse).toHaveBeenCalledWith('/mnt/r2');
-
-    const retryResult = await cleanupBucketMountsForDestroy({
-      registry,
-      logger,
-      getS3FSHost: () => s3fsHost,
-      getOutboundHost: () => outboundHost,
-      runMountOperation
-    });
-
-    expect(retryResult).toEqual({ mountsProcessed: 1, mountFailures: 0 });
     expect(registry.activeMounts.size).toBe(0);
-    expect(deleteFile).toHaveBeenCalledWith('/tmp/passwd--mnt-r2');
-    expect(deleteFile).toHaveBeenCalledWith('/tmp/ahbe--mnt-r2');
+    expect(unmountFuse).toHaveBeenCalledWith('/mnt/r2');
+    expect(deleteFile).not.toHaveBeenCalled();
     expect(outboundHost.removeOutboundByHost).toHaveBeenCalledWith(
       'r2.internal'
     );

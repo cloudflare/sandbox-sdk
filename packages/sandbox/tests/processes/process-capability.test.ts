@@ -47,7 +47,9 @@ function subscription<T>(events: T[] = []): {
 function host(status: ProcessStatus | null = running) {
   const logs = subscription() satisfies ProcessLogSubscriptionAPI;
   const ports = subscription() satisfies PortWatchSubscriptionAPI;
+  const releaseConnection = vi.fn();
   const control: ProcessCapabilityControl = {
+    retainRuntimeHold: vi.fn(() => releaseConnection),
     getProcess: vi.fn(async () => status),
     openLogs: vi.fn(async () => logs),
     openPortWatch: vi.fn(async () => ports),
@@ -57,7 +59,7 @@ function host(status: ProcessStatus | null = running) {
     runRead: async (_runtime, _operation, call) => call(control),
     runControl: async (_runtime, _operation, call) => call(control)
   };
-  return { control, lifecycle };
+  return { control, lifecycle, releaseConnection };
 }
 
 describe('ProcessCapabilityTarget', () => {
@@ -66,7 +68,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -82,7 +84,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -106,7 +108,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -127,8 +129,7 @@ describe('ProcessCapabilityTarget', () => {
           reason: 'runtime_replaced',
           operation: 'process.kill',
           admitted: true,
-          retryable: false,
-          effect: 'unknown'
+          retryable: false
         },
         httpStatus: 409,
         timestamp: new Date().toISOString()
@@ -137,7 +138,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
@@ -162,12 +163,12 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
-    const stream = await (await capability.openLogs()).stream();
-    await expect(stream.getReader().read()).resolves.toEqual({
+    const pullSubscription = await capability.openLogs();
+    await expect(pullSubscription.next()).resolves.toEqual({
       done: false,
       value: terminal
     });
@@ -179,6 +180,7 @@ describe('ProcessCapabilityTarget', () => {
     ]);
     expect(remote.cancel).toHaveBeenCalledTimes(1);
     expect(remote[Symbol.dispose]).toHaveBeenCalledTimes(1);
+    expect(testHost.releaseConnection).toHaveBeenCalledTimes(1);
   });
 
   it.each(['terminal', 'closure', 'read failure'])(
@@ -211,13 +213,11 @@ describe('ProcessCapabilityTarget', () => {
       const capability = new ProcessCapabilityTarget({
         id: 'p1',
         pid: 123,
-        runtime: { id: 'runtime-a' },
+        runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
         lifecycle: testHost.lifecycle
       });
 
-      const read = (await (await capability.openLogs()).stream())
-        .getReader()
-        .read();
+      const read = (await capability.openLogs()).next();
       if (outcome === 'terminal')
         await expect(read).resolves.toEqual({ done: false, value: terminal });
       else if (outcome === 'closure')
@@ -241,11 +241,11 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
-    await expect((await capability.openLogs()).stream()).rejects.toThrow(
+    await expect((await capability.openLogs()).next()).rejects.toThrow(
       'setup failed'
     );
     expect(remote.cancel).toHaveBeenCalledOnce();
@@ -270,13 +270,13 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 
-    const stream = await (await capability.openLogs()).stream();
+    const pullSubscription = await capability.openLogs();
 
-    await expect(stream.getReader().read()).rejects.toBeInstanceOf(
+    await expect(pullSubscription.next()).rejects.toBeInstanceOf(
       RPCTransportError
     );
     expect(remote.cancel).toHaveBeenCalledTimes(1);
@@ -289,7 +289,7 @@ describe('ProcessCapabilityTarget', () => {
     const capability = new ProcessCapabilityTarget({
       id: 'p1',
       pid: 123,
-      runtime: { id: 'runtime-a' },
+      runtime: { id: 'runtime-a', runtimeIncarnationID: 'incarnation-a' },
       lifecycle: testHost.lifecycle
     });
 

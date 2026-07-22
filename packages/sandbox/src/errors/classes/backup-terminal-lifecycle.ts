@@ -32,6 +32,7 @@ import type {
   ProcessReadyTimeoutContext,
   RPCTransportContext,
   RPCTransportErrorKind,
+  StaleTerminalHandleContext,
   TerminalControlErrorContext,
   TerminalNotFoundContext,
   ValidationFailedContext
@@ -171,6 +172,21 @@ export class TerminalControlError extends SandboxError<TerminalControlErrorConte
   }
 
   get operationName() {
+    return this.context.operation;
+  }
+}
+
+export class StaleTerminalHandleError extends SandboxError<StaleTerminalHandleContext> {
+  constructor(errorResponse: ErrorResponse<StaleTerminalHandleContext>) {
+    super(errorResponse);
+    this.name = 'StaleTerminalHandleError';
+  }
+
+  get terminalId() {
+    return this.context.terminalId;
+  }
+
+  get operation() {
     return this.context.operation;
   }
 }

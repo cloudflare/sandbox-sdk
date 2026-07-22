@@ -41,7 +41,7 @@ export interface PoolStats {
 
 interface ContainerRpc {
   startAndWaitForPorts(): Promise<void>;
-  stop(signal?: string): Promise<void>;
+  destroy(): Promise<void>;
   renewActivityTimeout(): void;
 }
 
@@ -202,11 +202,11 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     for (const containerUUID of [...this.warmContainers]) {
       try {
         const stub = this.getSandboxStub(containerUUID);
-        await (stub as unknown as ContainerRpc).stop();
+        await (stub as unknown as ContainerRpc).destroy();
         this.warmContainers.delete(containerUUID);
       } catch (error) {
         console.error({
-          message: 'Failed to stop container',
+          message: 'Failed to destroy container',
           component: 'warm-pool',
           containerUUID,
           error
@@ -443,20 +443,20 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
       console.info({
         message: 'Scaling down pool',
         component: 'warm-pool',
-        stopping: excess
+        destroying: excess
       });
 
-      const toStop = [...this.warmContainers].slice(0, excess);
-      const stopped: string[] = [];
+      const toDestroy = [...this.warmContainers].slice(0, excess);
+      const destroyed: string[] = [];
 
-      for (const uuid of toStop) {
+      for (const uuid of toDestroy) {
         try {
           const stub = this.getSandboxStub(uuid);
-          await (stub as unknown as ContainerRpc).stop();
-          stopped.push(uuid);
+          await (stub as unknown as ContainerRpc).destroy();
+          destroyed.push(uuid);
         } catch (error) {
           console.error({
-            message: 'Failed to stop container',
+            message: 'Failed to destroy container',
             component: 'warm-pool',
             containerUUID: uuid,
             error
@@ -464,7 +464,7 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
         }
       }
 
-      for (const uuid of stopped) {
+      for (const uuid of destroyed) {
         this.warmContainers.delete(uuid);
       }
       await this.persist();

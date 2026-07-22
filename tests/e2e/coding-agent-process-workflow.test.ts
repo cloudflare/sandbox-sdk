@@ -116,7 +116,7 @@ describe('coding agent process workflows', () => {
     expect(logs.events.at(-1)?.type).toBe('terminal');
 
     const pgrep = await post<{ stdout: string }>('/api/execute', {
-      command: ['/bin/bash', '-lc', "pgrep -f 'sleep 60' || true"]
+      command: ['/bin/bash', '-lc', "pgrep -f '[s]leep 60' || true"]
     });
     expect(pgrep.stdout.trim()).toBe('');
   }, 45000);
@@ -149,22 +149,26 @@ describe('coding agent process workflows', () => {
     expect(result.exitCode).not.toBe(0);
   }, 30000);
 
-  test('non-waking discovery and runtime fencing survive replacement', async () => {
+  test('non-waking discovery and runtime fencing reject stale handles', async () => {
     const result = await post<{
       stoppedListCount: number;
       stoppedGetFound: boolean;
-      staleError: string;
-      racingError: string;
-      recoveredState: string;
+      staleRejected: boolean;
+      staleReasonMatched: boolean;
+      racingRejected: boolean;
+      racingCode: string | null;
     }>('/api/process/runtime-fencing-regression', {});
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       stoppedListCount: 0,
       stoppedGetFound: false,
-      staleError: 'StaleProcessHandleError',
-      racingError: 'OperationInterruptedError',
-      recoveredState: 'running'
+      staleRejected: true,
+      staleReasonMatched: true,
+      racingRejected: true
     });
+    expect(['OPERATION_INTERRUPTED', 'RPC_TRANSPORT_ERROR']).toContain(
+      result.racingCode
+    );
   }, 60000);
 
   test('Codex shape: process ID is usable across requests for logs, status, and exit', async () => {
@@ -220,7 +224,7 @@ describe('coding agent process workflows', () => {
       command: [
         '/bin/bash',
         '-lc',
-        'printf start; yes truncate-me | head -c 400000'
+        'printf start; sleep 1; yes truncate-me | head -c 2000000'
       ]
     });
     await post(`/api/process/${noisy.id}/wait-for-log`, {

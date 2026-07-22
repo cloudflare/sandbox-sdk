@@ -10,6 +10,7 @@ describe('PTY', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let sandboxId: string;
+  const terminalIDs = new Map<string, string>();
 
   beforeAll(async () => {
     sandbox = await createTestSandbox();
@@ -26,7 +27,22 @@ describe('PTY', () => {
     ws: WebSocket;
     output: string[];
   }> {
-    const resolvedTerminalId = terminalId ?? `pty-${Date.now()}`;
+    let resolvedTerminalId = terminalId
+      ? terminalIDs.get(terminalId)
+      : undefined;
+    if (!resolvedTerminalId) {
+      const response = await fetch(`${workerUrl}/api/terminal/create`, {
+        method: 'POST',
+        headers: sandbox!.headers(),
+        body: JSON.stringify({ command: ['/bin/bash'], cols: 80, rows: 24 })
+      });
+      if (!response.ok) {
+        throw new Error(`Terminal creation failed: ${await response.text()}`);
+      }
+      const terminal = (await response.json()) as { id: string };
+      resolvedTerminalId = terminal.id;
+      if (terminalId) terminalIDs.set(terminalId, resolvedTerminalId);
+    }
     const path = `/terminal/${resolvedTerminalId}`;
     const wsUrl = `${workerUrl.replace(/^http/, 'ws')}${path}?sandboxId=${sandboxId}`;
     const ws = new WebSocket(wsUrl);
@@ -130,7 +146,8 @@ describe('PTY', () => {
       // Second connection: should receive buffered output
       const { ws: ws2, output: output2 } = await connectWebSocket(terminalId);
 
-      // Buffered output is sent before 'ready', so it should already be there
+      // Replay is forwarded asynchronously after connection readiness.
+      await waitForOutput(output2, marker);
       expect(output2.join('')).toContain(marker);
 
       cleanup(ws2);

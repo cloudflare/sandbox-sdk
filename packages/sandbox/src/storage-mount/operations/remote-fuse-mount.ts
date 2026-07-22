@@ -8,6 +8,8 @@ import {
   evictDirectoryMarkerCacheForMount,
   evictSigV4ClientCacheEntry
 } from '../outbound/s3-credential-proxy-handler';
+import type { MountRuntimeLease } from '../runtime-call';
+import type { S3FSHost } from '../s3fs';
 import {
   createDisableExpectHeaderFile,
   createPasswordFile,
@@ -32,6 +34,55 @@ export interface RemoteFuseMountContext extends BucketMountOperationContext {
   getR2AccessKeyID(): string | null;
   getR2SecretAccessKey(): string | null;
   lifecycle: MountLifecycle;
+  runtime: MountRuntimeLease['runtime'];
+  s3fsHost: S3FSHost;
+}
+
+export function validateRemoteFuseMount(
+  context: Pick<
+    RemoteFuseMountContext,
+    | 'registry'
+    | 'logger'
+    | 'getEnv'
+    | 'getEnvVars'
+    | 'getR2AccessKeyID'
+    | 'getR2SecretAccessKey'
+  >,
+  bucket: string,
+  mountPath: string,
+  options: RemoteMountBucketOptions
+): {
+  provider: BucketProvider | null;
+  credentials: ReturnType<typeof detectCredentials>;
+} {
+  const prefix = options.prefix;
+  validateRemoteMountOptions(context.registry.activeMounts, bucket, mountPath, {
+    ...options,
+    prefix
+  });
+  const provider = options.provider || detectProviderFromUrl(options.endpoint);
+  context.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+    explicitProvider: options.provider,
+    prefix
+  });
+  const envObj = context.getEnv() as Record<string, unknown>;
+  const envCredentials = {
+    AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+    AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+    R2_ACCESS_KEY_ID: context.getR2AccessKeyID() || undefined,
+    R2_SECRET_ACCESS_KEY: context.getR2SecretAccessKey() || undefined
+  };
+  const credentials = detectCredentials(options, {
+    ...envCredentials,
+    ...context.getEnvVars()
+  });
+  if (options.credentialProxy === true) {
+    validateProtectedS3fsOptions(options.s3fsOptions, 'credential proxy', [
+      'ahbe_conf',
+      'use_path_request_style'
+    ]);
+  }
+  return { provider, credentials };
 }
 
 export async function mountRemoteFuseBucket(
@@ -52,43 +103,17 @@ export async function mountRemoteFuseBucket(
   let credentialProxyMountId: string | undefined;
   let mountInfo: FuseMountInfo | undefined;
   try {
-    validateRemoteMountOptions(
-      context.registry.activeMounts,
+    const validation = validateRemoteFuseMount(
+      context,
       bucket,
       mountPath,
-      {
-        ...options,
-        prefix
-      }
+      options
     );
-
     const s3fsSource = buildS3fsSource(bucket, prefix);
-    provider = options.provider || detectProviderFromUrl(options.endpoint);
-
-    context.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
-
-    const envObj = context.getEnv() as Record<string, unknown>;
-    const envCredentials = {
-      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
-      R2_ACCESS_KEY_ID: context.getR2AccessKeyID() || undefined,
-      R2_SECRET_ACCESS_KEY: context.getR2SecretAccessKey() || undefined
-    };
-    const credentials = detectCredentials(options, {
-      ...envCredentials,
-      ...context.getEnvVars()
-    });
+    provider = validation.provider;
+    const credentials = validation.credentials;
 
     credentialProxyEnabled = options.credentialProxy === true;
-    if (credentialProxyEnabled) {
-      validateProtectedS3fsOptions(options.s3fsOptions, 'credential proxy', [
-        'ahbe_conf',
-        'use_path_request_style'
-      ]);
-    }
 
     passwordFilePath = generatePasswordFilePath();
     if (credentialProxyEnabled) {
@@ -121,10 +146,10 @@ export async function mountRemoteFuseBucket(
           }
         : {})
     };
-    const lifecycle = await context.lifecycle.capture();
+    const lifecycle = await context.lifecycle.capture(context.runtime);
 
     await createPasswordFile(
-      context.getS3FSHost(),
+      context.s3fsHost,
       passwordFilePath,
       bucket,
       credentialProxyEnabled
@@ -134,7 +159,7 @@ export async function mountRemoteFuseBucket(
     if (credentialProxyEnabled) {
       if (additionalHeaderFilePath) {
         await createDisableExpectHeaderFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           additionalHeaderFilePath
         );
       }
@@ -146,8 +171,12 @@ export async function mountRemoteFuseBucket(
       );
     }
 
-    dirExisted = await context.getMounts().pathExists(mountPath);
-    await context.getMounts().ensureDirectory(mountPath);
+    dirExisted = await context.runRuntimeCall('mount.pathExists', (control) =>
+      control.mounts.pathExists(mountPath)
+    );
+    await context.runRuntimeCall('mount.ensureDirectory', (control) =>
+      control.mounts.ensureDirectory(mountPath)
+    );
 
     const effectiveOptions: RemoteMountBucketOptions = credentialProxyEnabled
       ? {
@@ -163,7 +192,7 @@ export async function mountRemoteFuseBucket(
           ]
         }
       : options;
-    await executeS3FSMount(context.getS3FSHost(), {
+    await executeS3FSMount(context.s3fsHost, {
       bucket: s3fsSource,
       mountPath,
       options: effectiveOptions,
@@ -195,11 +224,11 @@ export async function mountRemoteFuseBucket(
 
     if (supportFilesSafeToDelete) {
       if (passwordFilePath) {
-        await deletePasswordFile(context.getS3FSHost(), passwordFilePath);
+        await deletePasswordFile(context.s3fsHost, passwordFilePath);
       }
       if (additionalHeaderFilePath) {
         await deleteAdditionalHeaderFile(
-          context.getS3FSHost(),
+          context.s3fsHost,
           additionalHeaderFilePath
         );
       }
@@ -207,10 +236,12 @@ export async function mountRemoteFuseBucket(
 
     if (!dirExisted) {
       try {
-        await context.getMounts().removeMountDirectory({
-          path: mountPath,
-          onlyIfNotMountpoint: false
-        });
+        await context.runRuntimeCall('mount.removeMountDirectory', (control) =>
+          control.mounts.removeMountDirectory({
+            path: mountPath,
+            onlyIfNotMountpoint: false
+          })
+        );
       } catch {
         // best-effort cleanup
       }

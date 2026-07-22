@@ -12,8 +12,21 @@ import type {
   TunnelOptions
 } from '@repo/shared';
 import { logCanonicalEvent } from '@repo/shared';
-import type { CurrentRuntimeIdentity } from '../current-runtime-identity';
-import type { CurrentSandboxLifetime } from '../sandbox-lifetime';
+import {
+  OperationInterruptedError,
+  RuntimeControlProtocolError
+} from '../errors';
+import {
+  RuntimeIdentity,
+  type RuntimeLease,
+  type RuntimeRecordStorage
+} from '../runtime';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
+import type {
+  CurrentSandboxLifetime,
+  SandboxLifetime
+} from '../sandbox-lifetime';
+import { SandboxLifetimeChangedError } from '../sandbox-lifetime';
 import {
   SandboxSecurityError,
   validatePort,
@@ -24,11 +37,15 @@ import {
   resumeNamedTunnelCleanupEntry,
   resumeNamedTunnelCleanupRecords
 } from './cleanup';
-import { TunnelOperationLifecycle } from './lifecycle';
+import { createTunnelInterruptedError } from './lifecycle';
 import { TunnelProvisioner } from './provisioner';
 import { randomId } from './random-id';
 import { pruneTunnelsForRestart } from './restart';
-import type { TunnelCleanupEntry, TunnelsStorage } from './storage';
+import type {
+  TunnelCleanupEntry,
+  TunnelMetaEntry,
+  TunnelsStorage
+} from './storage';
 import {
   CLEANUP_STORAGE_KEY,
   computeOptionsHash,
@@ -50,14 +67,25 @@ import {
 
 export type { TunnelsStorage, TunnelsStorageTxn } from './storage';
 
-/** Subset of the RPC client this service depends on. */
-interface TunnelsRPCClient {
-  tunnels: SandboxTunnelsAPI;
-}
-
 /** Subset of the Sandbox DO the service reads from. */
+export type TunnelProvisionLease = Pick<RuntimeLease, 'runtime' | 'retain'> & {
+  tunnels: SandboxTunnelsAPI;
+};
+
+export type TunnelExistingRuntimeCall = <T>(
+  runtime: RuntimeIdentity,
+  operation: string,
+  call: (tunnels: SandboxTunnelsAPI) => Promise<T>
+) => Promise<T | null>;
+
 export interface TunnelServiceHost {
-  client: TunnelsRPCClient;
+  runProvision<T>(
+    call: (lease: TunnelProvisionLease) => Promise<T>
+  ): Promise<T>;
+  runExisting: TunnelExistingRuntimeCall;
+  getStoredRuntime(
+    storage?: RuntimeRecordStorage
+  ): Promise<RuntimeIdentity | null>;
   storage: TunnelsStorage;
   logger: Logger;
   /**
@@ -85,8 +113,6 @@ export interface TunnelServiceHost {
    * to the global `fetch`. Tests inject a mock here.
    */
   fetcher?: typeof fetch;
-  /** Runtime fence for records backed by a current container process. */
-  currentRuntime?: Pick<CurrentRuntimeIdentity, 'get' | 'assertActive'>;
   /** Sandbox lifetime fence for operations that must not cross destroy(). */
   currentLifetime?: Pick<
     CurrentSandboxLifetime,
@@ -111,7 +137,9 @@ export type TunnelExitHandler = (
   id: string,
   port: number,
   exitCode: number | null,
-  tunnelRunId?: string
+  tunnelRunId: string,
+  runtime: RuntimeIdentity,
+  isSessionCurrent: () => boolean
 ) => Promise<void>;
 
 export interface TunnelsHandle {
@@ -127,10 +155,10 @@ export interface TunnelsHandle {
    * call this; they call `destroy(port)` for an individual tunnel.
    */
   destroyAll: () => Promise<void>;
+  /** Stop stored container-side tunnel runs without mutating durable state. */
+  destroyAllRuntimeRuns: () => Promise<void>;
   /** Resume retained Cloudflare-side cleanup records. Internal lifecycle hook. */
   resumeCleanup: () => Promise<void>;
-  /** Reconcile durable tunnel state after a fresh container runtime starts. */
-  onRuntimeStart: () => Promise<void>;
   /** Reconcile durable tunnel state after the container runtime stops. */
   onRuntimeStop: () => Promise<void>;
   /** Clear public tunnel state after sandbox destroy processing completes. */
@@ -153,6 +181,27 @@ function validateTunnelPort(port: number): void {
       `Invalid port number: ${port}. Must be 1024-65535, excluding reserved ports.`
     );
   }
+}
+
+function tunnelMetaOwnsRuntime(
+  meta: TunnelMetaEntry | undefined,
+  runtime: RuntimeIdentity | null
+): boolean {
+  return Boolean(
+    runtime &&
+    meta?.runtimeIdentityID === runtime.id &&
+    meta.runtimeIncarnationID === runtime.runtimeIncarnationID
+  );
+}
+
+function tunnelOwningRuntime(
+  meta: TunnelMetaEntry | undefined
+): RuntimeIdentity | null {
+  if (!meta?.runtimeIdentityID || !meta.runtimeIncarnationID) return null;
+  return new RuntimeIdentity({
+    id: meta.runtimeIdentityID,
+    runtimeIncarnationID: meta.runtimeIncarnationID
+  });
 }
 
 /**
@@ -179,6 +228,13 @@ function isTunnelNotFoundError(error: unknown): boolean {
   return hasErrorCode(error, 'TUNNEL_NOT_FOUND');
 }
 
+function isRuntimeActivationMismatch(error: unknown): boolean {
+  return (
+    error instanceof RuntimeControlProtocolError &&
+    error.context.reason === 'activation-mismatch'
+  );
+}
+
 interface TunnelGetRecoveryState {
   quickRun?: {
     tunnelId: string;
@@ -194,12 +250,10 @@ function createTunnelRunId(): string {
 export class TunnelService implements TunnelsHandler {
   readonly #host: TunnelServiceHost;
   readonly #portLocks = new Map<number, Promise<unknown>>();
-  readonly #lifecycle: TunnelOperationLifecycle;
   readonly #provisioner: TunnelProvisioner;
 
   constructor(host: TunnelServiceHost) {
     this.#host = host;
-    this.#lifecycle = new TunnelOperationLifecycle(host);
     this.#provisioner = new TunnelProvisioner(host);
   }
 
@@ -228,16 +282,18 @@ export class TunnelService implements TunnelsHandler {
 
       const recovery: TunnelGetRecoveryState = {};
       const result = await this.#withPortLock(port, () =>
-        this.#lifecycle.runGetWithRecovery(() =>
-          this.#getLocked(port, options, requestedHash, recovery)
-        )
+        this.#getLocked(port, options, requestedHash, recovery)
       );
       cacheState = result.cacheState;
       outcome = 'success';
       return result.info;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      throw error;
+      if (caughtError instanceof OperationInterruptedError) {
+        // Ensure retryable is false since we do not recover
+        caughtError.context.retryable = false;
+      }
+      throw caughtError;
     } finally {
       logCanonicalEvent(this.#host.logger, {
         event: 'tunnel.get',
@@ -285,19 +341,17 @@ export class TunnelService implements TunnelsHandler {
         }
       }
 
-      if (this.#host.currentRuntime) {
-        const currentRuntime = await this.#host.currentRuntime.get();
-        if (
-          !metaEntry?.runtimeIdentityID ||
-          currentRuntime?.id !== metaEntry.runtimeIdentityID
-        ) {
-          return {
-            info: existing.name
-              ? await this.#provisionNamedTunnel(port, existing.name)
-              : await this.#provisionQuickTunnel(port, recovery),
-            cacheState: 'miss'
-          };
-        }
+      const currentRuntime = await this.#host.getStoredRuntime();
+      if (
+        !tunnelMetaOwnsRuntime(metaEntry, currentRuntime) ||
+        !(await this.#validateCachedRuntime(currentRuntime))
+      ) {
+        return {
+          info: existing.name
+            ? await this.#provisionNamedTunnel(port, existing.name)
+            : await this.#provisionQuickTunnel(port, recovery),
+          cacheState: 'miss'
+        };
       }
 
       return { info: existing, cacheState: 'hit' };
@@ -313,6 +367,30 @@ export class TunnelService implements TunnelsHandler {
         : await this.#provisionQuickTunnel(port, recovery),
       cacheState: 'miss'
     };
+  }
+
+  async #validateCachedRuntime(
+    runtime: RuntimeIdentity | null
+  ): Promise<boolean> {
+    if (!runtime) return false;
+    try {
+      return (
+        (await this.#host.runExisting(
+          runtime,
+          'tunnel.lookup',
+          async () => true
+        )) === true
+      );
+    } catch (error) {
+      if (
+        error instanceof OperationInterruptedError ||
+        (error instanceof RuntimeControlProtocolError &&
+          error.context.reason === 'activation-mismatch')
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   #assertSameOptions(
@@ -347,11 +425,14 @@ export class TunnelService implements TunnelsHandler {
 
   async #updatePortCleanup(
     port: number,
-    next: (entry: TunnelCleanupEntry | undefined) => TunnelCleanupEntry
+    runtime: RuntimeIdentity,
+    next: (entry: TunnelCleanupEntry | undefined) => TunnelCleanupEntry,
+    isInterrupted: () => boolean = () => false
   ): Promise<void> {
-    await updatePortState(this.#host.storage, port, (state) => ({
-      cleanup: next(state.cleanup)
-    }));
+    await updatePortState(this.#host.storage, port, async (state, txn) => {
+      await this.#assertStoredRuntime(txn, runtime, isInterrupted);
+      return { cleanup: next(state.cleanup) };
+    });
   }
 
   #requireCleanupEntry(
@@ -367,105 +448,257 @@ export class TunnelService implements TunnelsHandler {
     port: number,
     recovery: TunnelGetRecoveryState
   ): Promise<QuickTunnelInfo> {
-    let lifecycle = await this.#lifecycle.capture();
+    const lifetime = await this.#host.currentLifetime?.getOrCreate();
     recovery.quickRun ??= {
       tunnelId: `quick-${randomId()}`,
       runId: createTunnelRunId()
     };
     const { tunnelId, runId } = recovery.quickRun;
-    const spawned = await this.#provisioner.provisionQuickTunnel(
-      port,
-      runId,
-      tunnelId
-    );
-    lifecycle = await this.#lifecycle.requireRuntime(
-      lifecycle,
-      'process_ready',
-      true
-    );
-    await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
-    await updatePortState(this.#host.storage, port, () => ({
-      info: spawned,
-      meta: {
-        optionsHash: 'v1:quick',
-        ...(lifecycle.runtime && {
-          runtimeIdentityID: lifecycle.runtime.id
-        }),
-        ...(lifecycle.lifetime && {
-          sandboxLifetimeID: lifecycle.lifetime.id
-        }),
-        tunnelRunId: runId
+
+    return await this.#host.runProvision(async (lease) => {
+      let interrupted = false;
+      let committedInfo: TunnelInfo | undefined;
+      const hold = lease.retain(() => {
+        interrupted = true;
+      });
+      const isInterrupted = () => interrupted;
+      try {
+        await this.#assertStoredRuntime(
+          undefined,
+          lease.runtime,
+          isInterrupted
+        );
+        await this.#assertSandboxLifetime(lifetime, 'starting');
+        const spawned = await this.#provisioner.provisionQuickTunnel(
+          lease.tunnels,
+          port,
+          runId,
+          tunnelId
+        );
+        await this.#assertSandboxLifetime(lifetime, 'process_ready');
+        await updatePortState(this.#host.storage, port, async (_state, txn) => {
+          await this.#assertStoredRuntime(txn, lease.runtime, isInterrupted);
+          return {
+            info: spawned,
+            meta: {
+              optionsHash: 'v1:quick',
+              runtimeIdentityID: lease.runtime.id,
+              runtimeIncarnationID: lease.runtime.runtimeIncarnationID,
+              ...(lifetime && { sandboxLifetimeID: lifetime.id }),
+              tunnelRunId: runId
+            }
+          };
+        });
+        committedInfo = spawned;
+        await this.#assertStoredRuntime(
+          undefined,
+          lease.runtime,
+          isInterrupted
+        );
+        await this.#assertSandboxLifetime(lifetime, 'committing');
+        return spawned;
+      } catch (error) {
+        if (committedInfo) {
+          await this.#invalidateCommittedPortIfUnchanged(
+            port,
+            committedInfo,
+            lease.runtime,
+            runId
+          );
+        }
+        throw error;
+      } finally {
+        hold.release();
       }
-    }));
-    await this.#lifecycle.assertActive(lifecycle, 'committing', true);
-    return spawned;
+    });
   }
 
   async #provisionNamedTunnel(
     port: number,
     name: string
   ): Promise<NamedTunnelInfo> {
-    let lifecycle = await this.#lifecycle.capture();
+    const lifetime = await this.#host.currentLifetime?.getOrCreate();
 
-    await this.#resumePortCleanup(port);
+    return await this.#host.runProvision(async (lease) => {
+      let interrupted = false;
+      let committedInfo: TunnelInfo | undefined;
+      let committedRunID: string | undefined;
+      const hold = lease.retain(() => {
+        interrupted = true;
+      });
+      const isInterrupted = () => interrupted;
+      try {
+        await this.#assertStoredRuntime(
+          undefined,
+          lease.runtime,
+          isInterrupted
+        );
+        await this.#assertSandboxLifetime(lifetime, 'starting');
+        await this.#resumePortCleanup(port);
+        await this.#assertStoredRuntime(
+          undefined,
+          lease.runtime,
+          isInterrupted
+        );
 
-    const prepared = await this.#provisioner.prepareNamedTunnel(port, name, {
-      onIntentReady: (entry) => this.#updatePortCleanup(port, () => entry),
-      onTunnelReady: (tunnelId) =>
-        this.#updatePortCleanup(port, (entry) =>
-          markCleanupTunnelReady(
-            this.#requireCleanupEntry(port, entry),
-            tunnelId
-          )
-        ),
-      onDNSReady: (dnsRecordId) =>
-        this.#updatePortCleanup(port, (entry) =>
-          markCleanupDNSReady(
-            this.#requireCleanupEntry(port, entry),
-            dnsRecordId
-          )
-        )
+        const prepared = await this.#provisioner.prepareNamedTunnel(
+          port,
+          name,
+          {
+            onIntentReady: (entry) =>
+              this.#updatePortCleanup(
+                port,
+                lease.runtime,
+                () => entry,
+                isInterrupted
+              ),
+            onTunnelReady: (tunnelID) =>
+              this.#updatePortCleanup(
+                port,
+                lease.runtime,
+                (entry) =>
+                  markCleanupTunnelReady(
+                    this.#requireCleanupEntry(port, entry),
+                    tunnelID
+                  ),
+                isInterrupted
+              ),
+            onDNSReady: (dnsRecordID) =>
+              this.#updatePortCleanup(
+                port,
+                lease.runtime,
+                (entry) =>
+                  markCleanupDNSReady(
+                    this.#requireCleanupEntry(port, entry),
+                    dnsRecordID
+                  ),
+                isInterrupted
+              )
+          }
+        );
+        const cleanupEntry = createNamedTunnelCleanupEntry(
+          prepared.info,
+          prepared.meta
+        );
+        if (cleanupEntry) {
+          await this.#updatePortCleanup(
+            port,
+            lease.runtime,
+            () => cleanupEntry,
+            isInterrupted
+          );
+        }
+        await this.#assertSandboxLifetime(lifetime, 'cloudflare_ready');
+
+        const tunnelRunID = createTunnelRunId();
+        await this.#provisioner.startNamedTunnelRun(
+          lease.tunnels,
+          prepared,
+          tunnelRunID
+        );
+        await this.#assertSandboxLifetime(lifetime, 'process_ready');
+
+        await updatePortState(this.#host.storage, port, async (_state, txn) => {
+          await this.#assertStoredRuntime(txn, lease.runtime, isInterrupted);
+          return {
+            info: prepared.info,
+            meta: {
+              ...prepared.meta,
+              runtimeIdentityID: lease.runtime.id,
+              runtimeIncarnationID: lease.runtime.runtimeIncarnationID,
+              ...(lifetime && { sandboxLifetimeID: lifetime.id }),
+              tunnelRunId: tunnelRunID
+            },
+            cleanup: undefined
+          };
+        });
+        committedInfo = prepared.info;
+        committedRunID = tunnelRunID;
+        await this.#assertStoredRuntime(
+          undefined,
+          lease.runtime,
+          isInterrupted
+        );
+        await this.#assertSandboxLifetime(lifetime, 'committing');
+        return prepared.info;
+      } catch (error) {
+        if (committedInfo && committedRunID) {
+          await this.#invalidateCommittedPortIfUnchanged(
+            port,
+            committedInfo,
+            lease.runtime,
+            committedRunID
+          );
+        }
+        throw error;
+      } finally {
+        hold.release();
+      }
     });
-    const cleanupEntry = createNamedTunnelCleanupEntry(
-      prepared.info,
-      prepared.meta
-    );
-    if (cleanupEntry) {
-      await updatePortState(this.#host.storage, port, () => ({
-        cleanup: cleanupEntry
-      }));
+  }
+
+  async #invalidateCommittedPortIfUnchanged(
+    port: number,
+    expectedInfo: TunnelInfo,
+    runtime: RuntimeIdentity,
+    runID: string
+  ): Promise<void> {
+    await updatePortState(this.#host.storage, port, (state) => {
+      if (
+        state.info?.id !== expectedInfo.id ||
+        state.meta?.runtimeIdentityID !== runtime.id ||
+        state.meta.runtimeIncarnationID !== runtime.runtimeIncarnationID ||
+        state.meta.tunnelRunId !== runID
+      ) {
+        return undefined;
+      }
+      if (state.info.name) {
+        return {
+          info: undefined,
+          meta: namedRespawnMeta(state.info, state.meta)
+        };
+      }
+      return { info: undefined, meta: undefined };
+    });
+  }
+
+  async #assertStoredRuntime(
+    storage: Parameters<TunnelServiceHost['getStoredRuntime']>[0],
+    expected: RuntimeIdentity,
+    isInterrupted: () => boolean = () => false
+  ): Promise<void> {
+    if (isInterrupted()) throw new RuntimeIdentityInactiveError();
+    const current = await this.#host.getStoredRuntime(storage);
+    if (
+      isInterrupted() ||
+      !current ||
+      current.id !== expected.id ||
+      current.runtimeIncarnationID !== expected.runtimeIncarnationID
+    ) {
+      throw new RuntimeIdentityInactiveError();
     }
-    await this.#lifecycle.assertActive(
-      lifecycle,
-      'cloudflare_ready',
-      'unknown'
-    );
+  }
 
-    const tunnelRunId = createTunnelRunId();
-    await this.#provisioner.startNamedTunnelRun(prepared, tunnelRunId);
-    lifecycle = await this.#lifecycle.requireRuntime(
-      lifecycle,
-      'process_ready',
-      true
-    );
-    await this.#lifecycle.assertActive(lifecycle, 'process_ready', true);
-
-    await updatePortState(this.#host.storage, port, () => ({
-      info: prepared.info,
-      meta: {
-        ...prepared.meta,
-        ...(lifecycle.runtime && {
-          runtimeIdentityID: lifecycle.runtime.id
-        }),
-        ...(lifecycle.lifetime && {
-          sandboxLifetimeID: lifecycle.lifetime.id
-        }),
-        tunnelRunId
-      },
-      cleanup: undefined
-    }));
-    await this.#lifecycle.assertActive(lifecycle, 'committing', true);
-    return prepared.info;
+  async #assertSandboxLifetime(
+    lifetime: SandboxLifetime | undefined,
+    phase: string
+  ): Promise<void> {
+    if (!lifetime || !this.#host.currentLifetime) return;
+    try {
+      await this.#host.currentLifetime.assertCurrent(lifetime);
+    } catch (error) {
+      if (error instanceof SandboxLifetimeChangedError) {
+        throw createTunnelInterruptedError({
+          reason: 'sandbox_lifetime_changed',
+          phase,
+          admitted: true,
+          retryable: false,
+          message:
+            'Tunnel operation was interrupted by a sandbox lifetime change'
+        });
+      }
+      throw error;
+    }
   }
 
   async destroy(portOrInfo: number | TunnelInfo): Promise<void> {
@@ -509,15 +742,26 @@ export class TunnelService implements TunnelsHandler {
         }));
 
         try {
-          if (current.meta?.tunnelRunId) {
-            await this.#host.client.tunnels.stopTunnelRun({
-              tunnelId: existing.id,
-              runId: current.meta.tunnelRunId
-            });
+          const owningRuntime = tunnelOwningRuntime(current.meta);
+          if (owningRuntime && current.meta?.tunnelRunId) {
+            const tunnelRunId = current.meta.tunnelRunId;
+            await this.#host.runExisting(
+              owningRuntime,
+              'tunnel.destroy',
+              (tunnels) =>
+                tunnels.stopTunnelRun({
+                  tunnelId: existing.id,
+                  runId: tunnelRunId
+                })
+            );
           }
         } catch (error) {
-          if (isTunnelNotFoundError(error)) {
-            // Container already forgot — fall through to CF cleanup.
+          if (
+            isTunnelNotFoundError(error) ||
+            error instanceof OperationInterruptedError ||
+            isRuntimeActivationMismatch(error)
+          ) {
+            // The owning runtime is already absent — continue durable cleanup.
           } else if (current.meta?.dnsRecordId) {
             this.#host.logger.warn(
               'tunnel.destroy: container tunnel cleanup failed',
@@ -567,10 +811,22 @@ export class TunnelService implements TunnelsHandler {
   }
 
   async list(): Promise<TunnelInfo[]> {
-    const map = await readMap(this.#host.storage);
-    const meta = await readMetaMap(this.#host.storage);
+    const { map, meta, runtime } = await this.#host.storage.transaction(
+      async (txn) => {
+        const [map, meta, runtime] = await Promise.all([
+          readMap(txn),
+          readMetaMap(txn),
+          this.#host.getStoredRuntime(txn)
+        ]);
+        return { map, meta, runtime };
+      }
+    );
     return Object.entries(map)
-      .filter(([port]) => !meta[port]?.needsRespawn)
+      .filter(
+        ([port]) =>
+          !meta[port]?.needsRespawn &&
+          tunnelMetaOwnsRuntime(meta[port], runtime)
+      )
       .map(([, info]) => info);
   }
 
@@ -578,18 +834,29 @@ export class TunnelService implements TunnelsHandler {
     id: string,
     port: number,
     exitCode: number | null,
-    tunnelRunId?: string
+    tunnelRunId: string,
+    runtime: RuntimeIdentity,
+    isSessionCurrent: () => boolean
   ): Promise<void> {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     try {
       await this.#withPortLock(port, async () => {
-        await updatePortState(this.#host.storage, port, (state) => {
+        await updatePortState(this.#host.storage, port, async (state, txn) => {
           const existing = state.info;
           const meta = state.meta;
-          if (existing?.id !== id) return undefined;
-          if (meta?.tunnelRunId && tunnelRunId !== meta.tunnelRunId) {
+          const activeRuntime = await this.#host.getStoredRuntime(txn);
+          if (!isSessionCurrent() || existing?.id !== id) return undefined;
+          if (
+            !activeRuntime ||
+            activeRuntime.id !== runtime.id ||
+            activeRuntime.runtimeIncarnationID !==
+              runtime.runtimeIncarnationID ||
+            meta?.runtimeIdentityID !== runtime.id ||
+            meta.runtimeIncarnationID !== runtime.runtimeIncarnationID ||
+            meta.tunnelRunId !== tunnelRunId
+          ) {
             return undefined;
           }
 
@@ -621,15 +888,7 @@ export class TunnelService implements TunnelsHandler {
   }
 
   async destroyAll(): Promise<void> {
-    const map = await readMap(this.#host.storage);
-    const meta = await readMetaMap(this.#host.storage);
-    const ports = new Set(Object.keys(map).map((p) => Number(p)));
-    for (const [portKey, entry] of Object.entries(meta)) {
-      const port = Number(portKey);
-      if (Number.isFinite(port) && namedTunnelInfoFromMeta(port, entry)) {
-        ports.add(port);
-      }
-    }
+    const ports = await this.destroyAllPorts();
 
     for (const port of ports) {
       try {
@@ -645,9 +904,43 @@ export class TunnelService implements TunnelsHandler {
     await this.resumeCleanup();
   }
 
-  async onRuntimeStart(): Promise<void> {
-    await pruneTunnelsForRestart(this.#host.storage);
-    await this.resumeCleanup();
+  async destroyAllRuntimeRuns(): Promise<void> {
+    const map = await readMap(this.#host.storage);
+    const meta = await readMetaMap(this.#host.storage);
+    const ports = await this.destroyAllPorts();
+    for (const port of ports) {
+      const info = map[String(port)];
+      const runId = meta[String(port)]?.tunnelRunId;
+      if (!info || !runId) continue;
+      const owningRuntime = tunnelOwningRuntime(meta[String(port)]);
+      if (!owningRuntime) continue;
+      try {
+        await this.#host.runExisting(
+          owningRuntime,
+          'tunnel.destroy',
+          (tunnels) => tunnels.stopTunnelRun({ tunnelId: info.id, runId })
+        );
+      } catch (error) {
+        if (isTunnelNotFoundError(error)) continue;
+        this.#host.logger.warn('tunnels.destroyAllRuntimeRuns: stop failed', {
+          port,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+
+  private async destroyAllPorts(): Promise<Set<number>> {
+    const map = await readMap(this.#host.storage);
+    const meta = await readMetaMap(this.#host.storage);
+    const ports = new Set(Object.keys(map).map((p) => Number(p)));
+    for (const [portKey, entry] of Object.entries(meta)) {
+      const port = Number(portKey);
+      if (Number.isFinite(port) && namedTunnelInfoFromMeta(port, entry)) {
+        ports.add(port);
+      }
+    }
+    return ports;
   }
 
   async onRuntimeStop(): Promise<void> {

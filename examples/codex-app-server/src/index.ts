@@ -82,28 +82,7 @@ export class Sandbox extends BaseSandbox<Env> {
   }
 
   async waitForPortReady(port: number): Promise<void> {
-    const watch = await this.client.ports.openWatch(port);
-    const stream = await watch.stream();
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          throw new Error(`Port ${port} watch closed before ready`);
-        }
-        if (value) {
-          if (value.type === 'ready') {
-            return;
-          }
-          if (value.type === 'error') {
-            throw new Error(`Port ${port} watch reported error`);
-          }
-        }
-      }
-    } finally {
-      await reader.cancel();
-      watch[Symbol.dispose]?.();
-    }
+    await this.startAndWaitForPorts(port);
   }
 }
 

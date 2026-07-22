@@ -11,8 +11,8 @@ import {
 } from '../src';
 import { createSandboxProcess } from '../src/processes';
 import type {
-  ProcessRPCDescriptor,
-  ProcessSubscriptionRPC
+  ProcessPullSubscriptionRPC,
+  ProcessRPCDescriptor
 } from '../src/processes/rpc-types';
 
 const now = new Date().toISOString();
@@ -35,18 +35,16 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
-function remote<T>(events?: T[]): ProcessSubscriptionRPC<T> {
+function remote<T>(events?: T[]): ProcessPullSubscriptionRPC<T> {
+  const remaining = events ? [...events] : undefined;
   return {
-    stream: vi.fn(
-      async () =>
-        new ReadableStream<T>({
-          start(controller) {
-            if (events === undefined) return;
-            for (const event of events) controller.enqueue(event);
-            controller.close();
-          }
-        })
-    ),
+    next: vi.fn(async (): Promise<ReadableStreamReadResult<T>> => {
+      if (remaining === undefined) return new Promise(() => {});
+      const value = remaining.shift();
+      return value === undefined
+        ? { done: true, value: undefined }
+        : { done: false, value };
+    }),
     cancel: vi.fn(async () => undefined),
     [Symbol.dispose]: vi.fn()
   };
@@ -63,8 +61,8 @@ function exited(code: number): ProcessLogEvent {
 }
 
 function descriptor(
-  portRemote: ProcessSubscriptionRPC<PortWatchEvent>,
-  logRemote: ProcessSubscriptionRPC<ProcessLogEvent>
+  portRemote: ProcessPullSubscriptionRPC<PortWatchEvent>,
+  logRemote: ProcessPullSubscriptionRPC<ProcessLogEvent>
 ): ProcessRPCDescriptor {
   return {
     id: running.id,
@@ -79,7 +77,7 @@ function descriptor(
 }
 
 function expectReleased(
-  remoteSubscription: ProcessSubscriptionRPC<object>
+  remoteSubscription: ProcessPullSubscriptionRPC<object>
 ): void {
   expect(remoteSubscription.cancel).toHaveBeenCalledTimes(1);
   expect(remoteSubscription[Symbol.dispose]).toHaveBeenCalledTimes(1);
@@ -124,7 +122,7 @@ describe('process readiness', () => {
   });
 
   it('times out while readiness subscription acquisition is pending', async () => {
-    const pending = deferred<ProcessSubscriptionRPC<PortWatchEvent>>();
+    const pending = deferred<ProcessPullSubscriptionRPC<PortWatchEvent>>();
     const port = remote<PortWatchEvent>();
     const logs = remote<ProcessLogEvent>();
     const processDescriptor = descriptor(port, logs);

@@ -438,19 +438,26 @@ describe('File Binary Read', () => {
     const testPath = sandbox!.uniquePath('binary-read-test.bin');
 
     // Write 10 MiB of incompressible random data entirely inside the container
-    const seedResult = (await (
-      await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: [
+    const seedResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: [
+          '/bin/bash',
+          '-lc',
+          [
             `mkdir -p $(dirname ${testPath})`,
             `dd if=/dev/urandom of=${testPath} bs=1M count=10 status=none`,
             `sha256sum ${testPath}`
           ].join(' && ')
-        })
+        ]
       })
-    ).json()) as { stdout: string; exitCode: number };
+    });
+    expect(seedResponse.ok).toBe(true);
+    const seedResult = (await seedResponse.json()) as {
+      stdout: string;
+      exitCode: number;
+    };
     expect(seedResult.exitCode).toBe(0);
     const [originalSha] = seedResult.stdout.trim().split(/\s+/);
     expect(originalSha).toMatch(/^[0-9a-f]{64}$/);

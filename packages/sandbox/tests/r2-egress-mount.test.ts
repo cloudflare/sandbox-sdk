@@ -1,13 +1,17 @@
 import { getContainer } from '@cloudflare/containers';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createBridgeApp } from '../src/bridge/routes';
+import { RuntimeIdentity, RuntimeOperationRunner } from '../src/runtime';
 import { ContainerProxy, Sandbox } from '../src/sandbox';
 import {
   type R2EgressParams,
   r2EgressHandler
 } from '../src/storage-mount/outbound/r2-egress-handler';
 import type { S3CredentialProxyParams } from '../src/storage-mount/types';
-import { createMockControlClient } from './helpers/mock-control-client';
+import {
+  asSandboxWithClient,
+  createMockControlClient
+} from './helpers/mock-control-client';
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -208,6 +212,7 @@ function createMockCtx(options?: {
       name: 'test-sandbox'
     },
     container: {
+      running: true,
       interceptOutboundHttp: vi.fn().mockResolvedValue(undefined)
     },
     exports: options?.includeContainerProxy === false ? {} : { ContainerProxy },
@@ -273,6 +278,86 @@ function createMountResult(
     exitCode: overrides?.exitCode ?? 0
   };
 }
+
+type SandboxWithClient = Sandbox & {
+  client: ReturnType<typeof createMockControlClient> & {
+    mounts: ReturnType<typeof createMountMocks>;
+  };
+};
+
+const originalRunExisting = RuntimeOperationRunner.prototype.runExisting;
+RuntimeOperationRunner.prototype.runExisting = async function <T>(
+  this: { testSandbox?: SandboxWithClient },
+  _target: unknown,
+  _operation: string,
+  call: (lease: {
+    runtime: RuntimeIdentity;
+    control: SandboxWithClient['client'];
+    retain(): { release(): void };
+  }) => Promise<T>
+) {
+  if (!this.testSandbox) return { status: 'absent' };
+  return await call({
+    runtime: new RuntimeIdentity({
+      id: 'runtime-1' as never,
+      runtimeIncarnationID: 'incarnation-1' as never
+    }),
+    control: this.testSandbox.client,
+    retain: () => ({ release: () => {} })
+  });
+};
+
+const originalRunWakingCompositeDescriptor = Object.getOwnPropertyDescriptor(
+  Sandbox.prototype,
+  'runWakingComposite'
+);
+
+Object.defineProperty(Sandbox.prototype, 'runWakingComposite', {
+  configurable: true,
+  value: async function (
+    this: SandboxWithClient,
+    _operation: string,
+    call: (lease: {
+      runtime: RuntimeIdentity;
+      control: SandboxWithClient['client'];
+      retain(): { release(): void };
+    }) => Promise<unknown>
+  ) {
+    (
+      this as unknown as {
+        runtimeRunner: RuntimeOperationRunner & {
+          testSandbox?: SandboxWithClient;
+        };
+      }
+    ).runtimeRunner.testSandbox = this;
+    await (
+      this as unknown as { ctx: { storage: DurableObjectStorage } }
+    ).ctx.storage.put('currentRuntimeIdentity', {
+      schemaVersion: 1,
+      id: 'runtime-1',
+      runtimeIncarnationID: 'incarnation-1'
+    });
+    return await call({
+      runtime: new RuntimeIdentity({
+        id: 'runtime-1' as never,
+        runtimeIncarnationID: 'incarnation-1' as never
+      }),
+      control: this.client,
+      retain: () => ({ release: () => {} })
+    });
+  }
+});
+
+afterAll(() => {
+  RuntimeOperationRunner.prototype.runExisting = originalRunExisting;
+  if (originalRunWakingCompositeDescriptor) {
+    Object.defineProperty(
+      Sandbox.prototype,
+      'runWakingComposite',
+      originalRunWakingCompositeDescriptor
+    );
+  }
+});
 
 function createMountMocks() {
   return {
@@ -395,7 +480,9 @@ describe('Sandbox credential proxy mounts', () => {
       credentialProxy: true
     });
 
-    expect(sandbox.client.files.writeFile).toHaveBeenCalledWith(
+    expect(
+      asSandboxWithClient(sandbox).client.files.writeFile
+    ).toHaveBeenCalledWith(
       expect.stringContaining('/tmp/.passwd-s3fs-'),
       'my-bucket:x:x'
     );
@@ -922,7 +1009,7 @@ describe('Sandbox R2 egress mounts', () => {
       { MY_BUCKET: bucket }
     );
     const client = createMockControlClient();
-    sandbox.client = client;
+    asSandboxWithClient(sandbox).client = client;
 
     vi.mocked(client.files.mkdir).mockResolvedValue({
       success: true,

@@ -1,3 +1,4 @@
+import type { ContainerStartConfigOptions } from '@cloudflare/containers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
   BackupOptions,
@@ -17,7 +18,11 @@ import type {
   RestoreBackupResult,
   SandboxCommand,
   SandboxOptions,
-  Terminal,
+  SandboxTerminalsAPI,
+  SandboxTunnelsAPI,
+  TerminalOutputEvent,
+  TerminalOutputSubscriptionAPI,
+  TerminalSnapshot,
   WaitForPortOptions,
   WatchOptions
 } from '@repo/shared';
@@ -37,12 +42,7 @@ import {
   type BackupRestoreTestFault,
   BackupService
 } from './backup/backup-service';
-import { ContainerControlClient } from './container-control';
-import { RuntimeControlClient } from './container-control/runtime-client';
-import {
-  CurrentRuntimeIdentity,
-  type RuntimeIdentity
-} from './current-runtime-identity';
+import type { ContainerControlClient } from './container-control';
 import type { ErrorResponse } from './errors';
 import {
   ContainerUnavailableError,
@@ -51,10 +51,16 @@ import {
   ProcessExitedBeforeReadyError,
   ProcessNotFoundError,
   ProcessReadyTimeoutError,
-  SandboxError
+  SandboxError,
+  StaleProcessHandleError,
+  StaleTerminalHandleError
 } from './errors';
-import type { HTTPAuthInterceptorParams as GitAuthInterceptorParams } from './extensions';
-import { SandboxExtension } from './extensions';
+import type {
+  ExtensionRuntimeCall,
+  ExtensionRuntimeControl,
+  HTTPAuthInterceptorParams as GitAuthInterceptorParams
+} from './extensions';
+import { SandboxExtension, sandboxRuntimeCall } from './extensions';
 import { collectFile, streamFile } from './file-stream';
 import { isPlatformTransientError } from './platform-errors';
 import { isPreviewProxyRequest } from './preview/protocol';
@@ -67,14 +73,31 @@ import {
   type ProcessCapabilityControl,
   ProcessCapabilityTarget
 } from './processes/process-capability';
-import { ProcessLifecycle } from './processes/process-lifecycle';
-import { openRemoteSubscription } from './processes/remote-subscription';
-import type { ProcessRPCDescriptor } from './processes/rpc-types';
-import { terminalHandle as terminalHandleFromSnapshot } from './pty';
 import {
-  ResourceActivityGate,
-  type ResourceActivityOperation
-} from './resource-activity-gate';
+  openRemoteSubscription,
+  PullSubscriptionTarget
+} from './processes/remote-subscription';
+import type {
+  ProcessPullSubscriptionRPC,
+  ProcessRPCDescriptor
+} from './processes/rpc-types';
+import { terminalHandleFromRPCDescriptor } from './pty';
+import type { TerminalRPCDescriptor } from './pty/rpc-types';
+import {
+  type TerminalCapabilityControl,
+  TerminalCapabilityTarget
+} from './pty/terminal-capability';
+import { ResourceActivityGate } from './resource-activity-gate';
+import {
+  RUNTIME_ABSENT,
+  RuntimeBootstrapProbe,
+  type RuntimeIdentity,
+  type RuntimeLease,
+  RuntimeOperationRunner,
+  RuntimeSessionManager,
+  SandboxRuntimeLifecycle
+} from './runtime';
+import { waitForRuntimePort } from './runtime/port-readiness';
 import { CurrentSandboxLifetime } from './sandbox-lifetime';
 import {
   SandboxSecurityError,
@@ -92,14 +115,16 @@ import {
 import { NamedTunnelConfigResolver } from './tunnels/named-tunnel-config';
 import {
   createTunnelsHandle,
+  pruneTunnelsForRestart,
   type TunnelExitHandler,
   type TunnelsHandle,
   type TunnelsHandler
 } from './tunnels/rpc-target';
 import { SandboxControlCallbackImpl } from './tunnels/sandbox-control-callback';
-import { SDK_VERSION } from './version';
 
 export { ContainerProxy };
+
+const DESTROY_RUNTIME_CLEANUP_TIMEOUT_MS = 5_000;
 
 function validateExecArgv(command: SandboxCommand): SandboxCommand {
   if (!Array.isArray(command)) {
@@ -133,16 +158,103 @@ function invalidCommand(
   });
 }
 
-function runtimeInterrupted(
-  operation: string,
-  effect: 'none' | 'unknown'
-): OperationInterruptedError {
+function toContainerHTTPRequest(request: Request): Request {
+  const url = new URL(request.url);
+  if (url.protocol === 'https:') url.protocol = 'http:';
+  const headers = new Headers(request.headers);
+  headers.delete('cf-container-target-port');
+  headers.delete('x-sandbox-port-route-token');
+  return new Request(new Request(url, request), { headers });
+}
+
+function retainedStream<T>(
+  stream: ReadableStream<T>,
+  lease: RuntimeLease,
+  operation = 'stream.read'
+): {
+  stream: ReadableStream<T>;
+  cancel(reason?: unknown): void;
+  release(): void;
+} {
+  const reader = stream.getReader();
+  let released = false;
+  let interruptedError: Error | undefined;
+  let hold: ReturnType<RuntimeLease['retain']> | undefined;
+  let interrupt!: (error: Error) => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    interrupt = reject;
+  });
+  interrupted.catch(() => undefined);
+  const release = () => {
+    if (released) return;
+    released = true;
+    hold?.release();
+  };
+  const cancelSource = (reason?: unknown) => {
+    if (released) return;
+    release();
+    void reader.cancel(reason).catch(() => undefined);
+  };
+  hold = lease.retain(() => {
+    if (released) return;
+    interruptedError = runtimeInterrupted(operation);
+    interrupt(interruptedError);
+    cancelSource(interruptedError);
+  });
+  return {
+    stream: new ReadableStream<T>({
+      async pull(streamController) {
+        try {
+          const result = await Promise.race([reader.read(), interrupted]);
+          if (interruptedError) throw interruptedError;
+          if (result.done) {
+            release();
+            streamController.close();
+            return;
+          }
+          streamController.enqueue(result.value);
+        } catch (error) {
+          release();
+          streamController.error(error);
+        }
+      },
+      cancel(reason) {
+        cancelSource(reason);
+      }
+    }),
+    cancel: cancelSource,
+    release
+  };
+}
+
+function retainStream<T>(
+  stream: ReadableStream<T>,
+  lease: RuntimeLease
+): ReadableStream<T> {
+  return retainedStream(stream, lease).stream;
+}
+
+function extensionRuntimeControl(
+  control: ContainerControlClient
+): ExtensionRuntimeControl {
+  return {
+    files: control.files,
+    ports: control.ports,
+    backup: control.backup,
+    watch: control.watch,
+    tunnels: control.tunnels,
+    terminals: control.terminals,
+    extensions: control.extensions,
+    utils: control.utils
+  };
+}
+
+function runtimeInterrupted(operation: string): OperationInterruptedError {
   const context: OperationInterruptedContext = {
     reason: 'runtime_replaced',
     operation,
     admitted: true,
-    retryable: false,
-    effect
+    retryable: false
   };
   return new OperationInterruptedError({
     code: ErrorCode.OPERATION_INTERRUPTED,
@@ -153,16 +265,201 @@ function runtimeInterrupted(
   });
 }
 
-function processCapabilityControl(
-  client: ContainerControlClient
-): ProcessCapabilityControl {
-  const processes = client.processesWithoutActivity();
+function isRuntimeAbsent(value: unknown): value is typeof RUNTIME_ABSENT {
+  return value === RUNTIME_ABSENT;
+}
+
+function staleTerminal(
+  terminalId: string,
+  operation: string
+): StaleTerminalHandleError {
+  return new StaleTerminalHandleError({
+    code: ErrorCode.STALE_TERMINAL_HANDLE,
+    message: 'Terminal handle refers to a previous runtime incarnation',
+    context: { terminalId, operation },
+    httpStatus: 409,
+    timestamp: new Date().toISOString()
+  });
+}
+
+type InterruptibleTerminalSubscription = TerminalOutputSubscriptionAPI & {
+  interrupt(): void;
+};
+
+function retainedTerminalSubscription(
+  terminalId: string,
+  operation: string,
+  subscription: TerminalOutputSubscriptionAPI,
+  releaseConnection: () => void
+): InterruptibleTerminalSubscription {
+  let released = false;
+  let reader: ReadableStreamDefaultReader<TerminalOutputEvent> | undefined;
+  let controller:
+    | ReadableStreamDefaultController<TerminalOutputEvent>
+    | undefined;
+  const stale = () => staleTerminal(terminalId, operation);
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseConnection();
+    if (reader) {
+      try {
+        void reader.cancel().catch(() => undefined);
+      } catch {}
+    } else {
+      try {
+        void subscription.cancel().catch(() => undefined);
+      } catch {}
+      try {
+        subscription[Symbol.dispose]();
+      } catch {}
+    }
+  };
+  const failStale = () => {
+    const error = stale();
+    controller?.error(error);
+    release();
+  };
   return {
+    async stream() {
+      const source = await openRemoteSubscription<TerminalOutputEvent>(
+        Promise.resolve(subscription),
+        { operation, protocol: 'stream' }
+      );
+      return new ReadableStream<TerminalOutputEvent>({
+        start(streamController) {
+          controller = streamController;
+          reader = source.getReader();
+        },
+        async pull(streamController) {
+          if (released) {
+            streamController.error(stale());
+            return;
+          }
+          try {
+            const result = await reader!.read();
+            if (released) {
+              streamController.error(stale());
+              return;
+            }
+            if (result.done) {
+              release();
+              streamController.close();
+              return;
+            }
+            streamController.enqueue(result.value);
+            if (result.value.type === 'terminal') {
+              release();
+              streamController.close();
+            }
+          } catch (error) {
+            release();
+            streamController.error(error);
+          }
+        },
+        cancel() {
+          release();
+        }
+      });
+    },
+    async cancel() {
+      release();
+    },
+    [Symbol.dispose]() {
+      release();
+    },
+    interrupt() {
+      failStale();
+    }
+  };
+}
+
+function retainedResponse(
+  response: Response,
+  lease: RuntimeLease,
+  operation: string
+): Response {
+  if (!response.body) return response;
+  return new Response(retainedStream(response.body, lease, operation).stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  });
+}
+
+function retainWebSocketResponse(
+  response: Response,
+  releaseConnection: () => void
+): { interrupt(): void; webSocketFound: boolean } {
+  const webSocket = (
+    response as {
+      webSocket?: EventTarget & {
+        close?: (code?: number, reason?: string) => void;
+      };
+    }
+  ).webSocket;
+  if (!webSocket) {
+    releaseConnection();
+    return { interrupt: () => {}, webSocketFound: false };
+  }
+  const release = once(releaseConnection);
+  const closeInterrupted = once(() => {
+    try {
+      webSocket.close?.(1012, 'Runtime replaced');
+    } catch {
+      // The runtime may reject close() after handing the socket to its peer.
+    } finally {
+      release();
+    }
+  });
+  webSocket.addEventListener('close', release, { once: true });
+  webSocket.addEventListener('error', release, { once: true });
+  return { interrupt: closeInterrupted, webSocketFound: true };
+}
+
+function once<T extends (...args: never[]) => void>(fn: T): T {
+  let called = false;
+  return ((...args: Parameters<T>) => {
+    if (called) return;
+    called = true;
+    fn(...(args as never[]));
+  }) as T;
+}
+
+function processCapabilityControl(
+  lease: RuntimeLease
+): ProcessCapabilityControl {
+  const client = lease.control;
+  const processes = client.processes;
+  return {
+    retainRuntimeHold: () => lease.retain().release,
     getProcess: (id) => processes.get(id),
     openLogs: (id, options) => processes.openLogs(id, options),
     openPortWatch: (port, options) => client.ports.openWatch(port, options),
     kill: (id, signal) => processes.kill(id, signal)
   };
+}
+
+type TerminalHandleStub = Omit<SandboxTerminalsAPI, 'output'> & {
+  output(
+    id: string,
+    options?: Parameters<SandboxTerminalsAPI['output']>[1]
+  ): Promise<ProcessPullSubscriptionRPC<TerminalOutputEvent>>;
+  fetch(request: Request): Promise<Response>;
+};
+
+function localizeTerminalHandle(
+  descriptor: TerminalRPCDescriptor,
+  sandboxStub: {
+    fetch(request: Request): Promise<Response>;
+  }
+): ReturnType<typeof terminalHandleFromRPCDescriptor> {
+  return terminalHandleFromRPCDescriptor(descriptor, async (request) => {
+    const token = await descriptor.capability.authorizeConnection();
+    const headers = new Headers(request.headers);
+    headers.set('x-sandbox-port-route-token', token);
+    return await sandboxStub.fetch(new Request(request, { headers }));
+  });
 }
 
 type SandboxConfiguration = {
@@ -187,10 +484,6 @@ type PreviewForwardingContainerState = DurableObjectState<{}> & {
   container?: PreviewForwardingContainer;
 };
 
-type PreviewForwardingLifecycleState = {
-  inflightRequests?: number;
-};
-
 type ConfigurableSandboxStub = {
   configure?: (configuration: SandboxConfiguration) => Promise<void>;
   setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
@@ -203,14 +496,23 @@ type ConfigurableSandboxStub = {
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
+  containerFetch: (
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ) => Promise<Response>;
   callExtension: (
     extensionName: string,
     method: string,
     args: unknown[]
   ) => Promise<unknown>;
-  createTerminal: (options: CreateTerminalOptions) => Promise<Terminal>;
-  getTerminal: (id: string) => Promise<Terminal | null>;
-  listTerminals: () => Promise<Terminal[]>;
+  createTerminal: (
+    options: CreateTerminalOptions
+  ) => Promise<TerminalRPCDescriptor>;
+  getTerminal: (id: string) => Promise<TerminalRPCDescriptor | null>;
+  listTerminals: () => Promise<TerminalRPCDescriptor[]>;
+  wsConnect: (request: Request, port: number) => Promise<Response>;
+  authorizePortRequest: (port: number, path: string) => Promise<string>;
   exec: (
     command: SandboxCommand,
     options?: ExecOptions
@@ -219,11 +521,21 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   listProcesses: () => Promise<ProcessStatus[]>;
 };
 
-export type SandboxClient<T> = Omit<T, keyof ISandbox> & ISandbox;
+type InternalSandboxRPCMethod = 'authorizePortRequest';
+
+export type SandboxClient<T> = Omit<
+  T,
+  keyof ISandbox | InternalSandboxRPCMethod
+> &
+  ISandbox;
 
 const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
+>();
+const sandboxConfigurationPending = new WeakMap<
+  object,
+  Map<string, Promise<void>>
 >();
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
@@ -242,6 +554,40 @@ const BACKUP_DOWNLOAD_PARALLEL_PARTS = 8;
 const BACKUP_DOWNLOAD_PARALLEL_MIN_SIZE = 10 * 1024 * 1024;
 const BACKUP_DOWNLOAD_MAX_PARTS = 64;
 
+type CancellationOptions = {
+  abort?: AbortSignal;
+  instanceGetTimeoutMS?: number;
+  portReadyTimeoutMS?: number;
+  waitInterval?: number;
+};
+
+type StartAndWaitForPortsOptions = {
+  startOptions?: ContainerStartConfigOptions;
+  ports?: number | number[];
+  cancellationOptions?: CancellationOptions;
+};
+
+function normalizeStartAndWaitForPortsOptions(
+  portsOrArgs?: number | number[] | StartAndWaitForPortsOptions,
+  cancellationOptions?: CancellationOptions,
+  startOptions?: ContainerStartConfigOptions
+): StartAndWaitForPortsOptions {
+  if (typeof portsOrArgs === 'number' || Array.isArray(portsOrArgs)) {
+    return { ports: portsOrArgs, cancellationOptions, startOptions };
+  }
+  return {
+    ...(portsOrArgs ?? {}),
+    cancellationOptions:
+      portsOrArgs?.cancellationOptions ?? cancellationOptions,
+    startOptions: portsOrArgs?.startOptions ?? startOptions
+  };
+}
+
+function normalizePorts(ports: number | number[] | undefined): number[] {
+  if (ports === undefined) return [];
+  return Array.isArray(ports) ? ports : [ports];
+}
+
 function getNamespaceConfigurationCache(
   namespace: object
 ): Map<string, CachedSandboxConfiguration> {
@@ -252,6 +598,17 @@ function getNamespaceConfigurationCache(
 
   const created = new Map<string, CachedSandboxConfiguration>();
   sandboxConfigurationCache.set(namespace, created);
+  return created;
+}
+
+function getNamespacePendingConfiguration(
+  namespace: object
+): Map<string, Promise<void>> {
+  const existing = sandboxConfigurationPending.get(namespace);
+  if (existing) return existing;
+
+  const created = new Map<string, Promise<void>>();
+  sandboxConfigurationPending.set(namespace, created);
   return created;
 }
 
@@ -462,32 +819,46 @@ export function getSandbox<T extends Sandbox<any>>(
   ) as unknown as T & SandboxProxyStub;
 
   const namespaceCache = getNamespaceConfigurationCache(ns);
-  const cachedConfiguration = namespaceCache.get(effectiveId);
-  const configuration = buildSandboxConfiguration(
-    effectiveId,
-    options,
-    cachedConfiguration
-  );
-
-  if (hasSandboxConfiguration(configuration)) {
-    const nextConfiguration = mergeSandboxConfiguration(
-      cachedConfiguration,
-      configuration
+  const pendingConfigurations = getNamespacePendingConfiguration(ns);
+  const applyRequestedConfiguration = async (): Promise<void> => {
+    const cachedConfiguration = namespaceCache.get(effectiveId);
+    const configuration = buildSandboxConfiguration(
+      effectiveId,
+      options,
+      cachedConfiguration
     );
-    namespaceCache.set(effectiveId, nextConfiguration);
+    if (!hasSandboxConfiguration(configuration)) return;
 
-    void applySandboxConfiguration(stub, configuration).catch(() => {
-      if (cachedConfiguration) {
-        namespaceCache.set(effectiveId, cachedConfiguration);
-        return;
+    await applySandboxConfiguration(stub, configuration);
+    namespaceCache.set(
+      effectiveId,
+      mergeSandboxConfiguration(cachedConfiguration, configuration)
+    );
+  };
+  const previousConfiguration = pendingConfigurations.get(effectiveId);
+  const configurationReady = previousConfiguration
+    ? previousConfiguration.then(applyRequestedConfiguration)
+    : applyRequestedConfiguration();
+  pendingConfigurations.set(effectiveId, configurationReady);
+  void configurationReady
+    .finally(() => {
+      if (pendingConfigurations.get(effectiveId) === configurationReady) {
+        pendingConfigurations.delete(effectiveId);
       }
-
-      namespaceCache.delete(effectiveId);
-    });
-  }
+    })
+    .catch(() => undefined);
 
   const enhancedMethods = {
-    fetch: (request: Request) => stub.fetch(request),
+    authorizePortRequest: undefined,
+    createPortRequestToken: undefined,
+    fetch: (request: Request) => {
+      const targetPort = request.headers.get('cf-container-target-port');
+      return targetPort === null
+        ? stub.fetch(request)
+        : fetchAuthorizedPort(stub, request, Number(targetPort));
+    },
+    containerFetch: (...args: Parameters<SandboxProxyStub['containerFetch']>) =>
+      stub.containerFetch(...args),
     exec: async (command: SandboxCommand, execOptions?: ExecOptions) =>
       createSandboxProcess(
         await stub.exec(command, sanitizeExecOptions(execOptions))
@@ -528,17 +899,26 @@ export function getSandbox<T extends Sandbox<any>>(
       stub.watch(path, options),
     checkChanges: (path: string, options: CheckChangesOptions = {}) =>
       stub.checkChanges(path, options),
-    createTerminal: (options: CreateTerminalOptions) =>
-      stub.createTerminal(options),
-    getTerminal: (id: string) => stub.getTerminal(id),
-    listTerminals: () => stub.listTerminals(),
+    createTerminal: async (options: CreateTerminalOptions) =>
+      localizeTerminalHandle(await stub.createTerminal(options), stub),
+    getTerminal: async (id: string) => {
+      const terminal = await stub.getTerminal(id);
+      return terminal ? localizeTerminalHandle(terminal, stub) : null;
+    },
+    listTerminals: async () =>
+      (await stub.listTerminals()).map((terminal) =>
+        localizeTerminalHandle(terminal, stub)
+      ),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
         return withSandboxOperationContext(
           `sandbox.tunnels.${method}`,
-          (...args: unknown[]) => stub.callTunnels(method, args)
+          async (...args: unknown[]) => {
+            await configurationReady;
+            return stub.callTunnels(method, args);
+          }
         );
       }
     })
@@ -556,7 +936,10 @@ export function getSandbox<T extends Sandbox<any>>(
         if (typeof method === 'function') {
           return withSandboxOperationContext(
             `sandbox.${prop}`,
-            method as (...args: unknown[]) => unknown
+            async (...args: unknown[]) => {
+              await configurationReady;
+              return (method as (...args: unknown[]) => unknown)(...args);
+            }
           );
         }
         return method;
@@ -575,7 +958,8 @@ export function getSandbox<T extends Sandbox<any>>(
       // forwards to the stub method (sandbox.method(...)), while a nested
       // access dispatches sandbox.<ext>.<method>(...) through callExtension.
       return new Proxy(
-        (...args: unknown[]) => {
+        async (...args: unknown[]) => {
+          await configurationReady;
           // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
           return target[prop](...args);
         },
@@ -584,8 +968,10 @@ export function getSandbox<T extends Sandbox<any>>(
             if (typeof method !== 'string' || method === 'then') {
               return undefined;
             }
-            return (...args: unknown[]) =>
-              stub.callExtension(prop, method, args);
+            return async (...args: unknown[]) => {
+              await configurationReady;
+              return stub.callExtension(prop, method, args);
+            };
           }
         }
       );
@@ -600,6 +986,26 @@ function sanitizeExecOptions(options?: ExecOptions): ExecOptions | undefined {
   if (options.env !== undefined) sanitized.env = options.env;
   if (options.timeout !== undefined) sanitized.timeout = options.timeout;
   return sanitized;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function mergeExecEnvironment(
+  sandboxEnv: Record<string, string>,
+  commandEnv: Record<string, string | null>
+): Record<string, string> {
+  const merged = { ...sandboxEnv };
+  for (const [name, value] of Object.entries(commandEnv)) {
+    if (value === null) delete merged[name];
+    else merged[name] = value;
+  }
+  return merged;
 }
 
 function getConcreteExtensionMethod(
@@ -629,6 +1035,7 @@ function getConcreteExtensionMethod(
 
 export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
+  authorizePortRequest: (port: number, path: string) => Promise<string>;
 }) {
   return async (request: Request, port: number) => {
     if (!validatePort(port)) {
@@ -636,16 +1043,35 @@ export function connect(stub: {
         `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
-    const portSwitchedRequest = switchPort(request, port);
-    return await stub.fetch(portSwitchedRequest);
+    return await fetchAuthorizedPort(stub, request, port);
   };
+}
+
+async function fetchAuthorizedPort(
+  stub: {
+    fetch: (request: Request) => Promise<Response>;
+    authorizePortRequest: (port: number, path: string) => Promise<string>;
+  },
+  request: Request,
+  port: number
+): Promise<Response> {
+  const token = await stub.authorizePortRequest(
+    port,
+    new URL(request.url).pathname
+  );
+  const switched = switchPort(request, port);
+  const headers = new Headers(switched.headers);
+  headers.set('x-sandbox-port-route-token', token);
+  return await stub.fetch(new Request(switched, { headers }));
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
-  client: ContainerControlClient;
+  private runtimeSessions: RuntimeSessionManager;
+  private runtimeLifecycle: SandboxRuntimeLifecycle;
+  private runtimeRunner: RuntimeOperationRunner;
 
   private sandboxName: string | null = null;
   // Tunnels subsystem handle. Lazily constructed on first access via the
@@ -662,17 +1088,22 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   envVars: Record<string, string> = {};
+  private readonly portRequestTokens = new Map<
+    string,
+    {
+      port: number;
+      path: string;
+      expiresAt: number;
+      scope: 'port' | 'terminal';
+    }
+  >();
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private bucketMounts: BucketMountService;
-  private currentRuntime: CurrentRuntimeIdentity;
   private currentLifetime: CurrentSandboxLifetime;
   private backupService: BackupService;
   private previewService: PreviewService;
   private resourceActivityGate: ResourceActivityGate;
-  private runtimeControlClient: RuntimeControlClient;
-  private processLifecycle: ProcessLifecycle;
-  private controlSessionActivity: ResourceActivityOperation | null = null;
 
   private r2AccessKeyId: string | null = null;
   private r2SecretAccessKey: string | null = null;
@@ -753,21 +1184,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     return fn.apply(extension, args);
   }
 
-  /**
-   * Compute the control-channel upgrade retry budget from current container
-   * timeouts.
-   *
-   * The budget covers the full container startup window (instance provisioning
-   * + port readiness) plus a 30s margin for the maximum single backoff delay.
-   * The 120s floor preserves the default for short timeout configurations.
-   */
-  private computeRetryTimeoutMs(): number {
-    const startupBudgetMs =
-      this.containerTimeouts.instanceGetTimeoutMS +
-      this.containerTimeouts.portReadyTimeoutMS;
-    return Math.max(120_000, startupBudgetMs + 30_000);
-  }
-
   private renewActivityTimeoutIfAvailable(): void {
     const renewActivityTimeout = this.renewActivityTimeout;
     if (typeof renewActivityTimeout === 'function') {
@@ -775,47 +1191,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
   }
 
-  /**
-   * Create the single control-plane client used for all SDK operations.
-   */
-  private createClient(): ContainerControlClient {
-    return new ContainerControlClient({
-      stub: this,
-      port: 3000,
-      logger: this.logger,
-      retryTimeoutMs: this.computeRetryTimeoutMs(),
-      // localMain exposes the DO-side control callback (tunnel-exit
-      // notifications, etc.) to the container side of the session.
-      localMain: this.controlCallback,
-      // The control channel multiplexes all work over a single capnweb
-      // WebSocket, so we can't bracket per-request — and a method that
-      // returns a ReadableStream resolves its promise long before the
-      // stream is actually drained. Instead, ContainerControlClient polls
-      // capnweb's session stats and reports busy/idle *transitions* of the
-      // current session. The resource activity gate owns that operation
-      // until the session returns to idle. See the file-level comment in
-      // container-control/client.ts for details.
-      onActivity: () => {
-        this.resourceActivityGate.recordActivity();
-      },
-      onOperationStarted: () => {
-        const activity = this.resourceActivityGate.beginOperation();
-        return {
-          beforeCall: activity.beforeCall.then(() =>
-            this.ensureContainerRunning()
-          ),
-          finish: activity.finish
-        };
-      },
-      onSessionBusy: () => {
-        this.controlSessionActivity =
-          this.resourceActivityGate.beginOperation();
-      },
-      onSessionIdle: () => {
-        this.controlSessionActivity?.finish();
-        this.controlSessionActivity = null;
-      }
-    });
+  private getRuntimePortStub(port: number) {
+    const stub = this.ctx.container?.getTcpPort?.(port);
+    if (!stub) throw new Error('Container runtime port is not available');
+    return stub;
   }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
@@ -837,11 +1216,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       sandboxId: this.ctx.id.toString()
     });
 
-    this.currentRuntime = new CurrentRuntimeIdentity(
-      this.ctx.storage,
-      () => this.getState(),
-      () => this.ctx.container?.running === true
-    );
     this.currentLifetime = new CurrentSandboxLifetime(this.ctx.storage);
     this.namedTunnelConfigResolver = new NamedTunnelConfigResolver({
       getEnv: () => this.env
@@ -850,8 +1224,20 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       ctx: this.ctx,
       getEnv: () => this.env,
       logger: this.logger,
-      getClient: () => this.client,
-      currentRuntime: this.currentRuntime,
+      runBackupAttempt: (operation, call) =>
+        this.runWakingComposite(operation, (lease) =>
+          call({
+            runtime: lease.runtime,
+            control: lease.control,
+            retain: lease.retain
+          })
+        ),
+      runtimeReader: {
+        get: () => this.runtimeLifecycle.get(),
+        getStored: (storage) => this.runtimeLifecycle.getStored(storage),
+        isActive: (runtime) => this.runtimeLifecycle.isActive(runtime),
+        assertActive: (runtime) => this.runtimeLifecycle.assertActive(runtime)
+      },
       currentLifetime: this.currentLifetime
     });
 
@@ -864,37 +1250,82 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     // session is created eagerly in the connection's constructor.
     this.controlCallback = new SandboxControlCallbackImpl(
       () => this.tunnelExitHandler,
-      this.logger
+      this.logger,
+      undefined,
+      () => this.runtimeLifecycle.get()
     );
     this.resourceActivityGate = new ResourceActivityGate(
       () => this.renewActivityTimeoutIfAvailable(),
-      () => super.onActivityExpired()
+      () => this.performRuntimeStop(() => super.stop())
     );
-    this.runtimeControlClient = new RuntimeControlClient({
-      getTcpPort: (port) => {
-        const container = this.getPreviewForwardingContainer();
-        if (!container) throw new Error('Container runtime is not available');
-        return container.getTcpPort(port);
+    this.runtimeSessions = new RuntimeSessionManager({
+      getTcpPort: (port) => this.getRuntimePortStub(port),
+      logger: this.logger,
+      callbackBinder: (runtime, isSessionCurrent) =>
+        this.controlCallback.bindRuntime(runtime, isSessionCurrent)
+    });
+    this.runtimeLifecycle = new SandboxRuntimeLifecycle({
+      storage: this.ctx.storage,
+      isRuntimeRunning: () => this.ctx.container?.running === true,
+      startControlPort: async (port, options) => {
+        await super.startAndWaitForPorts({
+          ports: [port],
+          cancellationOptions: {
+            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: options?.signal
+          },
+          startOptions: options?.startOptions
+        });
       },
-      beginNonWakingOperation: () =>
-        this.resourceActivityGate.beginNonWakingOperation(),
-      logger: this.logger
+      waitForControlPort: async () => undefined,
+      stopControlPort: async () => undefined,
+      probe: new RuntimeBootstrapProbe({
+        getTcpPort: (port) => this.getRuntimePortStub(port)
+      }),
+      sessions: this.runtimeSessions,
+      observeVersionCompatibility: async (_client, _runtime) => undefined,
+      reconcileReplacement: async () => {
+        await pruneTunnelsForRestart(this.ctx.storage);
+      }
     });
-    this.currentRuntime.onChange(() => this.runtimeControlClient.dispose());
-    this.processLifecycle = new ProcessLifecycle({
-      currentRuntime: this.currentRuntime,
-      runtimeClient: this.runtimeControlClient,
-      beginNonWakingOperation: () =>
-        this.resourceActivityGate.beginNonWakingOperation()
+    this.runtimeRunner = new RuntimeOperationRunner({
+      lifecycle: this.runtimeLifecycle,
+      activityGate: this.resourceActivityGate
     });
-
-    this.client = this.createClient();
     this.bucketMounts = new BucketMountService({
       getEnv: () => this.env,
       getEnvVars: () => this.envVars,
-      getClient: () => this.client,
+      runMountAttempt: (operation, call) =>
+        this.runWakingComposite(operation, (lease) =>
+          call({
+            runtime: lease.runtime,
+            control: lease.control,
+            retain: lease.retain
+          })
+        ),
+      runExistingMountAttempt: async (operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'current' },
+          operation,
+          (lease) =>
+            call({
+              runtime: lease.runtime,
+              control: lease.control,
+              retain: lease.retain
+            })
+        );
+        if (isRuntimeAbsent(result)) return { status: 'absent' };
+        return { status: 'completed', value: result };
+      },
       logger: this.logger,
-      currentRuntime: this.currentRuntime,
+      runtimeReader: {
+        get: () => this.runtimeLifecycle.get(),
+        getStored: (storage) => this.runtimeLifecycle.getStored(storage),
+        isActive: (runtime) => this.runtimeLifecycle.isActive(runtime),
+        assertActive: (runtime) => this.runtimeLifecycle.assertActive(runtime)
+      },
       currentLifetime: this.currentLifetime,
       getR2AccessKeyID: () => this.r2AccessKeyId,
       getR2SecretAccessKey: () => this.r2SecretAccessKey,
@@ -903,14 +1334,24 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     this.previewService = new PreviewService({
       storage: this.ctx.storage,
       logger: this.logger,
-      currentRuntime: this.currentRuntime,
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
+      assertRuntimeActive: (runtime) =>
+        this.runtimeLifecycle.assertActive(runtime),
       getContainerState: () => this.getState(),
       getForwardingContainer: () => this.getPreviewForwardingContainer(),
-      ensureRuntimeActiveForPreview: () => this.ensureRuntimeActiveForPreview(),
+      runWaking: (operation, call) =>
+        this.runWakingComposite(operation, (lease) => call(lease)),
+      runExisting: async (operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'current' },
+          operation,
+          (lease) => call(lease)
+        );
+        if (isRuntimeAbsent(result)) return null;
+        return result;
+      },
       getSandboxName: () => this.sandboxName,
-      getNormalizeID: () => this.normalizeId,
-      beginForward: () => this.beginPreviewForward(),
-      renewActivity: () => this.renewActivityTimeout()
+      getNormalizeID: () => this.normalizeId
     });
 
     this.ctx.blockConcurrencyWhile(async () => {
@@ -932,8 +1373,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           ...storedTimeouts
         };
         this.hasStoredContainerTimeouts = true;
-        // Update the control-channel retry budget to reflect stored timeouts.
-        this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
 
       // Restore sleep timeout if previously set via RPC
@@ -1072,7 +1511,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     await this.ctx.storage.put('containerTimeouts', validated);
     this.containerTimeouts = validated;
     this.hasStoredContainerTimeouts = true;
-    this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }
 
@@ -1209,7 +1647,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
 
     // Assigned synchronously so concurrent callers observe the promise
     // before any await point inside doDestroy().
-    const work = this.doDestroy();
+    const work = this.resourceActivityGate.runDestroyTeardown(() =>
+      this.doDestroy()
+    );
     this.inflightDestroy = work;
     try {
       await work;
@@ -1229,48 +1669,24 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     let caughtError: Error | undefined;
 
     try {
+      const cleanupRuntime =
+        await this.runtimeLifecycle.invalidateAndObserveStoredActive();
+
       // Preview URL auth and activation are cleared before await-heavy
       // teardown work. Concurrent preview traffic should observe missing
       // auth or runtime state and fail from DO-owned state without reaching
       // the container.
-      await this.previewService.clearPreviewState();
       await this.currentLifetime.rotate();
-      await this.currentRuntime.clear();
+      await this.previewService.clearPreviewState();
 
-      // Unmount all mounted buckets and cleanup before disconnecting the
-      // control client used by the mount lifecycle RPCs.
       ({ mountsProcessed, mountFailures } =
-        await this.bucketMounts.cleanupForDestroy());
-      if (mountFailures > 0) {
-        throw new Error(
-          `Failed to clean up ${mountFailures} bucket mount${mountFailures === 1 ? '' : 's'} during destroy()`
-        );
-      }
+        await this.runBoundedDestroyRuntimeCleanup(cleanupRuntime));
+      const durableTunnels = this.createDurableDestroyTunnelsHandle();
+      await durableTunnels.destroyAll();
+      await durableTunnels.clearDurableStateAfterDestroy();
 
-      // Tear down every tunnel this sandbox created — stops the
-      // container-side cloudflared processes and removes the Cloudflare
-      // tunnel + DNS resources for named tunnels. Runs before disconnect
-      // because destroyAll needs the container RPC. Best-effort per port;
-      // a failure on one doesn't block the rest of teardown.
-      //
-      // Lazily build the handler so destroyAll runs even on a sandbox
-      // that never accessed `tunnels` during its lifetime — storage may
-      // hold records from a prior lifetime under the same DO id.
-      try {
-        this.ensureTunnelsBuilt();
-        await this.tunnelServiceHandle?.destroyAll();
-      } catch (error) {
-        this.logger.warn('Failed to tear down tunnels during destroy()', {
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-      await this.tunnelServiceHandle?.clearDurableStateAfterDestroy();
-
-      // Disconnect the control client after all cleanup commands complete.
-      this.client.disconnect();
-
-      outcome = 'success';
       await super.destroy();
+      outcome = 'success';
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       throw error;
@@ -1286,93 +1702,221 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
   }
 
-  override async onStart() {
-    this.logger.debug('Sandbox started');
+  private async performRuntimeStop(
+    physicalStop: () => Promise<void>
+  ): Promise<void> {
+    await this.runtimeLifecycle.invalidate();
+    await this.previewService.clearActivePreviewPorts();
+    await physicalStop();
+  }
 
-    await this.currentRuntime.markStarted();
+  private async runBoundedDestroyRuntimeCleanup(
+    cleanupRuntime: RuntimeIdentity | null
+  ): Promise<{
+    mountsProcessed: number;
+    mountFailures: number;
+  }> {
+    if (!cleanupRuntime) {
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
+    }
 
-    // Fire-and-forget: version check is observability, not load-bearing.
-    this.checkVersionCompatibility().catch((error) => {
-      this.logger.error(
-        'Version compatibility check failed',
-        error instanceof Error ? error : new Error(String(error))
+    let timeoutID: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timeoutID = setTimeout(
+        () => resolve('timeout'),
+        DESTROY_RUNTIME_CLEANUP_TIMEOUT_MS
       );
     });
-
-    // Reconcile tunnel storage with the fresh container inside
-    // onStart's blockConcurrencyWhile gate so any get() that arrived
-    // during startup sees tunnel state for the current runtime.
+    const cleanup = this.cleanupRuntimeBeforeDestroy(cleanupRuntime);
+    let result: 'timeout' | { mountsProcessed: number; mountFailures: number };
     try {
-      this.ensureTunnelsBuilt();
-      await this.tunnelServiceHandle?.onRuntimeStart();
+      result = await Promise.race([cleanup, timeout]);
     } catch (error) {
-      this.logger.error(
-        'Failed to reconcile tunnel storage after container start',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      this.logger.warn('Failed runtime cleanup before destroy()', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
+    } finally {
+      if (timeoutID) clearTimeout(timeoutID);
+      this.runtimeSessions.closeActive();
     }
+    if (result === 'timeout') {
+      this.logger.warn('Timed out during runtime cleanup before destroy()', {
+        timeoutMs: DESTROY_RUNTIME_CLEANUP_TIMEOUT_MS
+      });
+      cleanup.catch((error) => {
+        this.logger.warn('Late runtime cleanup failed after destroy timeout', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+      return await this.bucketMounts.cleanupForDestroyWithoutRuntime();
+    }
+    return result;
+  }
+
+  private async cleanupRuntimeBeforeDestroy(
+    cleanupRuntime: RuntimeIdentity
+  ): Promise<{
+    mountsProcessed: number;
+    mountFailures: number;
+  }> {
+    const session = await this.runtimeSessions.acquireSession(cleanupRuntime);
+    const hold = session.retain();
+    const runControl = async <T>(
+      _operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ) => {
+      if (session.isInterrupted()) return session.interrupted;
+      return Promise.race([call(session.client), session.interrupted]);
+    };
+    let mountsProcessed = 0;
+    let mountFailures = 0;
+    try {
+      ({ mountsProcessed, mountFailures } =
+        await this.bucketMounts.cleanupForDestroyUsing(runControl));
+      if (mountFailures > 0) {
+        this.logger.warn('Failed to clean up bucket mounts during destroy()', {
+          mountFailures
+        });
+      }
+    } catch (error) {
+      this.logger.warn('Failed to clean up bucket mounts during destroy()', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    try {
+      const teardownTunnels = this.createTeardownTunnelsHandle(
+        runControl,
+        cleanupRuntime
+      );
+      await teardownTunnels.destroyAllRuntimeRuns();
+    } catch (error) {
+      this.logger.warn('Failed to tear down tunnels during destroy()', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      hold.release();
+    }
+
+    return { mountsProcessed, mountFailures };
+  }
+
+  private createTeardownTunnelsHandle(
+    runControl: <T>(
+      operation: string,
+      call: (control: ContainerControlClient) => Promise<T>
+    ) => Promise<T>,
+    cleanupRuntime: RuntimeIdentity
+  ): TunnelsHandle {
+    return this.createDestroyTunnelsHandle(async (runtime, operation, call) => {
+      if (
+        runtime.id !== cleanupRuntime.id ||
+        runtime.runtimeIncarnationID !== cleanupRuntime.runtimeIncarnationID
+      ) {
+        return null;
+      }
+      return await runControl(operation, (control) =>
+        call(control.tunnels as SandboxTunnelsAPI)
+      );
+    });
+  }
+
+  private createDurableDestroyTunnelsHandle(): TunnelsHandle {
+    return this.createDestroyTunnelsHandle(async () => null);
+  }
+
+  private createDestroyTunnelsHandle(
+    runExisting: Parameters<typeof createTunnelsHandle>[0]['runExisting']
+  ): TunnelsHandle {
+    return createTunnelsHandle({
+      runProvision: async () => {
+        throw new Error('Tunnel provisioning is unavailable during teardown');
+      },
+      runExisting,
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
+      storage: this.ctx.storage,
+      logger: this.logger,
+      sandboxId: this.ctx.id.toString(),
+      currentLifetime: this.currentLifetime,
+      getNamedTunnelConfig: () => this.namedTunnelConfigResolver.getConfig()
+    });
+  }
+
+  override async onStart() {
+    const replacementStartTransitionCompleted =
+      this.runtimeLifecycle.markRuntimeStarted();
+    this.logger.debug('Sandbox started', {
+      replacementStartTransitionCompleted
+    });
+  }
+
+  override async start(
+    options?: Parameters<Container<Env>['start']>[0]
+  ): Promise<void> {
+    await this.runtimeRunner.runWaking('runtime.start', async () => undefined, {
+      startOptions: options as ContainerStartConfigOptions | undefined
+    });
+  }
+
+  override startAndWaitForPorts(
+    args: StartAndWaitForPortsOptions
+  ): Promise<void>;
+  override startAndWaitForPorts(
+    portsOrArgs?: number | number[] | StartAndWaitForPortsOptions,
+    cancellationOptions?: CancellationOptions,
+    startOptions?: ContainerStartConfigOptions
+  ): Promise<void>;
+  override async startAndWaitForPorts(
+    portsOrArgs?: number | number[] | StartAndWaitForPortsOptions,
+    cancellationOptions?: CancellationOptions,
+    startOptions?: ContainerStartConfigOptions
+  ): Promise<void> {
+    const normalizedOptions = normalizeStartAndWaitForPortsOptions(
+      portsOrArgs,
+      cancellationOptions,
+      startOptions
+    );
+    const ports = normalizePorts(normalizedOptions.ports);
+    await this.runtimeRunner.runWaking(
+      'runtime.port.ready',
+      async (lease) => {
+        await Promise.all(
+          ports
+            .filter((port) => port !== 3000)
+            .map((port) =>
+              waitForRuntimePort(lease, port, {
+                timeout:
+                  normalizedOptions.cancellationOptions?.portReadyTimeoutMS,
+                interval: normalizedOptions.cancellationOptions?.waitInterval,
+                signal: normalizedOptions.cancellationOptions?.abort
+              })
+            )
+        );
+      },
+      {
+        signal: normalizedOptions.cancellationOptions?.abort,
+        startOptions: normalizedOptions.startOptions
+      }
+    );
   }
 
   override async stop(
     signal?: Parameters<Container<Env>['stop']>[0]
   ): Promise<void> {
-    this.runtimeControlClient.dispose();
-    this.client.disconnect();
-    await this.currentRuntime.clear();
-    await this.previewService.clearActivePreviewPorts();
-    await super.stop(signal);
-  }
-
-  /**
-   * Check if the container version matches the SDK version
-   * Logs a warning if there's a mismatch
-   */
-  private async checkVersionCompatibility(): Promise<void> {
-    const sdkVersion = SDK_VERSION;
-    let containerVersion: string | undefined;
-    let outcome: string;
-
-    try {
-      containerVersion = await this.client.utils.getVersion();
-
-      if (containerVersion === 'unknown') {
-        outcome = 'container_version_unknown';
-      } else if (containerVersion !== sdkVersion) {
-        outcome = 'version_mismatch';
-      } else {
-        outcome = 'compatible';
-      }
-    } catch (error) {
-      outcome = 'check_failed';
-      containerVersion = undefined;
-    }
-
-    const successLevel =
-      outcome === 'compatible'
-        ? ('debug' as const)
-        : outcome === 'container_version_unknown'
-          ? ('info' as const)
-          : ('warn' as const); // version_mismatch or check_failed
-
-    logCanonicalEvent(
-      this.logger,
-      {
-        event: 'version.check',
-        outcome: 'success',
-        durationMs: 0,
-        sdkVersion,
-        containerVersion: containerVersion ?? 'unknown',
-        versionOutcome: outcome
-      },
-      { successLevel }
+    await this.resourceActivityGate.runStopTeardown(() =>
+      this.performRuntimeStop(() => super.stop(signal))
     );
   }
 
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    this.runtimeControlClient.dispose();
-    await this.currentRuntime.clear();
+    const runtimeStopDisposition =
+      await this.runtimeLifecycle.reconcileObservedStop();
+    this.logger.debug('Sandbox runtime stop reconciled', {
+      runtimeStopDisposition
+    });
     await this.previewService.clearActivePreviewPorts();
 
     try {
@@ -1385,12 +1929,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       );
     }
 
-    // Stop local sync managers and clear runtime-scoped mount state before
-    // closing the control client; FUSE cleanup may need container RPC.
     await this.bucketMounts.cleanupForStop();
-
-    // Disconnect the active client so open sockets do not hold the DO alive.
-    this.client.disconnect();
 
     // Port tokens are durable authorization and survive container restarts;
     // runtime-scoped preview activation is cleared separately above.
@@ -1404,183 +1943,173 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   }
 
   /**
-   * Override Container.containerFetch to use production-friendly timeouts
-   * Automatically starts container with longer timeouts if not running
+   * Override Container.containerFetch to route direct forwarding through runtime admission.
    */
   override async containerFetch(
     requestOrUrl: Request | string | URL,
     portOrInit?: number | RequestInit,
     portParam?: number
   ): Promise<Response> {
-    // Parse arguments to extract request and port
     const { request, port } = this.parseContainerFetchArgs(
       requestOrUrl,
       portOrInit,
       portParam
     );
+    const pathname = new URL(request.url).pathname;
+    if (port === 3000 && pathname === '/rpc') {
+      throw new SandboxSecurityError(
+        'Container RPC connection is not authorized'
+      );
+    }
+    if (port === 3000 && pathname === '/ws/terminal') {
+      throw new SandboxSecurityError('Terminal connection is not authorized');
+    }
+    let physicalForwardStarted = false;
 
-    const activity = this.resourceActivityGate.beginOperation();
     try {
-      await activity.beforeCall;
-
-      const state = await this.getState();
-      const containerRunning = this.ctx.container?.running;
-
-      // Start container if persisted state is not healthy OR if runtime reports container is not running.
-      // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
-      // but Docker container is gone).
-      const staleStateDetected =
-        state.status === 'healthy' && containerRunning === false;
-      if (state.status !== 'healthy' || containerRunning === false) {
-        try {
-          await this.startAndWaitForPorts({
-            ports: port,
-            cancellationOptions: {
-              instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-              portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-              waitInterval: this.containerTimeouts.waitIntervalMS,
-              abort: request.signal
-            }
+      return await this.runtimeRunner.runWaking(
+        'container.fetch',
+        async (lease) => {
+          await waitForRuntimePort(lease, port, {
+            timeout: this.containerTimeouts.portReadyTimeoutMS,
+            interval: this.containerTimeouts.waitIntervalMS,
+            signal: request.signal
           });
-        } catch (e) {
-          // 1. Provisioning: Container VM not yet available
-          if (this.isNoInstanceError(e)) {
-            const errorBody: ErrorResponse = {
-              code: ErrorCode.CONTAINER_UNAVAILABLE,
-              message:
-                'Container is currently provisioning. This can take several minutes on first deployment.',
-              context: { reason: 'container_starting', retryable: true },
-              httpStatus: 503,
-              timestamp: new Date().toISOString(),
-              suggestion:
-                'The container is still being provisioned. Retry the operation in a moment.'
-            };
-            return new Response(JSON.stringify(errorBody), {
-              status: 503,
-              headers: {
-                'Content-Type': 'application/json',
-                'Retry-After': '10'
-              }
-            });
+          try {
+            await this.runtimeLifecycle.assertActive(lease.runtime);
+          } catch {
+            throw runtimeInterrupted('container.fetch');
           }
-
-          // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
-          // These will never recover on retry — fail fast so the caller gets a clear signal.
-          // Checked before transient to avoid broad transient patterns (e.g., "container did not
-          // start") masking specific permanent causes in wrapped error messages.
-          if (this.isPermanentStartupError(e)) {
-            this.logger.error(
-              'Permanent container startup error, returning 500',
-              e instanceof Error ? e : new Error(String(e))
-            );
-            const errorBody: ErrorResponse = {
-              code: ErrorCode.INTERNAL_ERROR,
-              message:
-                'Container failed to start due to a permanent error. Check your container configuration.',
-              context: {
-                phase: 'startup',
-                error: e instanceof Error ? e.message : String(e)
-              },
-              httpStatus: 500,
-              timestamp: new Date().toISOString(),
-              suggestion:
-                'This error will not resolve with retries. Check container logs, image name, and resource limits.'
-            };
-            return new Response(JSON.stringify(errorBody), {
-              status: 500,
-              headers: {
-                'Content-Type': 'application/json'
-              }
-            });
-          }
-
-          // 3. Transient startup errors: Container starting, port not ready yet
-          if (this.isTransientStartupError(e)) {
-            // If startup failed after detecting stale state, the container runtime is likely stuck
-            // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
-            // next request gets a fresh instance with a clean container binding. This mirrors the
-            // recovery pattern in the base Container class for 'Network connection lost' errors.
-            if (staleStateDetected) {
-              this.logger.warn('container.startup', {
-                outcome: 'stale_state_abort',
-                staleStateDetected: true,
-                error: e instanceof Error ? e.message : String(e)
-              });
-              this.ctx.abort();
-            } else {
-              this.logger.debug('container.startup', {
-                outcome: 'transient_error',
-                staleStateDetected,
-                error: e instanceof Error ? e.message : String(e)
-              });
-            }
-            const errorBody: ErrorResponse = {
-              code: ErrorCode.CONTAINER_UNAVAILABLE,
-              message: 'Container is starting. Please retry in a moment.',
-              context: { reason: 'container_starting', retryable: true },
-              httpStatus: 503,
-              timestamp: new Date().toISOString(),
-              suggestion:
-                'The container is not ready yet. Retry the operation in a moment.'
-            };
-            return new Response(JSON.stringify(errorBody), {
-              status: 503,
-              headers: {
-                'Content-Type': 'application/json',
-                'Retry-After': '3'
-              }
-            });
-          }
-
-          // 4. Unrecognized errors: Treat as transient since retries are safe
-          // and new platform error messages may not yet be in our pattern list.
-          this.logger.warn('container.startup', {
-            outcome: 'unrecognized_error',
-            staleStateDetected,
-            error: e instanceof Error ? e.message : String(e)
-          });
-          const errorBody: ErrorResponse = {
-            code: ErrorCode.CONTAINER_UNAVAILABLE,
-            message: 'Container is starting. Please retry in a moment.',
-            context: { reason: 'container_starting', retryable: true },
-            httpStatus: 503,
-            timestamp: new Date().toISOString(),
-            suggestion:
-              'The container is not ready yet. Retry the operation in a moment.'
-          };
-          return new Response(JSON.stringify(errorBody), {
-            status: 503,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '5'
-            }
-          });
-        }
+          physicalForwardStarted = true;
+          return retainedResponse(
+            await this.getRuntimePortStub(port).fetch(
+              toContainerHTTPRequest(request)
+            ),
+            lease,
+            'container.fetch.body'
+          );
+        },
+        { signal: request.signal }
+      );
+    } catch (error) {
+      if (
+        error instanceof OperationInterruptedError ||
+        physicalForwardStarted
+      ) {
+        throw error;
       }
-
-      // Delegate to parent for the actual fetch (handles TCP port access internally)
-      return await super.containerFetch(requestOrUrl, portOrInit, portParam);
-    } finally {
-      activity.finish();
+      if (request.signal.aborted) {
+        throw request.signal.reason ?? error;
+      }
+      const state = await this.getState();
+      const staleStateDetected =
+        state.status === 'healthy' && this.ctx.container?.running === false;
+      return this.containerStartupErrorResponse(error, staleStateDetected);
     }
   }
 
-  private async ensureContainerRunning(signal?: AbortSignal): Promise<void> {
-    const state = await this.getState();
-    if (state.status === 'healthy' && this.ctx.container?.running === true) {
-      return;
+  private containerStartupErrorResponse(
+    error: unknown,
+    staleStateDetected: boolean
+  ): Response {
+    if (this.isNoInstanceError(error)) {
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        message:
+          'Container is currently provisioning. This can take several minutes on first deployment.',
+        context: { reason: 'container_starting', retryable: true },
+        httpStatus: 503,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'The container is still being provisioned. Retry the operation in a moment.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '10'
+        }
+      });
     }
 
-    await this.start({
-      envVars: this.envVars,
-      entrypoint: this.entrypoint,
-      enableInternet: this.enableInternet,
-      labels: this.labels
+    if (this.isPermanentStartupError(error)) {
+      this.logger.error(
+        'Permanent container startup error, returning 500',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.INTERNAL_ERROR,
+        message:
+          'Container failed to start due to a permanent error. Check your container configuration.',
+        context: {
+          phase: 'startup',
+          error: error instanceof Error ? error.message : String(error)
+        },
+        httpStatus: 500,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (this.isTransientStartupError(error)) {
+      if (staleStateDetected) {
+        this.logger.warn('container.startup', {
+          outcome: 'stale_state_abort',
+          staleStateDetected: true,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        this.ctx.abort();
+      } else {
+        this.logger.debug('container.startup', {
+          outcome: 'transient_error',
+          staleStateDetected,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      const errorBody: ErrorResponse = {
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        message: 'Container is starting. Please retry in a moment.',
+        context: { reason: 'container_starting', retryable: true },
+        httpStatus: 503,
+        timestamp: new Date().toISOString(),
+        suggestion:
+          'The container is not ready yet. Retry the operation in a moment.'
+      };
+      return new Response(JSON.stringify(errorBody), {
+        status: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '3'
+        }
+      });
+    }
+
+    this.logger.warn('container.startup', {
+      outcome: 'unrecognized_error',
+      staleStateDetected,
+      error: error instanceof Error ? error.message : String(error)
     });
-
-    if (signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
+    const errorBody: ErrorResponse = {
+      code: ErrorCode.CONTAINER_UNAVAILABLE,
+      message: 'Container is starting. Please retry in a moment.',
+      context: { reason: 'container_starting', retryable: true },
+      httpStatus: 503,
+      timestamp: new Date().toISOString(),
+      suggestion:
+        'The container is not ready yet. Retry the operation in a moment.'
+    };
+    return new Response(JSON.stringify(errorBody), {
+      status: 503,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '5'
+      }
+    });
   }
 
   /**
@@ -1728,10 +2257,22 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           if (this.ctx.container?.running !== true) return 'unknown';
           return 'available';
         },
-        processesHasActive: () =>
-          this.client.processesWithoutActivity().hasActive(),
-        terminalsHasActive: () =>
-          this.client.terminalsWithoutActivity().hasActive()
+        processesHasActive: async () => {
+          const result = await this.runtimeRunner.probeExisting(
+            { kind: 'current' },
+            'processes.hasActive',
+            (lease) => lease.control.processes.hasActive()
+          );
+          return result === RUNTIME_ABSENT ? false : (result as boolean);
+        },
+        terminalsHasActive: async () => {
+          const result = await this.runtimeRunner.probeExisting(
+            { kind: 'current' },
+            'terminals.hasActive',
+            (lease) => lease.control.terminals.hasActive()
+          );
+          return result === RUNTIME_ABSENT ? false : (result as boolean);
+        }
       },
       this.keepAliveEnabled
     );
@@ -1739,27 +2280,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
 
   private getPreviewForwardingContainer(): PreviewForwardingContainerState['container'] {
     return (this.ctx as PreviewForwardingContainerState).container;
-  }
-
-  private beginPreviewForward(): () => void {
-    const lifecycle = this as unknown as PreviewForwardingLifecycleState;
-    lifecycle.inflightRequests = (lifecycle.inflightRequests ?? 0) + 1;
-    this.renewActivityTimeout();
-
-    let settled = false;
-    return () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      lifecycle.inflightRequests = Math.max(
-        0,
-        (lifecycle.inflightRequests ?? 0) - 1
-      );
-      if (lifecycle.inflightRequests === 0) {
-        this.renewActivityTimeout();
-      }
-    };
   }
 
   // Override fetch to route internal container requests to appropriate ports
@@ -1792,14 +2312,13 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       connectionHeader?.toLowerCase().includes('upgrade');
 
     if (isWebSocket) {
-      // WebSocket path: Let parent Container class handle WebSocket proxying
-      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      const port = this.determinePort(request);
       try {
         requestLogger.debug('WebSocket upgrade requested', {
           path: url.pathname,
-          port: this.determinePort(url)
+          port
         });
-        return await super.fetch(request);
+        return await this.connectWebSocket(request, port);
       } catch (error) {
         requestLogger.error(
           'WebSocket connection failed',
@@ -1811,66 +2330,332 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
 
     // Non-WebSocket: Use existing port determination and HTTP routing logic
-    const port = this.determinePort(url);
+    const port = this.determinePort(request);
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
   }
 
-  wsConnect(request: Request, port: number): Promise<Response> {
-    // Stub - actual implementation is attached by getSandbox() on the stub object
-    throw new Error(
-      'wsConnect must be called on the stub returned by getSandbox()'
+  async wsConnect(request: Request, port: number): Promise<Response> {
+    return await connect(this)(request, port);
+  }
+
+  async authorizePortRequest(port: number, path: string): Promise<string> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new SandboxSecurityError(
+        `Invalid port number: ${port}. Must be between 1 and 65535.`
+      );
+    }
+    return this.#createPortRequestToken(port, path, 'port');
+  }
+
+  #createPortRequestToken(
+    port: number,
+    path: string,
+    scope: 'port' | 'terminal'
+  ): string {
+    const now = Date.now();
+    for (const [token, route] of this.portRequestTokens) {
+      if (route.expiresAt <= now) this.portRequestTokens.delete(token);
+    }
+    const token = crypto.randomUUID();
+    this.portRequestTokens.set(token, {
+      port,
+      path,
+      expiresAt: now + 30_000,
+      scope
+    });
+    return token;
+  }
+
+  private connectWebSocket(request: Request, port: number): Promise<Response> {
+    return this.runtimeRunner.runWaking(
+      'container.websocket',
+      async (lease) => {
+        await waitForRuntimePort(lease, port, {
+          timeout: this.containerTimeouts.portReadyTimeoutMS,
+          interval: this.containerTimeouts.waitIntervalMS,
+          signal: request.signal
+        });
+        try {
+          await this.runtimeLifecycle.assertActive(lease.runtime);
+        } catch {
+          throw runtimeInterrupted('container.websocket');
+        }
+        let interrupted = false;
+        let retained: ReturnType<typeof retainWebSocketResponse> | undefined;
+        let releaseHold = () => {};
+        const hold = lease.retain(() => {
+          interrupted = true;
+          retained?.interrupt();
+          releaseHold();
+        });
+        releaseHold = hold.release;
+        if (interrupted) {
+          hold.release();
+          throw runtimeInterrupted('container.websocket');
+        }
+        try {
+          const response = await this.getRuntimePortStub(port).fetch(
+            toContainerHTTPRequest(request)
+          );
+          retained = retainWebSocketResponse(response, hold.release);
+          if (interrupted) {
+            retained.interrupt();
+            throw runtimeInterrupted('container.websocket');
+          }
+          return response;
+        } catch (error) {
+          hold.release();
+          throw error;
+        }
+      },
+      { signal: request.signal }
     );
   }
 
-  async createTerminal(options: CreateTerminalOptions): Promise<Terminal> {
-    return terminalHandleFromSnapshot(
-      this.terminalStub(),
-      await this.client.terminals.create(options)
+  async createTerminal(
+    options: CreateTerminalOptions
+  ): Promise<TerminalRPCDescriptor> {
+    return this.runtimeRunner.runWaking('terminal.create', async (lease) =>
+      this.terminalDescriptor(
+        await lease.control.terminals.create(options),
+        lease.runtime
+      )
     );
   }
 
-  async getTerminal(id: string): Promise<Terminal | null> {
-    const snapshot = await this.client.terminals.get(id);
-    return snapshot
-      ? terminalHandleFromSnapshot(this.terminalStub(), snapshot)
-      : null;
-  }
-
-  async listTerminals(): Promise<Terminal[]> {
-    return (await this.client.terminals.list()).map((snapshot) =>
-      terminalHandleFromSnapshot(this.terminalStub(), snapshot)
+  async getTerminal(id: string): Promise<TerminalRPCDescriptor | null> {
+    const result = await this.runtimeRunner.runExisting(
+      { kind: 'current' },
+      'terminal.get',
+      async (lease) => {
+        const snapshot = await lease.control.terminals.get(id);
+        return snapshot
+          ? this.terminalDescriptor(snapshot, lease.runtime)
+          : null;
+      }
     );
+    if (isRuntimeAbsent(result)) return null;
+    return result;
   }
 
-  private terminalStub() {
-    const terminals = this.client.terminals;
+  async listTerminals(): Promise<TerminalRPCDescriptor[]> {
+    const result = await this.runtimeRunner.runExisting(
+      { kind: 'current' },
+      'terminal.list',
+      async (lease) =>
+        (await lease.control.terminals.list()).map((snapshot) =>
+          this.terminalDescriptor(snapshot, lease.runtime)
+        )
+    );
+    if (isRuntimeAbsent(result)) return [];
+    return result;
+  }
+
+  private terminalDescriptor(
+    snapshot: TerminalSnapshot,
+    runtime: RuntimeIdentity
+  ): TerminalRPCDescriptor {
+    const stub = this.terminalStub(runtime);
+    const control: TerminalCapabilityControl = {
+      get: (id) => stub.get(id),
+      openOutput: (id, options) => stub.output(id, options),
+      write: (id, data) => stub.write(id, data),
+      resize: (id, cols, rows) => stub.resize(id, cols, rows),
+      interrupt: (id) => stub.interrupt(id),
+      terminate: (id) => stub.terminate(id),
+      authorizeConnection: async () =>
+        this.#createPortRequestToken(3000, '/ws/terminal', 'terminal')
+    };
     return {
-      create: (options: CreateTerminalOptions) => terminals.create(options),
-      get: (id: string) => terminals.get(id),
-      list: () => terminals.list(),
-      output: (id: string, options?: Parameters<typeof terminals.output>[1]) =>
-        terminals.output(id, options),
-      write: (id: string, data: Uint8Array) => terminals.write(id, data),
-      resize: (id: string, cols: number, rows: number) =>
-        terminals.resize(id, cols, rows),
-      interrupt: (id: string) => terminals.interrupt(id),
-      terminate: (id: string) => terminals.terminate(id),
-      hasActive: () => terminals.hasActive(),
-      fetch: (request: Request) => this.fetch(request)
+      snapshot,
+      runtimeIncarnationID: runtime.runtimeIncarnationID,
+      capability: new TerminalCapabilityTarget(snapshot.id, control)
     };
   }
 
-  private determinePort(url: URL): number {
-    // Direct DO fetch compatibility path used by switchPort()/wsConnect().
-    // Public preview URL traffic enters through proxyPreviewRequest() instead.
-    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
-    if (proxyMatch) {
-      return parseInt(proxyMatch[1], 10);
+  private terminalStub(runtime: RuntimeIdentity): TerminalHandleStub {
+    const runTerminal = async <T>(
+      terminalId: string,
+      operation: string,
+      call: (lease: RuntimeLease) => Promise<T>
+    ): Promise<T> => {
+      let result: T | typeof RUNTIME_ABSENT;
+      try {
+        result = await this.runtimeRunner.runExisting<T>(
+          { kind: 'runtime', runtime },
+          operation,
+          call
+        );
+      } catch (error) {
+        if (error instanceof OperationInterruptedError) {
+          throw staleTerminal(terminalId, operation);
+        }
+        throw error;
+      }
+      if (!isRuntimeAbsent(result)) return result;
+      throw staleTerminal(terminalId, operation);
+    };
+    return {
+      create: (options: CreateTerminalOptions) =>
+        this.runtimeRunner.runWaking('terminal.create', (lease) =>
+          lease.control.terminals.create(options)
+        ),
+      get: (id: string) =>
+        runTerminal(id, 'terminal.getSnapshot', (lease) =>
+          lease.control.terminals.get(id)
+        ),
+      list: async (): Promise<TerminalSnapshot[]> => {
+        const result = await this.runtimeRunner.runExisting<TerminalSnapshot[]>(
+          { kind: 'current' },
+          'terminal.list',
+          (lease) => lease.control.terminals.list()
+        );
+        if (isRuntimeAbsent(result)) return [];
+        return result;
+      },
+      output: (
+        id: string,
+        options?: Parameters<RuntimeLease['control']['terminals']['output']>[1]
+      ) =>
+        runTerminal(id, 'terminal.output', async (lease) => {
+          let retained: InterruptibleTerminalSubscription | undefined;
+          let releaseHold = () => {};
+          const hold = lease.retain(() => {
+            retained?.interrupt();
+            releaseHold();
+          });
+          releaseHold = hold.release;
+          try {
+            const subscription = await lease.control.terminals.output(
+              id,
+              options
+            );
+            retained = retainedTerminalSubscription(
+              id,
+              'terminal.output',
+              subscription,
+              hold.release
+            );
+            return new PullSubscriptionTarget(await retained.stream());
+          } catch (error) {
+            hold.release();
+            throw error;
+          }
+        }),
+      write: (id: string, data: Uint8Array) =>
+        runTerminal(id, 'terminal.write', (lease) =>
+          lease.control.terminals.write(id, data)
+        ),
+      resize: (id: string, cols: number, rows: number) =>
+        runTerminal(id, 'terminal.resize', (lease) =>
+          lease.control.terminals.resize(id, cols, rows)
+        ),
+      interrupt: (id: string) =>
+        runTerminal(id, 'terminal.interrupt', (lease) =>
+          lease.control.terminals.interrupt(id)
+        ),
+      terminate: (id: string) =>
+        runTerminal(id, 'terminal.terminate', (lease) =>
+          lease.control.terminals.terminate(id)
+        ),
+      hasActive: () =>
+        this.runtimeRunner
+          .probeExisting({ kind: 'current' }, 'terminals.hasActive', (lease) =>
+            lease.control.terminals.hasActive()
+          )
+          .then((result) => (isRuntimeAbsent(result) ? false : result)),
+      fetch: (request: Request) =>
+        runTerminal('', 'terminal.connect', async (lease) => {
+          let interrupted = false;
+          let retained: ReturnType<typeof retainWebSocketResponse> | undefined;
+          let releaseHold = () => {};
+          const hold = lease.retain(() => {
+            interrupted = true;
+            retained?.interrupt();
+            releaseHold();
+          });
+          releaseHold = hold.release;
+          if (interrupted) {
+            hold.release();
+            throw staleTerminal('', 'terminal.connect');
+          }
+          try {
+            const response = await this.getRuntimePortStub(3000).fetch(
+              toContainerHTTPRequest(request)
+            );
+            retained = retainWebSocketResponse(response, hold.release);
+            if (interrupted) {
+              retained.interrupt();
+              throw staleTerminal('', 'terminal.connect');
+            }
+            return response;
+          } catch (error) {
+            hold.release();
+            throw error;
+          }
+        })
+    };
+  }
+
+  private determinePort(request: Request): number {
+    const targetPort = Number(request.headers.get('cf-container-target-port'));
+    const routeToken = request.headers.get('x-sandbox-port-route-token');
+    const pathname = new URL(request.url).pathname;
+    const targetsControlPlane =
+      !request.headers.has('cf-container-target-port') || targetPort === 3000;
+
+    if (routeToken) {
+      const route = this.portRequestTokens.get(routeToken);
+      this.portRequestTokens.delete(routeToken);
+      if (
+        route &&
+        route.expiresAt > Date.now() &&
+        route.port === targetPort &&
+        route.path === new URL(request.url).pathname
+      ) {
+        if (
+          pathname === '/ws/terminal' &&
+          targetsControlPlane &&
+          route.scope !== 'terminal'
+        ) {
+          throw new SandboxSecurityError(
+            'Terminal connection is not authorized'
+          );
+        }
+        if (pathname === '/rpc' && targetsControlPlane) {
+          throw new SandboxSecurityError(
+            'Container RPC connection is not authorized'
+          );
+        }
+        return targetPort;
+      }
     }
 
-    // Direct fetch compatibility defaults to the container server port.
+    if (pathname === '/ws/terminal' && targetsControlPlane) {
+      throw new SandboxSecurityError('Terminal connection is not authorized');
+    }
+    if (pathname === '/rpc' && targetsControlPlane) {
+      throw new SandboxSecurityError(
+        'Container RPC connection is not authorized'
+      );
+    }
+
+    if (request.headers.has('cf-container-target-port')) {
+      if (
+        !Number.isInteger(targetPort) ||
+        targetPort < 1 ||
+        targetPort > 65535
+      ) {
+        throw new SandboxSecurityError(
+          `Invalid container target port: ${request.headers.get('cf-container-target-port')}`
+        );
+      }
+      return targetPort;
+    }
+
+    // Direct fetches target the container server port.
     // SDK control operations use ContainerControlClient over /rpc instead.
     return 3000;
   }
@@ -1882,27 +2667,34 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     const argv = validateExecArgv(command);
     const startTime = Date.now();
     const commandText = argv.join(' ');
-    const activity = this.resourceActivityGate.beginOperation();
-
+    const canMergeEnvironment =
+      options.env === undefined || isPlainObject(options.env);
+    const launchOptions =
+      canMergeEnvironment &&
+      (Object.keys(this.envVars).length > 0 || options.env !== undefined)
+        ? {
+            ...options,
+            env: mergeExecEnvironment(this.envVars, options.env ?? {})
+          }
+        : options;
     try {
-      await activity.beforeCall;
-      await this.ensureContainerRunning();
-      const owningRuntime = await this.currentRuntime.get();
-      if (!owningRuntime) {
-        throw runtimeInterrupted('process.start', 'none');
-      }
-      await this.assertLaunchRuntime(owningRuntime, 'none');
-
-      const status = await this.client.processes.start(argv, options);
-      await this.assertLaunchRuntime(owningRuntime, 'unknown');
-      const descriptor = this.processDescriptor(status, owningRuntime);
+      const descriptor = await this.runtimeRunner.runWaking(
+        'process.start',
+        async (lease) => {
+          const status = await lease.control.processes.start(
+            argv,
+            launchOptions
+          );
+          return this.processDescriptor(status, lease.runtime);
+        }
+      );
 
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: 'success',
         command: commandText,
-        processId: status.id,
-        pid: status.pid,
+        processId: descriptor.id,
+        pid: descriptor.pid,
         durationMs: Date.now() - startTime,
         origin: 'user'
       });
@@ -1920,20 +2712,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
         errorMessage: execError.message
       });
       throw error;
-    } finally {
-      activity.finish();
-    }
-  }
-
-  private async assertLaunchRuntime(
-    runtime: RuntimeIdentity,
-    effect: 'none' | 'unknown'
-  ): Promise<void> {
-    try {
-      await this.currentRuntime.assertActive(runtime);
-    } catch {
-      this.runtimeControlClient.dispose();
-      throw runtimeInterrupted('process.start', effect);
     }
   }
 
@@ -1941,10 +2719,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     status: ProcessStatus,
     runtime: RuntimeIdentity
   ): ProcessRPCDescriptor {
-    const lifecycle = this.processCapabilityLifecycle(runtime, {
-      id: status.id,
-      pid: status.pid
-    });
+    const lifecycle = this.processCapabilityLifecycle(runtime, status);
     return {
       id: status.id,
       pid: status.pid,
@@ -1959,61 +2734,90 @@ export class Sandbox<Env = unknown> extends Container<Env> {
 
   private processCapabilityLifecycle(
     owningRuntime: RuntimeIdentity,
-    process: { id: string; pid: number }
+    process: Pick<ProcessStatus, 'id' | 'pid'>
   ) {
-    const lifecycle = new ProcessLifecycle({
-      currentRuntime: this.currentRuntime,
-      runtimeClient: this.runtimeControlClient,
-      beginNonWakingOperation: () =>
-        this.resourceActivityGate.beginNonWakingOperation(),
-      process
-    });
+    const stale = (error: unknown) => {
+      if (error instanceof OperationInterruptedError) {
+        throw new StaleProcessHandleError({
+          code: ErrorCode.STALE_PROCESS_HANDLE,
+          message: 'Process handle refers to a previous runtime incarnation',
+          context: {
+            processId: process.id,
+            pid: process.pid,
+            operation: 'process.handle'
+          },
+          httpStatus: 409,
+          timestamp: new Date().toISOString()
+        });
+      }
+      throw error;
+    };
     return {
-      runRead: <T>(
-        _runtime: { readonly id: string },
+      runRead: async <T>(
+        _runtime: import('./processes/process-capability').ProcessCapabilityRuntime,
         operation: string,
         call: (control: ProcessCapabilityControl) => Promise<T>
-      ) =>
-        lifecycle.runRead(owningRuntime, operation, (client) =>
-          call(processCapabilityControl(client))
-        ),
-      runControl: <T>(
-        _runtime: { readonly id: string },
+      ) => {
+        const result = await this.runtimeRunner
+          .runExisting(
+            { kind: 'runtime', runtime: owningRuntime },
+            operation,
+            (lease) => call(processCapabilityControl(lease))
+          )
+          .catch(stale);
+        if (result === RUNTIME_ABSENT) stale(runtimeInterrupted(operation));
+        return result as T;
+      },
+      runControl: async <T>(
+        _runtime: import('./processes/process-capability').ProcessCapabilityRuntime,
         operation: string,
         call: (control: ProcessCapabilityControl) => Promise<T>
-      ) =>
-        lifecycle.runControl(owningRuntime, operation, (client) =>
-          call(processCapabilityControl(client))
-        )
+      ) => {
+        const result = await this.runtimeRunner
+          .runExisting(
+            { kind: 'runtime', runtime: owningRuntime },
+            operation,
+            (lease) => call(processCapabilityControl(lease))
+          )
+          .catch(stale);
+        if (result === RUNTIME_ABSENT) stale(runtimeInterrupted(operation));
+        return result as T;
+      }
     };
   }
 
   /** Internal bridge liveness read that neither starts nor renews a runtime. */
   async isRuntimeActive(): Promise<boolean> {
-    return (await this.processLifecycle.captureCurrent()) !== null;
+    return (await this.runtimeLifecycle.get()) !== null;
   }
 
   async getProcess(id: string): Promise<ProcessRPCDescriptor | null> {
-    const runtime = await this.processLifecycle.captureCurrent();
-    if (!runtime) return null;
-    const status = await this.processLifecycle.runRead(
-      runtime,
+    const result = await this.runtimeRunner.runExisting(
+      { kind: 'current' },
       'process.get',
-      (client) => client.processesWithoutActivity().get(id)
+      async (lease) => {
+        const status = await lease.control.processes.get(id);
+        return status ? this.processDescriptor(status, lease.runtime) : null;
+      }
     );
-    return status ? this.processDescriptor(status, runtime) : null;
+    return result === RUNTIME_ABSENT
+      ? null
+      : (result as ProcessRPCDescriptor | null);
   }
 
   async listProcesses(): Promise<ProcessStatus[]> {
-    const runtime = await this.processLifecycle.captureCurrent();
-    if (!runtime) return [];
-    return this.processLifecycle.runRead(runtime, 'process.list', (client) =>
-      client.processesWithoutActivity().list()
+    const result = await this.runtimeRunner.runExisting(
+      { kind: 'current' },
+      'process.list',
+      (lease) => lease.control.processes.list()
     );
+    return result === RUNTIME_ABSENT ? [] : (result as ProcessStatus[]);
   }
 
   async mkdir(path: string, options: { recursive?: boolean } = {}) {
-    return this.client.files.mkdir(path, { recursive: options.recursive });
+    return this.runtimeRunner.runWaking('files.mkdir', (lease) =>
+      lease.control.files.mkdir(path, { recursive: options.recursive })
+    );
   }
 
   async writeFile(
@@ -2021,25 +2825,40 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string } = {}
   ) {
-    if (content instanceof ReadableStream) {
-      return this.client.files.writeFileStream(path, content);
-    }
-
-    return this.client.files.writeFile(path, content, {
-      encoding: options.encoding
+    return this.runtimeRunner.runWaking('files.write', async (lease) => {
+      if (content instanceof ReadableStream) {
+        const retained = retainedStream(content, lease);
+        try {
+          return await lease.control.files.writeFileStream(
+            path,
+            retained.stream
+          );
+        } finally {
+          retained.cancel('writeFileStream completed');
+        }
+      }
+      return lease.control.files.writeFile(path, content, {
+        encoding: options.encoding
+      });
     });
   }
 
   async deleteFile(path: string) {
-    return this.client.files.deleteFile(path);
+    return this.runtimeRunner.runWaking('files.delete', (lease) =>
+      lease.control.files.deleteFile(path)
+    );
   }
 
   async renameFile(oldPath: string, newPath: string) {
-    return this.client.files.renameFile(oldPath, newPath);
+    return this.runtimeRunner.runWaking('files.rename', (lease) =>
+      lease.control.files.renameFile(oldPath, newPath)
+    );
   }
 
   async moveFile(sourcePath: string, destinationPath: string) {
-    return this.client.files.moveFile(sourcePath, destinationPath);
+    return this.runtimeRunner.runWaking('files.move', (lease) =>
+      lease.control.files.moveFile(sourcePath, destinationPath)
+    );
   }
 
   /**
@@ -2064,10 +2883,18 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     path: string,
     options: { encoding?: FileEncoding } = {}
   ): Promise<ReadFileResult | ReadFileStreamResult> {
-    if (options.encoding === 'none') {
-      return this.client.files.readFile(path, { encoding: options.encoding });
-    }
-    return this.client.files.readFile(path, { encoding: options.encoding });
+    return this.runtimeRunner.runWaking('files.read', async (lease) => {
+      if (options.encoding === 'none') {
+        const result = await lease.control.files.readFile(path, {
+          encoding: 'none'
+        });
+        return {
+          ...result,
+          content: retainStream(result.content, lease)
+        };
+      }
+      return lease.control.files.readFile(path, { encoding: options.encoding });
+    });
   }
 
   /**
@@ -2080,10 +2907,14 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       root: '/workspace'
     }
   ): Promise<string> {
-    const result = await this.client.workspace.createArchive({
-      root: options.root,
-      excludes: options.excludes ?? []
-    });
+    const result = await this.runtimeRunner.runWaking(
+      'workspace.archive.create',
+      (lease) =>
+        lease.control.workspace.createArchive({
+          root: options.root,
+          excludes: options.excludes ?? []
+        })
+    );
     return result.archivePath;
   }
 
@@ -2091,30 +2922,42 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     root: string;
     archivePath: string;
   }): Promise<void> {
-    await this.client.workspace.extractArchive(options);
+    await this.runtimeRunner.runWaking('workspace.archive.extract', (lease) =>
+      lease.control.workspace.extractArchive(options)
+    );
   }
 
   async cleanupWorkspaceArchive(archivePath: string): Promise<void> {
-    await this.client.workspace.cleanupArchive(archivePath);
+    await this.runtimeRunner.runWaking('workspace.archive.cleanup', (lease) =>
+      lease.control.workspace.cleanupArchive(archivePath)
+    );
   }
 
   async cleanupMountDirectory(mountPath: string): Promise<void> {
-    await this.client.mounts.removeMountDirectory({
-      path: mountPath,
-      onlyIfNotMountpoint: true
-    });
+    await this.runtimeRunner.runWaking('mounts.cleanup', (lease) =>
+      lease.control.mounts.removeMountDirectory({
+        path: mountPath,
+        onlyIfNotMountpoint: true
+      })
+    );
   }
 
   async readFileStream(path: string): Promise<ReadableStream<Uint8Array>> {
-    return this.client.files.readFileStream(path);
+    return this.runtimeRunner.runWaking('files.stream.read', async (lease) =>
+      retainStream(await lease.control.files.readFileStream(path), lease)
+    );
   }
 
   async listFiles(path: string, options?: ListFilesOptions) {
-    return this.client.files.listFiles(path, options);
+    return this.runtimeRunner.runWaking('files.list', (lease) =>
+      lease.control.files.listFiles(path, options)
+    );
   }
 
   async exists(path: string) {
-    return this.client.files.exists(path);
+    return this.runtimeRunner.runWaking('files.exists', (lease) =>
+      lease.control.files.exists(path)
+    );
   }
 
   /**
@@ -2134,14 +2977,19 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     path: string,
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    return openRemoteSubscription(
-      this.client.watch.watch({
-        path,
-        recursive: options.recursive,
-        include: options.include,
-        exclude: options.exclude
-      }),
-      { operation: 'open filesystem watch' }
+    return this.runtimeRunner.runWaking('watch.open', async (lease) =>
+      retainStream(
+        await openRemoteSubscription(
+          lease.control.watch.watch({
+            path,
+            recursive: options.recursive,
+            include: options.include,
+            exclude: options.exclude
+          }),
+          { operation: 'open filesystem watch', protocol: 'stream' }
+        ),
+        lease
+      )
     );
   }
 
@@ -2159,33 +3007,15 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     path: string,
     options: CheckChangesOptions = {}
   ): Promise<CheckChangesResult> {
-    return this.client.watch.checkChanges({
-      path,
-      recursive: options.recursive,
-      include: options.include,
-      exclude: options.exclude,
-      since: options.since
-    });
-  }
-
-  private async ensureRuntimeActiveForPreview(): Promise<RuntimeIdentity> {
-    const activity = this.resourceActivityGate.beginOperation();
-    try {
-      await activity.beforeCall;
-      await this.startAndWaitForPorts({
-        ports: this.defaultPort,
-        cancellationOptions: {
-          instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-          waitInterval: this.containerTimeouts.waitIntervalMS
-        }
-      });
-
-      const runtime = await this.currentRuntime.get();
-      return runtime ?? (await this.currentRuntime.markStarted());
-    } finally {
-      activity.finish();
-    }
+    return this.runtimeRunner.runWaking('watch.checkChanges', (lease) =>
+      lease.control.watch.checkChanges({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        since: options.since
+      })
+    );
   }
 
   /**
@@ -2217,6 +3047,27 @@ export class Sandbox<Env = unknown> extends Container<Env> {
    * });
    * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
+  private async runWakingComposite<T>(
+    operation: string,
+    call: (lease: RuntimeLease) => Promise<T>
+  ): Promise<T> {
+    let callbackOutcome: Promise<T> | undefined;
+    try {
+      return await this.runtimeRunner.runWaking(operation, (lease) => {
+        callbackOutcome = call(lease);
+        return callbackOutcome;
+      });
+    } catch (error) {
+      await callbackOutcome?.catch(() => undefined);
+      throw error;
+    }
+  }
+
+  [sandboxRuntimeCall] = (async (operation, call) =>
+    await this.runWakingComposite(operation, (lease) =>
+      call(extensionRuntimeControl(lease.control))
+    )) as ExtensionRuntimeCall;
+
   async exposePort(
     port: number,
     options: { name?: string; hostname: string; token?: string }
@@ -2295,11 +3146,26 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private ensureTunnelsBuilt(): void {
     if (this.tunnelsHandler) return;
     const built = createTunnelsHandle({
-      client: this.client,
+      runProvision: (call) =>
+        this.runWakingComposite('tunnel.provision', (lease) =>
+          call({
+            runtime: lease.runtime,
+            tunnels: lease.control.tunnels,
+            retain: lease.retain
+          })
+        ),
+      runExisting: async (runtime, operation, call) => {
+        const result = await this.runtimeRunner.runExisting(
+          { kind: 'runtime', runtime },
+          operation,
+          (lease) => call(lease.control.tunnels)
+        );
+        return isRuntimeAbsent(result) ? null : result;
+      },
+      getStoredRuntime: (storage) => this.runtimeLifecycle.getStored(storage),
       storage: this.ctx.storage,
       logger: this.logger,
       sandboxId: this.ctx.id.toString(),
-      currentRuntime: this.currentRuntime,
       currentLifetime: this.currentLifetime,
       getNamedTunnelConfig: () => this.namedTunnelConfigResolver.getConfig()
     });

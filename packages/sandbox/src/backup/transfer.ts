@@ -1,4 +1,8 @@
-import { type createLogger, getEnvString } from '@repo/shared';
+import {
+  type createLogger,
+  getEnvString,
+  type UploadPartsResponse
+} from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import type { ContainerControlClient } from '../container-control';
 import {
@@ -6,6 +10,8 @@ import {
   BackupRestoreError,
   ErrorCode,
   InvalidBackupConfigError,
+  OperationInterruptedError,
+  RPCTransportError,
   SandboxError
 } from '../errors';
 import { isR2Bucket } from '../storage-mount';
@@ -21,7 +27,6 @@ import {
 
 type BackupTransferDeps = {
   getEnv: () => unknown;
-  getClient: () => ContainerControlClient;
   logger: ReturnType<typeof createLogger>;
 };
 
@@ -34,10 +39,6 @@ export class BackupTransfer {
 
   private get env(): unknown {
     return this.deps.getEnv();
-  }
-
-  private get client(): ContainerControlClient {
-    return this.deps.getClient();
   }
 
   private parseBackupBucketEndpoint(
@@ -234,11 +235,12 @@ export class BackupTransfer {
     r2Key: string,
     archiveSize: number,
     backupId: string,
-    dir: string
+    dir: string,
+    control: ContainerControlClient
   ): Promise<void> {
     const presignedURL = await this.generatePresignedPutURL(r2Key);
 
-    await this.client.backup.uploadArchive({
+    await control.backup.uploadArchive({
       archivePath,
       url: presignedURL,
       timeoutMs: 1_810_000
@@ -303,7 +305,8 @@ export class BackupTransfer {
     r2Key: string,
     sizeBytes: number,
     backupId: string,
-    dir: string
+    dir: string,
+    control: ContainerControlClient
   ): Promise<void> {
     const targetParts = calculatePartCount(
       sizeBytes,
@@ -321,7 +324,8 @@ export class BackupTransfer {
         r2Key,
         sizeBytes,
         backupId,
-        dir
+        dir,
+        control
       );
     }
 
@@ -384,11 +388,9 @@ export class BackupTransfer {
         }))
       );
 
-      let uploadResult: Awaited<
-        ReturnType<typeof this.client.backup.uploadParts>
-      >;
+      let uploadResult: UploadPartsResponse;
       try {
-        uploadResult = await this.client.backup.uploadParts({
+        uploadResult = await control.backup.uploadParts({
           archivePath,
           parts
         });
@@ -403,7 +405,8 @@ export class BackupTransfer {
             r2Key,
             sizeBytes,
             backupId,
-            dir
+            dir,
+            control
           );
         }
         throw err;
@@ -476,7 +479,8 @@ export class BackupTransfer {
     r2Key: string,
     expectedSize: number,
     backupId: string,
-    dir: string
+    dir: string,
+    control: ContainerControlClient
   ): Promise<void> {
     const presignedURL = await this.generatePresignedGetURL(r2Key);
     const parts =
@@ -502,13 +506,19 @@ export class BackupTransfer {
           })();
 
     try {
-      await this.client.backup.downloadArchive({
+      await control.backup.downloadArchive({
         archivePath,
         expectedSize,
         parts,
         timeoutMs: 1_810_000
       });
     } catch (error) {
+      if (
+        error instanceof OperationInterruptedError ||
+        error instanceof RPCTransportError
+      ) {
+        throw error;
+      }
       throw new BackupRestoreError({
         message: `Presigned URL download failed: ${error instanceof Error ? error.message : String(error)}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,

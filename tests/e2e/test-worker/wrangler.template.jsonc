@@ -33,6 +33,18 @@
       }
     },
     {
+      "class_name": "SandboxBrowser",
+      "image": "{{IMAGE_SANDBOX}}",
+      "name": "{{CONTAINER_NAME}}-browser",
+      "instance_type": "standard-4",
+      "max_instances": 16,
+      "unsafe": {
+        "configuration": {
+          "durable_object_offset_instances": 0
+        }
+      }
+    },
+    {
       "class_name": "SandboxPython",
       "image": "{{IMAGE_PYTHON}}",
       "name": "{{CONTAINER_NAME}}-python",
@@ -85,6 +97,10 @@
         "name": "Sandbox"
       },
       {
+        "class_name": "SandboxBrowser",
+        "name": "SandboxBrowser"
+      },
+      {
         "class_name": "SandboxPython",
         "name": "SandboxPython"
       },
@@ -127,6 +143,10 @@
     {
       "deleted_classes": ["SandboxDesktop"],
       "tag": "v7"
+    },
+    {
+      "new_sqlite_classes": ["SandboxBrowser"],
+      "tag": "v8"
     }
   ],
 

@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * Named-tunnel behavior tests for the SDK tunnel service.
  *
@@ -23,12 +27,12 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   type TunnelsStorage
 } from '../../src/tunnels/rpc-target';
 import { makeFences, makeLogger, makeStorage } from './helpers';
@@ -257,7 +261,7 @@ function makeHandler(opts?: {
     zoneId: string;
   }>;
   configError?: Error;
-  fences?: Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
+  fences?: Pick<TunnelsHost, 'getStoredRuntime' | 'currentLifetime'>;
 }) {
   const { client } = makeClient();
   mockTunnelRun(client);
@@ -269,7 +273,15 @@ function makeHandler(opts?: {
     zoneId: opts?.config?.zoneId ?? 'zone-id'
   };
   const built = createTunnelsHandle({
-    client: client as unknown as TunnelsHost['client'],
+    runRuntimeCall: ((operation, call) =>
+      call(
+        client.tunnels as unknown as TunnelsHost['runRuntimeCall'] extends (
+          op: string,
+          call: (tunnels: infer U) => Promise<unknown>
+        ) => Promise<unknown>
+          ? U
+          : never
+      )) as TunnelsHost['runRuntimeCall'],
     storage,
     logger,
     sandboxId: opts?.sandboxId ?? 'sb1',
@@ -291,6 +303,9 @@ function makeHandler(opts?: {
     resumeCleanup: built.resumeCleanup
   };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > get(port, { name }) — named tunnel happy path', () => {
   it('provisions a fresh named tunnel end-to-end', async () => {
@@ -322,66 +337,36 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
     expect(JSON.stringify(info)).not.toContain('OPAQUE_TOKEN');
   });
 
-  it('replays the same named run request when the first call loses RPC transport', async () => {
+  it('surfaces RPC transport loss without replaying the named tunnel run', async () => {
     const cf = makeFakeCloudflare({});
     const { tunnels, client } = makeHandler({
       sandboxId: 'sb1',
       fetcher: cf.fetcher as unknown as typeof fetch
     });
-    client.tunnels.ensureTunnelRun
-      .mockRejectedValueOnce(createDisposedRPCError())
-      .mockImplementationOnce(async (request) => namedRunResult(request));
+    const error = createDisposedRPCError();
+    client.tunnels.ensureTunnelRun.mockRejectedValueOnce(error);
 
-    const info = await tunnels.get(8080, { name: 'api' });
+    await expect(tunnels.get(8080, { name: 'api' })).rejects.toBe(error);
 
-    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(2);
-    const first = client.tunnels.ensureTunnelRun.mock.calls[0][0];
-    const second = client.tunnels.ensureTunnelRun.mock.calls[1][0];
-    expect(second).toEqual(first);
-    expect(info).toMatchObject({
-      id: NAMED_TUNNEL_ID,
-      port: 8080,
-      name: 'api',
-      hostname: 'api.example.com',
-      url: 'https://api.example.com'
-    });
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds runtime-replacement recovery and never commits a partial record', async () => {
-    // Every post-spawn fence reports a replaced runtime, so recovery can
-    // never converge. The operation surfaces recovery_exhausted and
-    // leaves storage empty so no orphaned tunnel record persists.
+  it('does not consult the transitional runtime fence while provisioning', async () => {
     const cf = makeFakeCloudflare({});
-    let assertCalls = 0;
-    const { client, storage, tunnels } = makeHandler({
+    const assertActive = vi.fn(async () => {
+      throw new RuntimeIdentityInactiveError();
+    });
+    const { client, tunnels } = makeHandler({
       fetcher: cf.fetcher as unknown as typeof fetch,
-      fences: makeFences({
-        currentRuntime: {
-          assertActive: vi.fn(async () => {
-            assertCalls += 1;
-            if (assertCalls % 3 === 0) {
-              throw new RuntimeIdentityInactiveError();
-            }
-          })
-        }
-      })
+      fences: makeFences({ currentRuntime: { assertActive } })
     });
     mockNamedSpawn(client);
 
-    await expect(tunnels.get(8080, { name: 'api' })).rejects.toMatchObject({
-      name: 'OperationInterruptedError',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      context: expect.objectContaining({
-        reason: 'recovery_exhausted',
-        operation: 'tunnel.get',
-        retryable: true,
-        admitted: true,
-        recoveryAttempts: 2,
-        maxRecoveryAttempts: 2
-      })
+    await expect(tunnels.get(8080, { name: 'api' })).resolves.toMatchObject({
+      name: 'api'
     });
-    expect(await storage.get('tunnels')).toBeUndefined();
-    expect(await storage.get('tunnels:meta')).toBeUndefined();
+    expect(assertActive).not.toHaveBeenCalled();
+    expect(client.tunnels.ensureTunnelRun).toHaveBeenCalledTimes(1);
   });
 
   it('does not spawn or commit when lifetime changes during Cloudflare setup', async () => {
@@ -409,7 +394,7 @@ describe('tunnel service > get(port, { name }) — named tunnel happy path', () 
         reason: 'sandbox_lifetime_changed',
         operation: 'tunnel.get',
         retryable: false,
-        admitted: 'unknown'
+        admitted: true
       })
     });
     expect(client.tunnels.ensureTunnelRun).not.toHaveBeenCalled();
@@ -626,9 +611,14 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
       throw new Error(`Unhandled ${method} ${url}`);
     });
     const built = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger,
       sandboxId: 'sb1',
@@ -689,7 +679,9 @@ describe('tunnel service > get(port, options) — idempotency / hash guard', () 
         optionsHash: 'named:api',
         dnsRecordId: 'kept-dns-id',
         accountId: 'ACCT',
-        zoneId: 'zone-id'
+        zoneId: 'zone-id',
+        runtimeIdentityID: 'runtime-1',
+        runtimeIncarnationID: 'inc-1'
       }
     });
 

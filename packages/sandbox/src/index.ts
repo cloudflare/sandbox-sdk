@@ -73,7 +73,10 @@ export {
   ProcessWaitTimeoutError,
   // RPC transport error (raised on capnweb WebSocket session failures)
   RPCTransportError,
+  RuntimeControlProtocolError,
+  RuntimeIdentityInactiveError,
   StaleProcessHandleError,
+  StaleTerminalHandleError,
   TerminalControlError,
   TerminalNotFoundError
 } from './errors';

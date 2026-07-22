@@ -44,6 +44,7 @@ import type {
   ProcessWaitTimeoutContext,
   RPCTransportContext,
   StaleProcessHandleContext,
+  StaleTerminalHandleContext,
   TerminalControlErrorContext,
   TerminalNotFoundContext,
   ValidationFailedContext
@@ -96,6 +97,7 @@ import {
   SandboxError,
   ServiceNotRespondingError,
   StaleProcessHandleError,
+  StaleTerminalHandleError,
   TerminalControlError,
   TerminalNotFoundError,
   ValidationFailedError
@@ -103,6 +105,10 @@ import {
 
 type StaleProcessHandleResponse = ErrorResponse<StaleProcessHandleContext> & {
   code: typeof ErrorCode.STALE_PROCESS_HANDLE;
+};
+
+type StaleTerminalHandleResponse = ErrorResponse<StaleTerminalHandleContext> & {
+  code: typeof ErrorCode.STALE_TERMINAL_HANDLE;
 };
 
 type ProcessWaitTimeoutResponse = ErrorResponse<ProcessWaitTimeoutContext> & {
@@ -113,14 +119,15 @@ type ProcessAbortedResponse = ErrorResponse<ProcessAbortedContext> & {
   code: typeof ErrorCode.PROCESS_ABORTED;
 };
 
-type ProcessLifecycleResponse =
+type ProcessErrorResponse =
   | ErrorResponse
   | StaleProcessHandleResponse
+  | StaleTerminalHandleResponse
   | ProcessWaitTimeoutResponse
   | ProcessAbortedResponse;
 
 function isStaleProcessHandleResponse(
-  errorResponse: ProcessLifecycleResponse
+  errorResponse: ProcessErrorResponse
 ): errorResponse is StaleProcessHandleResponse {
   const { context } = errorResponse;
   return (
@@ -134,8 +141,21 @@ function isStaleProcessHandleResponse(
   );
 }
 
+function isStaleTerminalHandleResponse(
+  errorResponse: ProcessErrorResponse
+): errorResponse is StaleTerminalHandleResponse {
+  const { context } = errorResponse;
+  return (
+    errorResponse.code === ErrorCode.STALE_TERMINAL_HANDLE &&
+    'terminalId' in context &&
+    typeof context.terminalId === 'string' &&
+    'operation' in context &&
+    typeof context.operation === 'string'
+  );
+}
+
 function isProcessWaitTimeoutResponse(
-  errorResponse: ProcessLifecycleResponse
+  errorResponse: ProcessErrorResponse
 ): errorResponse is ProcessWaitTimeoutResponse {
   const { context } = errorResponse;
   return (
@@ -152,7 +172,7 @@ function isProcessWaitTimeoutResponse(
 }
 
 function isProcessAbortedResponse(
-  errorResponse: ProcessLifecycleResponse
+  errorResponse: ProcessErrorResponse
 ): errorResponse is ProcessAbortedResponse {
   const { context } = errorResponse;
   return (
@@ -251,7 +271,7 @@ export function createErrorFromResponse<TContext>(
     case ErrorCode.STALE_PROCESS_HANDLE:
       if (
         isStaleProcessHandleResponse(
-          errorResponse as unknown as ProcessLifecycleResponse
+          errorResponse as unknown as ProcessErrorResponse
         )
       ) {
         return new StaleProcessHandleError(
@@ -260,10 +280,22 @@ export function createErrorFromResponse<TContext>(
       }
       return new SandboxError(errorResponse);
 
+    case ErrorCode.STALE_TERMINAL_HANDLE:
+      if (
+        isStaleTerminalHandleResponse(
+          errorResponse as unknown as ProcessErrorResponse
+        )
+      ) {
+        return new StaleTerminalHandleError(
+          errorResponse as unknown as StaleTerminalHandleResponse
+        );
+      }
+      return new SandboxError(errorResponse);
+
     case ErrorCode.PROCESS_WAIT_TIMEOUT:
       if (
         isProcessWaitTimeoutResponse(
-          errorResponse as unknown as ProcessLifecycleResponse
+          errorResponse as unknown as ProcessErrorResponse
         )
       ) {
         return new ProcessWaitTimeoutError(
@@ -275,7 +307,7 @@ export function createErrorFromResponse<TContext>(
     case ErrorCode.PROCESS_ABORTED:
       if (
         isProcessAbortedResponse(
-          errorResponse as unknown as ProcessLifecycleResponse
+          errorResponse as unknown as ProcessErrorResponse
         )
       ) {
         return new ProcessAbortedError(

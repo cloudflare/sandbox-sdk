@@ -3,5 +3,6 @@ export {
   getTerminalHandle,
   listTerminalHandles,
   proxyTerminal,
-  terminalHandle
+  terminalHandle,
+  terminalHandleFromRPCDescriptor
 } from './proxy';

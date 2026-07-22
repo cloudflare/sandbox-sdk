@@ -315,7 +315,38 @@ export class ProcessPoolManager {
       });
       return;
     }
-    this.logger.debug('Releasing executor for context', {
+    this.terminateContextExecutor(contextId, language, executor, 'Releasing');
+    await this.ensureMinimumPool(language);
+  }
+  async interruptContext(
+    contextId: string,
+    language: InterpreterLanguage
+  ): Promise<void> {
+    const executor = this.contextExecutors.get(contextId);
+    if (!executor) {
+      this.logger.debug(
+        'Context interrupt ignored because no executor exists',
+        {
+          contextId
+        }
+      );
+      return;
+    }
+    this.terminateContextExecutor(
+      contextId,
+      language,
+      executor,
+      'Interrupting'
+    );
+    await this.reserveExecutorForContext(contextId, language);
+  }
+  private terminateContextExecutor(
+    contextId: string,
+    language: InterpreterLanguage,
+    executor: InterpreterProcess,
+    action: 'Releasing' | 'Interrupting'
+  ): void {
+    this.logger.debug(`${action} executor for context`, {
       contextId,
       language,
       executorId: executor.id
@@ -326,7 +357,6 @@ export class ProcessPoolManager {
     executor.process.kill();
     this.removeExecutorFromState(executor);
     this.releaseProcessSlot(executor.id);
-    await this.ensureMinimumPool(language);
   }
   isContextExecutorHealthy(contextId: string): boolean {
     const executor = this.contextExecutors.get(contextId);

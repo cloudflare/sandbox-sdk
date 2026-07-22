@@ -5,14 +5,14 @@ import type {
   TerminalOutputEvent,
   TerminalSnapshot
 } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
+import type { SandboxAPIDeps } from '@sandbox-container/control-plane';
 import type { TerminalManager } from '@sandbox-container/services/terminal-manager';
+import { createActivatedSandboxControlAPI } from './session-helper';
 
-function buildApi(terminalManager: TerminalManager): SandboxControlAPI {
-  return new SandboxControlAPI({ terminalManager } as SandboxAPIDeps);
+async function buildApi(terminalManager: TerminalManager) {
+  return createActivatedSandboxControlAPI({
+    terminalManager
+  } as SandboxAPIDeps);
 }
 
 describe('SandboxControlAPI terminals', () => {
@@ -20,7 +20,7 @@ describe('SandboxControlAPI terminals', () => {
   let manager: TerminalManager;
   let terminals: SandboxTerminalsAPI;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     snapshot = {
       id: 'generated-terminal-id',
       pid: 123,
@@ -39,7 +39,7 @@ describe('SandboxControlAPI terminals', () => {
       terminate: mock(async () => undefined),
       hasActive: mock(async () => true)
     } as unknown as TerminalManager;
-    terminals = buildApi(manager).terminals;
+    terminals = (await buildApi(manager)).terminals;
   });
 
   it('creates terminals through the focused terminals RPC API', async () => {

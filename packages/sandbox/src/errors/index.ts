@@ -84,6 +84,7 @@ export type {
   RPCTransportContext,
   RPCTransportErrorKind,
   StaleProcessHandleContext,
+  StaleTerminalHandleContext,
   TerminalControlErrorContext,
   TerminalNotFoundContext,
   ValidationFailedContext
@@ -148,9 +149,12 @@ export {
   ProcessWaitTimeoutError,
   // RPC Transport Errors (SDK-side, raised on WebSocket failures)
   RPCTransportError,
+  RuntimeControlProtocolError,
+  RuntimeIdentityInactiveError,
   SandboxError,
   ServiceNotRespondingError,
   StaleProcessHandleError,
+  StaleTerminalHandleError,
   TerminalControlError,
   // Terminal Errors
   TerminalNotFoundError,

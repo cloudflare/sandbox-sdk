@@ -28,6 +28,10 @@ See [PROCESS_EXECUTION.md](./PROCESS_EXECUTION.md).
 
 `createTerminal()` is the single PTY primitive for interactive shells. A terminal has its own ID, cursor-retained output, input, resize, interrupt, terminate, and reconnect path via `getTerminal(id)`. These terminal controls are intentionally separate: use terminals for interactive PTY state and `exec()` for supervised argv processes and numeric signals.
 
+## Runtime authority
+
+The Durable Object owns sandbox-lifetime state, while each live container runtime owns runtime-local truth. Before runtime RPCs, the SDK establishes or observes the control process, validates its runtime incarnation, activates one scoped control session, and admits the semantic operation through a runtime lease. Waking operations choose to start at the operation boundary; non-waking discovery and cleanup observe only an existing exact runtime and never create a replacement. Runtime authority, control domains, extension sidecars, streams, and WebSockets are callback- or transport-scoped and are not replayed after interruption.
+
 ## Active resources
 
 The current runtime owns active process and terminal leases. Active resources pin the live Sandbox independent of the Worker request that launched them. Durable Object storage records durable sandbox configuration such as preview ports and mounts, not process or terminal truth.

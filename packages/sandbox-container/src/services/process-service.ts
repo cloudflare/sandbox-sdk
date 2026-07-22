@@ -16,6 +16,7 @@ import {
   type ProcessStatus,
   type SandboxCommand
 } from '@repo/shared';
+import { CONFIG } from '../config';
 
 export const MAX_RETAINED_TERMINAL_PROCESSES = 64;
 
@@ -72,7 +73,7 @@ export class ProcessService {
       const process = await this.#supervisor.start({
         runId: id,
         command,
-        cwd: options.cwd,
+        cwd: options.cwd ?? CONFIG.DEFAULT_CWD,
         env: options.env,
         timeoutMs: options.timeout,
         onTerminal: (status) => this.onTerminal(id, status)

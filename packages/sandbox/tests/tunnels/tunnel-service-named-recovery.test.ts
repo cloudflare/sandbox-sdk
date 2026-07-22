@@ -1,3 +1,7 @@
+import {
+  completeTunnelServiceHost,
+  type TestTunnelServiceHost
+} from './helpers';
 /**
  * Named-tunnel behavior tests for the SDK tunnel service.
  *
@@ -23,12 +27,12 @@ import type {
 } from '@repo/shared';
 import type { Mock } from 'vitest';
 import { describe, expect, it, vi } from 'vitest';
-import { RuntimeIdentityInactiveError } from '../../src/current-runtime-identity';
 import { ErrorCode, RPCTransportError } from '../../src/errors';
+import { RuntimeIdentityInactiveError } from '../../src/runtime/types';
 import { SandboxLifetimeChangedError } from '../../src/sandbox-lifetime';
 import { SandboxSecurityError } from '../../src/security';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   type TunnelsStorage
 } from '../../src/tunnels/rpc-target';
 import { makeFences, makeLogger, makeStorage } from './helpers';
@@ -257,7 +261,7 @@ function makeHandler(opts?: {
     zoneId: string;
   }>;
   configError?: Error;
-  fences?: Pick<TunnelsHost, 'currentRuntime' | 'currentLifetime'>;
+  fences?: Pick<TunnelsHost, 'getStoredRuntime' | 'currentLifetime'>;
 }) {
   const { client } = makeClient();
   mockTunnelRun(client);
@@ -269,7 +273,15 @@ function makeHandler(opts?: {
     zoneId: opts?.config?.zoneId ?? 'zone-id'
   };
   const built = createTunnelsHandle({
-    client: client as unknown as TunnelsHost['client'],
+    runRuntimeCall: ((operation, call) =>
+      call(
+        client.tunnels as unknown as TunnelsHost['runRuntimeCall'] extends (
+          op: string,
+          call: (tunnels: infer U) => Promise<unknown>
+        ) => Promise<unknown>
+          ? U
+          : never
+      )) as TunnelsHost['runRuntimeCall'],
     storage,
     logger,
     sandboxId: opts?.sandboxId ?? 'sb1',
@@ -291,6 +303,9 @@ function makeHandler(opts?: {
     resumeCleanup: built.resumeCleanup
   };
 }
+
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
 
 describe('tunnel service > get(port, { name }) — retry / reuse', () => {
   it('reuses a tunnel left behind from a previous failed attempt', async () => {
@@ -387,7 +402,15 @@ describe('tunnel service > get(port, { name }) — retry / reuse', () => {
     });
 
     const { tunnels } = createTunnelsHandle({
-      client: client as unknown as TunnelsHost['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as TunnelsHost['runRuntimeCall'] extends (
+            op: string,
+            call: (tunnels: infer U) => Promise<unknown>
+          ) => Promise<unknown>
+            ? U
+            : never
+        )) as TunnelsHost['runRuntimeCall'],
       storage,
       logger,
       sandboxId: 'sb1',
@@ -538,9 +561,14 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
       }
     });
     const { tunnels } = createTunnelsHandle({
-      client: client as unknown as Parameters<
-        typeof createTunnelsHandle
-      >[0]['client'],
+      runRuntimeCall: ((operation, call) =>
+        call(
+          client.tunnels as unknown as Parameters<
+            Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall']
+          >[1] extends (tunnels: infer U) => Promise<unknown>
+            ? U
+            : never
+        )) as Parameters<typeof createTunnelsHandle>[0]['runRuntimeCall'],
       storage,
       logger: makeLogger(),
       sandboxId: 'sb1',
@@ -552,7 +580,7 @@ describe('tunnel service > restart respawn via needsRespawn flag', () => {
       fetcher: cf.fetcher as unknown as typeof fetch,
       currentRuntime: {
         get: vi.fn(async () => ({ id: 'runtime-new' })),
-        markStarted: vi.fn(async () => ({ id: 'runtime-new' })),
+        unexpectedPublisher: vi.fn(async () => ({ id: 'runtime-new' })),
         assertActive: vi.fn(async () => {})
       },
       currentLifetime: {

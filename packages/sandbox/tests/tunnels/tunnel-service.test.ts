@@ -1,23 +1,40 @@
 import type { TunnelInfo } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createTunnelsHandle,
+  createTunnelsHandle as createRuntimeTunnelsHandle,
   type TunnelsStorage
 } from '../../src/tunnels/rpc-target';
 import { TunnelService } from '../../src/tunnels/tunnel-service';
-import { makeLogger, makeStorage } from './helpers';
+import {
+  completeTunnelServiceHost,
+  makeLogger,
+  makeStorage,
+  type TestTunnelServiceHost
+} from './helpers';
+
+type TunnelsHost = Parameters<typeof createTunnelsHandle>[0];
+
+function makeRuntimeCall(): TunnelsHost['runRuntimeCall'] {
+  const tunnels = {
+    ensureTunnelRun: vi.fn(),
+    stopTunnelRun: vi.fn()
+  };
+  return (_operation, call) =>
+    call(
+      tunnels as unknown as Parameters<
+        Parameters<TunnelsHost['runRuntimeCall']>[1]
+      >[0]
+    );
+}
 
 function makeService(storage: TunnelsStorage): TunnelService {
-  return new TunnelService({
-    client: {
-      tunnels: {
-        ensureTunnelRun: vi.fn(),
-        stopTunnelRun: vi.fn()
-      }
-    },
-    storage,
-    logger: makeLogger()
-  });
+  return new TunnelService(
+    completeTunnelServiceHost({
+      runRuntimeCall: makeRuntimeCall(),
+      storage,
+      logger: makeLogger()
+    })
+  );
 }
 
 function quickTunnel(): TunnelInfo {
@@ -69,38 +86,22 @@ async function expectRestartReconciled(storage: TunnelsStorage): Promise<void> {
   });
 }
 
+const createTunnelsHandle = (host: TestTunnelServiceHost) =>
+  createRuntimeTunnelsHandle(completeTunnelServiceHost(host));
+
 describe('TunnelService', () => {
-  it.each([
-    [
-      'runtime start',
-      async (handle: ReturnType<typeof createTunnelsHandle>) =>
-        handle.onRuntimeStart()
-    ],
-    [
-      'runtime stop',
-      async (handle: ReturnType<typeof createTunnelsHandle>) =>
-        handle.onRuntimeStop()
-    ]
-  ])(
-    'exposes %s reconciliation through the handle factory',
-    async (_label, run) => {
-      const storage = makeRestartStorage();
-      const handle = createTunnelsHandle({
-        client: {
-          tunnels: {
-            ensureTunnelRun: vi.fn(),
-            stopTunnelRun: vi.fn()
-          }
-        },
-        storage,
-        logger: makeLogger()
-      });
+  it('exposes runtime-stop reconciliation through the handle factory', async () => {
+    const storage = makeRestartStorage();
+    const handle = createTunnelsHandle({
+      runRuntimeCall: makeRuntimeCall(),
+      storage,
+      logger: makeLogger()
+    });
 
-      await run(handle);
+    await handle.onRuntimeStop();
 
-      await expectRestartReconciled(storage);
-    }
-  );
+    await expectRestartReconciled(storage);
+  });
 
   it('preserves named metadata while reconciling a runtime restart', async () => {
     const storage = makeRestartStorage({
@@ -110,7 +111,7 @@ describe('TunnelService', () => {
     });
     const service = makeService(storage);
 
-    await service.onRuntimeStart();
+    await service.onRuntimeStop();
 
     await expect(storage.get('tunnels')).resolves.toEqual({});
     await expect(storage.get('tunnels:meta')).resolves.toEqual({

@@ -1,12 +1,13 @@
-import type { Logger, SandboxMountsAPI } from '@repo/shared';
+import type { Logger } from '@repo/shared';
 import type { MountOutboundHost } from '../outbound';
 import type { MountRegistry } from '../registry';
+import type { MountRuntimeCall } from '../runtime-call';
 import type { S3FSHost } from '../s3fs';
 
 export interface BucketMountOperationContext {
   registry: MountRegistry;
   logger: Logger;
-  getMounts(): SandboxMountsAPI;
+  runRuntimeCall: MountRuntimeCall;
   getOutboundHost(): MountOutboundHost;
-  getS3FSHost(): S3FSHost;
+  s3fsHost: S3FSHost | null;
 }

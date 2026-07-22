@@ -1,19 +1,15 @@
-import type {
-  CurrentRuntimeIdentity,
-  RuntimeIdentity
-} from '../current-runtime-identity';
-import { RuntimeIdentityInactiveError } from '../current-runtime-identity';
 import {
   ErrorCode,
   OperationInterruptedError,
   RPCTransportError
 } from '../errors';
+import type { RuntimeIdentity, RuntimeIdentityReader } from '../runtime';
+import { RuntimeIdentityInactiveError } from '../runtime/types';
 import type {
   CurrentSandboxLifetime,
   SandboxLifetime
 } from '../sandbox-lifetime';
 import { SandboxLifetimeChangedError } from '../sandbox-lifetime';
-import { BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS } from './constants';
 import type { BackupRestoreFaultInjector } from './restore-fault-injection';
 import {
   type BackupRestoreOperationPhase,
@@ -27,14 +23,17 @@ import {
 
 type RestoreLifecycleDeps = {
   storage: DurableObjectStorage;
-  currentRuntime: CurrentRuntimeIdentity;
+  runtimeReader: RuntimeIdentityReader;
   currentLifetime: CurrentSandboxLifetime;
   faultInjector: BackupRestoreFaultInjector;
 };
 
 export type RestoreLifecycleContext = {
   lifetime: SandboxLifetime;
-  runtimeReady: (archiveSize?: number) => Promise<{
+  runtimeReady: (
+    runtime: RuntimeIdentity,
+    archiveSize?: number
+  ) => Promise<{
     runtime: RuntimeIdentity;
     operation: BackupRestoreOperationRecord;
   }>;
@@ -69,11 +68,6 @@ export class RestoreLifecycleRunner {
       lifetime.id
     );
 
-    // Short-circuit: return the stored result without restoring again.
-    if (existing?.status === 'committed' && existing.result) {
-      return existing.result;
-    }
-
     const now = new Date().toISOString();
     let operation: BackupRestoreOperationRecord;
 
@@ -96,7 +90,7 @@ export class RestoreLifecycleRunner {
     }
     await this.operationRecords.put(operation);
 
-    return await this.runWithRecovery(operation, lifetime, params.attempt);
+    return await this.runAttempt(operation, lifetime, params.attempt);
   }
 
   private async runAttempt(
@@ -111,10 +105,10 @@ export class RestoreLifecycleRunner {
 
     const context: RestoreLifecycleContext = {
       lifetime,
-      runtimeReady: async (archiveSize) => {
+      runtimeReady: async (admittedRuntime, archiveSize) => {
         try {
-          runtime = await this.captureRuntime();
-          await this.deps.currentLifetime.assertCurrent(lifetime);
+          runtime = admittedRuntime;
+          await this.assertFences(runtime, lifetime);
         } catch (error) {
           const interrupted = await this.translateFenceError(
             error,
@@ -203,61 +197,16 @@ export class RestoreLifecycleRunner {
     try {
       return await attempt(context);
     } catch (error) {
+      if (error instanceof OperationInterruptedError) {
+        throw await this.translateOperationInterrupted(error, currentOperation);
+      }
       const translated = await this.translateRPCError(error, currentOperation);
       if (translated) {
         throw translated;
       }
-      if (!(error instanceof OperationInterruptedError)) {
-        await this.markFailed(currentOperation, error);
-      }
+      await this.markFailed(currentOperation, error);
       throw error;
     }
-  }
-
-  private async runWithRecovery(
-    initialOperation: BackupRestoreOperationRecord,
-    lifetime: SandboxLifetime,
-    attempt: (
-      context: RestoreLifecycleContext
-    ) => Promise<BackupRestoreOperationResult>
-  ): Promise<BackupRestoreOperationResult> {
-    let recoveryAttempts = 0;
-    let currentOperation = initialOperation;
-
-    while (true) {
-      try {
-        return await this.runAttempt(currentOperation, lifetime, attempt);
-      } catch (error) {
-        if (!(error instanceof OperationInterruptedError)) {
-          throw error;
-        }
-
-        if (!error.context.retryable) {
-          throw error;
-        }
-
-        if (recoveryAttempts >= BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS) {
-          throw this.createRecoveryExhaustedError(error, recoveryAttempts);
-        }
-
-        recoveryAttempts++;
-        // Re-read the interrupted record written by markInterrupted() and
-        // advance to the next attempt while preserving the operationId.
-        const interrupted =
-          (await this.operationRecords.get(currentOperation.operationKey)) ??
-          currentOperation;
-        const now = new Date().toISOString();
-        currentOperation = nextBackupRestoreAttempt(interrupted, now);
-        await this.operationRecords.put(currentOperation);
-      }
-    }
-  }
-
-  async captureRuntime(): Promise<RuntimeIdentity> {
-    let runtime = await this.deps.currentRuntime.get();
-    runtime = runtime ?? (await this.deps.currentRuntime.markStarted());
-    await this.deps.currentRuntime.assertActive(runtime);
-    return runtime;
   }
 
   async markRuntimeReady(
@@ -269,6 +218,7 @@ export class RestoreLifecycleRunner {
       ...operation,
       phase: 'runtime_ready' as const,
       runtimeIdentityID: runtime.id,
+      runtimeIncarnationID: runtime.runtimeIncarnationID,
       payload: {
         ...operation.payload,
         ...(archiveSize !== undefined && { archiveSize })
@@ -288,6 +238,7 @@ export class RestoreLifecycleRunner {
       ...operation,
       phase: 'archive_ready' as const,
       runtimeIdentityID: runtime.id,
+      runtimeIncarnationID: runtime.runtimeIncarnationID,
       payload: {
         ...operation.payload,
         ...(archiveSize !== undefined && { archiveSize })
@@ -302,7 +253,7 @@ export class RestoreLifecycleRunner {
     runtime: RuntimeIdentity,
     lifetime: SandboxLifetime
   ): Promise<void> {
-    await this.deps.currentRuntime.assertActive(runtime);
+    await this.deps.runtimeReader.assertActive(runtime);
     await this.deps.currentLifetime.assertCurrent(lifetime);
   }
 
@@ -318,6 +269,7 @@ export class RestoreLifecycleRunner {
       phase: 'verified' as const,
       status: 'committed' as const,
       runtimeIdentityID: runtime.id,
+      runtimeIncarnationID: runtime.runtimeIncarnationID,
       payload: {
         ...operation.payload,
         ...(archiveSize !== undefined && { archiveSize })
@@ -361,6 +313,32 @@ export class RestoreLifecycleRunner {
       reason,
       phase,
       admitted,
+      message
+    });
+  }
+
+  private async translateOperationInterrupted(
+    error: OperationInterruptedError,
+    operation: BackupRestoreOperationRecord
+  ): Promise<OperationInterruptedError> {
+    if (error.context.operationId === operation.operationId) {
+      return error;
+    }
+
+    const phase = operation.phase;
+    const message =
+      'Backup restore was interrupted before completion could be verified';
+    const retryable = this.isRestoreRetryable(error.context.reason);
+    const interrupted = await this.markInterrupted(
+      operation,
+      message,
+      retryable
+    );
+    return this.createInterruptedError({
+      operation: interrupted,
+      reason: error.context.reason,
+      phase,
+      admitted: error.context.admitted,
       message
     });
   }
@@ -436,17 +414,24 @@ export class RestoreLifecycleRunner {
     return next;
   }
 
+  private isRestoreRetryable(
+    reason: OperationInterruptedError['context']['reason']
+  ): boolean {
+    return ![
+      'sandbox_destroyed',
+      'sandbox_lifetime_changed',
+      'recovery_exhausted'
+    ].includes(reason);
+  }
+
   private createInterruptedError(params: {
     operation: BackupRestoreOperationRecord;
-    reason:
-      | 'runtime_replaced'
-      | 'sandbox_lifetime_changed'
-      | 'transport_disposed';
+    reason: OperationInterruptedError['context']['reason'];
     phase: BackupRestoreOperationPhase;
     admitted: true | 'unknown';
     message: string;
   }): OperationInterruptedError {
-    const retryable = params.reason !== 'sandbox_lifetime_changed';
+    const retryable = this.isRestoreRetryable(params.reason);
     const suggestion = retryable
       ? 'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
       : 'Start a new restoreBackup() call only if restoring this backup is still desired for the current sandbox.';
@@ -469,35 +454,6 @@ export class RestoreLifecycleRunner {
       },
       timestamp: new Date().toISOString(),
       suggestion
-    });
-  }
-
-  private createRecoveryExhaustedError(
-    error: OperationInterruptedError,
-    recoveryAttempts: number
-  ): OperationInterruptedError {
-    const context = error.context;
-    return new OperationInterruptedError({
-      message: 'Backup restore recovery attempts were exhausted',
-      code: ErrorCode.OPERATION_INTERRUPTED,
-      httpStatus: 409,
-      context: {
-        reason: 'recovery_exhausted',
-        operation: context.operation,
-        operationId: context.operationId,
-        operationKey: context.operationKey,
-        idempotencyKey: context.idempotencyKey,
-        backupId: context.backupId,
-        dir: context.dir,
-        phase: 'interrupted',
-        admitted: context.admitted,
-        retryable: true,
-        recoveryAttempts,
-        maxRecoveryAttempts: BACKUP_RESTORE_MAX_RECOVERY_ATTEMPTS
-      },
-      timestamp: new Date().toISOString(),
-      suggestion:
-        'Retry restoreBackup() with the same backup handle so the SDK can reconcile the restore operation.'
     });
   }
 }

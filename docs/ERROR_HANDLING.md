@@ -1,20 +1,31 @@
-# Error Handling & Retry Behavior
+# Error Handling & Runtime Admission
 
 ## HTTP Status Code Semantics
 
-The SDK uses proper HTTP status codes for container startup errors:
+The SDK uses HTTP status codes to distinguish startup/admission failures from
+already-admitted runtime work:
 
-| Status  | Meaning                                          | SDK Behavior                   |
-| ------- | ------------------------------------------------ | ------------------------------ |
-| **503** | Container unavailable before operation admission | Retry with exponential backoff |
-| **500** | Permanent (config error, missing image)          | Fail immediately               |
-| **400** | Client error (capacity limits, validation)       | Fail immediately               |
+| Status  | Meaning                                          | SDK behavior                     |
+| ------- | ------------------------------------------------ | -------------------------------- |
+| **503** | Container unavailable before operation admission | Caller may retry a new operation |
+| **500** | Permanent startup/configuration error            | Fail immediately                 |
+| **400** | Client error (capacity limits, validation)       | Fail immediately                 |
 
-## Retry Logic
+## Runtime Admission, Not Operation Replay
 
-- **Total budget**: 2 minutes (configurable per Sandbox via `containerTimeouts`).
-- **Backoff**: 3s → 6s → 12s → 24s → 30s (capped at 30s).
-- **Only retries**: 503 Service Unavailable.
+Before runtime RPCs, the SDK establishes or observes the current container
+runtime, probes its control-process metadata, validates the runtime
+incarnation, and activates an exact control session. A semantic operation then
+runs inside one admitted runtime lease. Waking operations choose to start the
+runtime at that boundary; non-waking discovery and cleanup only use an already
+active exact runtime and never create a replacement.
+
+The transport is single-attempt for each activated session. If a runtime changes
+or the control WebSocket is lost after admission, the SDK surfaces
+`OperationInterruptedError`, `RPCTransportError`, or the domain-specific
+runtime error. It does not replay ambiguous side-effecting work. Applications
+that want recovery should start a new semantic operation after observing the
+failure.
 
 ## Container Unavailable
 
@@ -32,115 +43,86 @@ an operation was admitted. For example, if a command starts and the WebSocket
 later closes, the SDK surfaces an execution error or `RPCTransportError`
 because the operation may have already produced side effects.
 
-### Retry surface
-
-The SDK has one startup retry surface: `ContainerControlConnection.fetchUpgradeWithRetry()` retries 503 responses on the `/rpc` WebSocket upgrade fetch during cold start. The retry budget comes from `Sandbox.computeRetryTimeoutMs()` and is pushed into the active `ContainerControlClient` when container timeouts change.
-
-`containerFetch()` cannot be used for the WebSocket upgrade itself. The control connection calls `stub.fetch()` directly and uses 503 responses as the readiness signal. `Sandbox.fetch()` delegates WebSocket upgrade requests to `super.fetch()`, while non-upgrade container startup and port readiness still flow through `containerFetch()` and `startAndWaitForPorts()`.
-
-Production-only instance allocation failures surface as 503 while workerd allocates a container VM. The `/rpc` upgrade retry loop continues until the retry budget is exhausted.
-
 ## Container Boot Lifecycle
 
-When a request triggers a cold start, the container goes through five distinct phases.
-Errors are surfaced as 503 (retried) for any phase that can self-heal, and 500 (immediate
-fail) for phases where retrying makes no difference.
+When a request triggers a cold start, the container goes through four relevant
+phases. Errors are surfaced as 503 for phases that can self-heal, and 500 for
+phases where retrying the same deployment makes no difference.
 
 ```text
-[1] Instance allocation     ──┐
-[2] Container start         ──┤  startAndWaitForPorts() owns 1–3
-[3] Port readiness          ──┘  driven by containerFetch() / Sandbox.fetch()
-[4] onStart hook            ──    runs inside blockConcurrencyWhile
-[5] Request proxying        ──    tcpPort.fetch() forwards the original request
+[1] Instance allocation      ──┐
+[2] Control port start       ──┤  runtime lifecycle establishment owns 1–3
+[3] Control session activate ──┘  exact runtime incarnation is validated
+[4] Admitted forwarding/RPC  ──   admitted TCP-port fetch or activated RPC
 ```
 
 ### [1] Instance allocation
 
 **Budget:** `containerTimeouts.instanceGetTimeoutMS` (default 30 s).
-**What happens:** workerd's container scheduler tries to assign a VM to the DO. On a
-cold start or right after eviction there may not be one ready yet.
+**What happens:** workerd's container scheduler tries to assign a VM to the DO.
+On a cold start or right after eviction there may not be one ready yet.
 
-| Failure                 | Surfaced as | SDK behavior                           |
-| ----------------------- | ----------- | -------------------------------------- |
-| `no container instance` | 503         | **Retry** (cold-start race)            |
-| `SURPASSED_*_LIMITS`    | 400         | Fail immediately (account-level limit) |
+| Failure                 | Surfaced as | SDK behavior                     |
+| ----------------------- | ----------- | -------------------------------- |
+| `no container instance` | 503         | Caller may retry a new operation |
+| `SURPASSED_*_LIMITS`    | 400         | Fail immediately (account limit) |
 
-Production-only: `wrangler dev` always has an instance ready, so phase 1 never returns
-503 locally.
+Production-only: `wrangler dev` always has an instance ready, so phase 1 never
+returns 503 locally.
 
-### [2] Container start
+### [2] Control port start
 
-**What happens:** `containerStart` boots the configured Docker image with the requested
-env, entrypoint, and outbound config.
+**What happens:** the runtime lifecycle starts the configured container and
+waits for the control port to be reachable. Image and configuration errors are
+not retryable by the SDK because they will keep failing until the deployment is
+fixed.
 
 | Failure                          | Surfaced as | SDK behavior                                             |
 | -------------------------------- | ----------- | -------------------------------------------------------- |
 | `No such image available`        | 500         | Fail — misconfigured `wrangler.jsonc` or registry mirror |
 | `Container already exists`       | 500         | Fail — name collision in DO state                        |
-| `Container exited before health` | 500         | Fail — image entrypoint crashed before phase 3           |
+| `Container exited before health` | 500         | Fail — image entrypoint crashed before readiness         |
+| Control port not ready           | 503         | Caller may retry a new operation                         |
 
-Image / config errors are not retryable; they will keep failing until the deployment is
-fixed.
+### [3] Control session activation
 
-### [3] Port readiness
+**What happens:** the SDK probes runtime metadata, validates the runtime
+incarnation, and activates the capnweb control session for that exact
+incarnation. Domain RPCs are rejected before activation. A replacement runtime
+must perform a new probe and activation; old sessions are interrupted rather
+than reused.
 
-**Budget:** `containerTimeouts.portReadyTimeoutMS` (default 90 s).
-**What happens:** `waitForPort()` polls TCP on the requested port (default 3000) every
-500 ms until it accepts a connection.
+| Failure                         | Surfaced as                  | SDK behavior                      |
+| ------------------------------- | ---------------------------- | --------------------------------- |
+| Missing/invalid metadata        | Runtime control protocol err | Fail current operation            |
+| Incarnation mismatch            | Operation interrupted        | Do not replay ambiguous operation |
+| WebSocket upgrade/transport err | Transport/runtime error      | Surface failure, no hidden retry  |
 
-| Failure                            | Surfaced as | SDK behavior                                                      |
-| ---------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `the container is not listening`   | 503         | **Retry** — app still starting up                                 |
-| `failed to verify port`            | 503         | **Retry** — health check timeout                                  |
-| `container port not found`         | 503         | **Retry** — workerd hasn't picked up the Docker port mapping yet  |
-| `Monitor failed to find container` | 503         | **Retry** — monitor restarted between provisioning and port check |
-| Total wait > `portReadyTimeoutMS`  | 503         | **Retry** until the SDK's overall budget is exhausted             |
+### [4] Admitted forwarding/RPC
 
-Slow-booting images (large dependencies, JIT warm-up, restoring snapshots) most often
-trip up here. Increase `portReadyTimeoutMS` rather than `instanceGetTimeoutMS` for slow
-containers — they govern different phases.
+**What happens:** once an operation is admitted, runtime control RPCs use the
+activated session. Direct HTTP/WebSocket forwarding first waits for the target
+port using the admitted runtime lease, then calls
+`this.ctx.container.getTcpPort(port).fetch(request)` inside that same lease.
+HTTP response bodies and WebSockets retain runtime authority until EOF,
+cancellation, close, or interruption.
 
-### [4] onStart hook
+| Failure                       | Surfaced as                                            |
+| ----------------------------- | ------------------------------------------------------ |
+| Runtime replacement           | `OperationInterruptedError`; no replay                 |
+| WebSocket close/transport     | `RPCTransportError` or domain-specific interruption    |
+| Container-side handler error  | Passthrough response or mapped `SandboxError` subclass |
+| Caller abort before admission | Caller abort reason                                    |
 
-**What happens:** Once the port is up, `@cloudflare/containers` calls
-`this.state.setHealthy()` and then `await this.onStart()` inside
-`blockConcurrencyWhile`. `Sandbox.onStart()` rehydrates exposed-port tokens, restores
-syncs, and initializes runtime-local control resources.
-
-| Failure            | Surfaced as | SDK behavior                                                                    |
-| ------------------ | ----------- | ------------------------------------------------------------------------------- |
-| `onStart()` throws | bubble      | The DO gate stays held; later requests see the same exception until it succeeds |
-
-Anything `onStart` does that re-enters the DO via `stub.fetch()` will deadlock against
-its own `blockConcurrencyWhile`. The SDK avoids this by talking to the container over
-`stub.fetch()` directly (which routes via `containerFetch()` for non-WS calls and
-`super.fetch()` for the WS upgrade), never via the DO's own `fetch()` handler.
-
-### [5] Request proxying
-
-**What happens:** `tcpPort.fetch(containerUrl, request)` forwards the original request
-to the container. For WebSocket upgrades, the response carries a `webSocket` property
-that gets `accept()`ed and handed to capnweb.
-
-| Failure                       | Surfaced as | SDK behavior                                                                                       |
-| ----------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `network connection lost`     | 503         | **Retry** — socket dropped mid-request                                                             |
-| WebSocket close 1000 + reason | bubble      | Surfaced as `RPCTransportError(peer_closed)`; not retried (call may have already had side effects) |
-| Container-side handler error  | passthrough | The container returns a typed error, the SDK maps it to a `SandboxError` subclass                  |
-
-### Where the retries live, by phase
-
-| Phase              | Retried by                                                                  |
-| ------------------ | --------------------------------------------------------------------------- |
-| 1 Instance alloc   | `/rpc` upgrade retry loop when opening the control channel                  |
-| 2 Container start  | None — 500 is permanent                                                     |
-| 3 Port readiness   | `/rpc` upgrade retry loop when opening the control channel                  |
-| 4 onStart          | None — the exception bubbles                                                |
-| 5 Request proxying | The control connection is reopened on the next call after a transport error |
+Direct forwarding no longer routes through inherited `Container.fetch()` or
+`Container.containerFetch()` after admission. Preview, terminal, and direct
+container forwarding all use exact runtime ownership and non-starting paths
+where their public API requires non-waking behavior.
 
 ## Capacity Limit Errors (Production Only)
 
-When hitting account limits, the Containers API returns 400 with these error codes:
+When hitting account limits, the Containers API returns 400 with these error
+codes:
 
 | Error Code                       | Meaning                           |
 | -------------------------------- | --------------------------------- |
@@ -158,42 +140,32 @@ These cannot be reproduced locally - they only occur in production.
 | Concurrent vCPU   | 100     |
 | Concurrent Disk   | 2 TB    |
 
-See [Containers limits](https://developers.cloudflare.com/containers/platform-details/limits/) for current values.
+## Testing Strategy
 
-## Best Practices
+### Local Unit Tests
 
-- Call `destroy()` when done to free resources
-- Use `keepAlive: false` (default) for auto-timeout
-- Monitor concurrent container usage in production
+Mock each startup phase separately:
 
-## Error Sources & Test Coverage
+1. Instance allocation errors via the container start path.
+2. Control port readiness errors via lifecycle establishment.
+3. Activation errors via runtime metadata/session mocks.
+4. Post-admission interruption via runtime replacement or transport close.
 
-The SDK handles errors from two layers:
+### E2E Tests
 
-### workerd (container-client.c++)
+Production-only paths require deployed Workers tests:
 
-| Error Message                      | Condition                         | SDK Response |
-| ---------------------------------- | --------------------------------- | ------------ |
-| `container port not found`         | Port not in Docker mappings       | 503          |
-| `Monitor failed to find container` | Container not found after retries | 503          |
-| `No such image available`          | Docker image missing              | 500          |
-| `Container already exists`         | Name collision                    | 500          |
+- Cold start under load.
+- Image pull failures.
+- Account capacity limits.
+- Runtime replacement while streams/WebSockets are retained.
 
-### @cloudflare/containers (container.ts)
+## Monitoring
 
-| Error Message                    | Condition                | SDK Response |
-| -------------------------------- | ------------------------ | ------------ |
-| `the container is not listening` | App not ready on port    | 503          |
-| `failed to verify port`          | Port health check failed | 503          |
-| `container did not start`        | Startup timeout          | 503          |
-| `network connection lost`        | Connection dropped       | 503          |
-| `no container instance`          | VM still provisioning    | 503          |
+Track these error patterns in production:
 
-### Test Coverage
-
-| Test File                        | What It Tests                     |
-| -------------------------------- | --------------------------------- |
-| `sandbox-error-handling.test.ts` | Error classification (503 vs 500) |
-| `base-client.test.ts`            | Retry logic based on status codes |
-
-All error patterns are verified against the actual error messages from workerd and @cloudflare/containers source code.
+- High 503 rate with `container_starting`: cold start or readiness tuning.
+- 500s with image/config messages: deployment misconfiguration.
+- `OperationInterruptedError`: expected during runtime replacement; unexpected
+  spikes indicate churn.
+- `RPCTransportError`: control transport closed after admission.

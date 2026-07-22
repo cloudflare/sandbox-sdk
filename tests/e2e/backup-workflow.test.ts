@@ -26,6 +26,10 @@ interface ErrorResponse {
   error?: string;
 }
 
+function shellCommand(parts: string[], separator = ' && '): string[] {
+  return ['/bin/bash', '-lc', parts.join(separator)];
+}
+
 /**
  * Helper to clean up a directory that may have a FUSE overlay mount.
  * Unmounts first (silently ignoring errors if not mounted), then removes.
@@ -203,7 +207,7 @@ describe('Backup Workflow E2E', () => {
       await cleanupDir(workerUrl, headers, TEST_DIR);
     }, 60000);
 
-    test('should recover restore after configured lifecycle fault', async () => {
+    test('should report an interrupted restore without retrying it', async () => {
       if (!backupBucketAvailable) return;
 
       const faultDir = `/workspace/backup-fault-${crypto.randomUUID().slice(0, 8)}`;
@@ -261,22 +265,22 @@ describe('Backup Workflow E2E', () => {
           localBucket: true
         })
       });
-      if (!restoreResponse.ok) {
-        throw new Error(`restore failed: ${await restoreResponse.text()}`);
-      }
-      const restoreResult = (await restoreResponse.json()) as RestoreResponse;
-      expect(restoreResult.success).toBe(true);
+      expect(restoreResponse.status).toBe(409);
+      const restoreError = (await restoreResponse.json()) as ErrorResponse;
+      expect(restoreError.code).toBe('OPERATION_INTERRUPTED');
 
+      // Do not retry restore: its completion is unknown after transport loss.
+      // A separate read proves the replacement runtime accepts new work.
       const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: ['/bin/bash', '-lc', `cat ${faultDir}/${faultFile}`]
+          command: ['/bin/bash', '-lc', 'printf runtime-recovered']
         })
       });
       expect(verifyResponse.ok).toBe(true);
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
-      expect(verifyResult.stdout).toContain(faultContent);
+      expect(verifyResult.stdout).toBe('runtime-recovered');
 
       await cleanupDir(workerUrl, headers, faultDir);
     }, 120000);
@@ -293,13 +297,13 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `git init ${REPO_DIR}`,
             `mkdir -p ${TEST_DIR}/node_modules`,
             `printf 'app/node_modules/\n' > ${REPO_DIR}/.gitignore`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "exclude-me" > ${TEST_DIR}/node_modules/a.txt`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -337,10 +341,13 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
-            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
-            `test -e ${TEST_DIR}/node_modules/a.txt && echo excluded:no || echo excluded:yes`
-          ].join('; ')
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+              `test -e ${TEST_DIR}/node_modules/a.txt && echo excluded:no || echo excluded:yes`
+            ],
+            '; '
+          )
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -361,13 +368,13 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `git init ${REPO_DIR}`,
             `mkdir -p ${TEST_DIR}/dist`,
             `printf 'app/dist/\n' > ${REPO_DIR}/.gitignore`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -406,10 +413,13 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
-            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
-            `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
-          ].join('; ')
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+              `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
+            ],
+            '; '
+          )
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -429,11 +439,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `mkdir -p ${TEST_DIR}/dist`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -469,10 +479,13 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
-            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
-            `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
-          ].join('; ')
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+              `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
+            ],
+            '; '
+          )
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -493,7 +506,7 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `git init ${REPO_DIR}`,
             `mkdir -p ${TEST_DIR}/dist`,
             `printf '*.log\n' > ${REPO_DIR}/.gitignore`,
@@ -501,7 +514,7 @@ describe('Backup Workflow E2E', () => {
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`,
             `echo "ignored" > ${TEST_DIR}/server.log`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -537,11 +550,14 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
-            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
-            `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`,
-            `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`
-          ].join('; ')
+          command: shellCommand(
+            [
+              `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+              `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`,
+              `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`
+            ],
+            '; '
+          )
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
@@ -565,12 +581,12 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `mkdir -p ${PROJECT_DIR}/src/utils ${PROJECT_DIR}/config`,
             `echo 'console.log("main")' > ${PROJECT_DIR}/src/index.js`,
             `echo 'export const VERSION = "1.0.0"' > ${PROJECT_DIR}/src/utils/version.js`,
             `echo '{"port": 3000}' > ${PROJECT_DIR}/config/settings.json`
-          ].join(' && ')
+          ])
         })
       });
       expect(setupResponse.ok).toBe(true);
@@ -949,18 +965,19 @@ describe('Backup Workflow E2E', () => {
       const TEST_DIR = `/workspace/special-chars-${crypto.randomUUID().slice(0, 8)}`;
 
       // Create files with special characters in names
-      await fetch(`${workerUrl}/api/execute`, {
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `mkdir -p "${TEST_DIR}"`,
             `echo "space content" > "${TEST_DIR}/file with spaces.txt"`,
             `echo "emoji content" > "${TEST_DIR}/emoji-🎉-file.txt"`,
             `echo "unicode content" > "${TEST_DIR}/日本語ファイル.txt"`
-          ].join(' && ')
+          ])
         })
       });
+      expect(setupResponse.ok).toBe(true);
 
       // Create backup
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
@@ -1341,19 +1358,19 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
 
     // 40 MiB of incompressible random data — squashfs won't compress it,
     // so the archive stays large and crosses the 32 MiB RPC payload cap.
-    const seedResult = (await (
-      await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: [
-            `mkdir -p ${TEST_DIR}`,
-            `dd if=/dev/urandom of=${TEST_DIR}/blob.bin bs=1M count=40 status=none`,
-            `sha256sum ${TEST_DIR}/blob.bin`
-          ].join(' && ')
-        })
+    const seedResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: shellCommand([
+          `mkdir -p ${TEST_DIR}`,
+          `dd if=/dev/urandom of=${TEST_DIR}/blob.bin bs=1M count=40 status=none`,
+          `sha256sum ${TEST_DIR}/blob.bin`
+        ])
       })
-    ).json()) as ExecuteResponse;
+    });
+    expect(seedResponse.ok).toBe(true);
+    const seedResult = (await seedResponse.json()) as ExecuteResponse;
     expect(seedResult.exitCode).toBe(0);
     const originalSha = seedResult.stdout?.trim().split(/\s+/)[0];
     expect(originalSha).toMatch(/^[0-9a-f]{64}$/);
@@ -1383,10 +1400,10 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `echo gone > ${TEST_DIR}/blob.bin`,
             `sha256sum ${TEST_DIR}/blob.bin`
-          ].join(' && ')
+          ])
         })
       })
     ).json()) as ExecuteResponse;
@@ -1418,10 +1435,10 @@ describe('Large localBucket backup (>32 MiB RPC payload)', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: [
+          command: shellCommand([
             `sha256sum ${TEST_DIR}/blob.bin`,
             `wc -c ${TEST_DIR}/blob.bin`
-          ].join(' && ')
+          ])
         })
       })
     ).json()) as ExecuteResponse;

@@ -117,6 +117,7 @@ export type {
   ReadFileOptions,
   ReadFileStreamOptions,
   RemoveMountDirectoryRequest,
+  RuntimeMetadata,
   S3FSOptionValue,
   SandboxAPI,
   SandboxBackupAPI,

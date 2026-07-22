@@ -1,11 +1,12 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from 'cloudflare:test';
+import type { ProcessLogEvent } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { RPCTransportError } from '../../src';
 import { createSandboxProcess } from '../../src/processes';
 import { readProcessOutput } from '../../src/processes/process-output';
-import type { ProcessLogSubscriptionRPC } from '../../src/processes/rpc-types';
+import type { ProcessPullSubscriptionRPC } from '../../src/processes/rpc-types';
 import type { ProcessCapabilityRPCTestDO } from '../fixtures/process-capability-rpc';
 
 declare global {
@@ -36,10 +37,9 @@ describe('process capability Workers RPC', () => {
     // Workers RPC's Stub transform cannot represent a disposable stream
     // capability, so refine the real boundary result to its wire contract.
     const subscription =
-      (await descriptor.capability.openLogs()) as unknown as ProcessLogSubscriptionRPC;
-    const reader = (await subscription.stream()).getReader();
+      (await descriptor.capability.openLogs()) as unknown as ProcessPullSubscriptionRPC<never>;
 
-    await expect(reader.read()).resolves.toEqual({
+    await expect(subscription.next()).resolves.toEqual({
       done: true,
       value: undefined
     });
@@ -54,8 +54,10 @@ describe('process capability Workers RPC', () => {
     const subscription = (await descriptor.capability.openLogs({
       replay: true,
       follow: true
-    })) as unknown as ProcessLogSubscriptionRPC;
-    const reader = (await subscription.stream()).getReader();
+    })) as unknown as ProcessPullSubscriptionRPC<ProcessLogEvent>;
+    const reader = {
+      read: () => subscription.next()
+    } as ReadableStreamDefaultReader<ProcessLogEvent>;
 
     await expect(
       readProcessOutput(reader, {

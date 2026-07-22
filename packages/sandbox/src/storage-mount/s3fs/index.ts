@@ -108,11 +108,13 @@ export async function executeS3FSMount(
     url: params.options.endpoint,
     ...(params.options.readOnly ? { ro: true } : {})
   };
-  const result = await host.client.mounts.mountS3FSAndVerify({
-    source: params.bucket,
-    mountPath: params.mountPath,
-    options: s3fsOptions
-  });
+  const result = await host.runRuntimeCall('mount.s3fs.mount', (control) =>
+    control.mounts.mountS3FSAndVerify({
+      source: params.bucket,
+      mountPath: params.mountPath,
+      options: s3fsOptions
+    })
+  );
   if (result.success) return;
 
   const detail = result.stdout?.trim() || result.stderr?.trim() || '';
@@ -136,7 +138,9 @@ export async function unmountTrackedFuseMount(
   if (!mountInfo.mounted) return true;
 
   host.logger.debug(`Unmounting bucket ${mountInfo.bucket} from ${mountPath}`);
-  const result = await host.client.mounts.unmountFuse(mountPath);
+  const result = await host.runRuntimeCall('mount.s3fs.unmount', (control) =>
+    control.mounts.unmountFuse(mountPath)
+  );
   if (!result.success) {
     throw new Error(
       `fusermount -u failed (exit ${result.exitCode}): ${result.stderr || 'unknown error'}`

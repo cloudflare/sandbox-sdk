@@ -1,4 +1,4 @@
-import type { RuntimeScoped } from '../current-runtime-identity';
+import type { RuntimeIdentityID, RuntimeIncarnationID } from '../runtime/types';
 
 /**
  * Persisted record for a single exposed port. `token` authorizes preview
@@ -10,9 +10,11 @@ export type PortTokenEntry = {
   name?: string;
 };
 
-export type PreviewPortActivation = RuntimeScoped<{
+export type PreviewPortActivation = {
+  runtimeIdentityID: RuntimeIdentityID;
+  runtimeIncarnationID: RuntimeIncarnationID;
   token: string;
-}>;
+};
 
 export type PreviewPortActivations = Record<string, PreviewPortActivation>;
 

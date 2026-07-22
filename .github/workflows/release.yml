@@ -6,6 +6,12 @@ on:
       - main
       - next
 
+# Serialize releases per branch so an older build cannot overwrite a newer
+# Worker and container deployment after finishing out of order.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: write

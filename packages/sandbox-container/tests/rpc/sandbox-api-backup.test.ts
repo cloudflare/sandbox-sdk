@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import {
-  type SandboxAPIDeps,
-  SandboxControlAPI
-} from '@sandbox-container/control-plane';
+import type { SandboxAPIDeps } from '@sandbox-container/control-plane';
 import type { BackupService } from '@sandbox-container/services/backup-service';
+import { createActivatedSandboxControlAPI } from './session-helper';
 
 const mockLogger = {
   info: vi.fn(),
@@ -15,8 +13,8 @@ const mockLogger = {
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
 
-function buildApi(backupService: BackupService): SandboxControlAPI {
-  return new SandboxControlAPI({
+async function buildApi(backupService: BackupService) {
+  return createActivatedSandboxControlAPI({
     backupService,
     logger: mockLogger
   } as unknown as SandboxAPIDeps);
@@ -61,7 +59,7 @@ describe('SandboxControlAPI backup', () => {
   });
 
   it('routes backup calls to stateless service operations', async () => {
-    const api = buildApi(mockBackupService);
+    const api = await buildApi(mockBackupService);
 
     await api.backup.createArchive('/workspace/app', '/var/backups/app.sqsh', {
       gitignore: true,

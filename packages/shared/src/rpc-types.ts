@@ -140,9 +140,18 @@ export interface SandboxPortsAPI {
   ): Promise<PortWatchSubscriptionAPI>;
 }
 
+export interface RuntimeMetadata {
+  runtimeIncarnationID: string;
+  sandboxVersion: string;
+  controlProtocolVersion: 1;
+}
+
 export interface SandboxUtilsAPI {
   ping(): Promise<string>;
-  getVersion(): Promise<string>;
+  getRuntimeMetadata(): Promise<RuntimeMetadata>;
+  activateControlSession(
+    expectedRuntimeIncarnationID: string
+  ): Promise<RuntimeMetadata>;
 }
 
 export interface CreateWorkspaceArchiveRequest {

@@ -127,7 +127,7 @@ describe('ResourceActivityGate', () => {
 
   test('in-flight operation prevents stop without leaked count', async () => {
     const { gate, stop } = createGate();
-    const operation = gate.beginOperation();
+    const operation = gate.beginActivity();
     await gate.runExpiry(
       {
         availability: async () => 'available' as const,
@@ -151,7 +151,7 @@ describe('ResourceActivityGate', () => {
 
   test('expiry does not renew for an in-flight non-waking operation', async () => {
     const { gate, stop, renew } = createGate();
-    const operation = gate.beginNonWakingOperation();
+    const operation = gate.beginExistingHold();
     const probe = {
       availability: vi.fn(async () => 'available' as const),
       processesHasActive: vi.fn(async () => false),
@@ -186,7 +186,7 @@ describe('ResourceActivityGate', () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    const operation = gate.beginOperation();
+    const operation = gate.beginActivity();
     let unblocked = false;
     const beforeCall = operation.beforeCall.then(() => {
       unblocked = true;
@@ -214,7 +214,7 @@ describe('ResourceActivityGate', () => {
     );
     await Promise.resolve();
     const renewsBeforeObservation = renew.mock.calls.length;
-    const operation = gate.beginNonWakingOperation();
+    const operation = gate.beginProbe();
     let admitted = false;
     const admission = operation.beforeCall.then(() => {
       admitted = true;
@@ -270,6 +270,101 @@ describe('ResourceActivityGate', () => {
     stopDone.resolve();
     await Promise.all([firstExpiry, repeatedExpiries]);
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('destroy teardown chains after a committed stop and still runs', async () => {
+    const stopDone = deferred<void>();
+    const events: string[] = [];
+    const gate = new ResourceActivityGate(vi.fn(), async () => {
+      events.push('stop:start');
+      await stopDone.promise;
+      events.push('stop:end');
+    });
+    const expiry = gate.runExpiry(
+      {
+        availability: async () => 'absent' as const,
+        processesHasActive: async () => false,
+        terminalsHasActive: async () => false
+      },
+      false
+    );
+    await Promise.resolve();
+    const destroy = gate.runDestroyTeardown(async () => {
+      events.push('destroy');
+    });
+    await Promise.resolve();
+
+    expect(events).toEqual(['stop:start']);
+    stopDone.resolve();
+    await Promise.all([expiry, destroy]);
+
+    expect(events).toEqual(['stop:start', 'stop:end', 'destroy']);
+  });
+
+  test('operation waiting on stop also waits for a later committed destroy', async () => {
+    const stopDone = deferred<void>();
+    const destroyDone = deferred<void>();
+    const events: string[] = [];
+    const gate = new ResourceActivityGate(vi.fn(), async () => {
+      events.push('stop:start');
+      await stopDone.promise;
+      events.push('stop:end');
+    });
+    const expiry = gate.runExpiry(
+      {
+        availability: async () => 'absent' as const,
+        processesHasActive: async () => false,
+        terminalsHasActive: async () => false
+      },
+      false
+    );
+    await Promise.resolve();
+    const operation = gate.beginActivity();
+    const admitted = operation.beforeCall.then(() => events.push('operation'));
+    const destroy = gate.runDestroyTeardown(async () => {
+      events.push('destroy:start');
+      await destroyDone.promise;
+      events.push('destroy:end');
+    });
+
+    stopDone.resolve();
+    await vi.waitFor(() => expect(events).toContain('destroy:start'));
+    expect(events).not.toContain('operation');
+    destroyDone.resolve();
+    await Promise.all([expiry, destroy, admitted]);
+    operation.finish();
+
+    expect(events).toEqual([
+      'stop:start',
+      'stop:end',
+      'destroy:start',
+      'destroy:end',
+      'operation'
+    ]);
+  });
+
+  test('destroy teardown still runs after a failed committed stop', async () => {
+    const events: string[] = [];
+    const gate = new ResourceActivityGate(vi.fn(), async () => {
+      events.push('stop');
+      throw new Error('stop failed');
+    });
+    await expect(
+      gate.runExpiry(
+        {
+          availability: async () => 'absent' as const,
+          processesHasActive: async () => false,
+          terminalsHasActive: async () => false
+        },
+        false
+      )
+    ).rejects.toThrow('stop failed');
+
+    await gate.runDestroyTeardown(async () => {
+      events.push('destroy');
+    });
+
+    expect(events).toEqual(['stop', 'destroy']);
   });
 
   test('absent runtime commits stop without probes', async () => {

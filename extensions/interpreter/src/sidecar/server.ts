@@ -69,6 +69,15 @@ class InterpreterSidecar
     }
   }
 
+  async interruptContext(contextId: string): Promise<void> {
+    const context = this.#contexts.get(contextId);
+    if (!context) return;
+    await this.#pool.interruptContext(
+      contextId,
+      context.language as InterpreterLanguage
+    );
+  }
+
   async runCode(
     contextId: string,
     code: string,

@@ -1,7 +1,7 @@
 import type { Logger } from '@repo/shared';
-import type { ContainerControlClient } from '../../container-control';
+import type { MountRuntimeCall } from '../runtime-call';
 
 export interface S3FSHost {
-  client: ContainerControlClient;
+  runRuntimeCall: MountRuntimeCall;
   logger: Logger;
 }

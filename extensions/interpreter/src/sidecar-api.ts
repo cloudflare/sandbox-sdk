@@ -24,6 +24,7 @@ export interface InterpreterSidecarAPI {
   }): Promise<InterpreterContextWire>;
   listContexts(): Promise<InterpreterContextWire[]>;
   deleteContext(contextId: string): Promise<void>;
+  interruptContext(contextId: string): Promise<void>;
   runCode(
     contextId: string,
     code: string,

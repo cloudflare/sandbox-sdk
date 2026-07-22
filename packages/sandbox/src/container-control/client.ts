@@ -15,7 +15,6 @@ import type {
   SandboxWorkspaceAPI
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import type { ResourceActivityOperation } from '../resource-activity-gate';
 import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
@@ -75,13 +74,14 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
    * Mirrors what `containerFetch()` does at the top of each HTTP request.
    */
   onActivity?: () => void;
-  onOperationStarted?: () => ResourceActivityOperation;
   /** Verifies that the owning runtime lease still permits RPC dispatch. */
   onDispatch?: () => void;
   /** Fires when the underlying connection closes or fails. */
   onConnectionClose?: () => void;
   /** Maps transport loss to operation interruption for the waking facade. */
   translateTransportErrorsAsInterruptions?: boolean;
+  connection?: ContainerControlConnection;
+  externallyOwnedConnection?: boolean;
   /**
    * Fires once when the capnweb session transitions from idle to busy
    * (an RPC call was started or a stream return is now in flight). The
@@ -112,14 +112,14 @@ export interface ContainerControlClientOptions extends ContainerControlConnectio
  * the file-level comment for the full rationale).
  */
 export class ContainerControlClient {
-  private readonly connOptions: ContainerControlConnectionOptions;
+  private readonly connOptions: ContainerControlConnectionOptions & {
+    connection?: ContainerControlConnection;
+    externallyOwnedConnection?: boolean;
+  };
   private readonly idleDisconnectMs: number;
   private readonly busyPollIntervalMs: number;
   private readonly logger: Logger;
   private readonly onActivity: (() => void) | undefined;
-  private readonly onOperationStarted:
-    | (() => ResourceActivityOperation)
-    | undefined;
   private readonly onDispatch: (() => void) | undefined;
   private readonly onConnectionClose: (() => void) | undefined;
   private readonly translateTransportErrorsAsInterruptions: boolean;
@@ -131,6 +131,8 @@ export class ContainerControlClient {
   private busyPollTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether we currently believe the session is busy. */
   private busy = false;
+  private connectionRetainers = 0;
+  private connectionGeneration = 0;
 
   constructor(options: ContainerControlClientOptions) {
     this.connOptions = {
@@ -138,7 +140,8 @@ export class ContainerControlClient {
       port: options.port,
       localMain: options.localMain,
       logger: options.logger,
-      retryTimeoutMs: options.retryTimeoutMs,
+      connection: options.connection,
+      externallyOwnedConnection: options.externallyOwnedConnection,
       // Event-driven failure recovery: when the live WebSocket closes
       // or errors, tear the connection down inside the same turn of
       // the event loop so the next RPC call builds a fresh one. The
@@ -157,7 +160,6 @@ export class ContainerControlClient {
       options.busyPollIntervalMs ?? BUSY_POLL_INTERVAL_MS;
     this.logger = options.logger ?? createNoOpLogger();
     this.onActivity = options.onActivity;
-    this.onOperationStarted = options.onOperationStarted;
     this.onDispatch = options.onDispatch;
     this.onConnectionClose = options.onConnectionClose;
     this.translateTransportErrorsAsInterruptions =
@@ -177,8 +179,10 @@ export class ContainerControlClient {
   private getConnection(): ContainerControlConnection {
     this.onDispatch?.();
     if (!this.conn) {
-      this.conn = new ContainerControlConnection(this.connOptions);
-      this.startBusyPoll();
+      this.conn =
+        this.connOptions.connection ??
+        new ContainerControlConnection(this.connOptions);
+      if (!this.connOptions.externallyOwnedConnection) this.startBusyPoll();
     }
     return this.conn;
   }
@@ -186,20 +190,6 @@ export class ContainerControlClient {
   // -------------------------------------------------------------------------
   // Activity & busy/idle tracking
   // -------------------------------------------------------------------------
-
-  /**
-   * Called synchronously at the start of each RPC method invocation.
-   * Renews the DO activity timeout so the sleepAfter alarm is pushed
-   * forward before the container processes the call.
-   */
-  private beginOperation = (): ResourceActivityOperation => {
-    return (
-      this.onOperationStarted?.() ?? {
-        beforeCall: Promise.resolve(),
-        finish: () => undefined
-      }
-    );
-  };
 
   /**
    * Sample `getStats()` and update busy/idle state. While busy, renews the
@@ -230,7 +220,9 @@ export class ContainerControlClient {
 
     const { imports, exports } = conn.getStats();
     const isBusy =
-      imports > IDLE_IMPORT_THRESHOLD || exports > IDLE_EXPORT_THRESHOLD;
+      this.connectionRetainers > 0 ||
+      imports > IDLE_IMPORT_THRESHOLD ||
+      exports > IDLE_EXPORT_THRESHOLD;
 
     if (isBusy) {
       if (!this.busy) {
@@ -278,6 +270,7 @@ export class ContainerControlClient {
       // Re-check before disconnecting — a new call may have started.
       const { imports, exports } = conn.getStats();
       if (
+        this.connectionRetainers === 0 &&
         imports <= IDLE_IMPORT_THRESHOLD &&
         exports <= IDLE_EXPORT_THRESHOLD
       ) {
@@ -297,6 +290,8 @@ export class ContainerControlClient {
   private destroyConnection(): void {
     this.stopBusyPoll();
     this.clearIdleTimer();
+    this.connectionRetainers = 0;
+    this.connectionGeneration += 1;
     // If we tear down while still believing the session is busy, fire the
     // idle transition so the DO's inflight counter doesn't leak.
     if (this.busy) {
@@ -304,7 +299,9 @@ export class ContainerControlClient {
       this.onSessionIdle?.();
     }
     if (this.conn) {
-      this.conn.disconnect();
+      if (!this.connOptions.externallyOwnedConnection) {
+        this.conn.disconnect();
+      }
       this.conn = null;
     }
   }
@@ -320,13 +317,11 @@ export class ContainerControlClient {
 
   private createDomainProxy<T extends object>(
     getStub: () => T,
-    domain: string,
-    onCallStarted = this.beginOperation
+    domain: string
   ): T {
     return createControlDomainProxy(
       getStub,
       domain,
-      onCallStarted,
       this.translateTransportErrorsAsInterruptions
     );
   }
@@ -349,16 +344,6 @@ export class ContainerControlClient {
     return this.createDomainProxy(
       () => this.getConnection().rpc().processes,
       'processes'
-    ) as unknown as SandboxProcessesAPI;
-  }
-  processesWithoutActivity(): SandboxProcessesAPI {
-    return this.createDomainProxy(
-      () => this.getConnection().rpc().processes,
-      'processes',
-      () => ({
-        beforeCall: Promise.resolve(),
-        finish: () => undefined
-      })
     ) as unknown as SandboxProcessesAPI;
   }
   get mounts(): SandboxMountsAPI {
@@ -403,16 +388,6 @@ export class ContainerControlClient {
       'terminals'
     ) as unknown as SandboxTerminalsAPI;
   }
-  terminalsWithoutActivity(): SandboxTerminalsAPI {
-    return this.createDomainProxy(
-      () => this.getConnection().rpc().terminals,
-      'terminals',
-      () => ({
-        beforeCall: Promise.resolve(),
-        finish: () => undefined
-      })
-    ) as unknown as SandboxTerminalsAPI;
-  }
   get extensions(): SandboxExtensionsAPI {
     return this.createDomainProxy(
       () => this.getConnection().rpc().extensions,
@@ -420,28 +395,29 @@ export class ContainerControlClient {
     );
   }
 
-  /**
-   * Update the upgrade retry budget. Applies to the current connection
-   * (if any) and is remembered for any future connections created after the
-   * client is torn down and reconnected.
-   */
-  setRetryTimeoutMs(ms: number): void {
-    this.connOptions.retryTimeoutMs = ms;
-    this.conn?.setRetryTimeoutMs(ms);
-  }
-
   isWebSocketConnected(): boolean {
     return this.conn?.isConnected() ?? false;
   }
 
   async connect(): Promise<void> {
-    const activity = this.beginOperation();
-    try {
-      await activity.beforeCall;
-      await this.getConnection().connect();
-    } finally {
-      activity.finish();
-    }
+    await this.getConnection().connect();
+  }
+
+  retainRuntimeHold(): () => void {
+    this.getConnection();
+    const generation = this.connectionGeneration;
+    this.connectionRetainers += 1;
+    this.clearIdleTimer();
+    let released = false;
+
+    return () => {
+      if (released || generation !== this.connectionGeneration) return;
+      released = true;
+      this.connectionRetainers -= 1;
+      if (this.connectionRetainers === 0 && !this.busy) {
+        this.scheduleIdleDisconnect();
+      }
+    };
   }
 
   disconnect(): void {

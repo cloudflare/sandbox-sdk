@@ -106,11 +106,15 @@ export class Interpreter extends SandboxExtension {
     options: CreateContextOptions = {}
   ): Promise<CodeContext> {
     validateLanguage(options.language);
-    const api = await this.sidecar<InterpreterSidecarAPI>();
-    const raw = await api.createContext({
-      language: options.language,
-      cwd: options.cwd
-    });
+    const raw = await this.withSidecar<
+      InterpreterSidecarAPI,
+      Awaited<ReturnType<InterpreterSidecarAPI['createContext']>>
+    >('interpreter.createContext', (api) =>
+      api.createContext({
+        language: options.language,
+        cwd: options.cwd
+      })
+    );
     const context = toCodeContext(raw);
     this.#contexts.set(context.id, context);
     return context;
@@ -127,10 +131,13 @@ export class Interpreter extends SandboxExtension {
 
     const execution = new Execution(code, context);
 
-    const api = await this.sidecar<InterpreterSidecarAPI>();
-    await api.runCode(context.id, code, options.language, async (event) => {
-      await this.#applyEvent(execution, event, options);
-    });
+    await this.withSidecar<InterpreterSidecarAPI, void>(
+      'interpreter.runCode',
+      (api) =>
+        api.runCode(context.id, code, options.language, async (event) => {
+          await this.#applyEvent(execution, event, options);
+        })
+    );
 
     return execution.toJSON();
   }
@@ -146,27 +153,55 @@ export class Interpreter extends SandboxExtension {
 
     const encoder = new TextEncoder();
     const self = this;
+    let closed = false;
+    let interruptContext: (() => Promise<void>) | undefined;
+    let interruptSettled: Promise<void> = Promise.resolve();
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          const api = await self.sidecar<InterpreterSidecarAPI>();
-          await api.runCode(context.id, code, options.language, (event) => {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-            );
-          });
-          controller.close();
+          await self.withSidecar<InterpreterSidecarAPI, void>(
+            'interpreter.runCodeStream',
+            async (api) => {
+              interruptContext = () => api.interruptContext(context.id);
+              if (closed) return;
+              await api.runCode(context.id, code, options.language, (event) => {
+                if (closed) return;
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+                );
+              });
+            }
+          );
+          if (!closed) {
+            closed = true;
+            controller.close();
+          }
         } catch (error) {
-          controller.error(error);
+          if (!closed) {
+            closed = true;
+            controller.error(error);
+          }
+        } finally {
+          await interruptSettled;
+          interruptContext = undefined;
         }
+      },
+      cancel() {
+        closed = true;
+        const interrupt = interruptContext;
+        if (!interrupt) return;
+        interruptSettled = interrupt().catch(() => {});
+        return interruptSettled;
       }
     });
   }
 
   /** List all code contexts (refreshes the local cache). */
   async listCodeContexts(): Promise<CodeContext[]> {
-    const api = await this.sidecar<InterpreterSidecarAPI>();
-    const raw = await api.listContexts();
+    const raw = await this.withSidecar<
+      InterpreterSidecarAPI,
+      Awaited<ReturnType<InterpreterSidecarAPI['listContexts']>>
+    >('interpreter.listContexts', (api) => api.listContexts());
     const contexts = raw.map(toCodeContext);
     for (const context of contexts) {
       this.#contexts.set(context.id, context);
@@ -176,8 +211,10 @@ export class Interpreter extends SandboxExtension {
 
   /** Delete a code context. */
   async deleteCodeContext(contextId: string): Promise<void> {
-    const api = await this.sidecar<InterpreterSidecarAPI>();
-    await api.deleteContext(contextId);
+    await this.withSidecar<InterpreterSidecarAPI, void>(
+      'interpreter.deleteContext',
+      (api) => api.deleteContext(contextId)
+    );
     this.#contexts.delete(contextId);
   }
 
