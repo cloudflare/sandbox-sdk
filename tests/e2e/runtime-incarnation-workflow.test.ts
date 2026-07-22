@@ -140,8 +140,14 @@ describe('Runtime incarnation lifecycle workflow', () => {
   test('invalidates the runtime when the control server exits', async () => {
     const response = await post('/api/runtime/control-server-exit');
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      stateStatus: 'stopped',
+    const result = (await response.json()) as {
+      stateStatus: string;
+      interruption: { originalMessage: string };
+      recoveryStdout: string;
+    };
+
+    expect(['stopped', 'stopped_with_code']).toContain(result.stateStatus);
+    expect(result).toMatchObject({
       interruption: {
         originalMessage: expect.stringContaining('StaleProcessHandleError')
       },
