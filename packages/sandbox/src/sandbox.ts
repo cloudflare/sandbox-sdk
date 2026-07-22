@@ -2876,7 +2876,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStart() {
     this.logger.debug('Sandbox started');
 
-    await this.currentRuntime.markStarted();
+    const runtime = await this.currentRuntime.markStarted();
+    await this.reactivateExposedPortsForRuntime(runtime);
 
     // Fire-and-forget: version check is observability, not load-bearing.
     this.checkVersionCompatibility().catch((error) => {
@@ -2970,6 +2971,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private async clearActivePreviewPorts(): Promise<void> {
     await this.ctx.storage.delete(ACTIVE_PREVIEW_PORTS_STORAGE_KEY);
+  }
+
+  /**
+   * Re-bind durable preview-port authorizations to the freshly started
+   * runtime.
+   *
+   * Preview-URL auth (`portTokens`) survives container restarts, but the
+   * runtime-scoped activation is cleared on stop. Without re-deriving it on
+   * start, every exposed port returns STALE_PREVIEW_URL after any restart —
+   * including exec/containerFetch calls that wake a stopped container — until
+   * the caller manually re-exposes the port.
+   *
+   * Runs inside onStart so it only reactivates ports for a container that is
+   * already starting: it never wakes a stopped runtime, and it never
+   * resurrects unexposed or destroyed ports, which are absent from
+   * `portTokens`.
+   */
+  private async reactivateExposedPortsForRuntime(
+    runtime: RuntimeIdentity
+  ): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      const tokens = await this.readPortTokens(txn);
+      const activations: PreviewPortActivations = {};
+      for (const [port, entry] of Object.entries(tokens)) {
+        activations[port] = runtime.scope({ token: entry.token });
+      }
+      await this.writeActivePreviewPorts(activations, txn);
+    });
   }
 
   /**
@@ -5017,10 +5046,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
-   * Preview URL authorization survives transient container restarts, but
-   * forwarding is active only for the runtime where `exposePort()` was last
-   * called. Call `exposePort()` again after a restart to reactivate an
-   * existing URL for the current runtime.
+   * Preview URL authorization and forwarding survive container restarts:
+   * exposed ports are automatically reactivated for the new runtime when the
+   * container starts, so the URL keeps forwarding without re-exposing. Call
+   * `unexposePort()` to revoke a URL.
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
