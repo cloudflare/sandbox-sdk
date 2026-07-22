@@ -16,11 +16,15 @@ export class CheckpointProxy extends WorkerEntrypoint<
     if (new URL(request.url).pathname !== CHECKPOINT_PATH)
       return new Response('Not found', { status: 404 });
 
-    const key = checkpointKey(this.ctx.props.sessionId);
+    const sessionId = this.ctx.props.sessionId;
+    const key = checkpointKey(sessionId);
     switch (request.method) {
       case 'HEAD': {
-        const object = await this.env.DEVIN_CHECKPOINTS.head(key);
-        return new Response(null, { status: object ? 200 : 404 });
+        // Answer from the session's Durable Object rather than probing R2, so a
+        // fresh session with no checkpoint never issues a HeadObject against a
+        // missing key (which R2 records as an error-level span).
+        const present = await this.#worker(sessionId).hasCheckpoint();
+        return new Response(null, { status: present ? 200 : 404 });
       }
       case 'GET': {
         const object = await this.env.DEVIN_CHECKPOINTS.get(key);
@@ -46,6 +50,7 @@ export class CheckpointProxy extends WorkerEntrypoint<
           this.env.DEVIN_CHECKPOINTS.put(key, readable),
           request.body.pipeTo(writable)
         ]);
+        await this.#worker(sessionId).recordCheckpointSaved();
         return new Response(null, { status: 204 });
       }
       default:
@@ -54,6 +59,10 @@ export class CheckpointProxy extends WorkerEntrypoint<
           headers: { allow: 'HEAD, GET, PUT' }
         });
     }
+  }
+
+  #worker(sessionId: string) {
+    return this.env.DevinWorker.get(this.env.DevinWorker.idFromName(sessionId));
   }
 }
 

@@ -4,6 +4,8 @@ import { reconcile } from './reconcile';
 
 export { CheckpointProxy } from './persistence';
 
+const CHECKPOINT_PRESENT_KEY = 'checkpointPresent';
+
 /**
  * One Durable Object per Devin session. The DO is deliberately dumb: it knows
  * how to start/stop its Cloudflare Container, but it does not call Devin and it
@@ -39,8 +41,22 @@ export class DevinWorker extends DurableObject<Env> {
 
     await this.#starting;
     await this.#stopContainer(sessionId, reason);
-    if (reason === 'terminated')
+    if (reason === 'terminated') {
       await deleteCheckpoint(this.env.DEVIN_CHECKPOINTS, sessionId);
+      await this.ctx.storage.delete(CHECKPOINT_PRESENT_KEY);
+    }
+  }
+
+  /** Whether this session has an R2 checkpoint the container can restore. */
+  async hasCheckpoint(): Promise<boolean> {
+    return (
+      (await this.ctx.storage.get<boolean>(CHECKPOINT_PRESENT_KEY)) === true
+    );
+  }
+
+  /** Recorded by the checkpoint proxy after a successful upload to R2. */
+  async recordCheckpointSaved(): Promise<void> {
+    await this.ctx.storage.put(CHECKPOINT_PRESENT_KEY, true);
   }
 
   async #startContainer(
