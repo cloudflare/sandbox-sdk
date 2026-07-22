@@ -18,6 +18,21 @@ assert_output() {
   echo "PASS $name"
 }
 
+assert_expected_image() {
+  local name=$1 worker=$2 image_tag=$3 app_name=$4 expected_image=$5 actual
+  actual=$(CLOUDFLARE_ACCOUNT_ID=account \
+    "$script" --expected-image "$worker" "$image_tag" "$app_name")
+  if [[ $actual != "$expected_image" ]]; then
+    printf 'FAIL %s\nexpected: %q\nactual:   %q\n' \
+      "$name" "$expected_image" "$actual" >&2
+    exit 1
+  fi
+  echo "PASS $name"
+}
+
+assert_expected_image browser-image worker ci-expected worker-browser \
+  'registry.cloudflare.com/account/sandbox:ci-expected'
+
 cat >"$tmp/ready.json" <<'JSON'
 {"version":2,"configuration":{"image":"registry.cloudflare.com/account/sandbox:ci-expected"},"health":{"errors":[],"instances":{"starting":0,"scheduling":0,"failed":0}}}
 JSON

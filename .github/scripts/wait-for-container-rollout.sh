@@ -23,6 +23,7 @@ expected_image() {
   local worker=$1 image_tag=$2 app_name=$3 image=sandbox
   case "$app_name" in
     "$worker") ;;
+    "$worker-browser") ;;
     "$worker-python") image=sandbox-python ;;
     "$worker-opencode") image=sandbox-opencode ;;
     "$worker-standalone") image=sandbox-standalone ;;
@@ -66,6 +67,11 @@ if [[ ${1:-} == --evaluate ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == --expected-image ]]; then
+  expected_image "$2" "$3" "$4"
+  exit 0
+fi
+
 worker=${1:?worker name required}
 image_tag=${2:?image tag required}
 timeout_seconds=${ROLLOUT_TIMEOUT_SECONDS:-600}
@@ -73,7 +79,7 @@ drain_grace_seconds=${ROLLOUT_DRAIN_GRACE_SECONDS:-180}
 poll_seconds=${ROLLOUT_POLL_SECONDS:-10}
 deadline=$((SECONDS + timeout_seconds))
 drain_deadline=$((SECONDS + drain_grace_seconds))
-app_names=("$worker" "$worker-python" "$worker-opencode" "$worker-standalone" "$worker-musl")
+app_names=("$worker" "$worker-browser" "$worker-python" "$worker-opencode" "$worker-standalone" "$worker-musl")
 
 echo "Waiting for container applications to serve image tag $image_tag"
 while ((SECONDS < deadline)); do

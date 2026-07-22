@@ -93,7 +93,7 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           SAFE_BUDGET=84
-          EXPECTED_PR_APPS=5
+          EXPECTED_PR_APPS=6
 
           CONTAINERS=$(wrangler containers list --json 2>/dev/null)
           if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then
@@ -326,7 +326,7 @@ jobs:
           }
 
           pids=()
-          for type in default python opencode standalone musl; do
+          for type in default browser python opencode standalone musl; do
             smoke_type "$type" &
             pids+=("$!")
           done
