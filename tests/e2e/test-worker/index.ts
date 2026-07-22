@@ -349,11 +349,6 @@ export default {
       if (proxyResponse) return proxyResponse;
     }
 
-    // Skip JSON body parsing for streaming endpoints to preserve request.body
-    const isStreamingUpload =
-      url.pathname === '/api/file/write-stream' && request.method === 'PUT';
-    const body = asRecord(isStreamingUpload ? {} : await parseBody(request));
-
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
     const baseSandboxId =
@@ -371,6 +366,25 @@ export default {
     const sandboxType =
       request.headers.get('X-Sandbox-Type') ??
       url.searchParams.get('sandboxType');
+
+    // This page only renders a client that will create the terminal in a later
+    // request. Avoid constructing a Sandbox here because getSandbox() starts
+    // asynchronous configuration, which this response would not await.
+    if (url.pathname === '/terminal-test') {
+      return new Response(
+        getTerminalTestPage(
+          sandboxId,
+          sandboxType === 'browser' ? 'browser' : ''
+        ),
+        { headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+
+    // Skip JSON body parsing for streaming endpoints to preserve request.body
+    const isStreamingUpload =
+      url.pathname === '/api/file/write-stream' && request.method === 'PUT';
+    const body = asRecord(isStreamingUpload ? {} : await parseBody(request));
+
     let sandboxNamespace: DurableObjectNamespace<Sandbox>;
     if (sandboxType === 'browser') {
       sandboxNamespace = env.SandboxBrowser;
@@ -1533,19 +1547,6 @@ console.log('Echo server on port ' + port);
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
-      }
-
-      // PTY: Browser test page for Playwright tests
-      if (url.pathname === '/terminal-test') {
-        return new Response(
-          getTerminalTestPage(
-            sandboxId,
-            sandboxType === 'browser' ? 'browser' : ''
-          ),
-          {
-            headers: { 'Content-Type': 'text/html' }
-          }
-        );
       }
 
       // PTY: WebSocket terminal proxy
