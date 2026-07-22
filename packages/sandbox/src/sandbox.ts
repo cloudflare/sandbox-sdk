@@ -1256,7 +1256,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     );
     this.resourceActivityGate = new ResourceActivityGate(
       () => this.renewActivityTimeoutIfAvailable(),
-      () => this.performRuntimeStop(() => super.onActivityExpired())
+      () => this.performRuntimeStop(() => super.stop())
     );
     this.runtimeSessions = new RuntimeSessionManager({
       getTcpPort: (port) => this.getRuntimePortStub(port),

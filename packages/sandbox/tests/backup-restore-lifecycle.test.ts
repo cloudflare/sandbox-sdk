@@ -452,7 +452,7 @@ describe('backup restore lifecycle', () => {
     expect(record.error?.retryable).toBe(false);
   });
 
-  it('returns a committed restore result from durable operation state without restoring again', async () => {
+  it('starts a new restore after a previously committed restore', async () => {
     const backupId = crypto.randomUUID();
     const storageMap = new Map<string, StoredValue>();
     storageMap.set(`operations:restore:${backupId}:/workspace/project`, {
@@ -484,7 +484,12 @@ describe('backup restore lifecycle', () => {
       id: backupId,
       dir: '/workspace/project'
     });
-    expect(restoreArchiveSpy).not.toHaveBeenCalled();
+    expect(restoreArchiveSpy).toHaveBeenCalledTimes(1);
+    const record = storageMap.get(
+      `operations:restore:${backupId}:/workspace/project`
+    ) as BackupRestoreOperationRecord;
+    expect(record.status).toBe('committed');
+    expect(record.operationId).not.toBe('operation-1');
   });
 
   it('does not retry restore across a sandbox lifetime change', async () => {

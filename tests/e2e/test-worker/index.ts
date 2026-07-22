@@ -110,6 +110,21 @@ function isSandboxErrorLike(error: unknown): error is SandboxErrorLike {
   );
 }
 
+function getErrorCode(error: unknown): string | null {
+  if (isSandboxErrorLike(error)) {
+    return error.code ?? error.errorResponse.code ?? null;
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code;
+  }
+  return null;
+}
+
 /**
  * Maps SandboxError subclass names to HTTP status codes and error codes.
  * Used as a fallback when errors cross the Cloudflare RPC boundary,
@@ -593,39 +608,35 @@ console.log('Echo server on port ' + port);
         ]);
         await oldProcess.waitForLog('admitted');
         const racingWait = oldProcess.waitForExit().then(
-          () => '',
-          (error: unknown) =>
-            error instanceof Error ? error.name : String(error)
+          () => ({ rejected: false, code: null }),
+          (error: unknown) => ({ rejected: true, code: getErrorCode(error) })
         );
         await new Promise((resolve) => setTimeout(resolve, 100));
         await sandbox.destroy();
 
         const stoppedList = await sandbox.listProcesses();
         const stoppedGet = await sandbox.getProcess(oldProcess.id);
-        const replacement = await sandbox.exec(['printf', 'replacement']);
-        await replacement.waitForExit();
 
-        let staleError = '';
+        let staleRejected = false;
+        let staleReasonMatched = false;
         try {
           await oldProcess.status();
         } catch (error) {
-          staleError = error instanceof Error ? error.name : String(error);
+          staleRejected = true;
+          staleReasonMatched =
+            error instanceof Error &&
+            error.message.includes('previous runtime incarnation');
         }
-        const racingError = await racingWait;
-
-        const live = await sandbox.exec(['/bin/bash', '-lc', 'sleep 30']);
-        const recovered = await sandbox.getProcess(live.id);
-        const recoveredStatus = await recovered?.status();
-        await recovered?.kill();
-        await recovered?.waitForExit();
+        const racingResult = await racingWait;
 
         return new Response(
           JSON.stringify({
             stoppedListCount: stoppedList.length,
             stoppedGetFound: stoppedGet !== null,
-            staleError,
-            racingError,
-            recoveredState: recoveredStatus?.state
+            staleRejected,
+            staleReasonMatched,
+            racingRejected: racingResult.rejected,
+            racingCode: racingResult.code
           }),
           { headers: { 'Content-Type': 'application/json' } }
         );

@@ -6,6 +6,7 @@ const processStarts: number[] = [];
 const terminalCreates: number[] = [];
 const terminalOutputCancels: number[] = [];
 const startAndWaitForPortsCalls: unknown[] = [];
+const physicalStops: number[] = [];
 let connected = true;
 let nextConnectionGeneration = 0;
 
@@ -39,7 +40,14 @@ vi.mock('@cloudflare/containers', () => {
       await this.physicalStart();
     }
 
-    async onActivityExpired(): Promise<void> {}
+    async stop(): Promise<void> {
+      physicalStops.push(physicalStops.length);
+      if (this.ctx.container) this.ctx.container.running = false;
+    }
+
+    async onActivityExpired(): Promise<void> {
+      await this.stop();
+    }
 
     async getState(): Promise<{ status: string }> {
       return { status: 'healthy' };
@@ -240,6 +248,7 @@ describe('Sandbox resource activity gate integration', () => {
     terminalCreates.length = 0;
     terminalOutputCancels.length = 0;
     startAndWaitForPortsCalls.length = 0;
+    physicalStops.length = 0;
   });
 
   afterEach(() => {
@@ -258,6 +267,26 @@ describe('Sandbox resource activity gate integration', () => {
     expect(rpcGenerations).toHaveLength(0);
   });
 
+  it('completes inactivity expiry through one physical stop', async () => {
+    const { sandbox, ctx } = await createSandbox();
+    await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
+
+    await expect(
+      Promise.race([
+        sandbox.onActivityExpired(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('activity expiry did not settle')),
+            100
+          )
+        )
+      ])
+    ).resolves.toBeUndefined();
+
+    expect(physicalStops).toHaveLength(1);
+    expect(ctx.container.running).toBe(false);
+  });
+
   it('holds exec and terminal creation behind a pending committed inactivity stop', async () => {
     const { sandbox, ctx } = await createSandbox();
     await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
@@ -265,7 +294,7 @@ describe('Sandbox resource activity gate integration', () => {
     let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-      'onActivityExpired'
+      'stop'
     ).mockImplementation(() => {
       stopCalled = true;
       return stop.promise;
@@ -342,7 +371,7 @@ describe('Sandbox resource activity gate integration', () => {
     let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-      'onActivityExpired'
+      'stop'
     ).mockImplementation(() => {
       stopCalled = true;
       return stop.promise;
@@ -384,7 +413,7 @@ describe('Sandbox resource activity gate integration', () => {
     let stopCalled = false;
     vi.spyOn(
       Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
-      'onActivityExpired'
+      'stop'
     ).mockImplementation(() => {
       stopCalled = true;
       return stop.promise;

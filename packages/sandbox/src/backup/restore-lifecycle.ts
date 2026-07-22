@@ -68,11 +68,6 @@ export class RestoreLifecycleRunner {
       lifetime.id
     );
 
-    // Short-circuit: return the stored result without restoring again.
-    if (existing?.status === 'committed' && existing.result) {
-      return existing.result;
-    }
-
     const now = new Date().toISOString();
     let operation: BackupRestoreOperationRecord;
 

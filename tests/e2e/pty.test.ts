@@ -146,7 +146,8 @@ describe('PTY', () => {
       // Second connection: should receive buffered output
       const { ws: ws2, output: output2 } = await connectWebSocket(terminalId);
 
-      // Buffered output is sent before 'ready', so it should already be there
+      // Replay is forwarded asynchronously after connection readiness.
+      await waitForOutput(output2, marker);
       expect(output2.join('')).toContain(marker);
 
       cleanup(ws2);
