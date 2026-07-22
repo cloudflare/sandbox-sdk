@@ -113,7 +113,10 @@ vi.mock('@cloudflare/containers', () => {
       return new Response('Mock Container HTTP fetch');
     }
     async startAndWaitForPorts(): Promise<void> {
-      // No-op: real container startup is not needed in tests.
+      // Match @cloudflare/containers: after ports are ready, invoke onStart.
+      if (this.ctx?.container) this.ctx.container.running = true;
+      const onStart = (this as { onStart?: () => Promise<void> }).onStart;
+      if (onStart) await onStart.call(this);
     }
     async destroy(): Promise<void> {
       // No-op: real container destroy is not needed in tests; individual
@@ -2276,6 +2279,44 @@ describe('Sandbox durable object behavior', () => {
       expect(deletedKeys).toContain('currentRuntimeIdentity');
     });
 
+    it('routes container hooks through replacement lifecycle reconciliation', async () => {
+      type RuntimeLifecycleHookProbe = {
+        markRuntimeStarted(): boolean;
+        reconcileObservedStop(): Promise<
+          'reconciled-previous-stop' | 'hard-invalidation'
+        >;
+        invalidate(): Promise<void>;
+      };
+      type SandboxLoggerProbe = {
+        debug(message: string, context?: Record<string, unknown>): void;
+      };
+
+      const lifecycle = (
+        sandbox as unknown as { runtimeLifecycle: RuntimeLifecycleHookProbe }
+      ).runtimeLifecycle;
+      const logger = (sandbox as unknown as { logger: SandboxLoggerProbe })
+        .logger;
+      const debug = vi.spyOn(logger, 'debug');
+      const markRuntimeStarted = vi.spyOn(lifecycle, 'markRuntimeStarted');
+      const reconcileObservedStop = vi
+        .spyOn(lifecycle, 'reconcileObservedStop')
+        .mockResolvedValue('reconciled-previous-stop');
+      const hardInvalidate = vi.spyOn(lifecycle, 'invalidate');
+
+      await sandbox.onStart();
+      await sandbox.onStop();
+
+      expect(markRuntimeStarted).toHaveBeenCalledTimes(1);
+      expect(reconcileObservedStop).toHaveBeenCalledTimes(1);
+      expect(hardInvalidate).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledWith('Sandbox started', {
+        replacementStartTransitionCompleted: false
+      });
+      expect(debug).toHaveBeenCalledWith('Sandbox runtime stop reconciled', {
+        runtimeStopDisposition: 'reconciled-previous-stop'
+      });
+    });
+
     it('stop() clears runtime-scoped preview state before signaling the container', async () => {
       const callOrder: string[] = [];
       vi.mocked(mockCtx.storage!.delete).mockImplementation(async (key) => {
@@ -2312,6 +2353,7 @@ describe('Sandbox durable object behavior', () => {
       vi.spyOn(parent, 'startAndWaitForPorts').mockImplementation(async () => {
         callOrder.push('super.startAndWaitForPorts');
         mockCtx.container.running = true;
+        await sandbox.onStart();
       });
 
       const stop = sandbox.stop();

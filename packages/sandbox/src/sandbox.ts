@@ -1844,7 +1844,11 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   }
 
   override async onStart() {
-    this.logger.debug('Sandbox started');
+    const replacementStartTransitionCompleted =
+      this.runtimeLifecycle.markRuntimeStarted();
+    this.logger.debug('Sandbox started', {
+      replacementStartTransitionCompleted
+    });
   }
 
   override async start(
@@ -1908,7 +1912,11 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    await this.runtimeLifecycle.invalidate();
+    const runtimeStopDisposition =
+      await this.runtimeLifecycle.reconcileObservedStop();
+    this.logger.debug('Sandbox runtime stop reconciled', {
+      runtimeStopDisposition
+    });
     await this.previewService.clearActivePreviewPorts();
 
     try {

@@ -56,6 +56,8 @@ vi.mock('@cloudflare/containers', () => {
     async startAndWaitForPorts(options: unknown): Promise<void> {
       startAndWaitForPortsCalls.push(options);
       await this.physicalStart();
+      const onStart = (this as { onStart?: () => Promise<void> }).onStart;
+      if (onStart) await onStart.call(this);
     }
 
     renewActivityTimeout(): void {}

@@ -79,12 +79,13 @@ export async function getContainerStatus(
 }
 
 /**
- * `stop()` requests graceful shutdown; it is not a lifecycle barrier. Tests
- * that need a completed runtime boundary should call this helper instead of
- * assuming the stop request has fully settled before the next SDK operation.
+ * `stop()` requests graceful shutdown; it is not a lifecycle barrier. This
+ * helper waits until the container library reports physical stopped state,
+ * but that state does not guarantee the Sandbox `onStop()` hook has run.
  *
- * This intentionally uses the test-worker's stop endpoint to force the same
+ * This intentionally uses the test worker's stop endpoint to force the same
  * stop/replacement boundary users can observe after sleep or runtime exit.
+ * The next waking SDK operation must reconcile any delayed stop notification.
  */
 export async function waitForContainerStopped(
   workerUrl: string,

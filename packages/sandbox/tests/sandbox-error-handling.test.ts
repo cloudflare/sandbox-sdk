@@ -236,6 +236,7 @@ describe('Sandbox.containerFetch() error classification', () => {
     startAndWaitSpy.mockImplementation(async () => {
       const container = mockCtx.container as { running: boolean };
       container.running = true;
+      await sandbox.onStart();
     });
   });
 
