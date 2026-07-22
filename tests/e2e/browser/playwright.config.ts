@@ -8,7 +8,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: isCI,
   retries: 1,
-  workers: isCI ? 1 : undefined,
+  workers: isCI ? 8 : undefined,
   maxFailures: isCI ? 1 : undefined,
   reporter: isCI ? [['line'], ['github']] : 'list',
   timeout: 60000,
