@@ -1,0 +1,30 @@
+{
+  "name": "repro-829-stale-preview-url",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "vite dev",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy --temporary --containers-rollout=none"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "0.11.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.40.2",
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "wrangler": "^4.102.0"
+  },
+  "overrides": {
+    "@cloudflare/containers": "0.3.5"
+  }
+}
