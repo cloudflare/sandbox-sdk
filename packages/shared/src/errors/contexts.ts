@@ -241,6 +241,42 @@ export interface InternalErrorContext {
 }
 
 /**
+ * Reason the sandbox container could not accept the incoming RPC connection.
+ * Callers may branch on this to distinguish container-startup unavailability
+ * from account-level capacity limits. `retryable` is always true regardless
+ * of reason.
+ */
+export type ContainerUnavailableReason =
+  /** The container is still booting. */
+  | 'container_starting'
+  /** The container is temporarily unhealthy. */
+  | 'container_unhealthy'
+  /** The container was replaced while the connection attempt was in progress. */
+  | 'container_replaced'
+  /** The WebSocket upgrade retry budget was exhausted. */
+  | 'rpc_upgrade_failed'
+  /**
+   * The Containers platform could not allocate an instance for the Durable
+   * Object during connection startup ("There is no container instance that
+   * can be provided to this Durable Object, try again later").
+   */
+  | 'no_container_instance_available'
+  /**
+   * The account reached its configured concurrent-instance ceiling
+   * ("Maximum number of running container instances exceeded. Try again
+   * later, or try configuring a higher value for max_instances").
+   */
+  | 'max_container_instances_exceeded'
+  /**
+   * The RPC connection was torn down before the container ever became
+   * reachable, and the underlying platform cause was not captured (e.g. the
+   * Durable Object was evicted mid-startup under capacity pressure). The
+   * container was never admitted — this is unavailability, not a cold start
+   * in progress.
+   */
+  | 'container_unreachable';
+
+/**
  * Container availability error context. Surfaced when the sandbox container
  * cannot accept the incoming RPC connection. The container may be starting
  * up, undergoing a runtime replacement, or temporarily unhealthy. The
@@ -249,13 +285,9 @@ export interface InternalErrorContext {
 export interface ContainerUnavailableContext {
   /**
    * Categorical reason distinguishing startup unavailability from runtime
-   * replacement and exhausted upgrade retries.
+   * replacement, exhausted upgrade retries, and account capacity limits.
    */
-  reason:
-    | 'container_starting'
-    | 'container_unhealthy'
-    | 'container_replaced'
-    | 'rpc_upgrade_failed';
+  reason: ContainerUnavailableReason;
   /**
    * Always true — this error represents a transient unavailability, not a
    * permanent failure. Callers should retry the same operation.
@@ -263,6 +295,12 @@ export interface ContainerUnavailableContext {
   retryable: true;
   /** Suggested delay in milliseconds before the next retry attempt. */
   retryAfterMs?: number;
+  /**
+   * Original platform/transport error message, preserved verbatim when the
+   * unavailability was detected from a lower-level error (e.g. the platform
+   * container-allocation failure) rather than a structured response body.
+   */
+  originalMessage?: string;
 }
 
 /**
@@ -348,4 +386,19 @@ export interface OperationInterruptedContext {
   recoveryAttempts?: number;
   /** Maximum number of internal recovery attempts allowed. */
   maxRecoveryAttempts?: number;
+  /**
+   * Container process exit code reported by the platform when the runtime
+   * stopped mid-operation (`reason === 'runtime_replaced'`). Preserved from
+   * the base container `onStop` params so a trace distinguishes an OOM kill
+   * (137) or signal (143) from a clean exit (0). Absent when the interruption
+   * was not driven by a container stop.
+   */
+  containerExitCode?: number;
+  /**
+   * Container stop reason reported by the platform (`'exit'` for a process
+   * exit, `'runtime_signal'` for a signalled shutdown/eviction). Preserved
+   * from the base container `onStop` params. Absent when not driven by a
+   * container stop.
+   */
+  stopReason?: string;
 }

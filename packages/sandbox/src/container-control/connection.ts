@@ -23,10 +23,16 @@ import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode, getHttpStatus, getSuggestion } from '@repo/shared/errors';
 import { RpcSession, type RpcStub, type RpcTransport } from 'capnweb';
 import { createErrorFromResponse } from '../errors/adapter';
+import { SandboxError } from '../errors/classes';
+import {
+  matchContainerUnavailable,
+  type PlatformUnavailableReason
+} from '../platform-errors';
 import {
   fetchWithResponseRetry,
   isRetryableWebSocketUpgradeResponse
 } from '../response-retry';
+import { traceEvent, withSpan } from './tracing';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,38 +58,115 @@ async function tryParseContainerUnavailable(
   response: Response
 ): Promise<Error | null> {
   const contentType = response.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) return null;
 
+  // JSON path: structured CONTAINER_UNAVAILABLE body emitted by the SDK's own
+  // container-side handlers.
+  if (contentType.includes('application/json')) {
+    try {
+      const body = (await response.clone().json()) as StructuredErrorBody;
+      if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
+
+      const reason =
+        body.context?.reason === 'container_starting' ||
+        body.context?.reason === 'container_unhealthy' ||
+        body.context?.reason === 'container_replaced' ||
+        body.context?.reason === 'rpc_upgrade_failed' ||
+        body.context?.reason === 'no_container_instance_available' ||
+        body.context?.reason === 'max_container_instances_exceeded'
+          ? body.context.reason
+          : 'container_replaced';
+      const context = {
+        reason,
+        retryable: true as const,
+        ...(typeof body.context?.retryAfterMs === 'number' && {
+          retryAfterMs: body.context.retryAfterMs
+        }),
+        ...(typeof body.context?.originalMessage === 'string' && {
+          originalMessage: body.context.originalMessage
+        })
+      };
+
+      return createErrorFromResponse({
+        code: ErrorCode.CONTAINER_UNAVAILABLE,
+        message: body.message ?? 'Container is unavailable',
+        context,
+        httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
+        suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
+        timestamp: new Date().toISOString()
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // Plain-text path: the @cloudflare/containers base class returns a plain
+  // text 503 ("There is no Container instance available at this time...")
+  // when it cannot admit a container. Classify the body so an exhausted retry
+  // budget still surfaces a typed ContainerUnavailableError rather than a
+  // generic rpc_upgrade_failed.
   try {
-    const body = (await response.clone().json()) as StructuredErrorBody;
-    if (body.code !== ErrorCode.CONTAINER_UNAVAILABLE) return null;
+    const text = await response.clone().text();
+    const reason = matchContainerUnavailable(text);
+    if (!reason) return null;
+    return buildContainerUnavailableError(reason, text);
+  } catch {
+    return null;
+  }
+}
 
-    const reason =
-      body.context?.reason === 'container_starting' ||
-      body.context?.reason === 'container_unhealthy' ||
-      body.context?.reason === 'container_replaced' ||
-      body.context?.reason === 'rpc_upgrade_failed'
-        ? body.context.reason
-        : 'container_replaced';
-    const context = {
-      reason,
-      retryable: true as const,
-      ...(typeof body.context?.retryAfterMs === 'number' && {
-        retryAfterMs: body.context.retryAfterMs
-      })
-    };
+/**
+ * True when a thrown connection-startup error matches a known platform
+ * container-admission failure. These are transient: the platform asks the
+ * caller to try again later, so they are safe to retry within the budget.
+ * Delegates to the shared matcher in platform-errors.ts.
+ */
+function isPlatformUnavailableError(error: unknown): boolean {
+  return matchContainerUnavailable(error) !== null;
+}
 
-    return createErrorFromResponse({
+/**
+ * Build a typed ContainerUnavailableError for a matched platform
+ * container-admission failure, preserving the original message verbatim.
+ */
+function buildContainerUnavailableError(
+  reason: PlatformUnavailableReason,
+  originalMessage: string,
+  cause?: unknown
+): Error {
+  const context = {
+    reason,
+    retryable: true as const,
+    originalMessage
+  };
+  return createErrorFromResponse(
+    {
       code: ErrorCode.CONTAINER_UNAVAILABLE,
-      message: body.message ?? 'Container is unavailable',
+      message: originalMessage,
       context,
       httpStatus: getHttpStatus(ErrorCode.CONTAINER_UNAVAILABLE),
       suggestion: getSuggestion(ErrorCode.CONTAINER_UNAVAILABLE, context),
       timestamp: new Date().toISOString()
-    });
-  } catch {
-    return null;
-  }
+    },
+    cause !== undefined ? { cause } : undefined
+  );
+}
+
+/**
+ * Convert a raw connection-startup error into a typed ContainerUnavailableError
+ * when it matches a known platform container-admission failure. Returns null
+ * for anything else so the caller preserves the original error.
+ */
+function tryConvertPlatformUnavailable(error: unknown): Error | null {
+  // Already a typed SDK error (e.g. thrown by the DO's startContainer hook):
+  // preserve it rather than rebuilding an equivalent instance.
+  if (error instanceof SandboxError) return error;
+
+  const reason = matchContainerUnavailable(error);
+  if (!reason) return null;
+
+  const originalMessage =
+    error instanceof Error ? error.message : String(error);
+  return buildContainerUnavailableError(reason, originalMessage, error);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +186,34 @@ export interface ContainerControlConnectionOptions {
   stub: ContainerFetchStub;
   port?: number;
   logger?: Logger;
+  /**
+   * Lazily resolve sandbox identifiers for trace spans. Queried at span time
+   * (not construction) so a name that is set after the client is built — or
+   * changes across the connection's lifetime — is reflected. Stamped on spans
+   * as `sandbox.id` and `sandbox.name`.
+   */
+  getSandboxInfo?: () => { id?: string; name?: string };
+  /**
+   * Optional hook to explicitly start the container (and wait for its ports)
+   * before issuing the WebSocket upgrade.
+   *
+   * When provided, the platform's container-admission failure ("no container
+   * instance" / "max instances exceeded") is thrown here — synchronously in
+   * the connection's own retry loop — so it is retried within the upgrade
+   * budget and, when exhausted, classified and surfaced directly as a typed
+   * `ContainerUnavailableError` via `onConnectionError`. This avoids relying
+   * on the failure being round-tripped through a 503 upgrade-response body.
+   *
+   * When omitted, the upgrade fetch itself triggers container start (the
+   * legacy behavior, still exercised by unit tests that pass a bare `fetch`
+   * stub).
+   *
+   * Runs under the container's own instance-get / port-ready budget — it is
+   * intentionally NOT passed the per-attempt connect-timeout signal, so the
+   * base class can run its budget to exhaustion and throw the classifiable
+   * no-instance error rather than a generic abort error.
+   */
+  startContainer?: () => Promise<void>;
   /**
    * Total retry budget (ms) for retryable upgrade responses while the
    * container is unavailable. Defaults to 120 000 (2 minutes), matching the
@@ -126,6 +237,26 @@ export interface ContainerControlConnectionOptions {
    * Not fired for `disconnect()`.
    */
   onClose?: () => void;
+  /**
+   * Invoked with the connection-startup error just before the deferred
+   * transport is aborted. Lets the owner capture the *real* failure cause
+   * (e.g. a platform container-allocation error) before capnweb replaces it
+   * with a generic "RPC session was shut down" message on the queued calls
+   * that reject as a result of the abort.
+   *
+   * Fired for connection-attempt failures before queued RPC calls are rejected.
+   * A single logical connect can emit multiple errors as the retry loop observes
+   * transient failures; the owner should treat the latest value as the current
+   * best startup cause. Not fired for `disconnect()`.
+   */
+  onConnectionError?: (error: unknown) => void;
+  /**
+   * Invoked once when the WebSocket upgrade succeeds and the capnweb session
+   * is live. Lets the owner record that the session actually established a
+   * connection to a running container, so a later teardown can be classified
+   * as a true interruption rather than a never-connected failure.
+   */
+  onConnected?: () => void;
 }
 
 /**
@@ -147,6 +278,12 @@ export class ContainerControlConnection {
   private readonly logger: Logger;
   private retryTimeoutMs: number;
   private readonly onClose: (() => void) | undefined;
+  private readonly onConnectionError: ((error: unknown) => void) | undefined;
+  private readonly onConnected: (() => void) | undefined;
+  private readonly startContainer: (() => Promise<void>) | undefined;
+  private readonly getSandboxInfo:
+    | (() => { id?: string; name?: string })
+    | undefined;
 
   constructor(options: ContainerControlConnectionOptions) {
     this.containerStub = options.stub;
@@ -154,6 +291,10 @@ export class ContainerControlConnection {
     this.logger = options.logger ?? createNoOpLogger();
     this.retryTimeoutMs = options.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
     this.onClose = options.onClose;
+    this.onConnectionError = options.onConnectionError;
+    this.onConnected = options.onConnected;
+    this.startContainer = options.startContainer;
+    this.getSandboxInfo = options.getSandboxInfo;
 
     this.transport = new DeferredTransport();
     this.session = new RpcSession<SandboxAPI>(
@@ -190,6 +331,26 @@ export class ContainerControlConnection {
     return this.connected;
   }
 
+  /**
+   * True while a connection attempt is in progress (upgrade not yet
+   * established and not yet failed). Owners use this to avoid tearing the
+   * connection down mid-attempt.
+   */
+  isConnecting(): boolean {
+    return this.connectPromise !== null;
+  }
+
+  /**
+   * Resolve once any in-flight connection attempt settles (success or
+   * failure). Resolves immediately when no attempt is in progress. Never
+   * rejects — callers only care that the attempt is done.
+   */
+  async whenSettled(): Promise<void> {
+    const pending = this.connectPromise;
+    if (!pending) return;
+    await pending.catch(() => {});
+  }
+
   async connect(): Promise<void> {
     if (this.connected) return;
 
@@ -205,7 +366,23 @@ export class ContainerControlConnection {
     }
   }
 
-  disconnect(): void {
+  /**
+   * Tear down the connection. `cause` (a lifecycle teardown reason from the
+   * owning DO) is used only for the disconnect trace event here; the owner
+   * is responsible for stamping it as a *weak* connection cause (one that
+   * never overwrites an authoritative failure already captured from a
+   * connection attempt), since a teardown is usually a downstream
+   * consequence of that earlier failure rather than the root cause.
+   */
+  disconnect(cause?: unknown): void {
+    if (cause !== undefined) {
+      traceEvent('sandbox.rpc.disconnect', {
+        ...this.spanAttrs(),
+        reason: cause instanceof Error ? cause.message : String(cause)
+      });
+    } else {
+      traceEvent('sandbox.rpc.disconnect', this.spanAttrs());
+    }
     try {
       (this.stub as unknown as Disposable)[Symbol.dispose]?.();
     } catch {
@@ -244,6 +421,20 @@ export class ContainerControlConnection {
   // -----------------------------------------------------------------------
 
   /**
+   * Base span attributes for this connection: the container port plus the
+   * sandbox identifiers (`sandbox.id` = DO id, `sandbox.name` = user name)
+   * when available.
+   */
+  private spanAttrs(): Record<string, string | number | undefined> {
+    const info = this.getSandboxInfo?.();
+    return {
+      'sandbox.rpc.port': this.port,
+      'sandbox.id': info?.id,
+      'sandbox.name': info?.name
+    };
+  }
+
+  /**
    * Run the owner-provided `onClose` callback exactly once per call,
    * swallowing any errors so a buggy listener can't keep the connection
    * object in a half-torn-down state.
@@ -256,6 +447,22 @@ export class ContainerControlConnection {
       this.logger.warn('ContainerControlConnection onClose handler threw', {
         error: err instanceof Error ? err.message : String(err)
       });
+    }
+  }
+
+  /**
+   * Run the owner-provided `onConnectionError` callback, swallowing any
+   * listener errors.
+   */
+  private fireConnectionError(error: unknown): void {
+    if (!this.onConnectionError) return;
+    try {
+      this.onConnectionError(error);
+    } catch (err) {
+      this.logger.warn(
+        'ContainerControlConnection onConnectionError handler threw',
+        { error: err instanceof Error ? err.message : String(err) }
+      );
     }
   }
 
@@ -285,6 +492,19 @@ export class ContainerControlConnection {
   };
 
   private async doConnect(): Promise<void> {
+    // Wrap the entire connect + retry loop in a single span so its duration
+    // spans every attempt (and matches the RPC call that is waiting on it).
+    // Per-attempt spans (sandbox.rpc.connect.attempt) nest inside this one.
+    // Without this, only the first attempt's span attaches to the trace: the
+    // retry loop's setTimeout backoff resumes in a detached async context
+    // that no longer carries the request's trace context, so later attempts
+    // would be invisible.
+    return withSpan('sandbox.rpc.connect', this.spanAttrs(), () =>
+      this.doConnectInner()
+    );
+  }
+
+  private async doConnectInner(): Promise<void> {
     try {
       const response = await this.fetchUpgradeWithRetry();
 
@@ -332,13 +552,34 @@ export class ContainerControlConnection {
       this.ws = ws;
       this.transport.activate(ws);
       this.connected = true;
+      // Record that a live session was established so a later teardown is
+      // classified as a true interruption rather than a never-connected
+      // failure. Swallow listener errors like the other fire* helpers.
+      try {
+        this.onConnected?.();
+      } catch (err) {
+        this.logger.warn(
+          'ContainerControlConnection onConnected handler threw',
+          {
+            error: err instanceof Error ? err.message : String(err)
+          }
+        );
+      }
 
       this.logger.debug('ContainerControlConnection established', {
         port: this.port
       });
     } catch (error) {
       this.connected = false;
-      this.transport.abort(error);
+      // Convert the platform container-allocation failure into a typed
+      // ContainerUnavailableError so the real cause survives. capnweb will
+      // otherwise mask it: `transport.abort()` below rejects the queued RPC
+      // calls with a generic "RPC session was shut down" message.
+      const connectionError = tryConvertPlatformUnavailable(error) ?? error;
+      // Hand the owner the real cause before aborting the transport, so it can
+      // prefer this over the masking disposal error on queued RPC rejections.
+      this.fireConnectionError(connectionError);
+      this.transport.abort(connectionError);
       // Signal the client to discard this connection. The transport is now
       // permanently aborted; any in-flight or future stub calls would fail
       // immediately. Firing onClose here lets the client null out its
@@ -346,9 +587,11 @@ export class ContainerControlConnection {
       this.fireOnClose();
       this.logger.error(
         'ContainerControlConnection failed',
-        error instanceof Error ? error : new Error(String(error))
+        connectionError instanceof Error
+          ? connectionError
+          : new Error(String(connectionError))
       );
-      throw error;
+      throw connectionError;
     }
   }
 
@@ -364,35 +607,81 @@ export class ContainerControlConnection {
       logger: this.logger,
       retryLogMessage:
         'ContainerControlConnection upgrade returned retryable status, retrying',
-      shouldRetry: isRetryableWebSocketUpgradeResponse
+      shouldRetry: isRetryableWebSocketUpgradeResponse,
+      // The Containers platform signals transient container-admission failure
+      // by *throwing* (e.g. "There is no container instance...") rather than
+      // returning a retryable status. Retry those within the same budget.
+      shouldRetryError: isPlatformUnavailableError
     });
   }
 
   /**
-   * Single WebSocket-upgrade fetch attempt. Owns its own AbortController so
-   * each retry gets a fresh per-attempt connect timeout independent of the
-   * total retry budget.
+   * Single WebSocket-upgrade fetch attempt.
+   *
+   * Container start and the upgrade fetch have deliberately separate timeout
+   * scopes:
+   *
+   *   - `startContainer()` runs under the base `Container` class's own
+   *     instance-get / port-ready budget. It must NOT be cut short by the
+   *     per-attempt connect timeout: the base class only emits the
+   *     classifiable `NO_CONTAINER_INSTANCE_ERROR` after its internal budget
+   *     is exhausted, and it checks its abort signal *before* that throw
+   *     (see @cloudflare/containers `doStartContainer`). Aborting it early
+   *     yields a generic "Aborted waiting for container to start" error that
+   *     we can't classify — which is what masked the real cause as
+   *     OPERATION_INTERRUPTED. Letting it run its own budget means the
+   *     platform capacity failure throws here, in our retry loop, where
+   *     `shouldRetryError` retries it and `doConnect`'s catch converts it to
+   *     a typed ContainerUnavailableError.
+   *
+   *   - The WebSocket upgrade fetch gets its own fresh AbortController so
+   *     each retry has an independent connect timeout for the *upgrade only*.
    */
   private async fetchUpgradeAttempt(): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      DEFAULT_CONNECT_TIMEOUT_MS
-    );
+    return withSpan(
+      'sandbox.rpc.connect.attempt',
+      this.spanAttrs(),
+      async () => {
+        // Explicitly start the container first (when a hook is provided),
+        // under its own budget — no per-attempt abort signal.
+        if (this.startContainer) {
+          try {
+            await this.startContainer();
+          } catch (error) {
+            // Stamp the converted structured cause on the owner as soon as a
+            // container-admission failure surfaces — before any retry/abort can
+            // mask it — so queued calls can surface it. Re-throw the original
+            // platform error because fetchWithResponseRetry's retry predicate
+            // matches the platform message, and doConnectInner converts the
+            // final exhausted error before exposing it to callers.
+            this.fireConnectionError(
+              tryConvertPlatformUnavailable(error) ?? error
+            );
+            throw error;
+          }
+        }
 
-    try {
-      const url = `http://localhost:${this.port}/rpc`;
-      const request = new Request(url, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-      return await this.containerStub.fetch(request);
-    } finally {
-      clearTimeout(timeout);
-    }
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          DEFAULT_CONNECT_TIMEOUT_MS
+        );
+
+        try {
+          const url = `http://localhost:${this.port}/rpc`;
+          const request = new Request(url, {
+            headers: {
+              Upgrade: 'websocket',
+              Connection: 'Upgrade'
+            },
+            signal: controller.signal
+          });
+          return await this.containerStub.fetch(request);
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+    );
   }
 }
 
