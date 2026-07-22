@@ -67,10 +67,11 @@ jobs:
           EXPECTED="${{ inputs.deploy_hash }}"
           URL="https://${{ inputs.worker_name_prefix }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev/health"
           HASH=$(curl -sf --max-time 10 "$URL" 2>/dev/null | jq -r '.deploy_hash // ""' 2>/dev/null || echo "")
-          echo "skip=false" >> "$GITHUB_OUTPUT"
           if [[ "$HASH" == "$EXPECTED" ]]; then
-            echo "::notice::Worker already reports deploy_hash=$EXPECTED; redeploying to fence container state"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Worker already reports deploy_hash=$EXPECTED; reusing deployment"
           else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Deploy hash mismatch ($HASH vs $EXPECTED) — deploying"
           fi
 
@@ -193,8 +194,8 @@ jobs:
 
       # --- Full deploy (only when health check misses) ---
 
-      - uses: actions/checkout@v6
-        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+      - name: Check out deployment revision
+        uses: actions/checkout@v6
         with:
           repository: ${{ inputs.checkout_repo || github.repository }}
           ref: ${{ inputs.checkout_ref || '' }}
@@ -239,19 +240,9 @@ jobs:
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         run: |
           WORKER="${{ inputs.worker_name_prefix }}"
-          echo "::group::Deploy worker"
-          cd tests/e2e/test-worker
-          ./generate-config.sh \
-            "${WORKER}" \
-            "${WORKER}" \
-            "registry:${{ inputs.image_tag }}"
-          npx wrangler deploy \
-            --name "${WORKER}" \
-            --containers-rollout immediate
-          cd "$GITHUB_WORKSPACE"
-          echo "::endgroup::"
+          SECRETS_FILE="$RUNNER_TEMP/${WORKER}-secrets.json"
+          trap 'rm -f "$SECRETS_FILE"' EXIT
 
-          echo "::group::Inject worker secrets"
           jq -n \
             --arg a "$AWS_ACCESS_KEY_ID" \
             --arg b "$AWS_SECRET_ACCESS_KEY" \
@@ -260,7 +251,19 @@ jobs:
             --arg e "$R2_SECRET_ACCESS_KEY" \
             --arg f "$DEPLOY_HASH" \
             '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e, DEPLOY_HASH:$f}' \
-          | npx wrangler secret bulk --name "${WORKER}"
+            > "$SECRETS_FILE"
+          chmod 600 "$SECRETS_FILE"
+
+          echo "::group::Deploy worker and secrets"
+          cd tests/e2e/test-worker
+          ./generate-config.sh \
+            "${WORKER}" \
+            "${WORKER}" \
+            "registry:${{ inputs.image_tag }}"
+          npx wrangler deploy \
+            --name "${WORKER}" \
+            --containers-rollout immediate \
+            --secrets-file "$SECRETS_FILE"
           echo "::endgroup::"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
