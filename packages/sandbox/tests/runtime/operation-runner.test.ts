@@ -137,9 +137,13 @@ function setup(current = runtime()) {
 }
 
 describe('RuntimeOperationRunner', () => {
-  test('runWaking establishes and renews once for the operation', async () => {
+  test('runWaking admits once after establishment and renews once', async () => {
     const ctx = setup();
-    await ctx.runner.runWaking('files.read', async (lease) => lease.runtime.id);
+    const dispatch = vi.fn(async (lease) => lease.runtime.id);
+
+    await ctx.runner.runWaking('files.read', dispatch);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
     expect(ctx.establishCalls).toBe(1);
     expect(ctx.acquireCalls).toBe(1);
     expect(ctx.renew).toHaveBeenCalledTimes(2);
@@ -150,13 +154,15 @@ describe('RuntimeOperationRunner', () => {
     ctx.lifecycle.establish.mockRejectedValueOnce(
       new RuntimeIdentityInactiveError()
     );
+    const dispatch = vi.fn(async () => 'forwarded');
 
     await expect(
-      ctx.runner.runWaking('container.fetch', async () => 'forwarded')
+      ctx.runner.runWaking('container.fetch', dispatch)
     ).rejects.toMatchObject({
       name: 'OperationInterruptedError',
       context: { operation: 'container.fetch', retryable: false }
     });
+    expect(dispatch).not.toHaveBeenCalled();
     expect(ctx.acquireCalls).toBe(0);
   });
 

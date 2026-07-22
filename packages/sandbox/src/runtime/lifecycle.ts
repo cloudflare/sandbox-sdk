@@ -19,6 +19,12 @@ const RUNTIME_RECORD_KEY = 'currentRuntimeIdentity';
 type LifecycleStorage = RuntimeRecordStorage &
   Pick<DurableObjectStorage, 'put' | 'delete'>;
 
+type ReplacementStartTransition = {
+  phase: 'reconciling-previous-stop' | 'replacement-started';
+};
+
+type RuntimeStopDisposition = 'reconciled-previous-stop' | 'hard-invalidation';
+
 export type RuntimeEstablishOptions = {
   signal?: AbortSignal;
   startOptions?: ContainerStartConfigOptions;
@@ -50,6 +56,7 @@ export class SandboxRuntimeLifecycle implements RuntimeIdentityReader {
   private generation = 0;
   private establishing: Promise<RuntimeIdentity> | null = null;
   private mutationGate: Promise<void> = Promise.resolve();
+  private replacementStart: ReplacementStartTransition | null = null;
 
   constructor(private readonly options: SandboxRuntimeLifecycleOptions) {}
 
@@ -115,15 +122,24 @@ export class SandboxRuntimeLifecycle implements RuntimeIdentityReader {
   }
 
   invalidateAndObserveStoredActive(): Promise<RuntimeIdentity | null> {
-    this.generation++;
-    this.notifyChanged();
-    this.options.sessions.closeActive();
-    return this.withMutationGate(async () => {
-      const stored = await this.getStored();
-      if (stored) await this.options.storage.delete(RUNTIME_RECORD_KEY);
-      await this.options.stopControlPort?.(3000);
-      return stored;
-    });
+    return this.invalidateCurrent(true);
+  }
+
+  markRuntimeStarted(): boolean {
+    if (this.replacementStart?.phase === 'reconciling-previous-stop') {
+      this.replacementStart.phase = 'replacement-started';
+      return true;
+    }
+    return false;
+  }
+
+  async reconcileObservedStop(): Promise<RuntimeStopDisposition> {
+    const invalidateEstablishment =
+      this.replacementStart?.phase !== 'reconciling-previous-stop';
+    await this.invalidateCurrent(invalidateEstablishment);
+    return invalidateEstablishment
+      ? 'hard-invalidation'
+      : 'reconciled-previous-stop';
   }
 
   onChange(listener: () => void): () => void {
@@ -134,52 +150,94 @@ export class SandboxRuntimeLifecycle implements RuntimeIdentityReader {
   private async doEstablish(
     options?: RuntimeEstablishOptions
   ): Promise<RuntimeIdentity> {
+    const needsPhysicalStart = !this.options.isRuntimeRunning();
+    const replacementStart = needsPhysicalStart
+      ? this.beginReplacementStart()
+      : null;
     const generation = this.generation;
-    const stored = await this.getStored();
 
-    if (!this.options.isRuntimeRunning()) {
-      await this.options.startControlPort(3000, options);
-      this.assertGeneration(generation);
-      await this.options.waitForControlPort(3000, options);
-      this.assertGeneration(generation);
-    }
+    try {
+      const stored = await this.getStored();
 
-    const metadata = validateRuntimeMetadata(
-      await this.options.probe.probe(),
-      'runtime.lifecycle.probe'
-    );
-    this.assertGeneration(generation);
-
-    const runtimeIncarnationID =
-      metadata.runtimeIncarnationID as RuntimeIncarnationID;
-    const runtime =
-      stored?.runtimeIncarnationID === runtimeIncarnationID
-        ? stored
-        : new RuntimeIdentity({
-            id: crypto.randomUUID() as RuntimeIdentityID,
-            runtimeIncarnationID
-          });
-    const client = await this.options.sessions.acquire(runtime);
-    this.assertGeneration(generation);
-    await this.options.observeVersionCompatibility(client, runtime);
-    this.assertGeneration(generation);
-
-    if (!stored || !sameIdentity(stored, runtime)) {
-      await this.options.reconcileReplacement(runtime);
-      this.assertGeneration(generation);
-    }
-
-    if (!this.options.isRuntimeRunning())
-      throw new RuntimeIdentityInactiveError();
-    return this.withMutationGate(async () => {
-      this.assertGeneration(generation);
-      await this.options.storage.put(RUNTIME_RECORD_KEY, toRecord(runtime));
-      if (this.generation !== generation) {
-        await this.deleteIfStored(runtime);
-        throw new RuntimeIdentityInactiveError();
+      if (needsPhysicalStart) {
+        await this.options.startControlPort(3000, options);
+        if (replacementStart?.phase !== 'replacement-started') {
+          throw new RuntimeIdentityInactiveError();
+        }
+        this.assertGeneration(generation);
+        await this.options.waitForControlPort(3000, options);
+        this.assertGeneration(generation);
       }
-      this.notifyChanged();
-      return runtime;
+
+      const metadata = validateRuntimeMetadata(
+        await this.options.probe.probe(),
+        'runtime.lifecycle.probe'
+      );
+      this.assertGeneration(generation);
+
+      const runtimeIncarnationID =
+        metadata.runtimeIncarnationID as RuntimeIncarnationID;
+      const runtime =
+        stored?.runtimeIncarnationID === runtimeIncarnationID
+          ? stored
+          : new RuntimeIdentity({
+              id: crypto.randomUUID() as RuntimeIdentityID,
+              runtimeIncarnationID
+            });
+      const client = await this.options.sessions.acquire(runtime);
+      this.assertGeneration(generation);
+      await this.options.observeVersionCompatibility(client, runtime);
+      this.assertGeneration(generation);
+
+      if (!stored || !sameIdentity(stored, runtime)) {
+        await this.options.reconcileReplacement(runtime);
+        this.assertGeneration(generation);
+      }
+
+      if (!this.options.isRuntimeRunning())
+        throw new RuntimeIdentityInactiveError();
+      return await this.withMutationGate(async () => {
+        this.assertGeneration(generation);
+        await this.options.storage.put(RUNTIME_RECORD_KEY, toRecord(runtime));
+        if (this.generation !== generation) {
+          await this.deleteIfStored(runtime);
+          throw new RuntimeIdentityInactiveError();
+        }
+        this.notifyChanged();
+        return runtime;
+      });
+    } finally {
+      this.endReplacementStart(replacementStart);
+    }
+  }
+
+  private beginReplacementStart(): ReplacementStartTransition {
+    const transition: ReplacementStartTransition = {
+      phase: 'reconciling-previous-stop'
+    };
+    this.replacementStart = transition;
+    return transition;
+  }
+
+  private endReplacementStart(
+    transition: ReplacementStartTransition | null
+  ): void {
+    if (transition && this.replacementStart === transition) {
+      this.replacementStart = null;
+    }
+  }
+
+  private invalidateCurrent(
+    invalidateEstablishment: boolean
+  ): Promise<RuntimeIdentity | null> {
+    if (invalidateEstablishment) this.generation++;
+    this.notifyChanged();
+    this.options.sessions.closeActive();
+    return this.withMutationGate(async () => {
+      const stored = await this.getStored();
+      if (stored) await this.options.storage.delete(RUNTIME_RECORD_KEY);
+      await this.options.stopControlPort?.(3000);
+      return stored;
     });
   }
 

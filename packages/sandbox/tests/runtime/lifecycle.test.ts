@@ -1,9 +1,11 @@
 import type { RuntimeMetadata } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../../src/container-control/client';
+import { ResourceActivityGate } from '../../src/resource-activity-gate';
 import {
   RuntimeIdentity,
   type RuntimeIncarnationID,
+  RuntimeOperationRunner,
   type RuntimeRecord,
   SandboxRuntimeLifecycle
 } from '../../src/runtime';
@@ -88,6 +90,13 @@ function record(identity: RuntimeIdentity): RuntimeRecord {
   };
 }
 
+type StartControlPortContext = {
+  lifecycle: SandboxRuntimeLifecycle;
+  setRunning(value: boolean): void;
+};
+
+type StartControlPort = (context: StartControlPortContext) => Promise<void>;
+
 function host(
   options: {
     stored?: Stored;
@@ -96,6 +105,7 @@ function host(
     sandboxVersion?: string;
     fail?: FailurePoint;
     deferredCompat?: ReturnType<typeof deferred<void>>;
+    startControlPort?: StartControlPort;
   } = {}
 ) {
   const storage = new MemoryStorage();
@@ -104,6 +114,7 @@ function host(
   storage.calls = [];
   let running = options.running ?? false;
   const calls: string[] = [];
+  let lifecycle!: SandboxRuntimeLifecycle;
   const featureReplay = {
     restore: vi.fn(),
     mountLocalSync: vi.fn(),
@@ -116,9 +127,12 @@ function host(
       if (options.fail === 'acquire') throw new Error('session failed');
       return {} as ContainerControlClient;
     }),
-    acquireSession: vi.fn(async () => {
-      throw new Error('not used by lifecycle tests');
-    }),
+    acquireSession: vi.fn(async () => ({
+      client: {} as ContainerControlClient,
+      interrupted: new Promise<never>(() => undefined),
+      isInterrupted: () => false,
+      retain: () => ({ release: vi.fn() })
+    })),
     closeActive: vi.fn(() => {
       calls.push('closeActive');
     }),
@@ -132,7 +146,17 @@ function host(
     startControlPort: vi.fn(async () => {
       calls.push('start');
       if (options.fail === 'start') throw new Error('start failed');
+      if (options.startControlPort) {
+        await options.startControlPort({
+          lifecycle,
+          setRunning(value: boolean) {
+            running = value;
+          }
+        });
+        return;
+      }
       running = true;
+      lifecycle.markRuntimeStarted();
     }),
     waitForControlPort: vi.fn(async () => {
       calls.push('wait');
@@ -163,6 +187,14 @@ function host(
       if (options.fail === 'reconcile') throw new Error('reconcile failed');
     })
   };
+  lifecycle = new SandboxRuntimeLifecycle(lifecycleOptions);
+  const runner = new RuntimeOperationRunner({
+    lifecycle,
+    activityGate: new ResourceActivityGate(
+      vi.fn(),
+      vi.fn(async () => undefined)
+    )
+  });
   const api = {
     storage,
     calls,
@@ -172,7 +204,8 @@ function host(
     setRunning(value: boolean) {
       running = value;
     },
-    lifecycle: new SandboxRuntimeLifecycle(lifecycleOptions)
+    lifecycle,
+    runner
   };
   storage.calls = calls;
   return api;
@@ -600,5 +633,135 @@ describe('SandboxRuntimeLifecycle', () => {
       namedTunnel: { needsRespawn: false },
       preview: { active: true }
     });
+  });
+
+  it('reconciles a delayed previous stop while starting its replacement', async () => {
+    const previous = runtime('runtime-1', 'inc-old');
+    const h = host({
+      stored: record(previous),
+      incarnation: 'inc-new',
+      startControlPort: async ({ lifecycle, setRunning }) => {
+        await expect(lifecycle.reconcileObservedStop()).resolves.toBe(
+          'reconciled-previous-stop'
+        );
+        setRunning(true);
+        lifecycle.markRuntimeStarted();
+      }
+    });
+
+    const dispatch = vi.fn(async (lease) => lease.runtime);
+    const replacement = await h.runner.runWaking('process.start', dispatch);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(replacement.id).not.toBe(previous.id);
+    expect(replacement.runtimeIncarnationID).toBe('inc-new');
+    expect(h.sessions.closeActive).toHaveBeenCalledTimes(1);
+    expect(h.calls).toEqual([
+      'start',
+      'closeActive',
+      'stop',
+      'wait',
+      'probe',
+      'acquire',
+      'compat',
+      'reconcile',
+      'put'
+    ]);
+    expect(h.storage.value).toEqual(record(replacement));
+  });
+
+  it('keeps repeated previous-stop reconciliation idempotent', async () => {
+    const previous = runtime('runtime-1', 'inc-old');
+    const h = host({
+      stored: record(previous),
+      incarnation: 'inc-new',
+      startControlPort: async ({ lifecycle, setRunning }) => {
+        await expect(lifecycle.reconcileObservedStop()).resolves.toBe(
+          'reconciled-previous-stop'
+        );
+        await expect(lifecycle.reconcileObservedStop()).resolves.toBe(
+          'reconciled-previous-stop'
+        );
+        setRunning(true);
+        lifecycle.markRuntimeStarted();
+      }
+    });
+    const replacement = await h.lifecycle.establish();
+    expect(replacement.id).not.toBe(previous.id);
+    expect(h.sessions.closeActive).toHaveBeenCalledTimes(2);
+    expect(h.calls.filter((call) => call === 'put')).toHaveLength(1);
+    expect(h.storage.value).toEqual(record(replacement));
+  });
+
+  it('rejects hard invalidation during replacement startup', async () => {
+    const h = host({
+      startControlPort: async ({ lifecycle, setRunning }) => {
+        await lifecycle.invalidate();
+        setRunning(true);
+        lifecycle.markRuntimeStarted();
+      }
+    });
+    await expect(h.lifecycle.establish()).rejects.toMatchObject({
+      name: 'RuntimeIdentityInactiveError'
+    });
+    expect(h.calls).not.toContain('probe');
+    expect(h.storage.value).toBeUndefined();
+  });
+
+  it('treats an observed stop after replacement start as hard invalidation', async () => {
+    const h = host({
+      startControlPort: async ({ lifecycle, setRunning }) => {
+        setRunning(true);
+        lifecycle.markRuntimeStarted();
+        await expect(lifecycle.reconcileObservedStop()).resolves.toBe(
+          'hard-invalidation'
+        );
+      }
+    });
+    await expect(h.lifecycle.establish()).rejects.toMatchObject({
+      name: 'RuntimeIdentityInactiveError'
+    });
+    expect(h.storage.value).toBeUndefined();
+  });
+
+  it('rejects replacement startup that completes without its start hook', async () => {
+    const h = host({
+      startControlPort: async ({ setRunning }) => setRunning(true)
+    });
+    await expect(h.lifecycle.establish()).rejects.toMatchObject({
+      name: 'RuntimeIdentityInactiveError'
+    });
+    expect(h.calls).not.toContain('probe');
+    expect(h.storage.value).toBeUndefined();
+  });
+
+  it('clears a failed replacement transition before a later establish', async () => {
+    let attempts = 0;
+    const previous = runtime('runtime-1', 'inc-old');
+    const h = host({
+      stored: record(previous),
+      incarnation: 'inc-new',
+      startControlPort: async ({ lifecycle, setRunning }) => {
+        attempts += 1;
+        if (attempts === 1) {
+          await expect(lifecycle.reconcileObservedStop()).resolves.toBe(
+            'reconciled-previous-stop'
+          );
+          throw new Error('replacement start failed');
+        }
+        setRunning(true);
+        lifecycle.markRuntimeStarted();
+      }
+    });
+
+    await expect(h.lifecycle.establish()).rejects.toThrow(
+      'replacement start failed'
+    );
+    expect(h.storage.value).toBeUndefined();
+    expect(h.calls).not.toContain('put');
+    await expect(h.lifecycle.establish()).resolves.toMatchObject({
+      runtimeIncarnationID: 'inc-new'
+    });
+    expect(attempts).toBe(2);
   });
 });
