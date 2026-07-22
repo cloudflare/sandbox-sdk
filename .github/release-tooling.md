@@ -1,5 +1,7 @@
 # GitHub Release Tooling
 
+Operator guide for cutting stable releases: [docs/RELEASE.md](../docs/RELEASE.md).
+
 Release workflows keep orchestration in YAML and shared release mechanics in small scripts:
 
 - `install-crane.sh` installs `crane` for image copying.
@@ -18,6 +20,29 @@ npm run test:release-tools
 
 These tests are a focused release-tooling check. The default `npm test` path stays scoped to workspace unit tests.
 
-## Release orchestrator
+## Stable release engine
 
-`release-orchestrator.ts` models the desired release state for stable and prerelease artifacts. For stable releases, Changesets still creates Version Packages PRs with changelog and version-file updates, while the orchestrator publishes and verifies npm, Docker Hub, CF Registry Library, GitHub Release, and binary assets. The backfill workflow also converges the full stable desired state, except npm publish is skipped; it resolves the release commit from the existing release tag and requires an explicit release commit SHA before creating a missing tag. For prereleases, the orchestrator publishes and verifies the npm prerelease dist-tag, Docker Hub tags, CF Registry Library tags, and optional moving Docker aliases. Reruns converge missing artifacts instead of depending on whether npm was newly published in the current workflow attempt.
+Stable release runs use one inspect/plan/apply/reinspect engine. The engine is
+rooted in a detached `releaseRoot` at the exact `releaseSHA`; release-owned
+files, including `docker-images.txt`, package metadata, changelog text, Docker
+inputs, and binary asset inputs, are read from that root. Local npm preparation
+happens in a temporary directory and publishes the tarball validated by
+`npm pack --json`.
+
+If an immutable artifact already matches, the engine reuses it. If an artifact
+is missing, the engine creates only that missing state. If a Git tag, Docker
+digest, GitHub Release tag, npm identity, local export, source image, or binary
+asset conflicts, the run fails before remote mutation. After applying missing
+state, the engine performs a fresh inspection and requires a complete matching
+release before promotion can start.
+
+Promotion is a separate current-main worktree transition. A run that creates or
+updates `promote/<version>` stops; Changesets runs only on a later `main` push
+where promotion reports `no-edits`.
+
+## Prerelease orchestrator
+
+For prereleases, `release-orchestrator.ts` publishes and verifies the npm
+prerelease dist-tag, Docker Hub tags, CF Registry Library tags, and optional
+moving Docker aliases. Reruns converge missing artifacts instead of depending
+on whether npm was newly published in the current workflow attempt.

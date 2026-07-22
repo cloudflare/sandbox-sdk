@@ -35,8 +35,12 @@ function assertPermission(
 test('release callers grant permissions required by reusable E2E', () => {
   const release = readWorkflow('.github/workflows/release.yml');
   const prerelease = readWorkflow('.github/workflows/reusable-prerelease.yml');
+  const reconcile = readWorkflow(
+    '.github/workflows/reconcile-stable-release.yml'
+  );
 
   assertPermission(release, 'prerelease', 'pull-requests', 'read');
   assertPermission(prerelease, 'e2e', 'pull-requests', 'read');
   assertPermission(release, 'e2e', 'pull-requests', 'read');
+  assertPermission(reconcile, 'e2e', 'pull-requests', 'read');
 });

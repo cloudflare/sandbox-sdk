@@ -340,14 +340,11 @@ jobs:
           name: build-${{ github.sha }}
           path: packages
 
-      - name: Set preview version
+      - name: Compute preview version
         id: version
         run: |
           VERSION="0.0.0-pr-${{ github.event.pull_request.number }}-$(git rev-parse --short HEAD)"
-          node -e "const fs=require('fs'); const p='./packages/sandbox/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version='${VERSION}'; fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - run: npx tsx .github/resolve-workspace-versions.ts
 
       - name: Install crane
         run: |
@@ -405,7 +402,11 @@ jobs:
           path: ./sandbox-linux-x64
           retention-days: 3
 
-      - run: npx pkg-pr-new publish './packages/sandbox'
+      - name: Publish isolated PR preview package
+        run: |
+          npx tsx .github/publish-preview-package.ts \
+            --release-root "$PWD" \
+            --version "${{ steps.version.outputs.version }}"
 
       # PR comment with preview info
       - uses: actions/github-script@v8

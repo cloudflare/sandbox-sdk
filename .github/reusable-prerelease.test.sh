@@ -27,34 +27,40 @@ assert_step_exports_account_id() {
 
 assert_step_exports_account_id ".github/workflows/reusable-prerelease.yml" "Publish prerelease" "      "
 assert_step_exports_account_id ".github/workflows/release.yml" "Publish stable release" "      "
-assert_step_exports_account_id ".github/workflows/backfill-release-artifacts.yml" "Backfill stable release artifacts" "      "
+assert_step_exports_account_id ".github/workflows/reconcile-stable-release.yml" "Reconcile stable release" "      "
 
 assert_workflow_contains() {
   local workflow="$1"
   local needle="$2"
-  if ! grep -Fq "$needle" "$workflow"; then
+  if ! grep -Fq -- "$needle" "$workflow"; then
     echo "Workflow $workflow must contain: $needle" >&2
     return 1
   fi
 }
 
 assert_workflow_contains ".github/workflows/release.yml" "npx tsx .github/release-orchestrator.ts stable"
-assert_workflow_contains ".github/workflows/release.yml" "bash .github/detect-stable-release-needed.sh"
-assert_workflow_contains ".github/workflows/release.yml" "steps.stable-release.outputs.publish == 'true'"
 assert_workflow_contains ".github/workflows/release.yml" 'GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'
 assert_workflow_contains ".github/workflows/release.yml" "for file in .changeset/*.md; do"
 assert_workflow_contains ".github/workflows/release.yml" '[[ "$file" == ".changeset/README.md" ]]'
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" "npx tsx .github/release-orchestrator.ts stable"
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" "fetch-depth: 0"
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" "persist-credentials: true"
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" "release_commit_sha"
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" 'git rev-list -n 1 "$git_tag"'
-assert_workflow_contains ".github/workflows/backfill-release-artifacts.yml" 'Release tag $git_tag is missing; provide release_commit_sha'
-if grep -Fq -- '--commit-sha "${{ github.sha }}"' .github/workflows/backfill-release-artifacts.yml; then
-  echo "Backfill must resolve the release commit instead of passing github.sha" >&2
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" "npx tsx .github/release-orchestrator.ts"
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" "fetch-depth: 0"
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" "persist-credentials: true"
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" "Resolve manual release identity"
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" 'release-sha: ${{ steps.identity.outputs.release-sha }}'
+assert_workflow_contains ".github/workflows/reconcile-stable-release.yml" '--mode "${{ needs.release-identity.outputs.release-mode }}"'
+if grep -Fq -- '--commit-sha "${{ github.sha }}"' .github/workflows/reconcile-stable-release.yml; then
+  echo "Reconcile must resolve the release commit instead of passing github.sha" >&2
   exit 1
 fi
 assert_workflow_contains ".github/workflows/reusable-prerelease.yml" "npx tsx .github/release-orchestrator.ts prerelease"
+assert_workflow_contains ".github/workflows/reusable-prerelease.yml" '--release-root "$PWD"'
+assert_workflow_contains ".github/workflows/pr-privileged.yml" "npx tsx .github/publish-preview-package.ts"
+
+if grep -R -q "resolve-workspace-versions.ts\|npm publish ./packages/sandbox" \
+  .github --exclude='*.md' --exclude='*.test.ts' --exclude='*.test.sh'; then
+  echo "Release workflows must not rewrite or publish the source checkout" >&2
+  exit 1
+fi
 
 detect_pending_changesets() {
   local changeset_dir="$1"

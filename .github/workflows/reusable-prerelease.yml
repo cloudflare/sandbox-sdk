@@ -196,8 +196,6 @@ jobs:
       - name: Apply prerelease version
         run: npx tsx .github/prerelease-channel.ts apply --version "${{ needs.version.outputs.version }}"
 
-      - run: npx tsx .github/resolve-workspace-versions.ts
-
       - name: Install crane
         run: .github/install-crane.sh
 
@@ -222,6 +220,7 @@ jobs:
             --version "${{ needs.version.outputs.version }}" \
             --source-tag "${{ needs.version.outputs.image_tag }}" \
             --npm-tag "${{ needs.version.outputs.channel }}" \
+            --release-root "$PWD" \
             "${alias_args[@]}"
 
       - name: Summarize prerelease

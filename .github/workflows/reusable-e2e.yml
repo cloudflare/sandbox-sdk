@@ -19,9 +19,15 @@ on:
         default: ''
         description: 'Content hash of deploy inputs (enables deploy skip via worker health check)'
       checkout_ref:
+        required: false
         type: string
         default: ''
         description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'
+      artifact_key:
+        required: false
+        type: string
+        default: ''
+        description: 'Key for build artifacts. Empty = workflow commit SHA.'
       checkout_repo:
         type: string
         default: ''
@@ -233,7 +239,7 @@ jobs:
       - uses: actions/download-artifact@v8
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
       - name: Deploy and configure worker
@@ -411,7 +417,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
       - name: E2E tests
         run: npx vitest run --config vitest.e2e.config.ts
@@ -474,7 +480,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
       - name: Compute Playwright browser cache key

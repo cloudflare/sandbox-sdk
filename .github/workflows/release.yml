@@ -15,6 +15,10 @@ permissions:
 env:
   CF_ACCOUNT_SUBDOMAIN: sandbox-sdk-ci
 
+concurrency:
+  group: release-refs/heads/main
+  cancel-in-progress: false
+
 jobs:
   # --- Prerelease channels ---
   prerelease:
@@ -34,12 +38,41 @@ jobs:
       publish_docker_alias: true
     secrets: inherit
 
+  # --- Resolve the immutable release identity for this run ---
+  release-identity:
+    if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      release-sha: ${{ steps.identity.outputs.release-sha }}
+      release-mode: ${{ steps.identity.outputs.release-mode }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Resolve release identity
+        id: identity
+        run: |
+          version="$(node -p "require('./packages/sandbox/package.json').version")"
+          npx tsx .github/release-identity.ts stable \
+            --version "$version" \
+            --selector "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
   # --- Compute content hashes for stable releases ---
   hashes:
+    needs: release-identity
     if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
-    concurrency:
-      group: release-hashes-${{ github.ref }}
-      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,6 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.release-identity.outputs.release-sha }}
           persist-credentials: false
           fetch-depth: 1
 
@@ -96,39 +130,34 @@ jobs:
 
   # --- Build (always runs everything on stable release) ---
   build:
-    needs: hashes
+    needs: [release-identity, hashes]
     if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
-    concurrency:
-      group: release-build-${{ github.ref }}
-      cancel-in-progress: true
     uses: ./.github/workflows/reusable-build.yml
     with:
       skip_docker: false
       image_tag: main
       docker_hash: ${{ needs.hashes.outputs.docker }}
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
     secrets: inherit
 
   # --- Quality gates (all checks on release) ---
   quality:
-    needs: build
+    needs: [release-identity, build]
     if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
-    concurrency:
-      group: release-quality-${{ github.ref }}
-      cancel-in-progress: true
     uses: ./.github/workflows/reusable-quality.yml
     with:
       run_sdk_tests: true
       run_container_tests: true
       run_changeset_validation: false
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
     secrets: inherit
 
   # --- E2E tests ---
   e2e:
-    needs: [hashes, build]
+    needs: [release-identity, hashes, build]
     if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
-    concurrency:
-      group: release-e2e-${{ github.ref }}
-      cancel-in-progress: true
     permissions:
       contents: read
       actions: read
@@ -138,15 +167,14 @@ jobs:
       worker_name_prefix: sandbox-e2e-test-worker-main
       image_tag: ci-${{ needs.hashes.outputs.docker }}
       deploy_hash: ${{ needs.hashes.outputs.deploy }}
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
     secrets: inherit
 
   # --- Publish release (after all gates pass) ---
   publish-release:
-    needs: [hashes, build, quality, e2e]
+    needs: [release-identity, hashes, build, quality, e2e]
     if: ${{ github.repository_owner == 'cloudflare' && github.ref == 'refs/heads/main' }}
-    concurrency:
-      group: release-publish-${{ github.ref }}
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -182,9 +210,18 @@ jobs:
         if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - uses: actions/download-artifact@v8
+        id: download-build
+        continue-on-error: true
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ needs.release-identity.outputs.release-sha }}
           path: packages
+
+      - name: Ensure build artifact is present
+        if: steps.download-build.outcome == 'failure'
+        run: |
+          echo "::error title=Build artifact unavailable::Artifact build-${{ needs.release-identity.outputs.release-sha }} is missing (expired or never uploaded). Re-run the entire Release workflow from this commit so hashes, build, quality, e2e, and publish run together; re-running only publish-release cannot recover an expired artifact."
+          exit 1
+
       - name: Install crane
         run: .github/install-crane.sh
 
@@ -201,6 +238,16 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Create release source worktree
+        id: release-src
+        run: |
+          release_sha="${{ needs.release-identity.outputs.release-sha }}"
+          worktree="$RUNNER_TEMP/release-src"
+          git worktree add --detach "$worktree" "$release_sha"
+          cp -R packages/sandbox/dist "$worktree/packages/sandbox/dist"
+          cp -R packages/shared/dist "$worktree/packages/shared/dist"
+          echo "path=$worktree" >> "$GITHUB_OUTPUT"
 
       - name: Detect pending changesets
         id: pending-changesets
@@ -219,24 +266,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - id: changesets
-        if: steps.pending-changesets.outputs.present == 'true'
-        uses: changesets/action@v1
-        with:
-          version: npx tsx .github/changeset-version.ts
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      - name: Detect stable release target
-        id: stable-release
-        if: steps.pending-changesets.outputs.present == 'false'
-        run: |
-          bash .github/detect-stable-release-needed.sh \
-            "${{ needs.build.outputs.version }}" \
-            "${{ github.sha }}" >> "$GITHUB_OUTPUT"
-
       - name: Publish stable release
-        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -245,10 +275,11 @@ jobs:
           npx tsx .github/release-orchestrator.ts stable \
             --version "${{ needs.build.outputs.version }}" \
             --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
-            --commit-sha "${{ github.sha }}"
+            --commit-sha "${{ needs.release-identity.outputs.release-sha }}" \
+            --release-root "${{ steps.release-src.outputs.path }}" \
+            --mode "${{ needs.release-identity.outputs.release-mode }}"
 
       - name: Update Docker Hub description
-        if: steps.pending-changesets.outputs.present == 'false' && steps.stable-release.outputs.publish == 'true'
         uses: peter-evans/dockerhub-description@v4
         continue-on-error: true
         with:
@@ -257,3 +288,38 @@ jobs:
           repository: cloudflare/sandbox
           readme-filepath: ./DOCKER_README.md
           short-description: ${{ github.event.repository.description }}
+
+      - name: Promote public references
+        id: promotion
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          result="$(npx tsx .github/promote-references.ts \
+            --version "${{ needs.build.outputs.version }}" \
+            --main-sha "${{ github.sha }}")"
+          echo "$result"
+          if grep -q 'promotion_result=pr-created' <<< "$result"; then
+            echo "result=pr-created" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=no-edits" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop after promotion PR
+        if: steps.promotion.outputs.result == 'pr-created'
+        run: echo "Promotion PR created or updated; Changesets will run after the PR merges to main."
+
+      - name: Remove release worktree
+        if: always()
+        run: |
+          if [ -n "${{ steps.release-src.outputs.path }}" ]; then
+            git worktree remove --force "${{ steps.release-src.outputs.path }}" || true
+          fi
+
+      - name: Prepare next release
+        id: changesets
+        if: steps.pending-changesets.outputs.present == 'true' && steps.promotion.outputs.result == 'no-edits'
+        uses: changesets/action@v1
+        with:
+          version: npx tsx .github/changeset-version.ts
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

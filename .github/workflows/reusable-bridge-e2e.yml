@@ -29,6 +29,7 @@ on:
         default: ''
         description: 'Optional. CF registry tag of the sandbox base image to rebase bridge/worker/Dockerfile onto (e.g. ci-<hash>). Empty = use the pinned base in the Dockerfile.'
       checkout_ref:
+        required: false
         type: string
         default: ''
         description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'

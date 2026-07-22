@@ -1,0 +1,216 @@
+name: Reconcile Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Stable version to reconcile, for example 0.12.4'
+        required: true
+        type: string
+      selector:
+        description: 'Git ref or SHA to use when the stable version tag is absent'
+        required: true
+        default: main
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: release-refs/heads/main
+  cancel-in-progress: false
+
+jobs:
+  release-identity:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release-sha: ${{ steps.identity.outputs.release-sha }}
+      release-mode: ${{ steps.identity.outputs.release-mode }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Resolve manual release identity
+        id: identity
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SELECTOR: ${{ inputs.selector }}
+        run: |
+          npx tsx .github/release-identity.ts stable \
+            --version "$RELEASE_VERSION" \
+            --selector "$RELEASE_SELECTOR" >> "$GITHUB_OUTPUT"
+
+  hashes:
+    needs: release-identity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      docker: ${{ steps.hash.outputs.docker }}
+      deploy: ${{ steps.hash.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-identity.outputs.release-sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Compute content hashes
+        id: hash
+        run: |
+          echo "docker=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            'docker-images.txt',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.*'
+          ) }}" >> "$GITHUB_OUTPUT"
+          echo "deploy=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            'docker-images.txt',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.*',
+            'packages/sandbox/src/**',
+            'tests/e2e/test-worker/**',
+            'vitest.e2e.config.ts',
+            '.github/workflows/release.yml',
+            '.github/workflows/reusable-e2e.yml'
+          ) }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [release-identity, hashes]
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: false
+      image_tag: main
+      docker_hash: ${{ needs.hashes.outputs.docker }}
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
+    secrets: inherit
+
+  quality:
+    needs: [release-identity, build]
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      run_sdk_tests: true
+      run_container_tests: true
+      run_changeset_validation: false
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
+    secrets: inherit
+
+  e2e:
+    needs: [release-identity, hashes, build]
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: sandbox-e2e-test-worker-manual
+      image_tag: ci-${{ needs.hashes.outputs.docker }}
+      deploy_hash: ${{ needs.hashes.outputs.deploy }}
+      checkout_ref: ${{ needs.release-identity.outputs.release-sha }}
+      artifact_key: ${{ needs.release-identity.outputs.release-sha }}
+    secrets: inherit
+
+  reconcile:
+    needs: [release-identity, hashes, build, quality, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Install crane
+        run: .github/install-crane.sh
+
+      - name: Login to registries
+        run: .github/login-release-registries.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+
+      - name: Materialize release root
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/release-root" "${{ needs.release-identity.outputs.release-sha }}"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ needs.release-identity.outputs.release-sha }}
+          path: ${{ runner.temp }}/release-root/packages
+
+      - name: Reconcile stable release
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          npx tsx .github/release-orchestrator.ts stable \
+            --version "$RELEASE_VERSION" \
+            --source-tag "ci-${{ needs.hashes.outputs.docker }}" \
+            --commit-sha "${{ needs.release-identity.outputs.release-sha }}" \
+            --release-root "$RUNNER_TEMP/release-root" \
+            --mode "${{ needs.release-identity.outputs.release-mode }}"
+
+      - name: Remove release worktree
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/release-root" ]; then
+            git worktree remove --force "$RUNNER_TEMP/release-root" || true
+          fi

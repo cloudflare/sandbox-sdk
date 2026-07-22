@@ -19,9 +19,15 @@ on:
         default: ''
         description: 'Content hash of Docker build inputs (enables content-addressed skip)'
       checkout_ref:
+        required: false
         type: string
         default: ''
         description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'
+      artifact_key:
+        required: false
+        type: string
+        default: ''
+        description: 'Key for build artifacts. Empty = workflow commit SHA.'
       checkout_repo:
         type: string
         default: ''
@@ -126,11 +132,11 @@ jobs:
       - name: Upload JS build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: |
             packages/sandbox/dist/
             packages/shared/dist/
-          retention-days: 1
+          retention-days: 7
 
       # --- Docker build (conditional, with content-addressed skip) ---
 

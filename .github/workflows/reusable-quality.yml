@@ -6,6 +6,14 @@ on:
       runner:
         type: string
         default: 'ubuntu-24.04-4core'
+      checkout_ref:
+        required: false
+        type: string
+        default: ''
+      artifact_key:
+        required: false
+        type: string
+        default: ''
       run_sdk_tests:
         type: boolean
         default: true
@@ -25,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.checkout_ref || '' }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -48,7 +57,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
       - name: Lint
@@ -79,6 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.checkout_ref || '' }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -102,7 +112,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
       - name: SDK unit tests
@@ -140,6 +150,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.checkout_ref || '' }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -167,7 +178,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ github.sha }}
+          name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
       - name: Container unit tests (Bun)
