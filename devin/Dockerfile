@@ -27,12 +27,21 @@ FROM debian:bookworm-slim
 # - ffmpeg for screen recording
 # - passwordless sudo for session-time commands that invoke sudo
 # ca-certificates is needed by the Devin CLI/runtime HTTPS clients.
+# - build-essential, python3/pip, awscli, zip/unzip, wget, ripgrep, jq,
+#   socat: common tooling expected in the session environment.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git sudo chromium ffmpeg zstd \
+    build-essential python3 python3-pip awscli zip unzip wget ripgrep jq socat \
   && echo 'root ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-devin-root \
   && chmod 0440 /etc/sudoers.d/90-devin-root \
   && rm -rf /var/lib/apt/lists/*
+
+# uv (Python package/project manager) is not packaged in Debian; install the
+# standalone binary from Astral into a system-wide location.
+RUN set -eux; \
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh; \
+    uv --version
 
 COPY --from=devin-cli /usr/local/bin/devin /usr/local/bin/devin
 COPY bin/start-devin-worker /usr/local/bin/start-devin-worker
