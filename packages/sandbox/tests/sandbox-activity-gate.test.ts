@@ -158,7 +158,7 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
-import { connect, Sandbox } from '../src/sandbox';
+import { Sandbox } from '../src/sandbox';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -221,7 +221,7 @@ async function createSandbox() {
     ctx as unknown as ConstructorParameters<typeof Sandbox>[0],
     {}
   );
-  const sandbox = Object.assign(stub, { wsConnect: connect(stub) });
+  const sandbox = stub;
 
   await Promise.all(
     ctx.blockConcurrencyWhile.mock.results.map((result) => result.value)
@@ -315,17 +315,19 @@ describe('Sandbox resource activity gate integration', () => {
     await ctx.storage.put('currentRuntimeIdentity', runtimeRecord());
 
     const terminal = await sandbox.createTerminal({ command: ['sh'] });
-    const stream = await terminal.output({ replay: true, follow: true });
-    const reader = stream.getReader();
-    const first = await reader.read();
-    const second = await reader.read();
+    const subscription = await terminal.capability.openOutput({
+      replay: true,
+      follow: true
+    });
+    const first = await subscription.next();
+    const second = await subscription.next();
 
     expect(first).toMatchObject({
       done: false,
       value: {
         type: 'terminal',
         state: 'exited',
-        terminalId: terminal.id
+        terminalId: terminal.snapshot.id
       }
     });
     expect(second).toEqual({ done: true, value: undefined });

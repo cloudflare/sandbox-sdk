@@ -20,7 +20,6 @@ import type {
   SandboxOptions,
   SandboxTerminalsAPI,
   SandboxTunnelsAPI,
-  Terminal,
   TerminalOutputEvent,
   TerminalOutputSubscriptionAPI,
   TerminalSnapshot,
@@ -74,9 +73,20 @@ import {
   type ProcessCapabilityControl,
   ProcessCapabilityTarget
 } from './processes/process-capability';
-import { openRemoteSubscription } from './processes/remote-subscription';
-import type { ProcessRPCDescriptor } from './processes/rpc-types';
-import { terminalHandle as terminalHandleFromSnapshot } from './pty';
+import {
+  openRemoteSubscription,
+  PullSubscriptionTarget
+} from './processes/remote-subscription';
+import type {
+  ProcessPullSubscriptionRPC,
+  ProcessRPCDescriptor
+} from './processes/rpc-types';
+import { terminalHandleFromRPCDescriptor } from './pty';
+import type { TerminalRPCDescriptor } from './pty/rpc-types';
+import {
+  type TerminalCapabilityControl,
+  TerminalCapabilityTarget
+} from './pty/terminal-capability';
 import { ResourceActivityGate } from './resource-activity-gate';
 import {
   RUNTIME_ABSENT,
@@ -146,6 +156,15 @@ function invalidCommand(
     suggestion: getSuggestion(ErrorCode.INVALID_COMMAND, {}),
     timestamp: new Date().toISOString()
   });
+}
+
+function toContainerHTTPRequest(request: Request): Request {
+  const url = new URL(request.url);
+  if (url.protocol === 'https:') url.protocol = 'http:';
+  const headers = new Headers(request.headers);
+  headers.delete('cf-container-target-port');
+  headers.delete('x-sandbox-port-route-token');
+  return new Request(new Request(url, request), { headers });
 }
 
 function retainedStream<T>(
@@ -283,15 +302,18 @@ function retainedTerminalSubscription(
     if (released) return;
     released = true;
     releaseConnection();
-    try {
-      void reader?.cancel().catch(() => undefined);
-    } catch {}
-    try {
-      void subscription.cancel().catch(() => undefined);
-    } catch {}
-    try {
-      subscription[Symbol.dispose]();
-    } catch {}
+    if (reader) {
+      try {
+        void reader.cancel().catch(() => undefined);
+      } catch {}
+    } else {
+      try {
+        void subscription.cancel().catch(() => undefined);
+      } catch {}
+      try {
+        subscription[Symbol.dispose]();
+      } catch {}
+    }
   };
   const failStale = () => {
     const error = stale();
@@ -300,7 +322,10 @@ function retainedTerminalSubscription(
   };
   return {
     async stream() {
-      const source = await subscription.stream();
+      const source = await openRemoteSubscription<TerminalOutputEvent>(
+        Promise.resolve(subscription),
+        { operation, protocol: 'stream' }
+      );
       return new ReadableStream<TerminalOutputEvent>({
         start(streamController) {
           controller = streamController;
@@ -415,9 +440,27 @@ function processCapabilityControl(
   };
 }
 
-type TerminalHandleStub = SandboxTerminalsAPI & {
+type TerminalHandleStub = Omit<SandboxTerminalsAPI, 'output'> & {
+  output(
+    id: string,
+    options?: Parameters<SandboxTerminalsAPI['output']>[1]
+  ): Promise<ProcessPullSubscriptionRPC<TerminalOutputEvent>>;
   fetch(request: Request): Promise<Response>;
 };
+
+function localizeTerminalHandle(
+  descriptor: TerminalRPCDescriptor,
+  sandboxStub: {
+    fetch(request: Request): Promise<Response>;
+  }
+): ReturnType<typeof terminalHandleFromRPCDescriptor> {
+  return terminalHandleFromRPCDescriptor(descriptor, async (request) => {
+    const token = await descriptor.capability.authorizeConnection();
+    const headers = new Headers(request.headers);
+    headers.set('x-sandbox-port-route-token', token);
+    return await sandboxStub.fetch(new Request(request, { headers }));
+  });
+}
 
 type SandboxConfiguration = {
   sandboxName?: {
@@ -453,14 +496,23 @@ type ConfigurableSandboxStub = {
 
 type SandboxProxyStub = ConfigurableSandboxStub & {
   fetch: (request: Request) => Promise<Response>;
+  containerFetch: (
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ) => Promise<Response>;
   callExtension: (
     extensionName: string,
     method: string,
     args: unknown[]
   ) => Promise<unknown>;
-  createTerminal: (options: CreateTerminalOptions) => Promise<Terminal>;
-  getTerminal: (id: string) => Promise<Terminal | null>;
-  listTerminals: () => Promise<Terminal[]>;
+  createTerminal: (
+    options: CreateTerminalOptions
+  ) => Promise<TerminalRPCDescriptor>;
+  getTerminal: (id: string) => Promise<TerminalRPCDescriptor | null>;
+  listTerminals: () => Promise<TerminalRPCDescriptor[]>;
+  wsConnect: (request: Request, port: number) => Promise<Response>;
+  authorizePortRequest: (port: number, path: string) => Promise<string>;
   exec: (
     command: SandboxCommand,
     options?: ExecOptions
@@ -469,11 +521,21 @@ type SandboxProxyStub = ConfigurableSandboxStub & {
   listProcesses: () => Promise<ProcessStatus[]>;
 };
 
-export type SandboxClient<T> = Omit<T, keyof ISandbox> & ISandbox;
+type InternalSandboxRPCMethod = 'authorizePortRequest';
+
+export type SandboxClient<T> = Omit<
+  T,
+  keyof ISandbox | InternalSandboxRPCMethod
+> &
+  ISandbox;
 
 const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
+>();
+const sandboxConfigurationPending = new WeakMap<
+  object,
+  Map<string, Promise<void>>
 >();
 
 const BACKUP_DEFAULT_TTL_SECONDS = 259200;
@@ -536,6 +598,17 @@ function getNamespaceConfigurationCache(
 
   const created = new Map<string, CachedSandboxConfiguration>();
   sandboxConfigurationCache.set(namespace, created);
+  return created;
+}
+
+function getNamespacePendingConfiguration(
+  namespace: object
+): Map<string, Promise<void>> {
+  const existing = sandboxConfigurationPending.get(namespace);
+  if (existing) return existing;
+
+  const created = new Map<string, Promise<void>>();
+  sandboxConfigurationPending.set(namespace, created);
   return created;
 }
 
@@ -746,32 +819,46 @@ export function getSandbox<T extends Sandbox<any>>(
   ) as unknown as T & SandboxProxyStub;
 
   const namespaceCache = getNamespaceConfigurationCache(ns);
-  const cachedConfiguration = namespaceCache.get(effectiveId);
-  const configuration = buildSandboxConfiguration(
-    effectiveId,
-    options,
-    cachedConfiguration
-  );
-
-  if (hasSandboxConfiguration(configuration)) {
-    const nextConfiguration = mergeSandboxConfiguration(
-      cachedConfiguration,
-      configuration
+  const pendingConfigurations = getNamespacePendingConfiguration(ns);
+  const applyRequestedConfiguration = async (): Promise<void> => {
+    const cachedConfiguration = namespaceCache.get(effectiveId);
+    const configuration = buildSandboxConfiguration(
+      effectiveId,
+      options,
+      cachedConfiguration
     );
-    namespaceCache.set(effectiveId, nextConfiguration);
+    if (!hasSandboxConfiguration(configuration)) return;
 
-    void applySandboxConfiguration(stub, configuration).catch(() => {
-      if (cachedConfiguration) {
-        namespaceCache.set(effectiveId, cachedConfiguration);
-        return;
+    await applySandboxConfiguration(stub, configuration);
+    namespaceCache.set(
+      effectiveId,
+      mergeSandboxConfiguration(cachedConfiguration, configuration)
+    );
+  };
+  const previousConfiguration = pendingConfigurations.get(effectiveId);
+  const configurationReady = previousConfiguration
+    ? previousConfiguration.then(applyRequestedConfiguration)
+    : applyRequestedConfiguration();
+  pendingConfigurations.set(effectiveId, configurationReady);
+  void configurationReady
+    .finally(() => {
+      if (pendingConfigurations.get(effectiveId) === configurationReady) {
+        pendingConfigurations.delete(effectiveId);
       }
-
-      namespaceCache.delete(effectiveId);
-    });
-  }
+    })
+    .catch(() => undefined);
 
   const enhancedMethods = {
-    fetch: (request: Request) => stub.fetch(request),
+    authorizePortRequest: undefined,
+    createPortRequestToken: undefined,
+    fetch: (request: Request) => {
+      const targetPort = request.headers.get('cf-container-target-port');
+      return targetPort === null
+        ? stub.fetch(request)
+        : fetchAuthorizedPort(stub, request, Number(targetPort));
+    },
+    containerFetch: (...args: Parameters<SandboxProxyStub['containerFetch']>) =>
+      stub.containerFetch(...args),
     exec: async (command: SandboxCommand, execOptions?: ExecOptions) =>
       createSandboxProcess(
         await stub.exec(command, sanitizeExecOptions(execOptions))
@@ -812,17 +899,26 @@ export function getSandbox<T extends Sandbox<any>>(
       stub.watch(path, options),
     checkChanges: (path: string, options: CheckChangesOptions = {}) =>
       stub.checkChanges(path, options),
-    createTerminal: (options: CreateTerminalOptions) =>
-      stub.createTerminal(options),
-    getTerminal: (id: string) => stub.getTerminal(id),
-    listTerminals: () => stub.listTerminals(),
+    createTerminal: async (options: CreateTerminalOptions) =>
+      localizeTerminalHandle(await stub.createTerminal(options), stub),
+    getTerminal: async (id: string) => {
+      const terminal = await stub.getTerminal(id);
+      return terminal ? localizeTerminalHandle(terminal, stub) : null;
+    },
+    listTerminals: async () =>
+      (await stub.listTerminals()).map((terminal) =>
+        localizeTerminalHandle(terminal, stub)
+      ),
     wsConnect: connect(stub),
     tunnels: new Proxy({} as TunnelsHandler, {
       get: (_, method) => {
         if (typeof method !== 'string' || method === 'then') return undefined;
         return withSandboxOperationContext(
           `sandbox.tunnels.${method}`,
-          (...args: unknown[]) => stub.callTunnels(method, args)
+          async (...args: unknown[]) => {
+            await configurationReady;
+            return stub.callTunnels(method, args);
+          }
         );
       }
     })
@@ -840,7 +936,10 @@ export function getSandbox<T extends Sandbox<any>>(
         if (typeof method === 'function') {
           return withSandboxOperationContext(
             `sandbox.${prop}`,
-            method as (...args: unknown[]) => unknown
+            async (...args: unknown[]) => {
+              await configurationReady;
+              return (method as (...args: unknown[]) => unknown)(...args);
+            }
           );
         }
         return method;
@@ -859,7 +958,8 @@ export function getSandbox<T extends Sandbox<any>>(
       // forwards to the stub method (sandbox.method(...)), while a nested
       // access dispatches sandbox.<ext>.<method>(...) through callExtension.
       return new Proxy(
-        (...args: unknown[]) => {
+        async (...args: unknown[]) => {
+          await configurationReady;
           // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
           return target[prop](...args);
         },
@@ -868,8 +968,10 @@ export function getSandbox<T extends Sandbox<any>>(
             if (typeof method !== 'string' || method === 'then') {
               return undefined;
             }
-            return (...args: unknown[]) =>
-              stub.callExtension(prop, method, args);
+            return async (...args: unknown[]) => {
+              await configurationReady;
+              return stub.callExtension(prop, method, args);
+            };
           }
         }
       );
@@ -933,6 +1035,7 @@ function getConcreteExtensionMethod(
 
 export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
+  authorizePortRequest: (port: number, path: string) => Promise<string>;
 }) {
   return async (request: Request, port: number) => {
     if (!validatePort(port)) {
@@ -940,9 +1043,26 @@ export function connect(stub: {
         `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
-    const portSwitchedRequest = switchPort(request, port);
-    return await stub.fetch(portSwitchedRequest);
+    return await fetchAuthorizedPort(stub, request, port);
   };
+}
+
+async function fetchAuthorizedPort(
+  stub: {
+    fetch: (request: Request) => Promise<Response>;
+    authorizePortRequest: (port: number, path: string) => Promise<string>;
+  },
+  request: Request,
+  port: number
+): Promise<Response> {
+  const token = await stub.authorizePortRequest(
+    port,
+    new URL(request.url).pathname
+  );
+  const switched = switchPort(request, port);
+  const headers = new Headers(switched.headers);
+  headers.set('x-sandbox-port-route-token', token);
+  return await stub.fetch(new Request(switched, { headers }));
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> {
@@ -968,6 +1088,15 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   envVars: Record<string, string> = {};
+  private readonly portRequestTokens = new Map<
+    string,
+    {
+      port: number;
+      path: string;
+      expiresAt: number;
+      scope: 'port' | 'terminal';
+    }
+  >();
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private bucketMounts: BucketMountService;
@@ -1818,6 +1947,15 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       portOrInit,
       portParam
     );
+    const pathname = new URL(request.url).pathname;
+    if (port === 3000 && pathname === '/rpc') {
+      throw new SandboxSecurityError(
+        'Container RPC connection is not authorized'
+      );
+    }
+    if (port === 3000 && pathname === '/ws/terminal') {
+      throw new SandboxSecurityError('Terminal connection is not authorized');
+    }
     let physicalForwardStarted = false;
 
     try {
@@ -1836,7 +1974,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           }
           physicalForwardStarted = true;
           return retainedResponse(
-            await this.getRuntimePortStub(port).fetch(request),
+            await this.getRuntimePortStub(port).fetch(
+              toContainerHTTPRequest(request)
+            ),
             lease,
             'container.fetch.body'
           );
@@ -2164,56 +2304,13 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       connectionHeader?.toLowerCase().includes('upgrade');
 
     if (isWebSocket) {
-      const port = this.determinePort(url);
+      const port = this.determinePort(request);
       try {
         requestLogger.debug('WebSocket upgrade requested', {
           path: url.pathname,
           port
         });
-        return await this.runtimeRunner.runWaking(
-          'container.websocket',
-          async (lease) => {
-            await waitForRuntimePort(lease, port, {
-              timeout: this.containerTimeouts.portReadyTimeoutMS,
-              interval: this.containerTimeouts.waitIntervalMS,
-              signal: request.signal
-            });
-            try {
-              await this.runtimeLifecycle.assertActive(lease.runtime);
-            } catch {
-              throw runtimeInterrupted('container.websocket');
-            }
-            let interrupted = false;
-            let retained:
-              | ReturnType<typeof retainWebSocketResponse>
-              | undefined;
-            let releaseHold = () => {};
-            const hold = lease.retain(() => {
-              interrupted = true;
-              retained?.interrupt();
-              releaseHold();
-            });
-            releaseHold = hold.release;
-            if (interrupted) {
-              hold.release();
-              throw runtimeInterrupted('container.websocket');
-            }
-            try {
-              const response =
-                await this.getRuntimePortStub(port).fetch(request);
-              retained = retainWebSocketResponse(response, hold.release);
-              if (interrupted) {
-                retained.interrupt();
-                throw runtimeInterrupted('container.websocket');
-              }
-              return response;
-            } catch (error) {
-              hold.release();
-              throw error;
-            }
-          },
-          { signal: request.signal }
-        );
+        return await this.connectWebSocket(request, port);
       } catch (error) {
         requestLogger.error(
           'WebSocket connection failed',
@@ -2225,41 +2322,109 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
 
     // Non-WebSocket: Use existing port determination and HTTP routing logic
-    const port = this.determinePort(url);
+    const port = this.determinePort(request);
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
   }
 
-  wsConnect(request: Request, port: number): Promise<Response> {
-    // Stub - actual implementation is attached by getSandbox() on the stub object
-    throw new Error(
-      'wsConnect must be called on the stub returned by getSandbox()'
+  async wsConnect(request: Request, port: number): Promise<Response> {
+    return await connect(this)(request, port);
+  }
+
+  async authorizePortRequest(port: number, path: string): Promise<string> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new SandboxSecurityError(
+        `Invalid port number: ${port}. Must be between 1 and 65535.`
+      );
+    }
+    return this.#createPortRequestToken(port, path, 'port');
+  }
+
+  #createPortRequestToken(
+    port: number,
+    path: string,
+    scope: 'port' | 'terminal'
+  ): string {
+    const now = Date.now();
+    for (const [token, route] of this.portRequestTokens) {
+      if (route.expiresAt <= now) this.portRequestTokens.delete(token);
+    }
+    const token = crypto.randomUUID();
+    this.portRequestTokens.set(token, {
+      port,
+      path,
+      expiresAt: now + 30_000,
+      scope
+    });
+    return token;
+  }
+
+  private connectWebSocket(request: Request, port: number): Promise<Response> {
+    return this.runtimeRunner.runWaking(
+      'container.websocket',
+      async (lease) => {
+        await waitForRuntimePort(lease, port, {
+          timeout: this.containerTimeouts.portReadyTimeoutMS,
+          interval: this.containerTimeouts.waitIntervalMS,
+          signal: request.signal
+        });
+        try {
+          await this.runtimeLifecycle.assertActive(lease.runtime);
+        } catch {
+          throw runtimeInterrupted('container.websocket');
+        }
+        let interrupted = false;
+        let retained: ReturnType<typeof retainWebSocketResponse> | undefined;
+        let releaseHold = () => {};
+        const hold = lease.retain(() => {
+          interrupted = true;
+          retained?.interrupt();
+          releaseHold();
+        });
+        releaseHold = hold.release;
+        if (interrupted) {
+          hold.release();
+          throw runtimeInterrupted('container.websocket');
+        }
+        try {
+          const response = await this.getRuntimePortStub(port).fetch(
+            toContainerHTTPRequest(request)
+          );
+          retained = retainWebSocketResponse(response, hold.release);
+          if (interrupted) {
+            retained.interrupt();
+            throw runtimeInterrupted('container.websocket');
+          }
+          return response;
+        } catch (error) {
+          hold.release();
+          throw error;
+        }
+      },
+      { signal: request.signal }
     );
   }
 
-  async createTerminal(options: CreateTerminalOptions): Promise<Terminal> {
+  async createTerminal(
+    options: CreateTerminalOptions
+  ): Promise<TerminalRPCDescriptor> {
     return this.runtimeRunner.runWaking('terminal.create', async (lease) =>
-      terminalHandleFromSnapshot(
-        this.terminalStub(lease.runtime),
+      this.terminalDescriptor(
         await lease.control.terminals.create(options),
-        lease.runtime.runtimeIncarnationID
+        lease.runtime
       )
     );
   }
 
-  async getTerminal(id: string): Promise<Terminal | null> {
+  async getTerminal(id: string): Promise<TerminalRPCDescriptor | null> {
     const result = await this.runtimeRunner.runExisting(
       { kind: 'current' },
       'terminal.get',
       async (lease) => {
         const snapshot = await lease.control.terminals.get(id);
         return snapshot
-          ? terminalHandleFromSnapshot(
-              this.terminalStub(lease.runtime),
-              snapshot,
-              lease.runtime.runtimeIncarnationID
-            )
+          ? this.terminalDescriptor(snapshot, lease.runtime)
           : null;
       }
     );
@@ -2267,21 +2432,39 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     return result;
   }
 
-  async listTerminals(): Promise<Terminal[]> {
+  async listTerminals(): Promise<TerminalRPCDescriptor[]> {
     const result = await this.runtimeRunner.runExisting(
       { kind: 'current' },
       'terminal.list',
       async (lease) =>
         (await lease.control.terminals.list()).map((snapshot) =>
-          terminalHandleFromSnapshot(
-            this.terminalStub(lease.runtime),
-            snapshot,
-            lease.runtime.runtimeIncarnationID
-          )
+          this.terminalDescriptor(snapshot, lease.runtime)
         )
     );
     if (isRuntimeAbsent(result)) return [];
     return result;
+  }
+
+  private terminalDescriptor(
+    snapshot: TerminalSnapshot,
+    runtime: RuntimeIdentity
+  ): TerminalRPCDescriptor {
+    const stub = this.terminalStub(runtime);
+    const control: TerminalCapabilityControl = {
+      get: (id) => stub.get(id),
+      openOutput: (id, options) => stub.output(id, options),
+      write: (id, data) => stub.write(id, data),
+      resize: (id, cols, rows) => stub.resize(id, cols, rows),
+      interrupt: (id) => stub.interrupt(id),
+      terminate: (id) => stub.terminate(id),
+      authorizeConnection: async () =>
+        this.#createPortRequestToken(3000, '/ws/terminal', 'terminal')
+    };
+    return {
+      snapshot,
+      runtimeIncarnationID: runtime.runtimeIncarnationID,
+      capability: new TerminalCapabilityTarget(snapshot.id, control)
+    };
   }
 
   private terminalStub(runtime: RuntimeIdentity): TerminalHandleStub {
@@ -2347,7 +2530,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
               subscription,
               hold.release
             );
-            return retained;
+            return new PullSubscriptionTarget(await retained.stream());
           } catch (error) {
             hold.release();
             throw error;
@@ -2391,7 +2574,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
             throw staleTerminal('', 'terminal.connect');
           }
           try {
-            const response = await this.getRuntimePortStub(3000).fetch(request);
+            const response = await this.getRuntimePortStub(3000).fetch(
+              toContainerHTTPRequest(request)
+            );
             retained = retainWebSocketResponse(response, hold.release);
             if (interrupted) {
               retained.interrupt();
@@ -2406,15 +2591,63 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     };
   }
 
-  private determinePort(url: URL): number {
-    // Direct DO fetch compatibility path used by switchPort()/wsConnect().
-    // Public preview URL traffic enters through proxyPreviewRequest() instead.
-    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
-    if (proxyMatch) {
-      return parseInt(proxyMatch[1], 10);
+  private determinePort(request: Request): number {
+    const targetPort = Number(request.headers.get('cf-container-target-port'));
+    const routeToken = request.headers.get('x-sandbox-port-route-token');
+    const pathname = new URL(request.url).pathname;
+    const targetsControlPlane =
+      !request.headers.has('cf-container-target-port') || targetPort === 3000;
+
+    if (routeToken) {
+      const route = this.portRequestTokens.get(routeToken);
+      this.portRequestTokens.delete(routeToken);
+      if (
+        route &&
+        route.expiresAt > Date.now() &&
+        route.port === targetPort &&
+        route.path === new URL(request.url).pathname
+      ) {
+        if (
+          pathname === '/ws/terminal' &&
+          targetsControlPlane &&
+          route.scope !== 'terminal'
+        ) {
+          throw new SandboxSecurityError(
+            'Terminal connection is not authorized'
+          );
+        }
+        if (pathname === '/rpc' && targetsControlPlane) {
+          throw new SandboxSecurityError(
+            'Container RPC connection is not authorized'
+          );
+        }
+        return targetPort;
+      }
     }
 
-    // Direct fetch compatibility defaults to the container server port.
+    if (pathname === '/ws/terminal' && targetsControlPlane) {
+      throw new SandboxSecurityError('Terminal connection is not authorized');
+    }
+    if (pathname === '/rpc' && targetsControlPlane) {
+      throw new SandboxSecurityError(
+        'Container RPC connection is not authorized'
+      );
+    }
+
+    if (request.headers.has('cf-container-target-port')) {
+      if (
+        !Number.isInteger(targetPort) ||
+        targetPort < 1 ||
+        targetPort > 65535
+      ) {
+        throw new SandboxSecurityError(
+          `Invalid container target port: ${request.headers.get('cf-container-target-port')}`
+        );
+      }
+      return targetPort;
+    }
+
+    // Direct fetches target the container server port.
     // SDK control operations use ContainerControlClient over /rpc instead.
     return 3000;
   }
@@ -2745,7 +2978,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
             include: options.include,
             exclude: options.exclude
           }),
-          { operation: 'open filesystem watch' }
+          { operation: 'open filesystem watch', protocol: 'stream' }
         ),
         lease
       )

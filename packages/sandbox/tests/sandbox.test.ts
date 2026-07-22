@@ -13,7 +13,7 @@ import {
 } from '../src/errors';
 import { SandboxExtension, type SandboxLike } from '../src/extensions';
 import { RuntimeIdentityInactiveError } from '../src/runtime/types';
-import { connect, getSandbox, Sandbox } from '../src/sandbox';
+import { getSandbox, Sandbox } from '../src/sandbox';
 import {
   asSandboxWithClient,
   createMockControlClient
@@ -80,10 +80,9 @@ vi.mock('../src/container-control/connection', () => ({
 
 vi.mock('@cloudflare/containers', () => {
   const mockSwitchPort = vi.fn((request: Request, port: number) => {
-    // Create a new request with the port in the URL path
-    const url = new URL(request.url);
-    url.pathname = `/proxy/${port}${url.pathname}`;
-    return new Request(url, request);
+    const headers = new Headers(request.headers);
+    headers.set('cf-container-target-port', String(port));
+    return new Request(request, { headers });
   });
 
   const MockContainer = class Container {
@@ -465,9 +464,7 @@ describe('Sandbox durable object behavior', () => {
       )
     );
 
-    sandbox = Object.assign(stub, {
-      wsConnect: connect(stub)
-    });
+    sandbox = stub;
     const sandboxWithClient = asSandboxWithClient(sandbox);
     sandboxWithClient.client = createMockControlClient();
     controlConnectionMockState.client = sandboxWithClient.client;
@@ -1126,6 +1123,16 @@ describe('Sandbox durable object behavior', () => {
   });
 
   describe('containerFetch() direct forwarding', () => {
+    it('rejects direct access to the container RPC control route', async () => {
+      const tcpFetch = vi.fn(async () => new Response('unexpected'));
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
+
+      await expect(
+        sandbox.containerFetch(new Request('https://example.com/rpc'), 3000)
+      ).rejects.toThrow('Container RPC connection is not authorized');
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
     it('retains direct HTTP response bodies until runtime invalidation', async () => {
       const bodyRead = deferred<Uint8Array>();
       const response = new Response(
@@ -1144,7 +1151,7 @@ describe('Sandbox durable object behavior', () => {
           headers: { 'x-test': 'body' }
         }
       );
-      const tcpFetch = vi.fn(async () => response);
+      const tcpFetch = vi.fn(async (_request: Request) => response);
       mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
       const forwarded = await sandbox.containerFetch(
@@ -1165,6 +1172,9 @@ describe('Sandbox durable object behavior', () => {
       expect(forwarded.headers.get('x-test')).toBe('body');
       expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(8080);
       expect(tcpFetch).toHaveBeenCalledOnce();
+      expect((tcpFetch.mock.calls[0][0] as Request).url).toBe(
+        'http://example.com/data'
+      );
     });
 
     it('releases direct HTTP responses without bodies immediately', async () => {
@@ -1337,7 +1347,115 @@ describe('Sandbox durable object behavior', () => {
 
       expect(mockCtx.container.getTcpPort).toHaveBeenCalledWith(3000);
       expect(tcpFetch).toHaveBeenCalledTimes(1);
+      expect((tcpFetch.mock.calls[0][0] as Request).url).toBe(
+        'http://example.com/ws'
+      );
       expect(await response.text()).toBe('WebSocket response');
+    });
+
+    it('routes switchPort WebSocket requests to the selected port', async () => {
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          'cf-container-target-port': '8080'
+        }
+      });
+
+      await sandbox.fetch(request);
+
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+      const forwarded = tcpFetch.mock.calls[0][0] as Request;
+      expect(forwarded.headers.has('cf-container-target-port')).toBe(false);
+    });
+
+    it('routes switchPort HTTP requests to the selected port', async () => {
+      const request = new Request('https://example.com/data', {
+        headers: { 'cf-container-target-port': '8081' }
+      });
+
+      await sandbox.fetch(request);
+
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8081);
+      const forwarded = tcpFetch.mock.calls[0][0] as Request;
+      expect(forwarded.headers.has('cf-container-target-port')).toBe(false);
+    });
+
+    it('rejects invalid container target ports', async () => {
+      await expect(sandbox.authorizePortRequest(0, '/app')).rejects.toThrow(
+        'Invalid port number'
+      );
+      await expect(sandbox.authorizePortRequest(65536, '/app')).rejects.toThrow(
+        'Invalid port number'
+      );
+    });
+
+    it('rejects unauthenticated terminal control-plane routes', async () => {
+      const request = new Request(
+        'https://example.com/ws/terminal?terminalId=terminal-a',
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade',
+            'cf-container-target-port': '3000'
+          }
+        }
+      );
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Terminal connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects public container RPC upgrades', async () => {
+      const request = new Request('https://example.com/rpc', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Container RPC connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
+    });
+
+    it('allows an authorized app-port /rpc route', async () => {
+      const token = await sandbox.authorizePortRequest(8080, '/rpc');
+      const request = new Request('https://example.com/rpc', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade',
+          'cf-container-target-port': '8080',
+          'x-sandbox-port-route-token': token
+        }
+      });
+
+      await sandbox.fetch(request);
+
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+    });
+
+    it('does not accept a general route token for terminal control', async () => {
+      const token = await sandbox.authorizePortRequest(3000, '/ws/terminal');
+      const request = new Request(
+        'https://example.com/ws/terminal?terminalId=terminal-a',
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade',
+            'cf-container-target-port': '3000',
+            'x-sandbox-port-route-token': token
+          }
+        }
+      );
+
+      await expect(sandbox.fetch(request)).rejects.toThrow(
+        'Terminal connection is not authorized'
+      );
+      expect(tcpFetch).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -1361,6 +1479,17 @@ describe('Sandbox durable object behavior', () => {
       async (_kind, request) => {
         await (await sandbox.fetch(request)).text();
         expect(tcpFetch).toHaveBeenCalledTimes(1);
+        const forwardedRequest = tcpFetch.mock.calls[0][0] as Request;
+        expect(forwardedRequest.url).toMatch(/^http:\/\//);
+        if (_kind === 'POST') {
+          expect(forwardedRequest.method).toBe('POST');
+          expect(forwardedRequest.headers.get('Content-Type')).toBe(
+            'application/json'
+          );
+          expect(await forwardedRequest.text()).toBe(
+            JSON.stringify({ data: 'test' })
+          );
+        }
       }
     );
 
@@ -1467,8 +1596,12 @@ describe('Sandbox durable object behavior', () => {
       const runExistingSpy = vi.spyOn(runtimeRunner, 'runExisting');
       const runWakingSpy = vi.spyOn(runtimeRunner, 'runWaking');
 
+      const previewRequest = createPreviewProxyRequest('/hello?x=1');
+      const headers = new Headers(previewRequest.headers);
+      headers.set('cf-container-target-port', '9000');
+      headers.set('x-sandbox-port-route-token', 'internal-token');
       const response = await sandbox.fetch(
-        createPreviewProxyRequest('/hello?x=1')
+        new Request(previewRequest, { headers })
       );
 
       expect(await response.text()).toBe('preview ok');
@@ -1490,6 +1623,12 @@ describe('Sandbox durable object behavior', () => {
       const forwardedRequest = tcpFetch.mock.calls[0][1] as Request;
       expect(forwardedRequest.headers.get('X-Sandbox-Name')).toBe(
         'test-sandbox'
+      );
+      expect(forwardedRequest.headers.has('cf-container-target-port')).toBe(
+        false
+      );
+      expect(forwardedRequest.headers.has('x-sandbox-port-route-token')).toBe(
+        false
       );
     });
 
@@ -1826,36 +1965,26 @@ describe('Sandbox durable object behavior', () => {
   });
 
   describe('wsConnect() method', () => {
-    it('should route WebSocket request through switchPort to sandbox.fetch', async () => {
-      const { switchPort } = await import('@cloudflare/containers');
-      const switchPortMock = vi.mocked(switchPort);
-
+    it('should route WebSocket requests through the selected TCP port', async () => {
       const request = new Request('http://localhost/ws/echo', {
         headers: {
           Upgrade: 'websocket',
           Connection: 'Upgrade'
         }
       });
-      mockCtx.container.getTcpPort = vi.fn(() => ({
-        fetch: vi.fn(
-          async () =>
-            new Response('WebSocket Upgraded', {
-              status: 200,
-              headers: { 'X-WebSocket-Upgraded': 'true' }
-            })
-        )
-      }));
+      const tcpFetch = vi.fn(
+        async () =>
+          new Response('WebSocket Upgraded', {
+            status: 200,
+            headers: { 'X-WebSocket-Upgraded': 'true' }
+          })
+      );
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
 
-      const fetchSpy = vi.spyOn(sandbox, 'fetch');
       const response = await sandbox.wsConnect(request, 8080);
 
-      // Verify switchPort was called with correct port
-      expect(switchPortMock).toHaveBeenCalledWith(request, 8080);
-
-      // Verify fetch was called with the switched request
-      expect(fetchSpy).toHaveBeenCalledOnce();
-
-      // Verify response indicates WebSocket upgrade
+      expect(mockCtx.container.getTcpPort).toHaveBeenLastCalledWith(8080);
+      expect(tcpFetch).toHaveBeenCalledOnce();
       expect(response.status).toBe(200);
       expect(response.headers.get('X-WebSocket-Upgraded')).toBe('true');
     });
@@ -1897,10 +2026,13 @@ describe('Sandbox durable object behavior', () => {
         }
       );
 
-      const fetchSpy = vi.spyOn(sandbox, 'fetch');
+      const tcpFetch = vi.fn(
+        async (_request: Request) => new Response('connected')
+      );
+      mockCtx.container.getTcpPort = vi.fn(() => ({ fetch: tcpFetch }));
       await sandbox.wsConnect(request, 8080);
 
-      const calledRequest = fetchSpy.mock.calls[0][0];
+      const calledRequest = tcpFetch.mock.calls[0][0] as Request;
 
       // Verify headers are preserved
       expect(calledRequest.headers.get('Upgrade')).toBe('websocket');

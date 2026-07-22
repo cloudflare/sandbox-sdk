@@ -4,10 +4,7 @@ test.describe('Terminal Addon', () => {
   const sandboxId = process.env.TEST_SANDBOX_ID || 'browser-test-sandbox';
 
   test.beforeEach(async ({ page }) => {
-    const terminalId = `terminal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await page.goto(
-      `/terminal-test?sandboxId=${sandboxId}&terminalId=${terminalId}`
-    );
+    await page.goto(`/terminal-test?sandboxId=${sandboxId}`);
   });
 
   test.describe('Connection', () => {
@@ -169,25 +166,17 @@ test.describe('Terminal Addon', () => {
   });
 
   test.describe('Terminal Isolation', () => {
-    test('different terminal IDs have independent terminals', async ({
-      browser
-    }) => {
+    test('different terminal sessions are independent', async ({ browser }) => {
       const contextA = await browser.newContext();
       const contextB = await browser.newContext();
 
       const pageA = await contextA.newPage();
       const pageB = await contextB.newPage();
 
-      const terminalA = `iso-a-${Date.now()}`;
-      const terminalB = `iso-b-${Date.now()}`;
       const marker = `marker-${Date.now()}`;
 
-      await pageA.goto(
-        `/terminal-test?sandboxId=${sandboxId}&terminalId=${terminalA}`
-      );
-      await pageB.goto(
-        `/terminal-test?sandboxId=${sandboxId}&terminalId=${terminalB}`
-      );
+      await pageA.goto(`/terminal-test?sandboxId=${sandboxId}`);
+      await pageB.goto(`/terminal-test?sandboxId=${sandboxId}`);
 
       await expect(pageA.getByTestId('connection-status')).toHaveText(
         'connected',

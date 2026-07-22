@@ -435,7 +435,8 @@ export class LocalMountSyncManager {
           }),
           {
             signal: this.watchAbortController?.signal,
-            operation: 'open local mount filesystem watch'
+            operation: 'open local mount filesystem watch',
+            protocol: 'stream'
           }
         );
 

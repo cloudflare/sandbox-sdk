@@ -13,6 +13,7 @@
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
+import { switchPort } from '@cloudflare/containers';
 import type { ProcessLogEvent, TerminalOutputEvent } from '@cloudflare/sandbox';
 import {
   Sandbox as BaseSandbox,
@@ -419,7 +420,7 @@ console.log('Echo server on port ' + port);
       const upgradeHeader = request.headers.get('Upgrade');
       if (upgradeHeader?.toLowerCase() === 'websocket') {
         if (url.pathname === '/ws/echo') {
-          return await sandbox.wsConnect(request, 8080);
+          return await sandbox.fetch(switchPort(request, 8080));
         }
         if (url.pathname === '/ws/code') {
           return await sandbox.wsConnect(request, 8081);
@@ -427,6 +428,10 @@ console.log('Echo server on port ' + port);
         if (url.pathname === '/ws/terminal') {
           return await sandbox.wsConnect(request, 8082);
         }
+      }
+
+      if (url.pathname === '/api/container-fetch') {
+        return await sandbox.containerFetch('http://container/', {}, 8080);
       }
 
       // Health check
@@ -1513,9 +1518,7 @@ console.log('Echo server on port ' + port);
 
       // PTY: Browser test page for Playwright tests
       if (url.pathname === '/terminal-test') {
-        const terminalId =
-          url.searchParams.get('terminalId') || `browser-test-${Date.now()}`;
-        return new Response(getTerminalTestPage(sandboxId, terminalId), {
+        return new Response(getTerminalTestPage(sandboxId), {
           headers: { 'Content-Type': 'text/html' }
         });
       }
@@ -1539,14 +1542,14 @@ console.log('Echo server on port ' + port);
           const terminal = await sandbox.getTerminal(terminalId);
           if (!terminal)
             return new Response('Terminal not found', { status: 404 });
-          return terminal.connect(request, { cols, rows });
+          return await terminal.connect(request, { cols, rows });
         }
         const terminal = await sandbox.createTerminal({
           command: ['bash'],
           cols,
           rows
         });
-        return terminal.connect(request, { cols, rows });
+        return await terminal.connect(request, { cols, rows });
       }
 
       return new Response('Not found', { status: 404 });
@@ -1643,7 +1646,7 @@ console.log('Echo server on port ' + port);
   }
 };
 
-function getTerminalTestPage(sandboxId: string, terminalId: string): string {
+function getTerminalTestPage(sandboxId: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1671,9 +1674,9 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
 
     const statusEl = document.getElementById('status');
     const sandboxId = '${sandboxId}';
-    const terminalId = '${terminalId}';
 
     let ws = null;
+    let terminalId = null;
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 10;
 
@@ -1682,8 +1685,24 @@ function getTerminalTestPage(sandboxId: string, terminalId: string): string {
       statusEl.dataset.testid = 'connection-status';
     }
 
-    function connect() {
+    async function connect() {
       updateStatus('connecting');
+      if (!terminalId) {
+        const response = await fetch('/api/terminal/create?sandboxId=' + encodeURIComponent(sandboxId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: ['/bin/bash'],
+            cols: term.cols,
+            rows: term.rows
+          })
+        });
+        if (!response.ok) {
+          updateStatus('error');
+          return;
+        }
+        terminalId = (await response.json()).id;
+      }
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?sandboxId=' + sandboxId;
       

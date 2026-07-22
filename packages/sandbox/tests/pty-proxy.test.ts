@@ -183,6 +183,72 @@ describe('terminal proxy', () => {
     expect(subscription[Symbol.dispose]).toHaveBeenCalledTimes(1);
   });
 
+  it('aborts while terminal output subscription acquisition is pending', async () => {
+    const stub = createStub();
+    stub.output.mockImplementationOnce(() => new Promise(() => {}));
+    const terminal = terminalHandle(stub, snapshot('terminal-123'));
+    const abortController = new AbortController();
+
+    const opening = terminal.output({ signal: abortController.signal });
+    abortController.abort(new Error('caller aborted'));
+    const outcome = await Promise.race([
+      opening.then(
+        () => 'resolved',
+        (error: Error) => error.message
+      ),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still pending'), 20)
+      )
+    ]);
+
+    expect(outcome).toBe('caller aborted');
+  });
+
+  it('times out while terminal output subscription acquisition is pending', async () => {
+    const stub = createStub();
+    stub.output.mockImplementationOnce(() => new Promise(() => {}));
+    const terminal = terminalHandle(stub, snapshot('terminal-123'));
+
+    const waiting = terminal.waitForExit({ timeout: 5 });
+    const outcome = await Promise.race([
+      waiting.then(
+        () => 'resolved',
+        (error: Error) => error.message
+      ),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still pending'), 20)
+      )
+    ]);
+
+    expect(outcome).toBe('Terminal wait timed out');
+  });
+
+  it('cleans up wait controls when subscription acquisition fails', async () => {
+    vi.useFakeTimers();
+    const stub = createStub();
+    stub.output.mockRejectedValueOnce(new Error('subscription failed'));
+    const terminal = terminalHandle(stub, snapshot('terminal-123'));
+    const abortController = new AbortController();
+    const removeEventListener = vi.spyOn(
+      abortController.signal,
+      'removeEventListener'
+    );
+
+    await expect(
+      terminal.waitForExit({
+        timeout: 1000,
+        signal: abortController.signal
+      })
+    ).rejects.toThrow('subscription failed');
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(removeEventListener).toHaveBeenCalledWith(
+      'abort',
+      expect.any(Function)
+    );
+    vi.useRealTimers();
+  });
+
   it('reports AbortSignal reason instead of timeout when signal wins', async () => {
     const stub = createStub();
     const terminal = terminalHandle(stub, snapshot('terminal-123'));

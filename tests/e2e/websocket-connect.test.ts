@@ -68,6 +68,15 @@ describe('WebSocket Connections', () => {
     ws.close();
   }, 20000);
 
+  test('should forward HTTP through containerFetch', async () => {
+    const response = await fetch(`${workerUrl}/api/container-fetch`, {
+      headers: { 'X-Sandbox-Id': sandboxId }
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Expected WebSocket');
+  });
+
   test('should handle multiple concurrent connections', async () => {
     const wsUrl = `${workerUrl.replace(/^http/, 'ws')}/ws/echo`;
 

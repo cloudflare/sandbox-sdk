@@ -79,45 +79,65 @@ describe('File Watch Workflow', () => {
     if (!response.ok || !response.body) {
       throw new Error(`Watch request failed: ${response.status}`);
     }
-
-    // watch() blocks until the watcher is established, so by the time
-    // the response arrives the filesystem watcher is ready.
-    const actionResult = await actions();
+    const body = response.body;
 
     const events: FileWatchSSEEvent[] = [];
     let watchId: string | null = null;
     const signal = AbortSignal.timeout(timeoutMs);
+    let resolveWatching!: () => void;
+    let rejectWatching!: (error: Error) => void;
+    let watchingSettled = false;
+    const watching = new Promise<void>((resolve, reject) => {
+      resolveWatching = resolve;
+      rejectWatching = reject;
+    });
+    const collecting = (async () => {
+      try {
+        for await (const event of parseSSEStream<FileWatchSSEEvent>(
+          body,
+          signal
+        )) {
+          events.push(event);
 
-    try {
-      for await (const event of parseSSEStream<FileWatchSSEEvent>(
-        response.body,
-        signal
-      )) {
-        events.push(event);
+          if (event.type === 'watching') {
+            watchId = event.watchId;
+            watchingSettled = true;
+            resolveWatching();
+          }
 
-        if (event.type === 'watching') {
-          watchId = event.watchId;
+          if (
+            event.type === 'stopped' ||
+            event.type === 'error' ||
+            events.length >= stopAfterEvents
+          ) {
+            break;
+          }
         }
-
-        if (
-          event.type === 'stopped' ||
-          event.type === 'error' ||
-          events.length >= stopAfterEvents
-        ) {
-          break;
-        }
-      }
-    } catch (error) {
-      if (
-        !(
+      } catch (error) {
+        const timedOut =
           signal.aborted &&
           error instanceof Error &&
-          error.message === 'Operation was aborted'
-        )
-      ) {
-        throw error;
+          error.message === 'Operation was aborted';
+        if (!timedOut) {
+          const failure =
+            error instanceof Error ? error : new Error(String(error));
+          if (!watchingSettled) {
+            watchingSettled = true;
+            rejectWatching(failure);
+            return;
+          }
+          throw failure;
+        }
+      } finally {
+        if (!watchingSettled) {
+          rejectWatching(new Error('Watch closed before it was established'));
+        }
       }
-    }
+    })();
+
+    await watching;
+    const actionResult = await actions();
+    await collecting;
 
     return { events, watchId, actionResult };
   }

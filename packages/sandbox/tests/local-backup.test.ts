@@ -1,7 +1,7 @@
 import type { SandboxCommand } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
-import { connect, Sandbox } from '../src/sandbox';
+import { Sandbox } from '../src/sandbox';
 import {
   asSandboxWithClient,
   createMockControlClient
@@ -248,9 +248,7 @@ describe('Local Backup & Restore', () => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
 
-    sandbox = Object.assign(stub, {
-      wsConnect: connect(stub)
-    });
+    sandbox = stub;
     const sandboxWithClient = asSandboxWithClient(sandbox);
     sandboxWithClient.client = createMockControlClient();
     installRuntimeCallRecorder(

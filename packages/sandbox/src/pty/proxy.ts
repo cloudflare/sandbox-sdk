@@ -3,11 +3,11 @@ import type {
   CreateTerminalOptions,
   ErrorResponse,
   ProcessExit,
-  SandboxTerminalsAPI,
   Terminal,
   TerminalOutputCursor,
   TerminalOutputEvent,
   TerminalOutputOptions,
+  TerminalOutputSubscriptionAPI,
   TerminalSnapshot,
   WaitForExitOptions
 } from '@repo/shared';
@@ -17,9 +17,28 @@ import {
 } from '@repo/shared/errors';
 import { TerminalControlError } from '../errors';
 import { openRemoteSubscription } from '../processes/remote-subscription';
+import type { ProcessPullSubscriptionRPC } from '../processes/rpc-types';
+import type { TerminalRPCDescriptor } from './rpc-types';
 
-interface SandboxTerminalStub extends SandboxTerminalsAPI {
+interface TerminalHandleStub {
+  get(id: string): Promise<TerminalSnapshot | null>;
+  output(
+    id: string,
+    options?: Omit<TerminalOutputOptions, 'signal'>
+  ): Promise<
+    | TerminalOutputSubscriptionAPI
+    | ProcessPullSubscriptionRPC<TerminalOutputEvent>
+  >;
+  write(id: string, data: Uint8Array): Promise<void>;
+  resize(id: string, cols: number, rows: number): Promise<void>;
+  interrupt(id: string): Promise<void>;
+  terminate(id: string): Promise<void>;
   fetch(request: Request): Promise<Response>;
+}
+
+interface SandboxTerminalStub extends TerminalHandleStub {
+  create(options: CreateTerminalOptions): Promise<TerminalSnapshot>;
+  list(): Promise<TerminalSnapshot[]>;
 }
 
 export async function createTerminalHandle(
@@ -46,9 +65,10 @@ export async function listTerminalHandles(
 }
 
 export function terminalHandle(
-  stub: SandboxTerminalStub,
+  stub: TerminalHandleStub,
   snapshot: TerminalSnapshot,
-  runtimeIncarnationID?: string
+  runtimeIncarnationID?: string,
+  outputProtocol: 'stream' | 'pull' = 'stream'
 ): Terminal {
   const id = snapshot.id;
   return {
@@ -60,8 +80,9 @@ export function terminalHandle(
     },
     write: (data) => stub.write(id, data),
     resize: (cols, rows) => stub.resize(id, cols, rows),
-    output: (options) => terminalOutput(stub, id, options),
-    waitForExit: (options) => waitForTerminalExit(stub, id, options),
+    output: (options) => terminalOutput(stub, id, options, outputProtocol),
+    waitForExit: (options) =>
+      waitForTerminalExit(stub, id, options, outputProtocol),
     interrupt: () => stub.interrupt(id),
     terminate: () => stub.terminate(id),
     connect: (request, options) => {
@@ -76,15 +97,39 @@ export function terminalHandle(
   };
 }
 
+export function terminalHandleFromRPCDescriptor(
+  descriptor: TerminalRPCDescriptor,
+  fetch: (request: Request) => Promise<Response>
+): Terminal {
+  const capability = descriptor.capability;
+  const stub: TerminalHandleStub = {
+    get: () => capability.getSnapshot(),
+    output: (_id, options) => capability.openOutput(options),
+    write: (_id, data) => capability.write(data),
+    resize: (_id, cols, rows) => capability.resize(cols, rows),
+    interrupt: () => capability.interrupt(),
+    terminate: () => capability.terminate(),
+    fetch
+  };
+  return terminalHandle(
+    stub,
+    descriptor.snapshot,
+    descriptor.runtimeIncarnationID,
+    'pull'
+  );
+}
+
 async function terminalOutput(
-  stub: SandboxTerminalStub,
+  stub: TerminalHandleStub,
   id: string,
-  options?: TerminalOutputOptions
+  options: TerminalOutputOptions | undefined,
+  protocol: 'stream' | 'pull'
 ) {
   const { signal, ...rpcOptions } = options ?? {};
-  const stream = await openRemoteSubscription(stub.output(id, rpcOptions), {
-    operation: 'open terminal output'
-  });
+  const stream = await openRemoteSubscription<TerminalOutputEvent>(
+    stub.output(id, rpcOptions),
+    { operation: 'open terminal output', protocol, signal }
+  );
   if (!signal) return stream;
   let reader: ReadableStreamDefaultReader<TerminalOutputEvent> | undefined;
   return new ReadableStream({
@@ -133,9 +178,10 @@ async function terminalOutput(
 }
 
 async function waitForTerminalExit(
-  stub: SandboxTerminalStub,
+  stub: TerminalHandleStub,
   id: string,
-  options: WaitForExitOptions = {}
+  options: WaitForExitOptions = {},
+  protocol: 'stream' | 'pull'
 ): Promise<ProcessExit> {
   const abortController = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -155,19 +201,24 @@ async function waitForTerminalExit(
   }
   if (options.timeout !== undefined)
     timeout = setTimeout(timeoutAbort, options.timeout);
-  const stream = await openRemoteSubscription(
-    stub.output(id, { replay: true, follow: true }),
-    { operation: 'wait for terminal exit' }
-  );
-  const reader = stream.getReader();
-  abortController.signal.addEventListener(
-    'abort',
-    () => {
-      void reader.cancel().catch(() => {});
-    },
-    { once: true }
-  );
+  let reader: ReadableStreamDefaultReader<TerminalOutputEvent> | undefined;
   try {
+    const stream = await openRemoteSubscription<TerminalOutputEvent>(
+      stub.output(id, { replay: true, follow: true }),
+      {
+        operation: 'wait for terminal exit',
+        protocol,
+        signal: abortController.signal
+      }
+    );
+    reader = stream.getReader();
+    abortController.signal.addEventListener(
+      'abort',
+      () => {
+        void reader?.cancel().catch(() => {});
+      },
+      { once: true }
+    );
     while (!abortController.signal.aborted) {
       const result = await reader.read();
       if (result.done) break;
@@ -185,7 +236,7 @@ async function waitForTerminalExit(
   } finally {
     if (timeout) clearTimeout(timeout);
     if (options.signal) options.signal.removeEventListener('abort', abort);
-    await reader.cancel().catch(() => {});
+    await reader?.cancel().catch(() => {});
   }
 }
 
@@ -216,7 +267,7 @@ function abortReason(reason: unknown): Error {
 }
 
 export async function proxyTerminal(
-  stub: Pick<SandboxTerminalStub, 'fetch'>,
+  stub: Pick<TerminalHandleStub, 'fetch'>,
   terminalId: string,
   request: Request,
   options: {
