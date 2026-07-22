@@ -7,9 +7,10 @@ export default defineConfig({
   testDir: '.',
   fullyParallel: true,
   forbidOnly: isCI,
-  retries: isCI ? 2 : 1,
-  workers: isCI ? 1 : undefined,
-  reporter: isCI ? 'github' : 'list',
+  retries: 1,
+  workers: isCI ? 8 : undefined,
+  maxFailures: isCI ? 1 : undefined,
+  reporter: isCI ? [['line'], ['github']] : 'list',
   timeout: 60000,
 
   use: {
