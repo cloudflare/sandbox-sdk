@@ -5,12 +5,14 @@
  *
  * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
+ * - SandboxBrowser: Isolated base image capacity for browser tests
  * - SandboxPython: Full image with Python (for code interpreter tests)
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
  * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
  * - SandboxMusl: Musl-based Alpine image variant (for musl binary tests)
  *
- * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
+ * Use X-Sandbox-Type or sandboxType to select: 'browser', 'python',
+ * 'opencode', 'standalone', 'musl', or default.
  */
 
 import { switchPort } from '@cloudflare/containers';
@@ -54,6 +56,7 @@ export class Sandbox extends BaseSandbox<Env> {
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
 export { ContainerProxy };
+export { Sandbox as SandboxBrowser };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
@@ -61,6 +64,7 @@ export { Sandbox as SandboxMusl };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  SandboxBrowser: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
@@ -363,10 +367,14 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
     const sleepAfter = request.headers.get('X-Sandbox-Sleep-After');
-    // Select sandbox type based on X-Sandbox-Type header
-    const sandboxType = request.headers.get('X-Sandbox-Type');
+    // Query selection lets WebSocket requests choose a sandbox namespace.
+    const sandboxType =
+      request.headers.get('X-Sandbox-Type') ??
+      url.searchParams.get('sandboxType');
     let sandboxNamespace: DurableObjectNamespace<Sandbox>;
-    if (sandboxType === 'python') {
+    if (sandboxType === 'browser') {
+      sandboxNamespace = env.SandboxBrowser;
+    } else if (sandboxType === 'python') {
       sandboxNamespace = env.SandboxPython;
     } else if (sandboxType === 'opencode') {
       sandboxNamespace = env.SandboxOpencode;
@@ -1529,9 +1537,15 @@ console.log('Echo server on port ' + port);
 
       // PTY: Browser test page for Playwright tests
       if (url.pathname === '/terminal-test') {
-        return new Response(getTerminalTestPage(sandboxId), {
-          headers: { 'Content-Type': 'text/html' }
-        });
+        return new Response(
+          getTerminalTestPage(
+            sandboxId,
+            sandboxType === 'browser' ? 'browser' : ''
+          ),
+          {
+            headers: { 'Content-Type': 'text/html' }
+          }
+        );
       }
 
       // PTY: WebSocket terminal proxy
@@ -1657,7 +1671,7 @@ console.log('Echo server on port ' + port);
   }
 };
 
-function getTerminalTestPage(sandboxId: string): string {
+function getTerminalTestPage(sandboxId: string, sandboxType: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1685,6 +1699,8 @@ function getTerminalTestPage(sandboxId: string): string {
 
     const statusEl = document.getElementById('status');
     const sandboxId = '${sandboxId}';
+    const sandboxType = '${sandboxType}';
+    const sandboxQuery = new URLSearchParams({ sandboxId, sandboxType }).toString();
 
     let ws = null;
     let terminalId = null;
@@ -1699,23 +1715,31 @@ function getTerminalTestPage(sandboxId: string): string {
     async function connect() {
       updateStatus('connecting');
       if (!terminalId) {
-        const response = await fetch('/api/terminal/create?sandboxId=' + encodeURIComponent(sandboxId), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            command: ['/bin/bash'],
-            cols: term.cols,
-            rows: term.rows
-          })
-        });
-        if (!response.ok) {
+        try {
+          const response = await fetch('/api/terminal/create?' + sandboxQuery, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: ['/bin/bash'],
+              cols: term.cols,
+              rows: term.rows
+            })
+          });
+          if (!response.ok) {
+            const detail = await response.text();
+            console.error('Terminal creation failed:', response.status, detail);
+            updateStatus('error');
+            return;
+          }
+          terminalId = (await response.json()).id;
+        } catch (error) {
+          console.error('Terminal creation failed:', error);
           updateStatus('error');
           return;
         }
-        terminalId = (await response.json()).id;
       }
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?sandboxId=' + sandboxId;
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + terminalId + '?' + sandboxQuery;
       
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';

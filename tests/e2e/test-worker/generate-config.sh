@@ -70,9 +70,3 @@ sed -e "s|{{WORKER_NAME}}|$WORKER_NAME|g" \
   wrangler.template.jsonc > wrangler.jsonc
 
 echo "✅ Generated wrangler.jsonc"
-
-# CI deploy-hash bump for PR 833 e2e rerun
-
-# CI deploy-hash bump for PR 833 e2e rerun
-
-# CI deploy-hash bump 2
