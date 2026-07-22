@@ -11,7 +11,7 @@
     "@cloudflare/containers": "^0.3.5",
     "aws4fetch": "^1.0.20",
     "capnweb": "^0.8.0",
-    "hono": "^4.12.26"
+    "hono": "^4.12.31"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
