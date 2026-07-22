@@ -29,6 +29,8 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 type WorkerStub = {
   ensureRunning: Mock;
   stop: Mock;
+  hasCheckpoint: Mock;
+  recordCheckpointSaved: Mock;
 };
 
 type TestNamespace = Env['DevinWorker'] & {
@@ -65,7 +67,9 @@ function makeNamespace(stubs = new Map<string, WorkerStub>()): TestNamespace {
       if (!stubs.has(id)) {
         stubs.set(id, {
           ensureRunning: vi.fn().mockResolvedValue(undefined),
-          stop: vi.fn().mockResolvedValue(undefined)
+          stop: vi.fn().mockResolvedValue(undefined),
+          hasCheckpoint: vi.fn().mockResolvedValue(false),
+          recordCheckpointSaved: vi.fn().mockResolvedValue(undefined)
         });
       }
       return stubFor(stubs, id);
@@ -107,10 +111,23 @@ function fakeContainer(running = false, destroyError?: Error) {
   };
 }
 
-function makeCtx(container = fakeContainer()) {
+function makeStorage(initial: Record<string, unknown> = {}) {
+  const store = new Map<string, unknown>(Object.entries(initial));
+  return {
+    store,
+    get: vi.fn(async (key: string) => store.get(key)),
+    put: vi.fn(async (key: string, value: unknown) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => store.delete(key))
+  };
+}
+
+function makeCtx(container = fakeContainer(), storage = makeStorage()) {
   const checkpointBinding = { fetch: vi.fn() };
   return {
     container,
+    storage,
     exports: {
       CheckpointProxy: vi.fn(() => checkpointBinding)
     },
@@ -162,9 +179,10 @@ describe('checkpoint proxy', () => {
       }),
       delete: vi.fn()
     };
+    const stubs = new Map<string, WorkerStub>();
     const proxy = new TestCheckpointProxy(
       { props: { sessionId: 'devin-1' } },
-      baseEnv({ DEVIN_CHECKPOINTS: bucket })
+      baseEnv({ DEVIN_CHECKPOINTS: bucket, DevinWorker: makeNamespace(stubs) })
     );
     const upload = new Request(
       'http://checkpoint.internal/checkpoint?key=sessions/devin-2.tar.zst',
@@ -182,12 +200,19 @@ describe('checkpoint proxy', () => {
     );
     expect(uploaded).toBe('new archive');
     expect(fixedLength).toBe(11);
+    // The upload marks the session's DO as having a checkpoint; R2 is never
+    // probed to answer the container's restore HEAD.
+    expect(
+      stubFor(stubs, 'id:devin-1').recordCheckpointSaved
+    ).toHaveBeenCalled();
 
+    stubFor(stubs, 'id:devin-1').hasCheckpoint.mockResolvedValue(true);
     const head = await proxy.fetch(
       new Request('http://checkpoint.internal/checkpoint', { method: 'HEAD' })
     );
     expect(head.status).toBe(200);
-    expect(bucket.head).toHaveBeenCalledWith('sessions/devin-1.tar.zst');
+    expect(stubFor(stubs, 'id:devin-1').hasCheckpoint).toHaveBeenCalled();
+    expect(bucket.head).not.toHaveBeenCalled();
 
     const download = await proxy.fetch(
       new Request('http://checkpoint.internal/checkpoint')
@@ -195,6 +220,27 @@ describe('checkpoint proxy', () => {
     expect(download.status).toBe(200);
     expect(download.headers.get('content-length')).toBe('13');
     await expect(download.text()).resolves.toBe('saved archive');
+  });
+
+  it('reports no checkpoint via the DO without probing R2', async () => {
+    const bucket = {
+      head: vi.fn().mockResolvedValue(null),
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn(),
+      delete: vi.fn()
+    };
+    const stubs = new Map<string, WorkerStub>();
+    const proxy = new TestCheckpointProxy(
+      { props: { sessionId: 'devin-1' } },
+      baseEnv({ DEVIN_CHECKPOINTS: bucket, DevinWorker: makeNamespace(stubs) })
+    );
+
+    const head = await proxy.fetch(
+      new Request('http://checkpoint.internal/checkpoint', { method: 'HEAD' })
+    );
+    expect(head.status).toBe(404);
+    expect(stubFor(stubs, 'id:devin-1').hasCheckpoint).toHaveBeenCalled();
+    expect(bucket.head).not.toHaveBeenCalled();
   });
 
   it('is not routed through the public Worker endpoint', async () => {
@@ -603,13 +649,33 @@ describe('Durable Object container actuator', () => {
   it('deletes the checkpoint when a session is terminated', async () => {
     const container = fakeContainer(false);
     const env = baseEnv();
-    const durableObject = newTestDevinWorker(makeCtx(container), env);
+    const storage = makeStorage({ checkpointPresent: true });
+    const durableObject = newTestDevinWorker(makeCtx(container, storage), env);
 
     await durableObject.stop('devin-1', 'terminated');
 
     expect(env.DEVIN_CHECKPOINTS.delete).toHaveBeenCalledWith(
       'sessions/devin-1.tar.zst'
     );
+    expect(storage.delete).toHaveBeenCalledWith('checkpointPresent');
+    expect(storage.store.has('checkpointPresent')).toBe(false);
+  });
+
+  it('tracks checkpoint presence across save and terminate', async () => {
+    const storage = makeStorage();
+    const durableObject = newTestDevinWorker(
+      makeCtx(fakeContainer(false), storage),
+      baseEnv()
+    );
+
+    await expect(durableObject.hasCheckpoint()).resolves.toBe(false);
+
+    await durableObject.recordCheckpointSaved();
+    expect(storage.store.get('checkpointPresent')).toBe(true);
+    await expect(durableObject.hasCheckpoint()).resolves.toBe(true);
+
+    await durableObject.stop('devin-1', 'terminated');
+    await expect(durableObject.hasCheckpoint()).resolves.toBe(false);
   });
 
   it('keeps the checkpoint when terminating a container fails', async () => {
