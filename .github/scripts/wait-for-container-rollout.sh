@@ -81,9 +81,19 @@ deadline=$((SECONDS + timeout_seconds))
 drain_deadline=$((SECONDS + drain_grace_seconds))
 app_names=("$worker" "$worker-browser" "$worker-python" "$worker-opencode" "$worker-standalone" "$worker-musl")
 
+if command -v wrangler >/dev/null 2>&1; then
+  wrangler_command=(wrangler)
+elif command -v npx >/dev/null 2>&1; then
+  echo 'Wrangler is not installed globally; running it through npx'
+  wrangler_command=(npx --yes wrangler@latest)
+else
+  echo '::error::Neither wrangler nor npx is available' >&2
+  exit 1
+fi
+
 echo "Waiting for container applications to serve image tag $image_tag"
 while ((SECONDS < deadline)); do
-  apps=$(wrangler containers list --json)
+  apps=$("${wrangler_command[@]}" containers list --json)
   all_ready=true
 
   for app_name in "${app_names[@]}"; do
@@ -95,9 +105,9 @@ while ((SECONDS < deadline)); do
     fi
 
     app_id=$(jq -r '.id' <<<"$app")
-    app=$(wrangler containers info "$app_id")
+    app=$("${wrangler_command[@]}" containers info "$app_id")
     expected=$(expected_image "$worker" "$image_tag" "$app_name")
-    instances=$(wrangler containers instances "$app_id" --json)
+    instances=$("${wrangler_command[@]}" containers instances "$app_id" --json)
     reasons=$(readiness_reasons "$app" "$instances" "$expected")
 
     if [[ -z $reasons ]]; then
