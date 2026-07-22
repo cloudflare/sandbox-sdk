@@ -57,6 +57,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sidecar.json",
     "docker:local": "scripts/docker-local.sh",
     "test": "vitest run --config vitest.config.ts \"$@\"",
+    "test:harness": "vitest run --config vitest.harness.config.ts \"$@\"",
     "test:sidecar": "bun test ../../extensions/interpreter/src/sidecar",
     "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
     "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
