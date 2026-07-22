@@ -1943,7 +1943,7 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('test-sandbox', false);
     });
 
-    it('onStart() marks a new current runtime without restoring saved ports', async () => {
+    it('onStart() marks a new current runtime and reactivates exposed ports for it', async () => {
       vi.mocked(mockCtx.storage!.get).mockImplementation(async (key) =>
         key === 'portTokens'
           ? {
@@ -1954,13 +1954,30 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await (sandbox as any).onStart();
 
-      expect(mockCtx.storage.put).toHaveBeenCalledWith(
-        'currentRuntimeIdentity',
-        expect.objectContaining({
-          id: expect.any(String)
-        })
-      );
+      const runtimePut = vi
+        .mocked(mockCtx.storage.put)
+        .mock.calls.find(([key]) => key === 'currentRuntimeIdentity');
+      expect(runtimePut).toBeDefined();
+      const newRuntimeId = (runtimePut?.[1] as { id: string }).id;
+      expect(newRuntimeId).toEqual(expect.any(String));
+
+      // Durable port auth is re-bound to the freshly started runtime so the
+      // preview URL keeps forwarding without a manual re-expose.
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('activePreviewPorts', {
+        '8080': { runtimeIdentityID: newRuntimeId, token: 'tok8080' }
+      });
       expect(sandbox.client.utils.createSession).not.toHaveBeenCalled();
+    });
+
+    it('onStart() does not write preview activations when no ports are exposed', async () => {
+      vi.mocked(mockCtx.storage!.get).mockImplementation(async () => null);
+
+      await (sandbox as any).onStart();
+
+      expect(mockCtx.storage.put).not.toHaveBeenCalledWith(
+        'activePreviewPorts',
+        expect.anything()
+      );
     });
 
     it('onStop() preserves durable auth and clears runtime-scoped preview state', async () => {
@@ -2199,6 +2216,127 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(storage.get('portTokens')).toEqual({
         '9090': { token: 'newtoken', name: undefined }
       });
+    });
+  });
+
+  // Regression test for https://github.com/cloudflare/sandbox-sdk/issues/829:
+  // exposePort() used to succeed while every request to the preview URL
+  // returned 410 STALE_PREVIEW_URL after a container restart (which rotates
+  // the runtime identity). Exposed ports are now reactivated for the new
+  // runtime on start, so forwarding survives restarts.
+  describe('preview URL survives container restart (issue #829)', () => {
+    let storage: Map<string, unknown>;
+
+    beforeEach(async () => {
+      storage = new Map<string, unknown>([
+        ['portTokens', {}],
+        ['currentRuntimeIdentity', { id: 'runtime-1' }],
+        ['activePreviewPorts', {}]
+      ]);
+      mockCtx.storage.get.mockImplementation(
+        async (key: string) => storage.get(key) ?? null
+      );
+      mockCtx.storage.put.mockImplementation(async (key: string, value) => {
+        storage.set(key, value);
+      });
+      mockCtx.storage.delete.mockImplementation(async (key: string) => {
+        storage.delete(key);
+      });
+      await sandbox.setSandboxName('test-sandbox', false);
+    });
+
+    it('forwards preview traffic while the exposing runtime is still current', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: PREVIEW_TEST_TOKEN
+      });
+
+      mockCtx.container.running = true;
+      const tcpFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(200);
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps forwarding preview traffic after a container restart without re-exposing', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: PREVIEW_TEST_TOKEN
+      });
+      expect(
+        (
+          storage.get('activePreviewPorts') as Record<
+            string,
+            { runtimeIdentityID: string }
+          >
+        )['8080'].runtimeIdentityID
+      ).toBe('runtime-1');
+
+      // Simulate a container (re)start. onStart() mints a brand-new runtime
+      // identity via markStarted() and re-binds the durable exposed-port auth
+      // to it. This runs on every container start, including when an
+      // exec/containerFetch call wakes a stopped container.
+      await (sandbox as Sandbox & { onStart(): Promise<void> }).onStart();
+
+      const runtimeAfter = storage.get('currentRuntimeIdentity') as {
+        id: string;
+      };
+      expect(runtimeAfter.id).not.toBe('runtime-1');
+      // The activation is reactivated for the new runtime.
+      expect(
+        (
+          storage.get('activePreviewPorts') as Record<
+            string,
+            { runtimeIdentityID: string; token: string }
+          >
+        )['8080']
+      ).toEqual({
+        runtimeIdentityID: runtimeAfter.id,
+        token: PREVIEW_TEST_TOKEN
+      });
+
+      // Container is healthy (mock getState() -> 'healthy') and running.
+      mockCtx.container.running = true;
+      const tcpFetch = vi
+        .fn()
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(200);
+      expect(tcpFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not resurrect a port that was unexposed before the restart', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: PREVIEW_TEST_TOKEN
+      });
+      await sandbox.unexposePort(8080);
+
+      await (sandbox as Sandbox & { onStart(): Promise<void> }).onStart();
+
+      mockCtx.container.running = true;
+      const tcpFetch = vi.fn();
+      mockCtx.container.getTcpPort = vi
+        .fn()
+        .mockReturnValue({ fetch: tcpFetch });
+
+      const response = await sandbox.fetch(createPreviewProxyRequest());
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'INVALID_TOKEN' });
+      expect(tcpFetch).not.toHaveBeenCalled();
     });
   });
 
