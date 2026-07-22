@@ -30,6 +30,7 @@ jobs:
       id-token: write
       contents: read
       actions: read
+      pull-requests: read
       packages: write
     with:
       channel: next
@@ -137,6 +138,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       worker_name_prefix: sandbox-e2e-test-worker-main
