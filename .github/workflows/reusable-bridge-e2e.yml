@@ -98,6 +98,9 @@ jobs:
           name: build-${{ github.sha }}
           path: packages
 
+      - name: Use workspace @cloudflare/sandbox
+        run: ./bridge/worker/scripts/link-workspace-sandbox.sh
+
       - name: Generate per-run SANDBOX_API_KEY
         id: apikey
         run: |

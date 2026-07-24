@@ -56,5 +56,8 @@ jobs:
       - name: Build @cloudflare/sandbox
         run: npx turbo run build --filter=@cloudflare/sandbox
 
+      - name: Use workspace @cloudflare/sandbox
+        run: ./bridge/worker/scripts/link-workspace-sandbox.sh
+
       - name: Worker unit tests
         run: npm test -w @cloudflare/sandbox-bridge

@@ -13,7 +13,7 @@ HTTP bridge between the [OpenAI Agents SDK](https://github.com/openai/openai-age
 
 Deploy the bridge worker with one click:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/bridge/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/next/bridge/worker)
 
 Or deploy manually — see [worker/README.md](./worker/README.md) for setup, configuration, and the full API reference.
 

@@ -16,7 +16,7 @@ See [`worker/README.md`](./worker/README.md) for the full API reference, deploym
 
 ```sh
 cd worker
-npm ci
+npm install
 npm run dev
 ```
 

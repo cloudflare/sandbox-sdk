@@ -2,18 +2,18 @@
 
 Cloudflare Worker (TypeScript + [Hono](https://hono.dev/)) that exposes the sandbox HTTP API. Creates and manages sandboxed execution environments backed by [Cloudflare Containers](https://developers.cloudflare.com/containers/).
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/main/bridge/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/sandbox-sdk/tree/next/bridge/worker)
 
 ## Prerequisites
 
 - Node.js and npm
 - A Cloudflare account with the Containers / Sandbox beta enabled
-- Wrangler is included as a dev dependency — `npm ci` is all you need
+- Wrangler is included as a dev dependency
 
 ## Getting Started
 
 ```sh
-npm ci
+npm install
 cp .dev.vars.example .dev.vars
 # Edit .dev.vars and set SANDBOX_API_KEY (generate one with: openssl rand -hex 32)
 npm run dev
@@ -36,7 +36,7 @@ The fastest way to deploy is the **Deploy to Cloudflare** button above. It clone
 To deploy manually:
 
 ```sh
-npm ci
+npm install
 npx wrangler login
 npx wrangler secret put SANDBOX_API_KEY    # paste a token from: openssl rand -hex 32
 npx wrangler deploy
@@ -64,10 +64,10 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
-1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.12.1`). Update the tag to match the SDK version.
+1. **`@cloudflare/sandbox`** — the SDK package in `package.json` (this branch uses the `next` dist-tag).
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (`FROM docker.io/cloudflare/sandbox:next`).
 
-Both versions should match — the SDK and container image are released together. After updating:
+Both should stay on the same release line. After updating:
 
 ```sh
 npm install
