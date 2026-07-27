@@ -19,8 +19,14 @@ export class CheckpointProxy extends WorkerEntrypoint<
     const key = checkpointKey(this.ctx.props.sessionId);
     switch (request.method) {
       case 'HEAD': {
-        const object = await this.env.DEVIN_CHECKPOINTS.head(key);
-        return new Response(null, { status: object ? 200 : 404 });
+        // Missing checkpoints are expected, but R2 records head() misses as
+        // error spans. Listing the exact key represents absence cleanly.
+        const { objects } = await this.env.DEVIN_CHECKPOINTS.list({
+          prefix: key,
+          limit: 1
+        });
+        const exists = objects.some((object) => object.key === key);
+        return new Response(null, { status: exists ? 200 : 404 });
       }
       case 'GET': {
         const object = await this.env.DEVIN_CHECKPOINTS.get(key);

@@ -41,6 +41,7 @@ function baseEnv(overrides: Record<string, unknown> = {}): Env {
     DEVIN_API_URL: 'https://api.example.test/opbeta',
     DEVIN_CHECKPOINTS: {
       head: vi.fn().mockResolvedValue(null),
+      list: vi.fn().mockResolvedValue({ objects: [] }),
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined)
@@ -156,6 +157,9 @@ describe('checkpoint proxy', () => {
     let uploaded = '';
     const bucket = {
       head: vi.fn().mockResolvedValue({ size: 13 }),
+      list: vi.fn().mockResolvedValue({
+        objects: [{ key: 'sessions/devin-1.tar.zst' }]
+      }),
       get: vi.fn().mockResolvedValue({ body: stored.body, size: 13 }),
       put: vi.fn(async (_key: string, body: ReadableStream) => {
         uploaded = await new Response(body).text();
@@ -187,7 +191,11 @@ describe('checkpoint proxy', () => {
       new Request('http://checkpoint.internal/checkpoint', { method: 'HEAD' })
     );
     expect(head.status).toBe(200);
-    expect(bucket.head).toHaveBeenCalledWith('sessions/devin-1.tar.zst');
+    expect(bucket.list).toHaveBeenCalledWith({
+      prefix: 'sessions/devin-1.tar.zst',
+      limit: 1
+    });
+    expect(bucket.head).not.toHaveBeenCalled();
 
     const download = await proxy.fetch(
       new Request('http://checkpoint.internal/checkpoint')
@@ -195,6 +203,30 @@ describe('checkpoint proxy', () => {
     expect(download.status).toBe(200);
     expect(download.headers.get('content-length')).toBe('13');
     await expect(download.text()).resolves.toBe('saved archive');
+  });
+
+  it('reports no checkpoint without issuing an R2 HEAD request', async () => {
+    const bucket = {
+      head: vi.fn().mockResolvedValue(null),
+      list: vi.fn().mockResolvedValue({ objects: [] }),
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn(),
+      delete: vi.fn()
+    };
+    const proxy = new TestCheckpointProxy(
+      { props: { sessionId: 'devin-1' } },
+      baseEnv({ DEVIN_CHECKPOINTS: bucket })
+    );
+
+    const head = await proxy.fetch(
+      new Request('http://checkpoint.internal/checkpoint', { method: 'HEAD' })
+    );
+    expect(head.status).toBe(404);
+    expect(bucket.list).toHaveBeenCalledWith({
+      prefix: 'sessions/devin-1.tar.zst',
+      limit: 1
+    });
+    expect(bucket.head).not.toHaveBeenCalled();
   });
 
   it('is not routed through the public Worker endpoint', async () => {
