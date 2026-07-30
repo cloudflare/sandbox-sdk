@@ -558,6 +558,40 @@ describe('in-schedule reconcile polling', () => {
     expect(fetch).toHaveBeenCalledTimes(6);
   });
 
+  it('keeps polling after a reconcile request rejects', async () => {
+    const env = baseEnv();
+    const fetch = vi.mocked(globalThis.fetch);
+    const error = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    fetch
+      .mockResolvedValueOnce(
+        new Response('upstream unavailable', { status: 503 })
+      )
+      .mockImplementation(async () =>
+        jsonResponse({ items: [item('devin-running', 'running')] })
+      );
+
+    const done = worker.scheduled({} as ScheduledEvent, env);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+
+    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(error).toHaveBeenCalledWith(
+      'reconcile failed',
+      expect.objectContaining({
+        message: 'Devin API 503: upstream unavailable'
+      })
+    );
+    const stub = stubFor(
+      (env.DevinWorker as unknown as TestNamespace).stubs,
+      'id:devin-running'
+    );
+    expect(stub.ensureRunning).toHaveBeenCalledTimes(5);
+    error.mockRestore();
+  });
+
   it('honors a custom DEVIN_RECONCILE_INTERVAL_MS', async () => {
     const env = baseEnv({ DEVIN_RECONCILE_INTERVAL_MS: '20000' });
     const fetch = vi.mocked(globalThis.fetch);

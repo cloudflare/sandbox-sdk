@@ -20,6 +20,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function pollReconcile(env: Env): Promise<void> {
+  try {
+    console.log('reconcile', await reconcile(env));
+  } catch (err) {
+    console.error('reconcile failed', err);
+  }
+}
+
 /**
  * One Durable Object per Devin session. The DO is deliberately dumb: it knows
  * how to start/stop its Cloudflare Container, but it does not call Devin and it
@@ -122,14 +130,14 @@ export default {
     const intervalMs = reconcileIntervalMs(env);
     const deadline = Date.now() + SCHEDULE_INTERVAL_MS;
 
-    console.log('reconcile', await reconcile(env));
+    await pollReconcile(env);
 
     // Poll again on the configured interval within this schedule window. A new
     // wait only starts when it can finish before the next cron tick, so the
     // final poll always completes before the following schedule fires.
     while (Date.now() + intervalMs < deadline) {
       await delay(intervalMs);
-      console.log('reconcile', await reconcile(env));
+      await pollReconcile(env);
     }
   }
 };
