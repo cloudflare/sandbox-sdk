@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi
+} from 'vitest';
 import worker, { CheckpointProxy, DevinWorker } from '../src/index';
 import {
   acceptorId,
@@ -504,7 +512,8 @@ describe('Worker reconciliation', () => {
   });
 
   it('scheduled events run the same reconcile loop', async () => {
-    const env = baseEnv();
+    // A poll interval as long as the schedule window leaves only the initial poll.
+    const env = baseEnv({ DEVIN_RECONCILE_INTERVAL_MS: '60000' });
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       jsonResponse({ items: [item('devin-running', 'running')] })
     );
@@ -516,6 +525,66 @@ describe('Worker reconciliation', () => {
       'id:devin-running'
     );
     expect(stub.ensureRunning).toHaveBeenCalledOnce();
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('in-schedule reconcile polling', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('polls every interval within the 60s window, then stops before the next tick', async () => {
+    const env = baseEnv();
+    const fetch = vi.mocked(globalThis.fetch);
+    fetch.mockImplementation(async () =>
+      jsonResponse({ items: [item('devin-running', 'running')] })
+    );
+
+    const done = worker.scheduled({} as ScheduledEvent, env);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1); // initial poll
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+
+    // Initial poll plus polls at 10s, 20s, 30s, 40s, 50s; none at 60s.
+    expect(fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('honors a custom DEVIN_RECONCILE_INTERVAL_MS', async () => {
+    const env = baseEnv({ DEVIN_RECONCILE_INTERVAL_MS: '20000' });
+    const fetch = vi.mocked(globalThis.fetch);
+    fetch.mockImplementation(async () =>
+      jsonResponse({ items: [item('devin-running', 'running')] })
+    );
+
+    const done = worker.scheduled({} as ScheduledEvent, env);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+
+    // Initial poll plus polls at 20s and 40s; none at 60s.
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('falls back to the default interval for invalid values', async () => {
+    const env = baseEnv({ DEVIN_RECONCILE_INTERVAL_MS: 'not-a-number' });
+    const fetch = vi.mocked(globalThis.fetch);
+    fetch.mockImplementation(async () =>
+      jsonResponse({ items: [item('devin-running', 'running')] })
+    );
+
+    const done = worker.scheduled({} as ScheduledEvent, env);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+
+    expect(fetch).toHaveBeenCalledTimes(6);
   });
 });
 

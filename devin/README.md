@@ -69,7 +69,7 @@ flowchart LR
     Worker --> R2
 ```
 
-Once per minute, the Worker polls only the configured Outpost and verifies each response's `metadata.outpost_id` before provisioning anything. It maps Devin's documented statuses to explicit commands for a Durable Object derived from the session ID.
+A cron trigger fires the reconciler once per minute. Within each invocation the Worker keeps polling on `DEVIN_RECONCILE_INTERVAL_MS` (10s by default), stopping before the next cron tick so schedules never overlap. This provisions new containers without waiting up to a full minute for the next cron. Each poll queries only the configured Outpost and verifies each response's `metadata.outpost_id` before provisioning anything. It maps Devin's documented statuses to explicit commands for a Durable Object derived from the session ID.
 
 | Devin status         | Action                                           |
 | -------------------- | ------------------------------------------------ |
@@ -94,13 +94,14 @@ This is suspend/resume persistence rather than continuous backup. Abrupt contain
 
 ## Configuration
 
-| Setting             | Description                                                                    |
-| ------------------- | ------------------------------------------------------------------------------ |
-| `DEVIN_OUTPOST_ID`  | Required Devin Outpost ID.                                                     |
-| `DEVIN_API_TOKEN`   | Required Devin service-user token with the **Run outpost workers** permission. |
-| `DEVIN_API_URL`     | Complete queue API prefix; defaults to `https://api.devin.ai/opbeta`.          |
-| `WORKER_ID_PREFIX`  | Acceptor ID prefix; defaults to `cf-outpost`.                                  |
-| `DEVIN_CHECKPOINTS` | R2 binding for suspend checkpoints.                                            |
+| Setting                       | Description                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `DEVIN_OUTPOST_ID`            | Required Devin Outpost ID.                                                             |
+| `DEVIN_API_TOKEN`             | Required Devin service-user token with the **Run outpost workers** permission.         |
+| `DEVIN_API_URL`               | Complete queue API prefix; defaults to `https://api.devin.ai/opbeta`.                  |
+| `WORKER_ID_PREFIX`            | Acceptor ID prefix; defaults to `cf-outpost`.                                          |
+| `DEVIN_RECONCILE_INTERVAL_MS` | Interval between reconcile polls within each cron schedule; defaults to `10000` (10s). |
+| `DEVIN_CHECKPOINTS`           | R2 binding for suspend checkpoints.                                                    |
 
 ## Operational notes
 
