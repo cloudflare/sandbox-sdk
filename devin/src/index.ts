@@ -4,6 +4,30 @@ import { reconcile } from './reconcile';
 
 export { CheckpointProxy } from './persistence';
 
+// Matches the cron trigger cadence in wrangler.jsonc (`* * * * *`). In-schedule
+// polling stays inside this window so consecutive invocations never overlap.
+const SCHEDULE_INTERVAL_MS = 60_000;
+const DEFAULT_RECONCILE_INTERVAL_MS = 10_000;
+
+function reconcileIntervalMs(env: Env): number {
+  const parsed = Number(env.DEVIN_RECONCILE_INTERVAL_MS);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_RECONCILE_INTERVAL_MS;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollReconcile(env: Env): Promise<void> {
+  try {
+    console.log('reconcile', await reconcile(env));
+  } catch (err) {
+    console.error('reconcile failed', err);
+  }
+}
+
 /**
  * One Durable Object per Devin session. The DO is deliberately dumb: it knows
  * how to start/stop its Cloudflare Container, but it does not call Devin and it
@@ -103,6 +127,17 @@ export default {
   },
 
   async scheduled(_: ScheduledEvent, env: Env): Promise<void> {
-    console.log('reconcile', await reconcile(env));
+    const intervalMs = reconcileIntervalMs(env);
+    const deadline = Date.now() + SCHEDULE_INTERVAL_MS;
+
+    await pollReconcile(env);
+
+    // Poll again on the configured interval within this schedule window. A new
+    // wait only starts when it can finish before the next cron tick, so the
+    // final poll always completes before the following schedule fires.
+    while (Date.now() + intervalMs < deadline) {
+      await delay(intervalMs);
+      await pollReconcile(env);
+    }
   }
 };
