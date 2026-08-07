@@ -142,7 +142,9 @@ describe('ContainerControlClient retry timeout wiring', () => {
         reason: 'transport_disposed',
         operation: 'commands.execute',
         phase: 'rpc_call',
-        admitted: 'unknown',
+        // The mock connection fires onConnected, so the session was established
+        // before the disposal interrupted the call.
+        admitted: true,
         retryable: false
       }
     });

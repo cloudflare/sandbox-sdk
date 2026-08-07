@@ -472,8 +472,8 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     // 4) The queued call rejects with the generic disposal error. Because the
     //    stale capacity cause was cleared on connect, the non-retryable
-    //    lifetime cause surfaces — not a misleading retryable
-    //    "no container instance".
+    //    lifetime cause surfaces. The public context names the pending method
+    //    and keeps the lifetime reason and retryability.
     commandExecuteImpl = () => {
       throw new Error('RPC session was shut down by disposing the main stub');
     };
@@ -486,9 +486,65 @@ describe('ContainerControlClient busy/idle tracking', () => {
 
     expect(thrown).not.toBeInstanceOf(ContainerUnavailableError);
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
-    expect(
-      (thrown as InstanceType<typeof OperationInterruptedError>).reason
-    ).toBe('sandbox_lifetime_changed');
+    const interrupted = thrown as InstanceType<
+      typeof OperationInterruptedError
+    >;
+    expect(interrupted.reason).toBe('sandbox_lifetime_changed');
+    expect(interrupted.context.operation).toBe('commands.execute');
+    expect(interrupted.context.phase).toBe('rpc_call');
+    expect(interrupted.context.admitted).toBe(true);
+    expect(interrupted.context.retryable).toBe(false);
+  });
+
+  it('rebounds a lifecycle stop cause onto the interrupted public operation', async () => {
+    vi.useRealTimers();
+    const { OperationInterruptedError } = await import('../src/errors');
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    const commands = client.commands;
+    const fireConnected = onConnectedHandlers.at(-1);
+    expect(fireConnected).toBeDefined();
+    fireConnected?.();
+
+    const stopCause = new OperationInterruptedError({
+      code: 'OPERATION_INTERRUPTED',
+      message: 'container stopped',
+      context: {
+        reason: 'runtime_replaced',
+        operation: 'rpc.connect',
+        phase: 'connection',
+        admitted: 'unknown',
+        retryable: true,
+        containerExitCode: 137,
+        stopReason: 'runtime_signal'
+      },
+      httpStatus: 503,
+      timestamp: new Date().toISOString()
+    });
+    client.disconnect(stopCause);
+
+    commandExecuteImpl = () => {
+      throw new Error('RPC session was shut down by disposing the main stub');
+    };
+
+    let thrown: unknown;
+    try {
+      thrown = await commands.execute('echo', 'default');
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    const interrupted = thrown as InstanceType<
+      typeof OperationInterruptedError
+    >;
+    expect(interrupted.reason).toBe('runtime_replaced');
+    expect(interrupted.context.operation).toBe('commands.execute');
+    expect(interrupted.context.phase).toBe('rpc_call');
+    expect(interrupted.context.admitted).toBe(true);
+    expect(interrupted.context.retryable).toBe(true);
+    expect(interrupted.context.containerExitCode).toBe(137);
+    expect(interrupted.context.stopReason).toBe('runtime_signal');
   });
 });
 
@@ -1008,6 +1064,54 @@ describe('translateRPCError', () => {
       thrown = e;
     }
     expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    const interrupted = thrown as InstanceType<
+      typeof OperationInterruptedError
+    >;
+    expect(interrupted.context.operation).toBe('utils.createSession');
+    expect(interrupted.context.phase).toBe('rpc_call');
+    expect(interrupted.context.admitted).toBe(true);
+  });
+
+  it('rebounds a captured lifecycle interruption onto the pending operation', async () => {
+    const translateRPCError = await loadFn();
+    const { OperationInterruptedError } = await loadErr();
+    const connectionError = new OperationInterruptedError({
+      code: 'OPERATION_INTERRUPTED',
+      message: 'sandbox lifetime changed',
+      context: {
+        reason: 'sandbox_lifetime_changed',
+        operation: 'rpc.connect',
+        phase: 'connection',
+        admitted: 'unknown',
+        retryable: false
+      },
+      httpStatus: 500,
+      timestamp: new Date().toISOString()
+    });
+
+    let thrown: unknown;
+    try {
+      translateRPCError(
+        new Error('RPC session was shut down by disposing the main stub'),
+        {
+          operation: 'files.writeFile',
+          connectionError,
+          sessionEstablished: true
+        }
+      );
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(OperationInterruptedError);
+    const interrupted = thrown as InstanceType<
+      typeof OperationInterruptedError
+    >;
+    expect(interrupted.reason).toBe('sandbox_lifetime_changed');
+    expect(interrupted.context.operation).toBe('files.writeFile');
+    expect(interrupted.context.phase).toBe('rpc_call');
+    expect(interrupted.context.admitted).toBe(true);
+    expect(interrupted.context.retryable).toBe(false);
   });
 
   it('surfaces a retryable ContainerUnavailableError (not a raw transport string) when the session never established', async () => {

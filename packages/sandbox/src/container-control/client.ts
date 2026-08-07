@@ -375,18 +375,137 @@ function buildTransportErrorResponse(
 }
 
 /**
+ * Extract a recognized structured error shape from a captured connection cause.
+ * Accepts both same-realm SandboxError instances and plain error-like objects
+ * that carry a known `code` plus either `context` or `details`.
+ */
+function extractCapturedErrorShape(captured: unknown): {
+  code: ErrorCode;
+  message: string;
+  context: Record<string, unknown>;
+} | null {
+  if (captured instanceof SandboxError) {
+    return {
+      code: captured.code as ErrorCode,
+      message: captured.message,
+      context: (captured.context ?? {}) as Record<string, unknown>
+    };
+  }
+
+  const shape = captured as {
+    code?: unknown;
+    message?: unknown;
+    context?: unknown;
+    details?: unknown;
+  } | null;
+  if (
+    !shape ||
+    typeof shape.code !== 'string' ||
+    !Object.hasOwn(ErrorCode, shape.code)
+  ) {
+    return null;
+  }
+
+  const code = shape.code as ErrorCode;
+  const structured =
+    shape.context && typeof shape.context === 'object'
+      ? (shape.context as Record<string, unknown>)
+      : shape.details && typeof shape.details === 'object'
+        ? (shape.details as Record<string, unknown>)
+        : {};
+  return {
+    code,
+    message: typeof shape.message === 'string' ? shape.message : code,
+    context: structured
+  };
+}
+
+/**
+ * Lifecycle disconnect causes are stamped with a generic connection-level
+ * operation identity. When they interrupt a concrete RPC method, rebind the
+ * public interruption context onto that method while preserving the lifecycle
+ * reason, retryability, and stop metadata.
+ */
+function rebindInterruptedOperationContext(
+  shape: {
+    code: ErrorCode;
+    message: string;
+    context: Record<string, unknown>;
+  },
+  context: RPCTranslationContext,
+  cause: unknown
+): SandboxError {
+  if (
+    shape.code !== ErrorCode.OPERATION_INTERRUPTED ||
+    typeof context.operation !== 'string' ||
+    context.operation.length === 0
+  ) {
+    return createErrorFromResponse(
+      {
+        code: shape.code,
+        message: shape.message,
+        context: shape.context,
+        httpStatus: getHttpStatus(shape.code),
+        suggestion: getSuggestion(
+          shape.code,
+          shape.context as Record<string, unknown>
+        ),
+        timestamp: new Date().toISOString()
+      },
+      { cause }
+    ) as SandboxError;
+  }
+
+  const admitted =
+    context.sessionEstablished === true
+      ? true
+      : context.sessionEstablished === false
+        ? false
+        : typeof shape.context.admitted === 'boolean' ||
+            shape.context.admitted === 'unknown'
+          ? (shape.context.admitted as boolean | 'unknown')
+          : 'unknown';
+
+  const interruptedContext: OperationInterruptedContext = {
+    ...(shape.context as OperationInterruptedContext),
+    operation: context.operation,
+    phase: 'rpc_call',
+    admitted
+  };
+
+  return createErrorFromResponse(
+    {
+      code: ErrorCode.OPERATION_INTERRUPTED,
+      message: shape.message,
+      context: interruptedContext,
+      httpStatus: getHttpStatus(ErrorCode.OPERATION_INTERRUPTED),
+      suggestion: getSuggestion(
+        ErrorCode.OPERATION_INTERRUPTED,
+        interruptedContext as unknown as Record<string, unknown>
+      ),
+      timestamp: new Date().toISOString()
+    },
+    { cause }
+  ) as SandboxError;
+}
+
+/**
  * When a queued RPC call rejects with a transport error that a connection
  * abort could have caused (session disposed, connection failed, upgrade
- * failed, or peer closed), and the connection captured a real startup error,
- * return that captured error in preference to the masking transport error.
+ * failed, or peer closed), and the connection captured a real startup or
+ * lifecycle error, return that captured error in preference to the masking
+ * transport error.
  *
  * The captured error is accepted whether it is:
- *   - a same-realm `SandboxError` (surfaced as-is), or
+ *   - a same-realm `SandboxError`, or
  *   - any structured, error-like value carrying a recognized `code` — e.g. a
  *     raw or cross-realm error decorated with `code: 'CONTAINER_UNAVAILABLE'`
  *     and optional `context`/`details`/`message`. Such values are rehydrated
- *     via `createErrorFromResponse` so the caller still receives a proper
- *     typed SandboxError instead of a masked OperationInterruptedError.
+ *     via `createErrorFromResponse` into a typed SandboxError.
+ *
+ * Lifecycle interruption causes are rebound onto the pending RPC method so the
+ * public error names that operation and keeps the lifecycle reason,
+ * retryability, and stop metadata.
  *
  * Anything without a recognized code is ignored so the caller falls back to
  * normal transport classification.
@@ -407,48 +526,9 @@ function maybePreferConnectionError(
     return null;
   }
 
-  // Same-realm typed error: surface as-is.
-  if (captured instanceof SandboxError) {
-    return captured;
-  }
-
-  // Structured, error-like value (raw/cross-realm) carrying a recognized
-  // code. Rehydrate into a typed SandboxError. Reads `context` or `details`
-  // for the structured payload, matching the two wire formats handled by
-  // `translateRPCError`.
-  const shape = captured as {
-    code?: unknown;
-    message?: unknown;
-    context?: unknown;
-    details?: unknown;
-  } | null;
-  if (
-    shape &&
-    typeof shape.code === 'string' &&
-    Object.hasOwn(ErrorCode, shape.code)
-  ) {
-    const code = shape.code as ErrorCode;
-    const structured =
-      shape.context && typeof shape.context === 'object'
-        ? (shape.context as Record<string, unknown>)
-        : shape.details && typeof shape.details === 'object'
-          ? (shape.details as Record<string, unknown>)
-          : {};
-    const message = typeof shape.message === 'string' ? shape.message : code;
-    return createErrorFromResponse(
-      {
-        code,
-        message,
-        context: structured,
-        httpStatus: getHttpStatus(code),
-        suggestion: getSuggestion(code, structured as Record<string, unknown>),
-        timestamp: new Date().toISOString()
-      },
-      { cause: captured }
-    ) as SandboxError;
-  }
-
-  return null;
+  const shape = extractCapturedErrorShape(captured);
+  if (!shape) return null;
+  return rebindInterruptedOperationContext(shape, context, captured);
 }
 
 /**
@@ -523,7 +603,12 @@ function buildInterruptedOperationResponse(
       kind === 'session_disposed' ? 'transport_disposed' : 'runtime_replaced',
     operation: context.operation,
     phase: 'rpc_call',
-    admitted: 'unknown',
+    admitted:
+      context.sessionEstablished === true
+        ? true
+        : context.sessionEstablished === false
+          ? false
+          : 'unknown',
     retryable: false
   };
   const action =

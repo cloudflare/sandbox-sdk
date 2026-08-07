@@ -34,9 +34,37 @@ export interface ResponseRetryOptions {
 }
 
 /**
+ * Compute the next backoff delay from the remaining retry budget. Returns null
+ * when another attempt should not begin.
+ *
+ * Delay is limited to the budget left after reserving `minTimeForRetryMs` for
+ * the subsequent attempt. An attempt already in progress owns its own
+ * per-request timeouts via the caller-provided `fetchResponse` function.
+ */
+function nextRetryDelayMs(
+  attempt: number,
+  remainingMs: number,
+  minTimeForRetryMs: number
+): number | null {
+  const availableForDelay = remainingMs - minTimeForRetryMs;
+  if (availableForDelay <= 0) {
+    return null;
+  }
+
+  const computedDelay = Math.min(
+    DEFAULT_INITIAL_RETRY_DELAY_MS * 2 ** attempt,
+    DEFAULT_MAX_RETRY_DELAY_MS
+  );
+  return Math.min(computedDelay, availableForDelay);
+}
+
+/**
  * Retry Response-returning operations while their response remains retryable.
- * The retry budget covers the whole operation; each attempt owns any
- * per-request timeout inside the caller-provided `fetchResponse` function.
+ *
+ * The retry budget decides whether another attempt may begin after a retryable
+ * response or thrown error. Each attempt owns any per-request timeout inside
+ * the caller-provided `fetchResponse` function. Backoff is limited to the
+ * remaining budget after reserving `minTimeForRetryMs` for that next attempt.
  */
 export async function fetchWithResponseRetry(
   fetchResponse: () => Promise<Response>,
@@ -58,15 +86,15 @@ export async function fetchWithResponseRetry(
 
       const elapsed = Date.now() - startTime;
       const remaining = options.retryTimeoutMs - elapsed;
-      if (remaining <= options.minTimeForRetryMs) {
-        // Budget exhausted — surface the real cause rather than swallowing it.
+      const delay = nextRetryDelayMs(
+        attempt,
+        remaining,
+        options.minTimeForRetryMs
+      );
+      if (delay === null) {
+        // Budget exhausted — surface the real cause.
         throw error;
       }
-
-      const delay = Math.min(
-        DEFAULT_INITIAL_RETRY_DELAY_MS * 2 ** attempt,
-        DEFAULT_MAX_RETRY_DELAY_MS
-      );
 
       options.logger.info(options.retryLogMessage, {
         attempt: attempt + 1,
@@ -86,8 +114,13 @@ export async function fetchWithResponseRetry(
 
     const elapsed = Date.now() - startTime;
     const remaining = options.retryTimeoutMs - elapsed;
+    const delay = nextRetryDelayMs(
+      attempt,
+      remaining,
+      options.minTimeForRetryMs
+    );
 
-    if (remaining <= options.minTimeForRetryMs) {
+    if (delay === null) {
       options.onRetryExhausted?.({
         attempts: attempt + 1,
         elapsedMs: elapsed,
@@ -95,11 +128,6 @@ export async function fetchWithResponseRetry(
       });
       return response;
     }
-
-    const delay = Math.min(
-      DEFAULT_INITIAL_RETRY_DELAY_MS * 2 ** attempt,
-      DEFAULT_MAX_RETRY_DELAY_MS
-    );
 
     options.logger.info(options.retryLogMessage, {
       status: response.status,
