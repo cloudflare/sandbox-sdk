@@ -248,7 +248,7 @@ export function parseNpmPackResult(stdout: string): PackResult {
     );
   }
 
-  const candidate = Array.isArray(parsed) ? parsed[0] : parsed;
+  const candidate = unwrapNpmPackCandidate(parsed);
   if (
     candidate === null ||
     typeof candidate !== 'object' ||
@@ -278,6 +278,23 @@ export function parseNpmPackResult(stdout: string): PackResult {
     filename: (candidate as { filename: string }).filename,
     files
   };
+}
+
+function unwrapNpmPackCandidate(parsed: unknown): unknown {
+  if (Array.isArray(parsed)) {
+    return parsed[0];
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return parsed;
+  }
+  if ('filename' in parsed) {
+    return parsed;
+  }
+  const values = Object.values(parsed as Record<string, unknown>);
+  if (values.length === 1) {
+    return values[0];
+  }
+  return parsed;
 }
 
 function extractJsonPayload(stdout: string): string {

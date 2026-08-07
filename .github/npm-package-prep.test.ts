@@ -188,4 +188,13 @@ describe('parseNpmPackResult', () => {
       'pkg.tgz'
     );
   });
+
+  test('accepts package-name keyed npm pack JSON', () => {
+    assert.equal(
+      parseNpmPackResult(
+        '{"@cloudflare/sandbox":{"filename":"cloudflare-sandbox-0.12.5.tgz","files":[{"path":"package.json"}]}}'
+      ).filename,
+      'cloudflare-sandbox-0.12.5.tgz'
+    );
+  });
 });
