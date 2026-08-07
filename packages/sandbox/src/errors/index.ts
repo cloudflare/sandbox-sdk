@@ -48,6 +48,7 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContainerUnavailableContext,
+  ContainerUnavailableReason,
   ContextNotFoundContext,
   ErrorCodeType,
   ErrorResponse,

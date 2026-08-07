@@ -114,6 +114,7 @@ export type {
 } from './clients/interpreter-client.js';
 export type {
   ContainerUnavailableContext,
+  ContainerUnavailableReason,
   OperationInterruptedContext,
   OperationInterruptedReason,
   RPCTransportContext,
