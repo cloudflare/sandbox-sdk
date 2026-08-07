@@ -1,5 +1,36 @@
 # @cloudflare/sandbox
 
+## 0.12.5
+
+### Patch Changes
+
+- [#786](https://github.com/cloudflare/sandbox-sdk/pull/786) [`750ca4d`](https://github.com/cloudflare/sandbox-sdk/commit/750ca4de89d977c1e8127c5ea7c3e03965307aef) Thanks [@aron-cf](https://github.com/aron-cf)! - Instrument the bridge API with Cloudflare custom spans. Each endpoint now emits
+  a `bridge.<operation>` span annotated with the sandbox ID, container UUID, and
+  operation-specific metadata (command, file path, port, session ID, and so on),
+  so requests are traceable end to end. Enable tracing with
+  `observability.traces.enabled` in your Worker configuration.
+
+- [#799](https://github.com/cloudflare/sandbox-sdk/pull/799) [`0783596`](https://github.com/cloudflare/sandbox-sdk/commit/0783596b334be98a2ab415f1f54ec342e313c10c) Thanks [@aron-cf](https://github.com/aron-cf)! - Make `destroy()` succeed when the sandbox container was never admitted, so cleanup no longer fails with a no-instance platform error.
+
+- [#799](https://github.com/cloudflare/sandbox-sdk/pull/799) [`0783596`](https://github.com/cloudflare/sandbox-sdk/commit/0783596b334be98a2ab415f1f54ec342e313c10c) Thanks [@aron-cf](https://github.com/aron-cf)! - Reduce intermittent startup failures during concurrent sandbox creation where operations could fail with a disposed RPC session error.
+
+- [#799](https://github.com/cloudflare/sandbox-sdk/pull/799) [`0783596`](https://github.com/cloudflare/sandbox-sdk/commit/0783596b334be98a2ab415f1f54ec342e313c10c) Thanks [@aron-cf](https://github.com/aron-cf)! - Surface container capacity and admission failures as retryable `ContainerUnavailableError` with a structured `reason`, including no-instance and max-instances cases. Callers can branch on `error.reason` instead of parsing platform messages.
+
+- [#786](https://github.com/cloudflare/sandbox-sdk/pull/786) [`750ca4d`](https://github.com/cloudflare/sandbox-sdk/commit/750ca4de89d977c1e8127c5ea7c3e03965307aef) Thanks [@aron-cf](https://github.com/aron-cf)! - Fill the warm pool in bounded-parallel batches instead of one container at a
+  time, so it primes and recovers far faster after a burst. Tune the batch size
+  with `WARM_POOL_SCALE_BATCH_SIZE` (default 5, clamped to 20).
+
+- [#786](https://github.com/cloudflare/sandbox-sdk/pull/786) [`750ca4d`](https://github.com/cloudflare/sandbox-sdk/commit/750ca4de89d977c1e8127c5ea7c3e03965307aef) Thanks [@aron-cf](https://github.com/aron-cf)! - Refill the warm pool the moment it drains instead of waiting for the next
+  background tick. After a burst consumes warm containers, replenishment now
+  starts immediately, cutting the latency tail for sandboxes created during
+  sustained or back-to-back bursts.
+
+- [#786](https://github.com/cloudflare/sandbox-sdk/pull/786) [`750ca4d`](https://github.com/cloudflare/sandbox-sdk/commit/750ca4de89d977c1e8127c5ea7c3e03965307aef) Thanks [@aron-cf](https://github.com/aron-cf)! - Let the warm pool know its instance ceiling up front via the
+  `WARM_POOL_MAX_INSTANCES` bridge variable. Set it to match your container's
+  `max_instances` so the pool makes correct capacity decisions without first
+  crashing into the limit. `0` (the default) preserves the existing auto-learn
+  behaviour.
+
 ## 0.12.4
 
 ### Patch Changes
