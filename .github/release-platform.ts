@@ -314,6 +314,13 @@ function parseJSONString(output: string, description: string): string {
     return parsed;
   }
   if (
+    Array.isArray(parsed) &&
+    parsed.length === 1 &&
+    typeof parsed[0] === 'string'
+  ) {
+    return parsed[0];
+  }
+  if (
     parsed !== null &&
     typeof parsed === 'object' &&
     'version' in parsed &&

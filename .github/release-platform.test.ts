@@ -226,5 +226,20 @@ describe('ReleasePlatform', () => {
       ),
       { version: stableVersion('1.2.3') }
     );
+
+    const arrayShape = new ExecReleasePlatform({
+      command: async () => ({
+        exitCode: 0,
+        stdout: '["1.2.3"]\n',
+        stderr: ''
+      })
+    });
+    assert.deepEqual(
+      await arrayShape.npm.inspectVersion(
+        '@cloudflare/sandbox',
+        stableVersion('1.2.3')
+      ),
+      { version: stableVersion('1.2.3') }
+    );
   });
 });
