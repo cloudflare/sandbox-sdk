@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface CapturedOptions {
   retryTimeoutMs?: number;
+  onConnected?: () => void;
 }
 
 interface CapturedRPCMain {
@@ -39,8 +40,14 @@ const captured: {
 
 vi.mock('../src/container-control/connection', () => ({
   ContainerControlConnection: class {
+    private onConnected: (() => void) | undefined;
     constructor(options: CapturedOptions) {
       captured.options.push(options);
+      this.onConnected = options.onConnected;
+      // Reflect an established session so disposed-mid-call errors classify as
+      // OPERATION_INTERRUPTED (a true interruption), matching real behavior
+      // once the WebSocket upgrade has succeeded.
+      this.onConnected?.();
     }
     setRetryTimeoutMs(ms: number) {
       captured.setRetryTimeoutCalls.push(ms);
@@ -135,7 +142,9 @@ describe('ContainerControlClient retry timeout wiring', () => {
         reason: 'transport_disposed',
         operation: 'commands.execute',
         phase: 'rpc_call',
-        admitted: 'unknown',
+        // The mock connection fires onConnected, so the session was established
+        // before the disposal interrupted the call.
+        admitted: true,
         retryable: false
       }
     });

@@ -250,18 +250,27 @@ describe('Sandbox.containerFetch() error classification', () => {
     );
   });
 
-  describe('no instance error → 503 with provisioning message', () => {
-    it('returns 503 with provisioning message for "no container instance"', async () => {
-      const response = await triggerContainerFetchWithError(
-        'there is no container instance that can be provided to this durable object'
-      );
+  describe('no instance error → 503 CONTAINER_UNAVAILABLE', () => {
+    it('returns a structured CONTAINER_UNAVAILABLE 503 for "no container instance"', async () => {
+      const platformMessage =
+        'there is no container instance that can be provided to this durable object';
+      const response = await triggerContainerFetchWithError(platformMessage);
 
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('10');
-      expect(
-        ((await response.json()) as { context: { phase: string } }).context
-          .phase
-      ).toBe('provisioning');
+      const body = (await response.json()) as {
+        code: string;
+        message: string;
+        context: {
+          reason: string;
+          retryable: boolean;
+          originalMessage: string;
+        };
+      };
+      expect(body.code).toBe('CONTAINER_UNAVAILABLE');
+      expect(body.context.reason).toBe('no_container_instance_available');
+      expect(body.context.retryable).toBe(true);
+      expect(body.context.originalMessage).toBe(platformMessage);
     });
 
     it('returns 503 for case-insensitive "No Container Instance" match', async () => {
@@ -345,17 +354,23 @@ describe('Sandbox.containerFetch() error classification', () => {
     });
   });
   describe('unrecognized errors → 503 (safe to retry)', () => {
-    it('returns 503 for max instances exceeded (recoverable capacity limit)', async () => {
-      // Confirmed via platform source: TOOMANYDURABLEOBJECTS resets the retry timer
-      // and adds 10s backoff, expecting the condition to clear as load drops.
-      // Lands in unrecognized tier (Retry-After: 5) since the message doesn't
-      // match a known transient pattern, but still gets 503 for safe retry.
-      const response = await triggerContainerFetchWithError(
-        'maximum number of running container instances exceeded. Try again later, or try configuring a higher value for max_instances'
-      );
+    it('returns a structured CONTAINER_UNAVAILABLE 503 for max instances exceeded', async () => {
+      // Platform capacity limit (TOOMANYDURABLEOBJECTS). Classified as a
+      // container-admission failure so callers receive a typed
+      // ContainerUnavailableError with an actionable reason.
+      const platformMessage =
+        'maximum number of running container instances exceeded. Try again later, or try configuring a higher value for max_instances';
+      const response = await triggerContainerFetchWithError(platformMessage);
 
       expect(response.status).toBe(503);
-      expect(response.headers.get('Retry-After')).toBe('5');
+      expect(response.headers.get('Retry-After')).toBe('10');
+      const body = (await response.json()) as {
+        code: string;
+        context: { reason: string; retryable: boolean };
+      };
+      expect(body.code).toBe('CONTAINER_UNAVAILABLE');
+      expect(body.context.reason).toBe('max_container_instances_exceeded');
+      expect(body.context.retryable).toBe(true);
     });
 
     it('returns 503 for "container already exists" errors (workerd)', async () => {
@@ -409,7 +424,7 @@ describe('Sandbox.containerFetch() error classification', () => {
 
     it('503 responses include Retry-After: 10 for provisioning errors', async () => {
       const response = await triggerContainerFetchWithError(
-        'no container instance available'
+        'There is no Container instance available at this time. Try again later.'
       );
 
       expect(response.status).toBe(503);
