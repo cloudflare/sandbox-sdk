@@ -11,21 +11,10 @@ on:
         description: 'Internal registry source tag, for example ci-<docker hash>'
         required: true
         type: string
-      publish_docker_hub:
-        description: 'Copy Docker images to Docker Hub'
-        required: true
-        default: true
-        type: boolean
-      publish_cf_library:
-        description: 'Copy Docker images to CF Registry Library'
-        required: true
-        default: true
-        type: boolean
-      upload_binaries:
-        description: 'Extract standalone binaries and upload them to the GitHub release'
-        required: true
-        default: true
-        type: boolean
+      release_commit_sha:
+        description: 'Release commit SHA, required only if the release tag is missing'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -38,7 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Install crane
         run: .github/install-crane.sh
@@ -51,52 +41,35 @@ jobs:
           DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
 
-      - name: Publish Docker images to Docker Hub
-        if: ${{ inputs.publish_docker_hub }}
-        run: |
-          .github/publish-sandbox-images.sh \
-            --source-tag "${{ inputs.source_tag }}" \
-            --version "${{ inputs.version }}" \
-            --docker-hub
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Backfill stable release artifacts
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Publish Docker images to CF Registry Library
-        if: ${{ inputs.publish_cf_library }}
-        run: |
-          .github/publish-sandbox-images.sh \
-            --source-tag "${{ inputs.source_tag }}" \
-            --version "${{ inputs.version }}" \
-            --cf-library
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Extract standalone binaries
-        if: ${{ inputs.upload_binaries }}
-        run: |
-          REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-          SRC_TAG="${{ inputs.source_tag }}"
-          docker pull "${REGISTRY}/sandbox:${SRC_TAG}"
-          CID=$(docker create "${REGISTRY}/sandbox:${SRC_TAG}")
-          docker cp "$CID":/container-server/sandbox ./sandbox-linux-x64
-          docker rm "$CID"
-          docker pull "${REGISTRY}/sandbox-musl:${SRC_TAG}"
-          CID=$(docker create "${REGISTRY}/sandbox-musl:${SRC_TAG}")
-          docker cp "$CID":/container-server/sandbox ./sandbox-linux-x64-musl
-          docker rm "$CID"
-
-      - name: Upload binaries to GitHub Release
-        if: ${{ inputs.upload_binaries }}
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
         run: |
-          VERSION="${{ inputs.version }}"
-          sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
-          sha256sum sandbox-linux-x64-musl > sandbox-linux-x64-musl.sha256
-          gh release upload "@cloudflare/sandbox@${VERSION}" \
-            ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 \
-            ./sandbox-linux-x64-musl ./sandbox-linux-x64-musl.sha256 \
-            --clobber
+          git_tag="@cloudflare/sandbox@${{ inputs.version }}"
+          release_commit_sha="${{ inputs.release_commit_sha }}"
+
+          if git rev-parse --verify --quiet "refs/tags/${git_tag}" >/dev/null; then
+            release_commit_sha="$(git rev-list -n 1 "$git_tag")"
+          elif [[ -z "$release_commit_sha" ]]; then
+            echo "Release tag $git_tag is missing; provide release_commit_sha to create or converge the tag." >&2
+            exit 1
+          fi
+
+          npx tsx .github/release-orchestrator.ts stable \
+            --version "${{ inputs.version }}" \
+            --source-tag "${{ inputs.source_tag }}" \
+            --commit-sha "$release_commit_sha" \
+            --skip-npm true
 
       - name: Summarize backfill
         run: |
@@ -104,7 +77,5 @@ jobs:
             echo "## Release artifact backfill"
             echo "Version: \`${{ inputs.version }}\`"
             echo "Source tag: \`${{ inputs.source_tag }}\`"
-            echo "Docker Hub: \`${{ inputs.publish_docker_hub }}\`"
-            echo "CF Registry Library: \`${{ inputs.publish_cf_library }}\`"
-            echo "GitHub release binaries: \`${{ inputs.upload_binaries }}\`"
+            echo "Convergence: full stable release state, except npm publish is skipped"
           } >> "$GITHUB_STEP_SUMMARY"

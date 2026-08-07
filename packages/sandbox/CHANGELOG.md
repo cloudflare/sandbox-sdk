@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.12.4
+
+### Patch Changes
+
+- [#798](https://github.com/cloudflare/sandbox-sdk/pull/798) [`33ac27b`](https://github.com/cloudflare/sandbox-sdk/commit/33ac27bbe6698f706bc2aee0435280c869d1465f) Thanks [@aron-cf](https://github.com/aron-cf)! - Add `labels` to `SandboxOptions` so `getSandbox()` can attach Cloudflare Container labels for analytics and observability. Labels are applied on container start; updates while running apply on the next start.
+
+## 0.12.3
+
+### Patch Changes
+
+- [#781](https://github.com/cloudflare/sandbox-sdk/pull/781) [`56b4f78`](https://github.com/cloudflare/sandbox-sdk/commit/56b4f78e630cbbae9d3a59d7fd8bfc8477ba973d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Restoring a backup now survives a durable object restart.
+
+- [#780](https://github.com/cloudflare/sandbox-sdk/pull/780) [`2fec714`](https://github.com/cloudflare/sandbox-sdk/commit/2fec714dc3514177de084df5aefa2ec545c0eb00) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Reduces startup failures when a sandbox is booting or being replaced during container deployment. As well as providing structured errors for sandbox runtime and platform interruptions including retry guidance for idempotent operations.
+
+- [#782](https://github.com/cloudflare/sandbox-sdk/pull/782) [`17d1962`](https://github.com/cloudflare/sandbox-sdk/commit/17d1962db455a176aa78f98b162d1e19b78986bd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Recover quick tunnels when the sandbox runtime is replaced. `tunnels.get(port)` now provisions through an idempotent runtime-run boundary so a retry after a replacement returns a currently usable URL instead of a dead one, and `tunnels.list()` no longer returns quick tunnel URLs known to be stale after a container restart.
+
 ## 0.12.2
 
 ### Patch Changes

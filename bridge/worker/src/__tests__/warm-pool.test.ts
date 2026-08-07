@@ -56,6 +56,10 @@ async function withPool(
   opts: {
     warmTarget?: number;
     maxInstances?: number | null;
+    /** Operator-declared ceiling passed through configure() (Proposal 1). */
+    configuredMaxInstances?: number;
+    /** Bounded-parallel batch size passed through configure() (TICKET2). */
+    scaleBatchSize?: number;
     warmContainers?: string[];
     assignments?: [string, string][];
     containerBehavior?: {
@@ -94,7 +98,9 @@ async function withPool(
     // Configure
     await instance.configure({
       warmTarget: opts.warmTarget ?? 0,
-      refreshInterval: 60_000
+      refreshInterval: 60_000,
+      ...(opts.configuredMaxInstances !== undefined ? { maxInstances: opts.configuredMaxInstances } : {}),
+      ...(opts.scaleBatchSize !== undefined ? { scaleBatchSize: opts.scaleBatchSize } : {})
     });
 
     await callback(instance, mock);
@@ -221,6 +227,183 @@ describe('WarmPool', () => {
         async (pool) => {
           await pool.alarm();
           expect(startCount).toBe(0);
+        }
+      );
+    });
+  });
+
+  // ── batched scale-up (TICKET2) ─────────────────────────────────────────
+
+  describe('batched scale-up', () => {
+    /**
+     * Behavior wrapper that records the peak number of concurrent
+     * startAndWaitForPorts calls in flight at once.
+     */
+    function concurrencyTracker() {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let startCount = 0;
+      return {
+        startCount: () => startCount,
+        maxInFlight: () => maxInFlight,
+        behavior: {
+          startAndWaitForPorts: vi.fn(async () => {
+            startCount++;
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            // Yield so siblings in the same batch can also enter.
+            await Promise.resolve();
+            await Promise.resolve();
+            inFlight--;
+          }),
+          getState: vi.fn(async () => ({ status: 'running' as const }))
+        }
+      };
+    }
+
+    it('starts containers in bounded-parallel batches', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 10,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 5,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(10);
+          expect(tracker.startCount()).toBe(10);
+          // Bounded: never more than batch size in flight at once.
+          expect(tracker.maxInFlight()).toBe(5);
+        }
+      );
+    });
+
+    it('batch size of 1 reproduces serial behaviour', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 4,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 1,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          expect((await pool.getStats()).warm).toBe(4);
+          expect(tracker.maxInFlight()).toBe(1);
+        }
+      );
+    });
+
+    it('clamps batch size to a safe maximum', async () => {
+      const tracker = concurrencyTracker();
+      await withPool(
+        {
+          warmTarget: 30,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 1000,
+          containerBehavior: tracker.behavior
+        },
+        async (pool) => {
+          await pool.alarm();
+          // Clamped to the documented max of 20, not 1000.
+          expect(tracker.maxInFlight()).toBe(20);
+        }
+      );
+    });
+
+    it('stops launching batches once capacity is exhausted mid-fill', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 20,
+          scaleBatchSize: 5,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // First batch of 5 succeeds; the second batch hits the cap.
+              if (startCount > 5) {
+                throw new Error(MAX_INSTANCES_ERROR);
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          // 5 succeed, the straddling batch of 5 all fail (bounded overshoot),
+          // then the loop stops — no third batch.
+          expect(startCount).toBe(10);
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(5);
+        }
+      );
+    });
+
+    it('records the accurate ceiling after a partial-capacity batch', async () => {
+      // Regression: with parallel batches, recordCapacityLimit() runs while a
+      // batch's successful starts are not yet in warmContainers, so it would
+      // infer a ceiling lower than reality and reject available capacity.
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 10,
+          scaleBatchSize: 5,
+          // Two slots already taken by live assignments.
+          assignments: [
+            ['s1', 'a1'],
+            ['s2', 'a2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // Only the first 3 starts succeed; the rest hit the cap.
+              if (startCount > 3) {
+                throw new Error(MAX_INSTANCES_ERROR);
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          // 3 warm + 2 assigned = 5 real containers running.
+          expect(stats.warm).toBe(3);
+          expect(stats.total).toBe(5);
+          // The inferred ceiling must reflect the true total, not the stale
+          // pre-batch count of 2.
+          expect(stats.maxInstances).toBe(5);
+        }
+      );
+    });
+
+    it('adds only successful UUIDs from a partial-failure batch', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 4,
+          configuredMaxInstances: 100,
+          scaleBatchSize: 5,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+              // Odd-numbered starts fail with a non-capacity error.
+              if (startCount % 2 === 1) {
+                throw new Error('transient boot failure');
+              }
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          const stats = await pool.getStats();
+          // 2 of the 4 attempted succeeded; pool not corrupted.
+          expect(stats.warm).toBe(2);
         }
       );
     });
@@ -356,6 +539,123 @@ describe('WarmPool', () => {
 
   // ── startContainer error detection ─────────────────────────────────────
 
+  describe('eager refill', () => {
+    it('refills the warm pool after a pop without waiting for the alarm', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 2,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2'],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.getContainer('user1');
+          // Wait for the fire-and-forget refill to settle.
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(2);
+          expect(startCount).toBe(1);
+        }
+      );
+    });
+
+    it('debounces concurrent pops to a single in-flight refill', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2', 'w3'],
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              await gate;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          let adjustCount = 0;
+          const wrapped = pool as unknown as {
+            adjustPool: () => Promise<void>;
+            refillPromise: Promise<void> | null;
+          };
+          const orig = wrapped.adjustPool.bind(pool);
+          wrapped.adjustPool = async () => {
+            adjustCount++;
+            return orig();
+          };
+
+          await Promise.all([pool.getContainer('user3'), pool.getContainer('user4')]);
+
+          // Two pops, but only one refill should be in flight.
+          expect(adjustCount).toBe(1);
+
+          release();
+          await wrapped.refillPromise;
+        }
+      );
+    });
+
+    it('eager refill never exceeds remaining capacity', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 3,
+          warmContainers: ['w1'],
+          assignments: [['user1', 'c1']],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          // Pop w1 → warm 0, assigned 2, total 2. Ceiling 3 leaves room for 1.
+          await pool.getContainer('user2');
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+          expect(startCount).toBe(1);
+          const stats = await pool.getStats();
+          expect(stats.warm).toBe(1);
+        }
+      );
+    });
+
+    it('refill failure does not reject getContainer', async () => {
+      await withPool(
+        {
+          warmTarget: 2,
+          configuredMaxInstances: 10,
+          warmContainers: ['w1', 'w2'],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              throw new Error('boom');
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await expect(pool.getContainer('user1')).resolves.toBeDefined();
+          await (pool as unknown as { refillPromise: Promise<void> | null }).refillPromise;
+        }
+      );
+    });
+  });
+
   describe('startContainer / error detection', () => {
     it('records knownMaxInstances when max_instances error is thrown', async () => {
       await withPool(
@@ -463,6 +763,8 @@ describe('WarmPool', () => {
       await withPool(
         {
           warmTarget: 5,
+          // Serial batches isolate the mid-loop capacity stop.
+          scaleBatchSize: 1,
           containerBehavior: {
             startAndWaitForPorts: vi.fn(async () => {
               startCount++;
@@ -567,6 +869,139 @@ describe('WarmPool', () => {
     });
   });
 
+  // ── Configured max_instances (Proposal 1) ──────────────────────────────
+
+  describe('configured max_instances', () => {
+    it('seeds knownMaxInstances from config before any container start', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 100
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(100);
+        }
+      );
+    });
+
+    it('does not require a discovery 502 to learn the ceiling', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 5,
+          configuredMaxInstances: 2,
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await pool.alarm();
+          // Clamped to configured ceiling of 2 — no failed start needed.
+          expect(startCount).toBe(2);
+        }
+      );
+    });
+
+    it('keeps a learned-lower ceiling over a higher configured value', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          maxInstances: 3,
+          configuredMaxInstances: 100
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(3);
+        }
+      );
+    });
+
+    it('keeps a configured-lower ceiling over a higher learned value', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          maxInstances: 50,
+          configuredMaxInstances: 10
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(10);
+        }
+      );
+    });
+
+    it('treats 0 as auto-learn (preserves null ceiling)', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 0
+        },
+        async (pool) => {
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBeNull();
+        }
+      );
+    });
+
+    it('never starts beyond the configured ceiling in getContainer', async () => {
+      await withPool(
+        {
+          warmTarget: 0,
+          configuredMaxInstances: 2,
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {}),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          await expect(pool.getContainer('user3')).rejects.toThrow('instance limit reached');
+        }
+      );
+    });
+
+    it('re-seeds the configured ceiling after a successful probe clears it', async () => {
+      let startCount = 0;
+      await withPool(
+        {
+          warmTarget: 3,
+          maxInstances: 2,
+          configuredMaxInstances: 5,
+          assignments: [
+            ['user1', 'c1'],
+            ['user2', 'c2']
+          ],
+          containerBehavior: {
+            startAndWaitForPorts: vi.fn(async () => {
+              startCount++;
+            }),
+            getState: vi.fn(async () => ({ status: 'running' }))
+          }
+        },
+        async (pool) => {
+          // Probe succeeds, clears the learned limit of 2.
+          await pool.alarm();
+          expect((await pool.getStats()).maxInstances).toBeNull();
+          // Next configure() (every request) re-seeds the configured ceiling.
+          await pool.configure({
+            warmTarget: 3,
+            refreshInterval: 60_000,
+            maxInstances: 5
+          });
+          const stats = await pool.getStats();
+          expect(stats.maxInstances).toBe(5);
+        }
+      );
+    });
+  });
+
   // ── Multiple alarm cycles ──────────────────────────────────────────────
 
   describe('multiple alarm cycles', () => {
@@ -577,6 +1012,9 @@ describe('WarmPool', () => {
       await withPool(
         {
           warmTarget: 3,
+          // Reactive discovery counts on serial starts; batch size 1 keeps the
+          // inferred ceiling accurate for the learn-by-crashing path.
+          scaleBatchSize: 1,
           containerBehavior: {
             startAndWaitForPorts: vi.fn(async () => {
               totalStarted++;

@@ -12,6 +12,7 @@
     "ignoreUnknown": false,
     "includes": [
       "bridge/**",
+      "devin/**",
       "packages/**",
       "examples/**",
       "sites/**",

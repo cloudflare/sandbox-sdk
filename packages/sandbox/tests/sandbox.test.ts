@@ -27,6 +27,7 @@ vi.mock('@cloudflare/containers', () => {
     ctx: any;
     env: any;
     sleepAfter: string | number = '10m';
+    labels?: Record<string, string>;
     constructor(ctx: any, env: any) {
       this.ctx = ctx;
       this.env = env;
@@ -2755,6 +2756,75 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('labels configuration', () => {
+    it('configure() applies labels to the inherited container labels field', async () => {
+      await sandbox.configure({ labels: { tenantId: 'tenant_123' } });
+
+      expect((sandbox as any).labels).toEqual({ tenantId: 'tenant_123' });
+      expect(mockCtx.storage.put).toHaveBeenCalledWith('labels', {
+        tenantId: 'tenant_123'
+      });
+    });
+
+    it('clones labels before storing them', async () => {
+      const labels = { tenantId: 'tenant_123' };
+
+      await sandbox.setLabels(labels);
+      labels.tenantId = 'mutated';
+
+      expect((sandbox as any).labels).toEqual({ tenantId: 'tenant_123' });
+    });
+
+    it('constructor restores persisted labels', async () => {
+      const storageState = new Map<string, unknown>([
+        ['labels', { tenantId: 'tenant_123' }]
+      ]);
+      const storage = {
+        get: vi.fn(async (key: string) => storageState.get(key)),
+        put: vi.fn(async (key: string, value: unknown) => {
+          storageState.set(key, value);
+        }),
+        delete: vi.fn(async (key: string) => {
+          storageState.delete(key);
+        }),
+        list: vi.fn().mockResolvedValue(new Map())
+      };
+      const restoreCtx: MockCtx = {
+        storage: {
+          ...storage,
+          transaction: vi.fn(async (callback) => callback(storage))
+        } as any,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(
+            <T>(callback: () => Promise<T>): Promise<T> => callback()
+          ),
+        waitUntil: vi.fn(),
+        container: { running: false, start: vi.fn() },
+        id: {
+          toString: () => 'restore-labels-sandbox',
+          equals: vi.fn(),
+          name: 'restore-labels-sandbox'
+        } as any
+      };
+
+      const restoredSandbox = new Sandbox(
+        restoreCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+        mockEnv
+      );
+
+      await Promise.all(
+        (restoreCtx.blockConcurrencyWhile as any).mock.results.map(
+          (r: { value: unknown }) => r.value
+        )
+      );
+
+      expect((restoredSandbox as any).labels).toEqual({
+        tenantId: 'tenant_123'
+      });
+    });
+  });
+
   describe('setSandboxName atomicity', () => {
     // sandboxName and normalizeId are written together; if the second write
     // rejects, in-memory state must match storage (both unchanged).
@@ -2789,6 +2859,17 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(renewCallsAfterFirst).toBeGreaterThan(0);
 
       await sandbox.configure({ sleepAfter: '3s' });
+
+      expect(renewSpy.mock.calls.length).toBe(renewCallsAfterFirst);
+    });
+
+    it('does not renew activity timeout on repeated identical labels', async () => {
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.configure({ labels: { tenantId: 'tenant_123' } });
+      const renewCallsAfterFirst = renewSpy.mock.calls.length;
+
+      await sandbox.configure({ labels: { tenantId: 'tenant_123' } });
 
       expect(renewSpy.mock.calls.length).toBe(renewCallsAfterFirst);
     });

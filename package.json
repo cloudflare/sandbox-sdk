@@ -38,7 +38,8 @@
     "tooling/*",
     "sites/*",
     "examples/*",
-    "bridge/worker"
+    "bridge/worker",
+    "devin"
   ],
   "devDependencies": {
     "@biomejs/biome": "2.3.7",

@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.12.26"
+    "hono": "^4.12.31"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",

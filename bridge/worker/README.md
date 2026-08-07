@@ -57,7 +57,7 @@ The default configuration uses `"lite"` instances with `max_instances: 3`. This 
 The bridge worker depends on two versioned artifacts that should be kept in sync:
 
 1. **`@cloudflare/sandbox`** — the SDK package in `package.json`. Bump the version (or use `"*"` to track latest) and run `npm install`.
-2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.12.2`). Update the tag to match the SDK version.
+2. **`cloudflare/sandbox` Docker image** — the base image tag in `Dockerfile` (e.g. `FROM docker.io/cloudflare/sandbox:0.12.4`). Update the tag to match the SDK version.
 
 Both versions should match — the SDK and container image are released together. After updating:
 
@@ -150,7 +150,6 @@ curl -X POST http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/exec \
 #### `GET /v1/sandbox/:id/file/:path`
 
 Read a file from the sandbox filesystem. The file path is given in the URL after `/file/` as an absolute path without the leading slash (e.g. `workspace/main.py` for `/workspace/main.py`). Must resolve within `/workspace`. Returns raw bytes (`application/octet-stream`).
-
 
 ```sh
 curl -X GET http://localhost:8787/v1/sandbox/mfrggzdfmy2tqnrz/file/workspace/main.py \
@@ -428,10 +427,12 @@ The pool is primed (its alarm loop started) in two ways:
 
 Set these variables in `wrangler.jsonc` (under `vars`) or via `wrangler secret put`:
 
-| Variable                     | Default   | Description                                                                          |
-| ---------------------------- | --------- | ------------------------------------------------------------------------------------ |
-| `WARM_POOL_TARGET`           | `"0"`     | Number of idle containers to keep warm. **0 disables the pool** (no surprise bills). |
-| `WARM_POOL_REFRESH_INTERVAL` | `"10000"` | Milliseconds between pool health-check / replenishment cycles.                       |
+| Variable                     | Default   | Description                                                                                                                                         |
+| ---------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WARM_POOL_TARGET`           | `"0"`     | Number of idle containers to keep warm. **0 disables the pool** (no surprise bills).                                                                |
+| `WARM_POOL_REFRESH_INTERVAL` | `"10000"` | Milliseconds between pool health-check / replenishment cycles.                                                                                      |
+| `WARM_POOL_MAX_INSTANCES`    | `"0"`     | Capacity ceiling the pool plans against. Set it to match `containers[].max_instances`. **0 leaves the ceiling to be learned from capacity errors.** |
+| `WARM_POOL_SCALE_BATCH_SIZE` | `"5"`     | Number of containers started in parallel per scale-up batch. Clamped to `[1, 20]`.                                                                  |
 
 The cron trigger frequency can be adjusted in `wrangler.jsonc` under `triggers.crons`. Remove the cron entirely if you only want manual priming via `POST /v1/pool/prime`.
 

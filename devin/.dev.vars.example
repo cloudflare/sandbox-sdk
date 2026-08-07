@@ -1,0 +1,4 @@
+# Devin service-user token with the Run outpost workers permission.
+# For local dev, copy to .dev.vars. For production, run:
+#   npx wrangler secret put DEVIN_API_TOKEN
+DEVIN_API_TOKEN=
