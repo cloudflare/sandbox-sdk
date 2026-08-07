@@ -71,7 +71,7 @@ sandboxAddon.connect({ sandboxId: sessionId, sessionId });
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 22.22+
 - Docker (for local development)
 - Cloudflare account with container access
 

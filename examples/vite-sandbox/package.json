@@ -12,8 +12,8 @@
   "devDependencies": {
     "@cloudflare/sandbox": "*",
     "@vitejs/plugin-react": "^5.1.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "vite": "^7.3.5",
     "wrangler": "^4.102.0"
   },
