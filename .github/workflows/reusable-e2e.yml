@@ -280,6 +280,10 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           DEPLOY_HASH: ${{ inputs.deploy_hash }}
 
+      # Deploy reuse skips the earlier wrangler install; rollout still needs it.
+      - name: Ensure wrangler is available for rollout checks
+        run: command -v wrangler >/dev/null 2>&1 || npm install -g wrangler@latest
+
       - name: Wait for container rollout readiness
         run: .github/scripts/wait-for-container-rollout.sh "${{ inputs.worker_name_prefix }}" "${{ inputs.image_tag }}"
         env:

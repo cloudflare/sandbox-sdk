@@ -39,3 +39,6 @@ if grep -Fq 'if:' <<<"$checkout_step"; then
   echo "Deployment checkout must run when an existing deployment is reused" >&2
   exit 1
 fi
+
+assert_contains 'Ensure wrangler is available for rollout checks'
+assert_contains 'command -v wrangler'
