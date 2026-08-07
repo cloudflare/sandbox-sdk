@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Keep RPC sessions alive while method calls are pending to avoid intermittent `RPC session was shut down by disposing the main stub` failures during concurrent sandbox startup.
+Reduce intermittent startup failures during concurrent sandbox creation where operations could fail with a disposed RPC session error.
