@@ -91,12 +91,13 @@ import {
   getHttpStatus,
   getSuggestion,
   type OperationInterruptedContext,
+  type OperationInterruptedReason,
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
-import { SandboxError } from '../errors/classes';
+import { OperationInterruptedError, SandboxError } from '../errors/classes';
 import {
   ContainerControlConnection,
   type ContainerControlConnectionOptions
@@ -420,6 +421,31 @@ function extractCapturedErrorShape(captured: unknown): {
   };
 }
 
+const OPERATION_INTERRUPTED_REASONS = new Set<OperationInterruptedReason>([
+  'runtime_replaced',
+  'transport_disposed',
+  'sandbox_lifetime_changed',
+  'recovery_exhausted'
+]);
+
+function asOperationInterruptedReason(
+  value: unknown
+): OperationInterruptedReason | null {
+  return typeof value === 'string' &&
+    OPERATION_INTERRUPTED_REASONS.has(value as OperationInterruptedReason)
+    ? (value as OperationInterruptedReason)
+    : null;
+}
+
+function asInterruptedAdmitted(
+  value: unknown
+): boolean | 'unknown' | undefined {
+  if (typeof value === 'boolean' || value === 'unknown') {
+    return value;
+  }
+  return undefined;
+}
+
 /**
  * Lifecycle disconnect causes are stamped with a generic connection-level
  * operation identity. When they interrupt a concrete RPC method, rebind the
@@ -434,7 +460,7 @@ function rebindInterruptedOperationContext(
   },
   context: RPCTranslationContext,
   cause: unknown
-): SandboxError {
+): Error {
   if (
     shape.code !== ErrorCode.OPERATION_INTERRUPTED ||
     typeof context.operation !== 'string' ||
@@ -453,27 +479,46 @@ function rebindInterruptedOperationContext(
         timestamp: new Date().toISOString()
       },
       { cause }
-    ) as SandboxError;
+    );
   }
 
+  const reason =
+    asOperationInterruptedReason(shape.context.reason) ?? 'transport_disposed';
   const admitted =
     context.sessionEstablished === true
       ? true
       : context.sessionEstablished === false
         ? false
-        : typeof shape.context.admitted === 'boolean' ||
-            shape.context.admitted === 'unknown'
-          ? (shape.context.admitted as boolean | 'unknown')
-          : 'unknown';
+        : (asInterruptedAdmitted(shape.context.admitted) ?? 'unknown');
+  const retryable =
+    typeof shape.context.retryable === 'boolean'
+      ? shape.context.retryable
+      : false;
 
   const interruptedContext: OperationInterruptedContext = {
-    ...(shape.context as OperationInterruptedContext),
+    reason,
     operation: context.operation,
     phase: 'rpc_call',
-    admitted
+    admitted,
+    retryable,
+    ...(typeof shape.context.recoveryAttempts === 'number' && {
+      recoveryAttempts: shape.context.recoveryAttempts
+    }),
+    ...(typeof shape.context.maxRecoveryAttempts === 'number' && {
+      maxRecoveryAttempts: shape.context.maxRecoveryAttempts
+    }),
+    ...(typeof shape.context.containerExitCode === 'number' && {
+      containerExitCode: shape.context.containerExitCode
+    }),
+    ...(typeof shape.context.stopReason === 'string' && {
+      stopReason: shape.context.stopReason
+    })
   };
 
-  return createErrorFromResponse(
+  // Construct the typed interruption error directly. The generic adapter
+  // accepts untyped Record contexts; this path already has a concrete
+  // OperationInterruptedContext, matching buildInterruptedOperationResponse.
+  return new OperationInterruptedError(
     {
       code: ErrorCode.OPERATION_INTERRUPTED,
       message: shape.message,
@@ -486,7 +531,7 @@ function rebindInterruptedOperationContext(
       timestamp: new Date().toISOString()
     },
     { cause }
-  ) as SandboxError;
+  );
 }
 
 /**
@@ -513,7 +558,7 @@ function rebindInterruptedOperationContext(
 function maybePreferConnectionError(
   transportResponse: ErrorResponse<RPCTransportContext>,
   context: RPCTranslationContext
-): SandboxError | null {
+): Error | null {
   const captured = context.connectionError;
   if (!captured) return null;
   const { kind } = transportResponse.context;
