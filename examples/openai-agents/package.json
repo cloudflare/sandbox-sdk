@@ -17,8 +17,8 @@
     "@cloudflare/sandbox": "*",
     "@openai/agents": "^0.3.3",
     "nanoid": "^5.1.6",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.42.0",

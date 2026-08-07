@@ -5,15 +5,6 @@ import { Room } from './room';
 
 export { Sandbox, Room, RoomRegistry };
 
-declare module 'react-router' {
-  export interface AppLoadContext {
-    cloudflare: {
-      env: Env;
-      ctx: ExecutionContext;
-    };
-  }
-}
-
 const reactHandler = createRequestHandler(
   () => import('virtual:react-router/server-build'),
   import.meta.env.MODE
@@ -97,8 +88,6 @@ export default {
       return registry.fetch(request);
     }
 
-    return reactHandler(request, {
-      cloudflare: { env, ctx }
-    });
+    return reactHandler(request);
   }
 } satisfies ExportedHandler<Env>;
