@@ -195,4 +195,36 @@ describe('ReleasePlatform', () => {
       /docker inspect .* failed: permission denied/
     );
   });
+
+  test('npm inspectVersion accepts object and bare version JSON shapes', async () => {
+    const objectShape = new ExecReleasePlatform({
+      command: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({ version: '1.2.3' }),
+        stderr: ''
+      })
+    });
+    assert.deepEqual(
+      await objectShape.npm.inspectVersion(
+        '@cloudflare/sandbox',
+        stableVersion('1.2.3')
+      ),
+      { version: stableVersion('1.2.3') }
+    );
+
+    const bare = new ExecReleasePlatform({
+      command: async () => ({
+        exitCode: 0,
+        stdout: '1.2.3\n',
+        stderr: ''
+      })
+    });
+    assert.deepEqual(
+      await bare.npm.inspectVersion(
+        '@cloudflare/sandbox',
+        stableVersion('1.2.3')
+      ),
+      { version: stableVersion('1.2.3') }
+    );
+  });
 });

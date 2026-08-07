@@ -294,16 +294,36 @@ function createDockerClient(executor: ProcessExecutor): DockerRegistryClient {
 }
 
 function parseJSONString(output: string, description: string): string {
+  const trimmed = output.trim();
+  if (trimmed === '') {
+    throw new Error(`${description} returned empty output`);
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(output);
+    parsed = JSON.parse(trimmed);
   } catch {
+    // Some npm versions print a bare version without JSON quotes.
+    if (/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(trimmed)) {
+      return trimmed;
+    }
     throw new Error(`${description} returned invalid JSON: ${output}`);
   }
-  if (typeof parsed !== 'string') {
-    throw new Error(`${description} returned a non-string value`);
+
+  if (typeof parsed === 'string') {
+    return parsed;
   }
-  return parsed;
+  if (
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    'version' in parsed &&
+    typeof (parsed as { version: unknown }).version === 'string'
+  ) {
+    return (parsed as { version: string }).version;
+  }
+  throw new Error(
+    `${description} returned a non-string value: ${JSON.stringify(parsed)}`
+  );
 }
 
 function parseGitHubRelease(output: string): GitHubReleaseInfo {
