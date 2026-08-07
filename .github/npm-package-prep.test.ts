@@ -161,3 +161,31 @@ function fakeDeps(writes: Map<string, string>) {
     workspaceVersions: () => new Map([['@repo/shared', '1.2.3']])
   };
 }
+
+import { parseNpmPackResult } from './npm-package-prep.ts';
+
+describe('parseNpmPackResult', () => {
+  test('accepts array and single-object npm pack JSON', () => {
+    assert.equal(
+      parseNpmPackResult(
+        '[{"filename":"pkg.tgz","files":[{"path":"package.json"}]}]'
+      ).filename,
+      'pkg.tgz'
+    );
+    assert.equal(
+      parseNpmPackResult(
+        '{"filename":"pkg.tgz","files":[{"path":"package.json"}]}'
+      ).filename,
+      'pkg.tgz'
+    );
+  });
+
+  test('ignores leading npm notices before JSON', () => {
+    assert.equal(
+      parseNpmPackResult(
+        'npm notice\n[{"filename":"pkg.tgz","files":[{"path":"package.json"}]}]'
+      ).filename,
+      'pkg.tgz'
+    );
+  });
+});

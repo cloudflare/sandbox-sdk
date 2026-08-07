@@ -226,14 +226,77 @@ async function npmPack(
     cwd: packageDir
   });
   if (result.exitCode !== 0) {
-    throw new Error(`npm pack failed: ${result.stderr.trim()}`);
+    throw new Error(
+      `npm pack failed: ${result.stderr.trim() || result.stdout.trim()}`
+    );
   }
-  const parsed = JSON.parse(result.stdout) as PackResult[];
-  const pack = parsed[0];
-  if (pack === undefined) {
-    throw new Error('npm pack produced no tarball');
+  const pack = parseNpmPackResult(result.stdout);
+  if (pack.filename.trim() === '') {
+    throw new Error(`npm pack produced no tarball: ${result.stdout.trim()}`);
   }
   return pack;
+}
+
+export function parseNpmPackResult(stdout: string): PackResult {
+  const jsonText = extractJsonPayload(stdout);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText) as unknown;
+  } catch (error) {
+    throw new Error(
+      `npm pack produced invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const candidate = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    !('filename' in candidate) ||
+    typeof (candidate as { filename: unknown }).filename !== 'string' ||
+    !('files' in candidate) ||
+    !Array.isArray((candidate as { files: unknown }).files)
+  ) {
+    throw new Error(`npm pack produced no tarball: ${stdout.trim()}`);
+  }
+
+  const files = (candidate as { files: unknown[] }).files.map((file) => {
+    if (
+      file === null ||
+      typeof file !== 'object' ||
+      !('path' in file) ||
+      typeof (file as { path: unknown }).path !== 'string'
+    ) {
+      throw new Error(
+        `npm pack produced malformed file list: ${stdout.trim()}`
+      );
+    }
+    return { path: (file as { path: string }).path };
+  });
+
+  return {
+    filename: (candidate as { filename: string }).filename,
+    files
+  };
+}
+
+function extractJsonPayload(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (trimmed === '') {
+    throw new Error('npm pack produced empty output');
+  }
+  const arrayStart = trimmed.indexOf('[');
+  const objectStart = trimmed.indexOf('{');
+  let start = -1;
+  if (arrayStart >= 0 && (objectStart < 0 || arrayStart < objectStart)) {
+    start = arrayStart;
+  } else if (objectStart >= 0) {
+    start = objectStart;
+  }
+  if (start < 0) {
+    throw new Error(`npm pack produced no JSON payload: ${trimmed}`);
+  }
+  return trimmed.slice(start);
 }
 
 function validatePackFiles(
