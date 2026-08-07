@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.12.4
+FROM docker.io/cloudflare/sandbox:0.12.5
 
 # mount-s3 (mountpoint-s3) — pinned version with SHA-256 verification per architecture
 ARG MOUNT_S3_VERSION=1.22.3
