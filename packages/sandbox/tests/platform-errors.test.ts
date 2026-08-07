@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   isDurableObjectCodeUpdateReset,
-  isPlatformTransientError
+  isPlatformTransientError,
+  matchContainerUnavailable
 } from '../src/platform-errors';
 
 describe('platform error classifiers', () => {
@@ -60,5 +61,60 @@ describe('platform error classifiers', () => {
         toString: () => 'Durable Object is overloaded'
       })
     ).toBe(false);
+  });
+});
+
+describe('matchContainerUnavailable', () => {
+  it('classifies the platform no-instance error thrown during startup', () => {
+    expect(
+      matchContainerUnavailable(
+        new Error(
+          'there is no container instance that can be provided to this durable object'
+        )
+      )
+    ).toBe('no_container_instance_available');
+  });
+
+  it('classifies the plain-text 503 no-instance body', () => {
+    expect(
+      matchContainerUnavailable(
+        'There is no Container instance available at this time. Try again later.'
+      )
+    ).toBe('no_container_instance_available');
+  });
+
+  it('classifies the max-instances capacity error', () => {
+    expect(
+      matchContainerUnavailable(
+        new Error(
+          'Maximum number of running container instances exceeded. Try again later.'
+        )
+      )
+    ).toBe('max_container_instances_exceeded');
+  });
+
+  it('matches case-insensitively and without instanceof (realm-safe)', () => {
+    // A cross-realm error whose message is a plain property, not an Error.
+    const crossRealm = {
+      message:
+        'THERE IS NO CONTAINER INSTANCE THAT CAN BE PROVIDED TO THIS DURABLE OBJECT'
+    };
+    expect(matchContainerUnavailable(crossRealm)).toBe(
+      'no_container_instance_available'
+    );
+  });
+
+  it('walks the cause chain to find a wrapped admission failure', () => {
+    const cause = new Error(
+      'there is no container instance that can be provided to this durable object'
+    );
+    expect(matchContainerUnavailable(new Error('wrapper', { cause }))).toBe(
+      'no_container_instance_available'
+    );
+  });
+
+  it('returns null for unrelated errors', () => {
+    expect(matchContainerUnavailable(new Error('boom'))).toBeNull();
+    expect(matchContainerUnavailable(undefined)).toBeNull();
   });
 });

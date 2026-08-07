@@ -45,6 +45,81 @@ describe('ContainerControlConnection', () => {
       conn.disconnect();
       expect(conn.isConnected()).toBe(false);
     });
+
+    it('does not fire onConnectionError on disconnect (owner stamps the cause weakly)', () => {
+      // The teardown cause is used only for the disconnect trace event; the
+      // owning client is responsible for stamping it as a weak cause so it
+      // never overwrites an authoritative connect-attempt failure.
+      const onConnectionError = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        onConnectionError
+      });
+      conn.disconnect(new Error('sandbox stopped'));
+      expect(onConnectionError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('connection-attempt state', () => {
+    it('reports isConnecting() while a connect is in flight and clears after it settles', async () => {
+      let resolveFetch: (r: Response) => void = () => {};
+      const fetchGate = new Promise<Response>((res) => {
+        resolveFetch = res;
+      });
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn().mockReturnValue(fetchGate) },
+        retryTimeoutMs: 0
+      });
+
+      expect(conn.isConnecting()).toBe(false);
+      const connectPromise = conn.connect().catch(() => {});
+      expect(conn.isConnecting()).toBe(true);
+
+      // Fail the upgrade so the attempt settles.
+      resolveFetch(new Response('nope', { status: 404 }));
+      await conn.whenSettled();
+      await connectPromise;
+      expect(conn.isConnecting()).toBe(false);
+    });
+
+    it('whenSettled() resolves immediately when no attempt is in flight', async () => {
+      const conn = new ContainerControlConnection({ stub: { fetch: vi.fn() } });
+      await expect(conn.whenSettled()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('sandbox trace identifiers', () => {
+    it('resolves getSandboxInfo lazily at span time, not at construction', () => {
+      const getSandboxInfo = vi.fn(() => ({ id: 'do-1', name: 'ws-1' }));
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        getSandboxInfo
+      });
+      // Not queried on construction.
+      expect(getSandboxInfo).not.toHaveBeenCalled();
+
+      // A span-emitting path (disconnect) queries it.
+      conn.disconnect();
+      expect(getSandboxInfo).toHaveBeenCalled();
+    });
+
+    it('reflects a name that changes after the connection is built', () => {
+      let name: string | undefined;
+      const getSandboxInfo = vi.fn(() => ({ id: 'do-2', name }));
+      const conn = new ContainerControlConnection({
+        stub: { fetch: vi.fn() },
+        getSandboxInfo
+      });
+
+      // Name assigned after construction.
+      name = 'late-name';
+      conn.disconnect();
+
+      // The lazy callback saw the updated name (proves it isn't captured at
+      // construction time).
+      const last = getSandboxInfo.mock.results.at(-1)?.value;
+      expect(last).toEqual({ id: 'do-2', name: 'late-name' });
+    });
   });
 
   describe('connect', () => {
@@ -318,6 +393,101 @@ describe('ContainerControlConnection', () => {
       });
     }
 
+    it('surfaces ContainerUnavailableError when explicit startContainer throws a platform error', async () => {
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const fetchMock = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        startContainer: () => Promise.reject(new Error(platformMessage)),
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+      // The upgrade fetch is never attempted when start fails.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('stamps onConnectionError as soon as startContainer first throws (before the retry budget is exhausted)', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'There is no container instance that can be provided to this Durable Object, try again later';
+        const onConnectionError = vi.fn();
+        const startContainer = vi
+          .fn<() => Promise<void>>()
+          .mockRejectedValue(new Error(platformMessage));
+        const conn = new ContainerControlConnection({
+          stub: { fetch: vi.fn() },
+          startContainer,
+          onConnectionError,
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect().catch(() => {});
+        // Let the first attempt run and throw.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startContainer).toHaveBeenCalledTimes(1);
+        // The cause is stamped immediately, well before the retry budget or
+        // any teardown — as a typed ContainerUnavailableError.
+        expect(onConnectionError).toHaveBeenCalled();
+        const stamped = onConnectionError.mock.calls[0][0];
+        expect((stamped as { code?: string }).code).toBe(
+          'CONTAINER_UNAVAILABLE'
+        );
+
+        // Clean up the pending retry loop.
+        conn.disconnect();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await connectPromise;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('retries a thrown startContainer platform error, then upgrades on success', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'there is no container instance that can be provided to this durable object';
+        const startContainer = vi
+          .fn<() => Promise<void>>()
+          .mockRejectedValueOnce(new Error(platformMessage))
+          .mockResolvedValueOnce(undefined);
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockResolvedValue(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          startContainer,
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startContainer).toHaveBeenCalledTimes(1);
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(startContainer).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('retries retryable upgrade responses until success', async () => {
       vi.useFakeTimers();
       try {
@@ -385,6 +555,178 @@ describe('ContainerControlConnection', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('retries a thrown lower-case no-instance error (containers-library form) until success', async () => {
+      vi.useFakeTimers();
+      try {
+        // The @cloudflare/containers package uses a lower-case message; the
+        // matcher must be case-insensitive or this failure skips the retry
+        // loop entirely (the ~2s failures seen in the repro).
+        const lowerMessage =
+          'there is no container instance that can be provided to this durable object';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValueOnce(new Error(lowerMessage))
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exhausts the retry budget on a lower-case no-instance error and surfaces ContainerUnavailableError', async () => {
+      vi.useFakeTimers();
+      try {
+        const lowerMessage =
+          'there is no container instance that can be provided to this durable object';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValue(new Error(lowerMessage));
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 20_000
+        });
+
+        const connectPromise = conn.connect();
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          code: 'CONTAINER_UNAVAILABLE',
+          context: {
+            reason: 'no_container_instance_available',
+            retryable: true
+          }
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await assertion;
+        expect(conn.isConnected()).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('retries a thrown platform "no container instance" error until success', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'There is no container instance that can be provided to this Durable Object, try again later';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValueOnce(new Error(platformMessage))
+          .mockRejectedValueOnce(new Error(platformMessage))
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(6_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('retries a thrown "max instances exceeded" error until success', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'Maximum number of running container instances exceeded. Try again later, or try configuring a higher value for max_instances';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValueOnce(new Error(platformMessage))
+          .mockResolvedValueOnce(makeUpgradeResponse());
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 60_000
+        });
+
+        const connectPromise = conn.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(conn.isConnected()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('surfaces ContainerUnavailableError when the platform error retry budget is exhausted', async () => {
+      vi.useFakeTimers();
+      try {
+        const platformMessage =
+          'There is no container instance that can be provided to this Durable Object, try again later';
+        const fetchMock = vi
+          .fn<(req: Request) => Promise<Response>>()
+          .mockRejectedValue(new Error(platformMessage));
+
+        const conn = new ContainerControlConnection({
+          stub: { fetch: fetchMock },
+          retryTimeoutMs: 20_000
+        });
+
+        const connectPromise = conn.connect();
+        const assertion = expect(connectPromise).rejects.toMatchObject({
+          code: 'CONTAINER_UNAVAILABLE',
+          context: {
+            reason: 'no_container_instance_available',
+            retryable: true,
+            originalMessage: platformMessage
+          }
+        });
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        await assertion;
+
+        expect(conn.isConnected()).toBe(false);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not retry a thrown non-platform error', async () => {
+      const fetchMock = vi
+        .fn<(req: Request) => Promise<Response>>()
+        .mockRejectedValue(new Error('some other failure'));
+
+      const conn = new ContainerControlConnection({
+        stub: { fetch: fetchMock },
+        retryTimeoutMs: 120_000
+      });
+
+      await expect(conn.connect()).rejects.toThrow('some other failure');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('does not retry terminal upgrade failures', async () => {
@@ -517,6 +859,78 @@ describe('ContainerControlConnection', () => {
   });
 
   describe('structured error classification', () => {
+    it('classifies a plain-text 503 no-instance body as ContainerUnavailableError', async () => {
+      // The @cloudflare/containers base class returns a plain-text 503 (not
+      // JSON) when it cannot admit an instance. After the retry budget is
+      // exhausted this must still surface as a typed ContainerUnavailableError.
+      const body =
+        'There is no Container instance available at this time.\nThis is likely because you have reached your max concurrent instance count.';
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'text/plain' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect((error as Error).constructor.name).toBe(
+        'ContainerUnavailableError'
+      );
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true
+        }
+      });
+      expect(
+        (error as { context?: { originalMessage?: string } }).context
+          ?.originalMessage
+      ).toContain('no Container instance available');
+    });
+
+    it('preserves reason and originalMessage from a structured no-instance JSON body', async () => {
+      // Mirrors what Sandbox.containerFetch now emits for the platform
+      // no-instance failure: a JSON 503 with the real reason + message.
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const body = JSON.stringify({
+        code: 'CONTAINER_UNAVAILABLE',
+        message: platformMessage,
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockResolvedValue(
+            new Response(body, {
+              status: 503,
+              headers: { 'content-type': 'application/json' }
+            })
+          )
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+    });
+
     it('throws ContainerUnavailableError when upgrade response contains structured CONTAINER_UNAVAILABLE body', async () => {
       const body = JSON.stringify({
         code: 'CONTAINER_UNAVAILABLE',
@@ -571,6 +985,93 @@ describe('ContainerControlConnection', () => {
           retryable: true
         }
       });
+    });
+
+    it('converts the platform "no container instance" error into a ContainerUnavailableError', async () => {
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockRejectedValue(new Error(platformMessage))
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect((error as Error).constructor.name).toBe(
+        'ContainerUnavailableError'
+      );
+      expect(error).toMatchObject({
+        context: {
+          reason: 'no_container_instance_available',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+    });
+
+    it('converts the platform "max instances exceeded" error into a ContainerUnavailableError', async () => {
+      const platformMessage =
+        'Maximum number of running container instances exceeded. Try again later, or try configuring a higher value for max_instances';
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockRejectedValue(new Error(platformMessage))
+        },
+        retryTimeoutMs: 0
+      });
+
+      const error = await conn.connect().catch((e: unknown) => e);
+      expect((error as { code?: string }).code).toBe('CONTAINER_UNAVAILABLE');
+      expect((error as Error).constructor.name).toBe(
+        'ContainerUnavailableError'
+      );
+      expect(error).toMatchObject({
+        context: {
+          reason: 'max_container_instances_exceeded',
+          retryable: true,
+          originalMessage: platformMessage
+        }
+      });
+    });
+
+    it('fires onConnectionError with the converted platform error before aborting the transport', async () => {
+      const platformMessage =
+        'There is no container instance that can be provided to this Durable Object, try again later';
+      const onConnectionError = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi.fn().mockRejectedValue(new Error(platformMessage))
+        },
+        retryTimeoutMs: 0,
+        onConnectionError
+      });
+
+      await conn.connect().catch(() => {});
+      expect(onConnectionError).toHaveBeenCalledOnce();
+      const captured = onConnectionError.mock.calls[0][0];
+      expect((captured as { code?: string }).code).toBe(
+        'CONTAINER_UNAVAILABLE'
+      );
+      expect(captured).toMatchObject({
+        context: { reason: 'no_container_instance_available' }
+      });
+    });
+
+    it('fires onConnectionError for a generic upgrade failure', async () => {
+      const onConnectionError = vi.fn();
+      const conn = new ContainerControlConnection({
+        stub: {
+          fetch: vi
+            .fn()
+            .mockResolvedValue(new Response('Not Found', { status: 404 }))
+        },
+        retryTimeoutMs: 0,
+        onConnectionError
+      });
+
+      await conn.connect().catch(() => {});
+      expect(onConnectionError).toHaveBeenCalledOnce();
     });
 
     it('fires onClose after a failed connect so the client can discard the poisoned connection', async () => {

@@ -56,7 +56,7 @@ export interface PoolStats {
 // Container RPC shapes (inherited by Sandbox from Container)
 // ---------------------------------------------------------------------------
 
-interface ContainerRpc {
+interface ContainerRPC {
   startAndWaitForPorts(): Promise<void>;
   stop(signal?: string): Promise<void>;
   renewActivityTimeout(): void;
@@ -260,7 +260,7 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     for (const containerUUID of [...this.warmContainers]) {
       try {
         const stub = this.getSandboxStub(containerUUID);
-        await (stub as unknown as ContainerRpc).stop();
+        await (stub as unknown as ContainerRPC).stop();
         this.warmContainers.delete(containerUUID);
       } catch (error) {
         console.error({
@@ -383,7 +383,7 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
 
     try {
       const stub = this.getSandboxStub(containerUUID);
-      await (stub as unknown as ContainerRpc).startAndWaitForPorts();
+      await (stub as unknown as ContainerRPC).startAndWaitForPorts();
       console.info({
         message: 'Container started',
         component: 'warm-pool',
@@ -451,7 +451,7 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
     for (const containerUUID of this.warmContainers) {
       try {
         const stub = this.getSandboxStub(containerUUID);
-        (stub as unknown as ContainerRpc).renewActivityTimeout();
+        (stub as unknown as ContainerRPC).renewActivityTimeout();
       } catch (error) {
         console.error({
           message: 'Failed to renew activity timeout',
@@ -552,7 +552,7 @@ export class WarmPool extends DurableObject<WarmPoolEnv> {
       for (const uuid of toStop) {
         try {
           const stub = this.getSandboxStub(uuid);
-          await (stub as unknown as ContainerRpc).stop();
+          await (stub as unknown as ContainerRPC).stop();
           stopped.push(uuid);
         } catch (error) {
           console.error({
