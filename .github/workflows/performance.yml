@@ -237,3 +237,15 @@ jobs:
             -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
             -H "Content-Type: application/json" \
             -d '{"run_id": "perf-${{ github.run_id }}"}'
+
+  dispatch-next:
+    needs: performance-tests
+    if: ${{ always() && github.event_name == 'schedule' && github.ref_name == 'main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Run performance tests on next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run performance.yml --repo "$GITHUB_REPOSITORY" --ref next --field scenario=all
