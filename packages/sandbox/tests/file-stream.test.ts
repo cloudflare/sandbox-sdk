@@ -1,6 +1,11 @@
 import type { FileMetadata } from '@repo/shared';
-import { describe, expect, it } from 'vitest';
-import { collectFile, streamFile } from '../src/file-stream';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  abortableByteStream,
+  areByteStreamsEqual,
+  collectFile,
+  streamFile
+} from '../src/file-stream';
 
 describe('File Streaming Utilities', () => {
   /**
@@ -245,6 +250,95 @@ describe('File Streaming Utilities', () => {
       expect(result.content).toBeInstanceOf(Uint8Array);
       expect((result.content as Uint8Array).length).toBeGreaterThan(0);
       expect(result.metadata.isBinary).toBe(true);
+    });
+  });
+
+  describe('abortableByteStream', () => {
+    it('joins source cleanup when canceled after abort starts', async () => {
+      let releaseCancel!: () => void;
+      const cancelRelease = new Promise<void>((resolve) => {
+        releaseCancel = resolve;
+      });
+      const sourceCancel = vi.fn(() => cancelRelease);
+      const source = new ReadableStream<Uint8Array>({ cancel: sourceCancel });
+      const controller = new AbortController();
+      const reader = abortableByteStream(source, controller.signal).getReader();
+      const read = reader.read();
+
+      controller.abort(new Error('stopped'));
+      let cancelSettled = false;
+      const cancel = reader.cancel().then(() => {
+        cancelSettled = true;
+      });
+      await Promise.resolve();
+      expect(cancelSettled).toBe(false);
+
+      releaseCancel();
+      await cancel;
+      await read;
+
+      expect(cancelSettled).toBe(true);
+      expect(sourceCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for source cancellation before rejecting on abort', async () => {
+      let canceledWith: unknown;
+      let releaseCancel!: () => void;
+      const cancelRelease = new Promise<void>((resolve) => {
+        releaseCancel = resolve;
+      });
+      const source = new ReadableStream<Uint8Array>({
+        cancel(reason) {
+          canceledWith = reason;
+          return cancelRelease;
+        }
+      });
+      const controller = new AbortController();
+      const reader = abortableByteStream(source, controller.signal).getReader();
+      let readSettled = false;
+      const read = reader.read().catch((error: unknown) => {
+        readSettled = true;
+        throw error;
+      });
+      const readResult = expect(read).rejects.toBeInstanceOf(Error);
+
+      controller.abort(new Error('stopped'));
+      await Promise.resolve();
+      expect(readSettled).toBe(false);
+      releaseCancel();
+
+      await readResult;
+      expect(canceledWith).toBeInstanceOf(Error);
+    });
+  });
+
+  describe('areByteStreamsEqual', () => {
+    async function* chunks(...values: number[][]) {
+      for (const value of values) yield Uint8Array.from(value);
+    }
+
+    it('compares equal bytes across different chunk boundaries', async () => {
+      await expect(
+        areByteStreamsEqual(
+          chunks([1], [2, 3], [], [4]),
+          chunks([1, 2], [3, 4])
+        )
+      ).resolves.toBe(true);
+    });
+
+    it('detects unequal content and lengths', async () => {
+      await expect(
+        areByteStreamsEqual(chunks([1, 2, 3]), chunks([1, 4, 3]))
+      ).resolves.toBe(false);
+      await expect(
+        areByteStreamsEqual(chunks([1, 2]), chunks([1, 2, 3]))
+      ).resolves.toBe(false);
+    });
+
+    it('treats empty streams as equal', async () => {
+      await expect(
+        areByteStreamsEqual(chunks([]), chunks([], []))
+      ).resolves.toBe(true);
     });
   });
 

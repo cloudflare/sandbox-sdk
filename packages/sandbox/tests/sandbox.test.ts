@@ -585,6 +585,22 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(firstSessionId).toBe(secondSessionId);
     });
 
+    it('forwards base64 stream encoding through the public API', async () => {
+      vi.spyOn(sandbox.client.files, 'readFileStream').mockResolvedValue(
+        new ReadableStream<Uint8Array>()
+      );
+
+      await sandbox.readFileStream('/invalid-utf8.txt', {
+        encoding: 'base64'
+      });
+
+      expect(sandbox.client.files.readFileStream).toHaveBeenCalledWith(
+        '/invalid-utf8.txt',
+        'sandbox-default',
+        { encoding: 'base64' }
+      );
+    });
+
     it('should use default session for process management', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
@@ -783,6 +799,44 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('re-creates a session restored from storage for an older container', async () => {
+      // A session id rehydrated from durable storage on cold start describes a
+      // session the current container may never have created: the container can
+      // be replaced while the DO is evicted, and containerGeneration is
+      // memory-only. Trusting the cached id strands every session-scoped call
+      // on a session the runtime does not know.
+      (sandbox as unknown as { defaultSession: string }).defaultSession =
+        'sandbox-default';
+
+      await sandbox.exec('echo one');
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo one',
+        'sandbox-default',
+        undefined
+      );
+
+      // Once re-created for this generation, the cache is trusted again.
+      await sandbox.exec('echo two');
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-creates a restored session before applying environment updates', async () => {
+      (sandbox as unknown as { defaultSession: string }).defaultSession =
+        'sandbox-default';
+
+      await sandbox.setEnvVars({ MODE: 'test' });
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        "export MODE='test'",
+        'sandbox-default',
+        { origin: 'internal' }
+      );
+    });
+
     it('coalesces concurrent callers onto one createSession RPC', async () => {
       let resolveCreate!: (value: unknown) => void;
       vi.mocked(sandbox.client.utils.createSession).mockReturnValueOnce(
@@ -826,6 +880,120 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.exec('echo two');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['defaultSession', 'containerPlacementId'])(
+      'invalidates session initialization during %s persistence',
+      async (blockedKey) => {
+        vi.mocked(sandbox.client.utils.createSession).mockResolvedValue({
+          success: true,
+          id: 'sandbox-default',
+          message: 'Created',
+          containerPlacementId: 'placement-old'
+        } as never);
+        const originalPut = vi
+          .mocked(mockCtx.storage.put)
+          .getMockImplementation() as (
+          key: string,
+          value: unknown
+        ) => Promise<void>;
+        let releasePut!: () => void;
+        let markPutStarted!: () => void;
+        const putStarted = new Promise<void>((resolve) => {
+          markPutStarted = resolve;
+        });
+        const putRelease = new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        let blocked = false;
+        vi.mocked(mockCtx.storage.put).mockImplementation(
+          async (key: string, value: unknown) => {
+            await originalPut(key, value);
+            if (key === blockedKey && !blocked) {
+              blocked = true;
+              markPutStarted();
+              await putRelease;
+            }
+          }
+        );
+        const internal = sandbox as unknown as {
+          containerGeneration: number;
+          defaultSession: string | null;
+          initializeDefaultSession(
+            sessionId: string,
+            generation: number
+          ): Promise<string>;
+          onStop(): Promise<void>;
+        };
+
+        const initialization = internal.initializeDefaultSession(
+          'sandbox-default',
+          internal.containerGeneration
+        );
+        await putStarted;
+        const stop = internal.onStop();
+        releasePut();
+
+        await expect(initialization).rejects.toBeInstanceOf(
+          SessionInitInvalidatedError
+        );
+        await stop;
+        expect(internal.defaultSession).toBeNull();
+        const getStorage = mockCtx.storage.get as unknown as (
+          key: string
+        ) => Promise<unknown>;
+        expect(await getStorage('defaultSession')).toBeNull();
+        expect(await getStorage('containerPlacementId')).toBeNull();
+      }
+    );
+
+    it('preserves a replacement session initialized after stop cleanup', async () => {
+      vi.mocked(sandbox.client.utils.createSession).mockResolvedValue({
+        success: true,
+        id: 'sandbox-default',
+        message: 'Created',
+        containerPlacementId: 'placement-new'
+      } as never);
+      let releaseRuntimeClear!: () => void;
+      let markRuntimeClearStarted!: () => void;
+      const runtimeClearStarted = new Promise<void>((resolve) => {
+        markRuntimeClearStarted = resolve;
+      });
+      const runtimeClearRelease = new Promise<void>((resolve) => {
+        releaseRuntimeClear = resolve;
+      });
+      const internal = sandbox as unknown as {
+        containerGeneration: number;
+        defaultSession: string | null;
+        currentRuntime: { clear(): Promise<void> };
+        initializeDefaultSession(
+          sessionId: string,
+          generation: number
+        ): Promise<string>;
+        onStop(): Promise<void>;
+      };
+      vi.spyOn(internal.currentRuntime, 'clear').mockImplementation(
+        async () => {
+          markRuntimeClearStarted();
+          await runtimeClearRelease;
+        }
+      );
+
+      const stop = internal.onStop();
+      await runtimeClearStarted;
+      await internal.initializeDefaultSession(
+        'sandbox-default',
+        internal.containerGeneration
+      );
+      releaseRuntimeClear();
+      await stop;
+
+      const getStorage = mockCtx.storage.get as unknown as (
+        key: string
+      ) => Promise<unknown>;
+      expect(internal.defaultSession).toBe('sandbox-default');
+      expect(await getStorage('defaultSession')).toBe('sandbox-default');
+      expect(await getStorage('containerPlacementId')).toBe('placement-new');
     });
 
     it('does not share an in-flight init across different session ids', async () => {
