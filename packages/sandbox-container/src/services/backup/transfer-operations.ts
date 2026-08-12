@@ -316,7 +316,7 @@ while IFS=: read -r offset expected_bytes part_file; do
     echo "downloaded part size mismatch at offset $offset: expected $expected_bytes got $actual_bytes" >&2
     exit 1
   fi
-  dd if="$part_file" of="$tmp_archive" bs=1 seek="$offset" conv=notrunc status=none
+  dd if="$part_file" of="$tmp_archive" bs=1M seek="$offset" oflag=seek_bytes conv=notrunc status=none
 done <<EOF
 $part_files
 EOF
