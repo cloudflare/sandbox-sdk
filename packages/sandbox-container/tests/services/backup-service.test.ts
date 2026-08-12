@@ -795,6 +795,10 @@ describe('BackupService', () => {
       expect(command).toContain('for pid in $pids; do');
       expect(command).toContain('wait "$pid"');
       expect(command).toContain('wc -c < "$part_file"');
+      expect(command).toContain(
+        'dd if="$part_file" of="$tmp_archive" bs=1M seek="$offset" oflag=seek_bytes conv=notrunc status=none'
+      );
+      expect(command).not.toContain('bs=1 seek="$offset"');
       expect(command).toContain('mv "$tmp_archive" \'/var/backups/app.sqsh\'');
       expect(command).not.toContain("rm -f '/var/backups/app.sqsh'");
       expect(options).toEqual({ timeoutMs: 1_810_000 });
