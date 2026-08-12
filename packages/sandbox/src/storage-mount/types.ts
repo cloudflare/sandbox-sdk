@@ -46,6 +46,12 @@ export interface LocalSyncMountInfo {
   mountPath: string;
   syncManager: LocalMountSyncManager;
   mounted: boolean;
+  prefix?: string;
+  readOnly: boolean;
+  // Container generation this mount's sync manager was started against. The
+  // manager holds a container session, so a mount from an earlier generation
+  // is stale even though its bucket, prefix and mode still match.
+  containerGeneration: number;
 }
 
 export interface R2BindingMountInfo {

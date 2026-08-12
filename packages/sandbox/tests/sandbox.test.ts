@@ -783,6 +783,30 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
+    it('re-creates a session restored from storage for an older container', async () => {
+      // A session id rehydrated from durable storage on cold start describes a
+      // session the current container may never have created: the container can
+      // be replaced while the DO is evicted, and containerGeneration is
+      // memory-only. Trusting the cached id strands every session-scoped call
+      // on a session the runtime does not know.
+      (sandbox as unknown as { defaultSession: string }).defaultSession =
+        'sandbox-default';
+
+      await sandbox.exec('echo one');
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo one',
+        'sandbox-default',
+        undefined
+      );
+
+      // Once re-created for this generation, the cache is trusted again.
+      await sandbox.exec('echo two');
+
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
+    });
+
     it('coalesces concurrent callers onto one createSession RPC', async () => {
       let resolveCreate!: (value: unknown) => void;
       vi.mocked(sandbox.client.utils.createSession).mockReturnValueOnce(
