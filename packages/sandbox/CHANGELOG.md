@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.6
+
+### Patch Changes
+
+- [#866](https://github.com/cloudflare/sandbox-sdk/pull/866) [`ae6a900`](https://github.com/cloudflare/sandbox-sdk/commit/ae6a9006f696e86782bae07e0c6ae2234974f82e) Thanks [@scuffi](https://github.com/scuffi)! - Enforce mounted bucket and prefix boundaries for server-side copy operations when using `credentialProxy`.
+
 ## 0.12.5
 
 ### Patch Changes
