@@ -564,6 +564,268 @@ describe('s3CredentialProxyHandler mount scope enforcement', () => {
 
     vi.restoreAllMocks();
   });
+
+  it('allows copy sources inside the configured prefix', async () => {
+    let capturedRequest: Request | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      capturedRequest = input instanceof Request ? input : new Request(input);
+      return new Response('ok', { status: 200 });
+    });
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      {
+        'x-amz-copy-source': `/${BUCKET}/project-a/source%20file.txt?versionId=1`
+      }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(capturedRequest?.headers.get('x-amz-copy-source')).toBe(
+      `/${BUCKET}/project-a/source%20file.txt?versionId=1`
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects copy sources from a different bucket', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-amz-copy-source': '/other-bucket/secret.txt' }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain('copy source is outside mounted scope');
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects copy sources outside the configured prefix', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-amz-copy-source': `/${BUCKET}/project-b/secret.txt` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows multipart copy sources inside the configured prefix', async () => {
+    let capturedRequest: Request | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      capturedRequest = input instanceof Request ? input : new Request(input);
+      return new Response('ok', { status: 200 });
+    });
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt?partNumber=1&uploadId=upload-1`,
+      'PUT',
+      { 'x-amz-copy-source': `/${BUCKET}/project-a/source.txt` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(capturedRequest?.headers.get('x-amz-copy-source')).toBe(
+      `/${BUCKET}/project-a/source.txt`
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects out-of-scope multipart copy sources', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt?partNumber=1&uploadId=upload-1`,
+      'PUT',
+      { 'x-amz-copy-source': `/${BUCKET}/project-b/secret.txt` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    `/${BUCKET}/project-a-evil/secret.txt`,
+    `/${BUCKET}/project-a%252Fsecret.txt`
+  ])('rejects ambiguous out-of-prefix copy source %s', async (copySource) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-amz-copy-source': copySource }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects malformed copy sources', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-amz-copy-source': `/${BUCKET}/project-a/%ZZ` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('invalid x-amz-copy-source');
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('allows GCS copy sources inside the configured prefix', async () => {
+    let capturedRequest: Request | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (input) => {
+      capturedRequest = input instanceof Request ? input : new Request(input);
+      return new Response('ok', { status: 200 });
+    });
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-goog-copy-source': `/${BUCKET}/project-a/source%2Ffile.txt` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(
+        makeParams({
+          prefix: 'project-a',
+          provider: 'gcs',
+          authStrategy: 'gcs',
+          endpoint: 'https://storage.googleapis.com'
+        })
+      ) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(res.status).toBe(200);
+    expect(capturedRequest?.headers.get('x-goog-copy-source')).toBe(
+      `/${BUCKET}/project-a/source%2Ffile.txt`
+    );
+    expect(capturedRequest?.headers.get('Authorization')).toMatch(
+      /^GOOG4-HMAC-SHA256/
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects out-of-scope GCS copy sources', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      { 'x-goog-copy-source': `/${BUCKET}/project-b/secret.txt` }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(
+        makeParams({
+          prefix: 'project-a',
+          provider: 'gcs',
+          authStrategy: 'gcs',
+          endpoint: 'https://storage.googleapis.com'
+        })
+      ) as Parameters<typeof s3CredentialProxyHandler>[2]
+    );
+
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('rejects requests with multiple copy source headers', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const req = makeRequest(
+      `/${MOUNT_ID}/${BUCKET}/project-a/copied.txt`,
+      'PUT',
+      {
+        'x-amz-copy-source': `/${BUCKET}/project-a/source.txt`,
+        'x-goog-copy-source': `/${BUCKET}/project-a/source.txt`
+      }
+    );
+
+    const res = await s3CredentialProxyHandler(
+      req,
+      {} as Cloudflare.Env,
+      makeCtx(makeParams({ prefix: 'project-a' })) as Parameters<
+        typeof s3CredentialProxyHandler
+      >[2]
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('multiple copy source headers');
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
 });
 
 describe('s3CredentialProxyHandler SigV4 signing', () => {
