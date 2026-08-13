@@ -437,6 +437,72 @@ function isObjectKeyWithinPrefix(
   );
 }
 
+type ParsedCopySource = {
+  bucket: string;
+  objectKey: string;
+};
+
+function parseCopySourceHeader(value: string): ParsedCopySource | null {
+  const encodedPath = value.split('?', 1)[0];
+  if (!encodedPath) {
+    return null;
+  }
+
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(encodedPath);
+  } catch {
+    return null;
+  }
+
+  const path = decodedPath.startsWith('/') ? decodedPath.slice(1) : decodedPath;
+  const separatorIndex = path.indexOf('/');
+  if (separatorIndex <= 0 || separatorIndex === path.length - 1) {
+    return null;
+  }
+
+  return {
+    bucket: path.slice(0, separatorIndex),
+    objectKey: path.slice(separatorIndex + 1)
+  };
+}
+
+function validateCopySourceWithinMountScope(
+  headers: Headers,
+  bucket: string,
+  prefix: string | undefined
+): Response | null {
+  const copySources = [
+    ['x-amz-copy-source', headers.get('x-amz-copy-source')],
+    ['x-goog-copy-source', headers.get('x-goog-copy-source')]
+  ].filter((entry): entry is [string, string] => entry[1] !== null);
+
+  if (copySources.length > 1) {
+    return new Response('Bad Request: multiple copy source headers', {
+      status: 400
+    });
+  }
+  if (copySources.length === 0) {
+    return null;
+  }
+
+  const [headerName, value] = copySources[0];
+  const copySource = parseCopySourceHeader(value);
+  if (!copySource) {
+    return new Response(`Bad Request: invalid ${headerName}`, { status: 400 });
+  }
+  if (
+    copySource.bucket !== bucket ||
+    !isObjectKeyWithinPrefix(copySource.objectKey, prefix)
+  ) {
+    return new Response('Forbidden: copy source is outside mounted scope', {
+      status: 403
+    });
+  }
+
+  return null;
+}
+
 function isRequestWithinMountScope(
   realPath: string,
   url: URL,
@@ -728,6 +794,14 @@ export const s3CredentialProxyHandler: OutboundHandler<
     return new Response('Forbidden: request is outside mounted bucket scope', {
       status: 403
     });
+  }
+  const copySourceError = validateCopySourceWithinMountScope(
+    request.headers,
+    mount.bucket,
+    mount.prefix
+  );
+  if (copySourceError) {
+    return copySourceError;
   }
   const cleanHeaders = buildCleanHeaders(request.headers);
   const cleanRequest = new Request(realUrl.toString(), {
