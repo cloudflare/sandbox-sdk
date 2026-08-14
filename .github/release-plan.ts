@@ -4,7 +4,6 @@ import type { PreparedNpmPackage } from './npm-package-prep.ts';
 import type { DockerRef } from './release-platform.ts';
 import type {
   CommitSHA,
-  NpmPackageName,
   StableVersion,
   VersionTag
 } from './release-primitives.ts';
@@ -17,11 +16,6 @@ export type ReleaseOperation =
       type: 'publish-npm';
       prepared: PreparedNpmPackage;
       npmTag: string;
-    }
-  | {
-      type: 'set-npm-latest';
-      packageName: NpmPackageName;
-      version: StableVersion;
     }
   | { type: 'create-git-tag'; tag: VersionTag; sha: CommitSHA }
   | {
@@ -67,21 +61,14 @@ export function planStableRelease(
   }
 
   // Tag first so identity recovery stays valid if later steps fail.
-  // Publish npm under a non-latest tag before Docker/GitHub assets.
-  // Move npm latest only after immutable artifacts are planned last.
+  // Publish current npm releases directly to latest only after every other
+  // release artifact is complete.
   const operations: ReleaseOperation[] = [];
   if (inspection.git.versionTag.state === 'missing') {
     operations.push({
       type: 'create-git-tag',
       tag: context.versionTag,
       sha: context.releaseSHA
-    });
-  }
-  if (inspection.npm.version.state === 'missing') {
-    operations.push({
-      type: 'publish-npm',
-      prepared: prepared.npm,
-      npmTag: npmPublicationTag(context.version)
     });
   }
   if (inspection.github.release.state === 'missing') {
@@ -117,11 +104,14 @@ export function planStableRelease(
       });
     }
   }
-  if (latestAction.type === 'set') {
+  if (inspection.npm.version.state === 'missing') {
     operations.push({
-      type: 'set-npm-latest',
-      packageName: context.npmPackageName,
-      version: latestAction.version
+      type: 'publish-npm',
+      prepared: prepared.npm,
+      npmTag:
+        context.mode === 'current' && latestAction.type === 'set'
+          ? 'latest'
+          : npmPublicationTag(context.version)
     });
   }
 
@@ -152,6 +142,15 @@ function collectConflicts(
       );
     }
   }
+  if (
+    context.mode === 'current' &&
+    inspection.npm.version.state === 'matching' &&
+    latestNeedsUpdate(context, inspection)
+  ) {
+    conflicts.push(
+      `npm.latest: ${context.npmPackageName}@${context.version} is already published but latest does not point to it; run "npm dist-tag add ${context.npmPackageName}@${context.version} latest" with maintainer authentication, then retry`
+    );
+  }
   addConflict(conflicts, 'git.versionTag', inspection.git.versionTag);
   addConflict(conflicts, 'github.release', inspection.github.release);
   for (const asset of inspection.github.assets) {
@@ -167,6 +166,15 @@ function decideLatest(
   context: StableReleaseContext,
   inspection: StableInspection
 ): LatestAction {
+  if (context.mode === 'historical') {
+    if (inspection.npm.latest.state === 'matching') {
+      return {
+        type: 'preserve',
+        version: inspection.npm.latest.observed.version
+      };
+    }
+    return { type: 'none' };
+  }
   if (inspection.npm.latest.state === 'missing') {
     return { type: 'set', version: context.version };
   }
@@ -179,6 +187,20 @@ function decideLatest(
   if (comparison < 0) return { type: 'set', version: context.version };
   if (comparison === 0) return { type: 'none' };
   return { type: 'preserve', version: observed };
+}
+
+function latestNeedsUpdate(
+  context: StableReleaseContext,
+  inspection: StableInspection
+): boolean {
+  if (inspection.npm.latest.state === 'missing') return true;
+  if (inspection.npm.latest.state === 'conflict') return false;
+  return (
+    compareStableSemver(
+      inspection.npm.latest.observed.version,
+      context.version
+    ) < 0
+  );
 }
 
 function addConflict(

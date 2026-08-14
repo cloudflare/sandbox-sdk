@@ -120,13 +120,6 @@ async function applyOperation(
         operation.npmTag
       );
       return;
-    case 'set-npm-latest':
-      await platform.npm.setDistTag(
-        operation.packageName,
-        operation.version,
-        'latest'
-      );
-      return;
     case 'create-git-tag':
       await platform.git.createTag(operation.tag, operation.sha);
       return;

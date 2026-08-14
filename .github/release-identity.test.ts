@@ -3,12 +3,22 @@ import assert from 'node:assert/strict';
 import {
   chooseReleaseIdentity,
   deriveStableReleaseIdentity,
+  npmVersionViewArgs,
   runStableIdentityCli,
   type StableIdentityDeps
 } from './release-identity.ts';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 const HISTORICAL_SHA = '89abcdef0123456789abcdef0123456789abcdef';
+
+test('npm identity lookup bypasses cached registry metadata', () => {
+  assert.deepEqual(npmVersionViewArgs('@cloudflare/sandbox@1.2.3'), [
+    'view',
+    '@cloudflare/sandbox@1.2.3',
+    'version',
+    '--prefer-online'
+  ]);
+});
 
 function fakeIdentityDeps(): StableIdentityDeps {
   return {
