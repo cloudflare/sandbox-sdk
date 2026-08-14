@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.7
+
+### Patch Changes
+
+- [`23a08e4`](https://github.com/cloudflare/sandbox-sdk/commit/23a08e457c96ef3046737214a5cd884a3f9d0c24) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Ensure stable releases advance npm's `latest` tag only after all release artifacts pass verification.
+
 ## 0.12.6
 
 ### Patch Changes
