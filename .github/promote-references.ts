@@ -82,9 +82,10 @@ export async function runPromotionInWorktree(
     await deps.git(['commit', '-m', `Promote public refs to ${version}`], {
       cwd: root
     });
-    await deps.git(['push', '--force-with-lease', 'origin', `HEAD:${branch}`], {
-      cwd: root
-    });
+    await deps.git(
+      ['push', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`],
+      { cwd: root }
+    );
     await deps.upsertPR(version, branch);
     return { status: 'pr-created', branch };
   } finally {

@@ -128,7 +128,7 @@ describe('runPromotionInWorktree', () => {
       ['add', '--', 'examples/minimal/Dockerfile'],
       ['diff', '--cached', '--name-only'],
       ['commit', '-m', 'Promote public refs to 1.2.3'],
-      ['push', '--force-with-lease', 'origin', 'HEAD:promote/1.2.3']
+      ['push', '--force-with-lease', 'origin', 'HEAD:refs/heads/promote/1.2.3']
     ]);
   });
 
