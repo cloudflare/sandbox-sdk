@@ -160,6 +160,46 @@ describe('runStableReleaseEngine', () => {
     assert.deepEqual(cleaned, ['clean']);
   });
 
+  test('retries reinspection while published state propagates', async () => {
+    const platform = seededPlatformWithSourceImage();
+    const inspectVersion = platform.npm.inspectVersion;
+    const publishPreparedPackage = platform.npm.publishPreparedPackage;
+    let published = false;
+    let hiddenInspections = 0;
+    let delays = 0;
+
+    platform.npm.inspectVersion = async (name, version) => {
+      if (published && hiddenInspections === 0) {
+        hiddenInspections += 1;
+        return undefined;
+      }
+      return inspectVersion(name, version);
+    };
+    platform.npm.publishPreparedPackage = async (prepared, npmTag) => {
+      await publishPreparedPackage(prepared, npmTag);
+      published = true;
+    };
+
+    const result = await runStableReleaseEngine({
+      context: makeContext(),
+      platform,
+      prepare: async () => makePreparedRelease(),
+      reinspectionDelay: async () => {
+        delays += 1;
+      }
+    });
+
+    assert.deepEqual(result.finalPlan.operations, []);
+    assert.equal(hiddenInspections, 1);
+    assert.equal(delays, 1);
+    assert.equal(
+      platform.operations.filter((operation) =>
+        operation.startsWith('npm.publish')
+      ).length,
+      1
+    );
+  });
+
   test('cleans once when applying an operation fails', async () => {
     const platform = new FakeReleasePlatform();
     const cleaned: string[] = [];

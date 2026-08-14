@@ -13,6 +13,7 @@ export interface StableEngineInput {
   context: StableReleaseContext;
   platform: ReleasePlatform;
   prepare(): Promise<PreparedRelease>;
+  reinspectionDelay?(): Promise<void>;
 }
 
 export interface StableEngineResult {
@@ -57,13 +58,7 @@ export async function runStableReleaseEngine(
 
     await applyStableReleasePlan(initialPlan, input.platform);
 
-    const reinspection = await inspectStableRelease(
-      input.context,
-      prepared,
-      input.platform
-    );
-    const finalPlan = planStableRelease(input.context, reinspection, prepared);
-    aggregateReleaseFailures('reinspect', finalPlan.conflicts);
+    const finalPlan = await reinspectUntilComplete(input, prepared);
     if (finalPlan.operations.length > 0) {
       throw new Error(
         `Stable release reinspection found missing state:\n${finalPlan.operations
@@ -79,6 +74,38 @@ export async function runStableReleaseEngine(
   } finally {
     await cleanupPreparedRelease(prepared, primaryError);
   }
+}
+
+const REINSPECTION_ATTEMPTS = 7;
+const REINSPECTION_DELAY_MS = 5_000;
+
+async function reinspectUntilComplete(
+  input: StableEngineInput,
+  prepared: PreparedRelease
+): Promise<StableReleasePlan> {
+  let finalPlan: StableReleasePlan | undefined;
+
+  for (let attempt = 1; attempt <= REINSPECTION_ATTEMPTS; attempt += 1) {
+    const reinspection = await inspectStableRelease(
+      input.context,
+      prepared,
+      input.platform
+    );
+    finalPlan = planStableRelease(input.context, reinspection, prepared);
+    aggregateReleaseFailures('reinspect', finalPlan.conflicts);
+    if (finalPlan.operations.length === 0) return finalPlan;
+    if (attempt < REINSPECTION_ATTEMPTS) {
+      await (input.reinspectionDelay ?? defaultReinspectionDelay)();
+    }
+  }
+
+  if (finalPlan === undefined)
+    throw new Error('Stable release not reinspected');
+  return finalPlan;
+}
+
+async function defaultReinspectionDelay(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, REINSPECTION_DELAY_MS));
 }
 
 async function cleanupPreparedRelease(
