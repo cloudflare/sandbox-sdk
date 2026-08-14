@@ -133,7 +133,7 @@ const nodeStableIdentityDeps: StableIdentityDeps = {
     );
   },
   npmVersionExists: async (packageVersion) => {
-    const result = spawnSync('npm', ['view', packageVersion, 'version'], {
+    const result = spawnSync('npm', npmVersionViewArgs(packageVersion), {
       encoding: 'utf8'
     });
     if (result.status === 0) {
@@ -203,13 +203,17 @@ function tagSHAFromGit(gitTag: string): string | null {
 
 function npmVersionExistsCheck(version: string): boolean {
   try {
-    execFileSync('npm', ['view', `@cloudflare/sandbox@${version}`, 'version'], {
+    execFileSync('npm', npmVersionViewArgs(`@cloudflare/sandbox@${version}`), {
       stdio: 'ignore'
     });
     return true;
   } catch {
     return false;
   }
+}
+
+export function npmVersionViewArgs(packageVersion: string): string[] {
+  return ['view', packageVersion, 'version', '--prefer-online'];
 }
 
 function runLegacyIdentityCli(): string {

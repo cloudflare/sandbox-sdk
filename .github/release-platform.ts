@@ -51,11 +51,6 @@ export interface NpmReleaseClient {
     prepared: PreparedNpmPackage,
     tag: string
   ): Promise<void>;
-  setDistTag(
-    name: SandboxPackageName,
-    version: StableVersion,
-    tag: 'latest'
-  ): Promise<void>;
 }
 
 export interface GitTagClient {
@@ -128,7 +123,8 @@ function createNpmClient(executor: ProcessExecutor): NpmReleaseClient {
         'view',
         packageVersion,
         'version',
-        '--json'
+        '--json',
+        '--prefer-online'
       ]);
       if (isNpmMissing(result)) {
         return undefined;
@@ -146,7 +142,8 @@ function createNpmClient(executor: ProcessExecutor): NpmReleaseClient {
         'view',
         name,
         `dist-tags.${tag}`,
-        '--json'
+        '--json',
+        '--prefer-online'
       ]);
       if (isNpmMissing(result)) {
         return undefined;
@@ -166,17 +163,6 @@ function createNpmClient(executor: ProcessExecutor): NpmReleaseClient {
           '--access',
           'public',
           '--tag',
-          tag
-        ])
-      );
-    },
-    setDistTag: async (name, version, tag) => {
-      requireSuccess(
-        `npm dist-tag for ${name}@${version}`,
-        await executor.command('npm', [
-          'dist-tag',
-          'add',
-          `${name}@${version}`,
           tag
         ])
       );

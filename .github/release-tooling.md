@@ -34,7 +34,10 @@ is missing, the engine creates only that missing state. If a Git tag, Docker
 digest, GitHub Release tag, npm identity, local export, source image, or binary
 asset conflicts, the run fails before remote mutation. After applying missing
 state, the engine performs a fresh inspection and requires a complete matching
-release before promotion can start.
+release before promotion can start. Current releases publish npm directly to
+`latest` as the final mutation so trusted publishing does not require a
+separate authenticated dist-tag update. If the version already exists while
+`latest` is behind, CI reports the maintainer command required before retrying.
 
 Promotion is a separate current-main worktree transition. A run that creates or
 updates `promote/<version>` stops; Changesets runs only on a later `main` push

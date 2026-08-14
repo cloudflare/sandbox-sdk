@@ -43,10 +43,6 @@ export class FakeReleasePlatform implements ReleasePlatform {
           stableVersion(prepared.version)
         );
       }
-    },
-    setDistTag: async (name: string, version: StableVersion, tag: 'latest') => {
-      this.operations.push(`npm.distTag ${name}@${version} ${tag}`);
-      this.distTags.set(`${name}:${tag}`, version);
     }
   };
   readonly git = {

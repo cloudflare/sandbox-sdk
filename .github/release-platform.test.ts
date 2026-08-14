@@ -123,6 +123,45 @@ describe('ReleasePlatform', () => {
     ]);
   });
 
+  test('exec npm inspections bypass cached registry metadata', async () => {
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const platform = new ExecReleasePlatform({
+      command: async (command, args) => {
+        calls.push({ command, args });
+        return { exitCode: 0, stdout: '"1.2.3"', stderr: '' };
+      }
+    });
+
+    await platform.npm.inspectVersion(
+      '@cloudflare/sandbox',
+      stableVersion('1.2.3')
+    );
+    await platform.npm.inspectDistTag('@cloudflare/sandbox', 'latest');
+
+    assert.deepEqual(calls, [
+      {
+        command: 'npm',
+        args: [
+          'view',
+          '@cloudflare/sandbox@1.2.3',
+          'version',
+          '--json',
+          '--prefer-online'
+        ]
+      },
+      {
+        command: 'npm',
+        args: [
+          'view',
+          '@cloudflare/sandbox',
+          'dist-tags.latest',
+          '--json',
+          '--prefer-online'
+        ]
+      }
+    ]);
+  });
+
   test('exec npm inspection returns missing for E404 and throws for auth', async () => {
     const missing = new ExecReleasePlatform({
       command: async () => ({
