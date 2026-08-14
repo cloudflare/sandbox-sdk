@@ -4,7 +4,7 @@ How to cut and finish a stable Sandbox SDK release.
 
 ## Overview
 
-Merging a **Version Packages** PR to `main` starts the release. CI publishes that version (npm package, container images, git tag, and GitHub Release), then opens a **promotion** PR that updates Docker image pins in the repo. The release workflow stops after creating or updating that promotion PR. Once promotion is merged, a later push to `main` can open the next Version Packages PR when there are new changesets.
+Merging a **Version Packages** PR to `main` starts the release. CI creates the container images, git tag, GitHub Release, and binary assets before publishing the npm package directly to `latest` as the final release mutation. It then opens a **promotion** PR that updates Docker image pins in the repo. The release workflow stops after creating or updating that promotion PR. Once promotion is merged, a later push to `main` can open the next Version Packages PR when there are new changesets.
 
 If a run fails partway through, retrying the same version is usually safe: CI fills in missing pieces and will not replace artifacts that already exist with different content.
 
@@ -42,7 +42,7 @@ If packages and images are published but promotion is not merged yet, the releas
 ## Automatic and manual runs
 
 - **Automatic:** pushes to `main` may run the stable release workflow.
-- **Manual:** **Reconcile stable release** in Actions uses the same rules when you need to finish or retry a version without waiting for another push.
+- **Manual:** **Reconcile stable release** in Actions uses the same rules when you need to finish or retry a version without waiting for another push. Successful reconciliation of the current release also creates or updates the promotion PR; historical reconciliation does not move repository references backward.
 
 Only one stable release or reconcile run proceeds at a time on `main`; others queue. Queued runs are normal.
 
@@ -53,6 +53,7 @@ Retry the same version first: re-run the failed workflow, or start **Reconcile s
 | Situation                                                  | Likely meaning                                   | Action                                                                                   |
 | ---------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | Failed during publish                                      | Transient error or incomplete progress           | Retry the same version                                                                   |
+| npm version exists but `latest` points to an older version | npm publishing completed without tag promotion   | A maintainer must run the exact `npm dist-tag add` command reported by CI, then retry    |
 | npm package exists but the matching git tag does not       | Broken or half-finished release identity         | Investigate before publishing again; do not skip ahead to a new version to paper over it |
 | Conflict, unexpected image digest, or wrong tag target     | An existing artifact does not match this release | Investigate; CI will not overwrite mismatched immutable artifacts                        |
 | Promote PR is open and there is no new Version Packages PR | Normal sequencing                                | Merge promote (or confirm refs already match)                                            |

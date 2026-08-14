@@ -125,28 +125,44 @@ describe('planStableRelease', () => {
     });
   });
 
-  test('advances absent or older latest and leaves equal latest unchanged', () => {
+  test('publishes a missing current version to absent or older latest', () => {
+    for (const latest of ['missing', '1.2.2'] as const) {
+      const prepared = makePreparedRelease();
+      const plan = planStableRelease(
+        makeContext(),
+        inspection({ npm: 'missing', latest }),
+        prepared
+      );
+      assert.deepEqual(plan.latestAction, { type: 'set', version: '1.2.3' });
+      assert.deepEqual(
+        plan.operations.filter((operation) => operation.type === 'publish-npm'),
+        [
+          {
+            type: 'publish-npm',
+            prepared: prepared.npm,
+            npmTag: 'latest'
+          }
+        ]
+      );
+    }
+  });
+
+  test('requires maintainer authentication when a published version is not latest', () => {
     for (const latest of ['missing', '1.2.2'] as const) {
       const plan = planStableRelease(
         makeContext(),
         inspection({ latest }),
         makePreparedRelease()
       );
-      assert.deepEqual(plan.latestAction, { type: 'set', version: '1.2.3' });
-      assert.deepEqual(
-        plan.operations.filter(
-          (operation) => operation.type === 'set-npm-latest'
-        ),
-        [
-          {
-            type: 'set-npm-latest',
-            packageName: '@cloudflare/sandbox',
-            version: '1.2.3'
-          }
-        ]
-      );
-    }
 
+      assert.deepEqual(plan.operations, []);
+      assert.deepEqual(plan.conflicts, [
+        'npm.latest: @cloudflare/sandbox@1.2.3 is already published but latest does not point to it; run "npm dist-tag add @cloudflare/sandbox@1.2.3 latest" with maintainer authentication, then retry'
+      ]);
+    }
+  });
+
+  test('leaves equal latest unchanged', () => {
     const equal = planStableRelease(
       makeContext(),
       inspection({ latest: '1.2.3' }),
@@ -177,7 +193,8 @@ describe('planStableRelease', () => {
         npm: 'missing',
         git: 'missing',
         github: 'missing',
-        docker: 'missing'
+        docker: 'missing',
+        latest: 'missing'
       }),
       prepared
     );
@@ -187,11 +204,6 @@ describe('planStableRelease', () => {
         type: 'create-git-tag',
         tag: context.versionTag,
         sha: context.releaseSHA
-      },
-      {
-        type: 'publish-npm',
-        prepared: prepared.npm,
-        npmTag: 'release-1-2-3'
       },
       {
         type: 'create-github-release',
@@ -221,11 +233,16 @@ describe('planStableRelease', () => {
           repository: 'docker.io/cloudflare/sandbox',
           tag: '1.2.3'
         }
+      },
+      {
+        type: 'publish-npm',
+        prepared: prepared.npm,
+        npmTag: 'latest'
       }
     ]);
   });
 
-  test('orders git tag before npm publish and latest last', () => {
+  test('orders git tag first and current npm publish last', () => {
     const prepared = makePreparedRelease();
     const plan = planStableRelease(
       makeContext(),
@@ -239,7 +256,7 @@ describe('planStableRelease', () => {
 
     assert.deepEqual(
       plan.operations.map((operation) => operation.type),
-      ['create-git-tag', 'publish-npm', 'set-npm-latest']
+      ['create-git-tag', 'publish-npm']
     );
   });
 
@@ -257,11 +274,7 @@ describe('planStableRelease', () => {
       version: '1.2.4'
     });
     assert.deepEqual(
-      plan.operations.filter(
-        (operation) =>
-          operation.type === 'publish-npm' ||
-          operation.type === 'set-npm-latest'
-      ),
+      plan.operations.filter((operation) => operation.type === 'publish-npm'),
       [
         {
           type: 'publish-npm',
@@ -272,7 +285,7 @@ describe('planStableRelease', () => {
     );
   });
 
-  test('publishes under a non-latest tag before separately setting latest', () => {
+  test('publishes a current release directly to latest', () => {
     const prepared = makePreparedRelease();
     const plan = planStableRelease(
       makeContext(),
@@ -281,21 +294,34 @@ describe('planStableRelease', () => {
     );
 
     assert.deepEqual(
-      plan.operations.filter(
-        (operation) =>
-          operation.type === 'publish-npm' ||
-          operation.type === 'set-npm-latest'
-      ),
+      plan.operations.filter((operation) => operation.type === 'publish-npm'),
+      [
+        {
+          type: 'publish-npm',
+          prepared: prepared.npm,
+          npmTag: 'latest'
+        }
+      ]
+    );
+  });
+
+  test('publishes a historical release under a non-latest tag when latest is absent', () => {
+    const context = { ...makeContext(), mode: 'historical' as const };
+    const prepared = makePreparedRelease();
+    const plan = planStableRelease(
+      context,
+      inspection({ npm: 'missing', latest: 'missing' }),
+      prepared
+    );
+
+    assert.deepEqual(plan.latestAction, { type: 'none' });
+    assert.deepEqual(
+      plan.operations.filter((operation) => operation.type === 'publish-npm'),
       [
         {
           type: 'publish-npm',
           prepared: prepared.npm,
           npmTag: 'release-1-2-3'
-        },
-        {
-          type: 'set-npm-latest',
-          packageName: '@cloudflare/sandbox',
-          version: '1.2.3'
         }
       ]
     );

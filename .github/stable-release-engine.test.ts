@@ -24,6 +24,16 @@ describe('runStableReleaseEngine', () => {
 
     assert.equal(result.finalPlan.operations.length, 0);
     assert.equal(platform.distTags.get('@cloudflare/sandbox:latest'), '1.2.3');
+    assert.equal(
+      platform.operations.at(-1),
+      'npm.publish /tmp/pkg/pkg.tgz latest'
+    );
+    assert.equal(
+      platform.operations.some((operation) =>
+        operation.startsWith('npm.distTag')
+      ),
+      false
+    );
   });
 
   test('scenario already complete release performs no mutation', async () => {
@@ -203,6 +213,30 @@ describe('runStableReleaseEngine', () => {
         assert.match(String(error.errors[1]), /cleanup failed/);
         return true;
       }
+    );
+  });
+
+  test('does not publish npm when an earlier Docker copy fails', async () => {
+    const platform = seededPlatformWithSourceImage();
+    platform.docker.copyImage = async () => {
+      throw new Error('copy failed');
+    };
+
+    await assert.rejects(
+      runStableReleaseEngine({
+        context: makeContext(),
+        platform,
+        prepare: async () => makePreparedRelease()
+      }),
+      /copy failed/
+    );
+
+    assert.equal(platform.npmVersions.size, 0);
+    assert.equal(
+      platform.operations.some((operation) =>
+        operation.startsWith('npm.publish')
+      ),
+      false
     );
   });
 

@@ -157,6 +157,7 @@ jobs:
       actions: read
       contents: write
       id-token: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -222,3 +223,15 @@ jobs:
           if [ -d "$RUNNER_TEMP/release-root" ]; then
             git worktree remove --force "$RUNNER_TEMP/release-root" || true
           fi
+
+      - name: Promote public references
+        if: needs.release-identity.outputs.release-mode == 'current'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          git fetch origin main
+          main_sha="$(git rev-parse origin/main)"
+          npx tsx .github/promote-references.ts \
+            --version "$RELEASE_VERSION" \
+            --main-sha "$main_sha"
