@@ -68,6 +68,11 @@ function trimTrailingSlashes(s: string): string {
   return s.slice(0, end);
 }
 
+function normalizeMountPrefix(prefix: string | undefined): string | undefined {
+  if (!prefix) return undefined;
+  return trimTrailingSlashes(normalizeObjectKey(prefix)) || undefined;
+}
+
 function parsePath(pathname: string): ParsedPath | null {
   const stripped = pathname.startsWith('/') ? pathname.slice(1) : pathname;
   if (!stripped) return null;
@@ -490,8 +495,7 @@ async function handlePutObject(
   key: string,
   request: Request,
   env: Cloudflare.Env,
-  permitted: Set<string>,
-  mountPrefix?: string
+  buckets: R2EgressParams['buckets']
 ): Promise<Response> {
   const copySourceHeader = request.headers.get('x-amz-copy-source');
   if (copySourceHeader) {
@@ -502,7 +506,7 @@ async function handlePutObject(
       });
     }
 
-    if (!permitted.has(copySource.bucket)) {
+    if (!Object.hasOwn(buckets, copySource.bucket)) {
       return new Response(
         `Access to R2 bucket "${copySource.bucket}" is not permitted. ` +
           'Call mountBucket() with this bucket before accessing it.',
@@ -510,6 +514,7 @@ async function handlePutObject(
       );
     }
 
+    const sourceParams = buckets[copySource.bucket];
     const sourceBucket =
       copySource.bucket === bucketName
         ? r2
@@ -522,10 +527,10 @@ async function handlePutObject(
       );
     }
 
-    const sourceKey =
-      mountPrefix && copySource.bucket === bucketName
-        ? `${mountPrefix}/${copySource.key}`
-        : copySource.key;
+    const sourcePrefix = normalizeMountPrefix(sourceParams.prefix);
+    const sourceKey = sourcePrefix
+      ? `${sourcePrefix}/${copySource.key}`
+      : copySource.key;
     const sourceObject = await sourceBucket.get(sourceKey);
     if (!sourceObject) {
       return new Response(null, { status: 404 });
@@ -679,10 +684,7 @@ export const r2EgressHandler: OutboundHandler<
   }
 
   const bucketParams = ctx.params.buckets[bucketName];
-  const rawPrefix = bucketParams.prefix;
-  const mountPrefix = rawPrefix
-    ? trimTrailingSlashes(normalizeObjectKey(rawPrefix))
-    : undefined;
+  const mountPrefix = normalizeMountPrefix(bucketParams.prefix);
   const readOnly = bucketParams.readOnly ?? false;
 
   const r2 = resolveR2Bucket(env, bucketName);
@@ -712,7 +714,6 @@ export const r2EgressHandler: OutboundHandler<
   }
 
   const fullKey = mountPrefix ? `${mountPrefix}/${key}` : key;
-  const permitted = new Set(Object.keys(ctx.params.buckets));
 
   if (
     readOnly &&
@@ -763,8 +764,7 @@ export const r2EgressHandler: OutboundHandler<
         fullKey,
         request,
         env,
-        permitted,
-        mountPrefix
+        ctx.params.buckets
       );
     case 'DELETE':
       return handleDeleteObject(r2, fullKey);
