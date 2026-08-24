@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.8
+
+### Patch Changes
+
+- [#879](https://github.com/cloudflare/sandbox-sdk/pull/879) [`8534aef`](https://github.com/cloudflare/sandbox-sdk/commit/8534aef9baaeb2adebb974802ba9c325809e6ae6) Thanks [@scuffi](https://github.com/scuffi)! - Enforce source mount prefixes for server-side copies between R2 bindings.
+
 ## 0.12.7
 
 ### Patch Changes
