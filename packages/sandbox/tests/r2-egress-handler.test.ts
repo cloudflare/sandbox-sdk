@@ -527,6 +527,115 @@ describe('r2EgressHandler', () => {
       });
     });
 
+    it('does not copy a raw physical key outside a cross-binding source prefix', async () => {
+      const victimKey = 'victim/secret.txt';
+      const victimBody = 'VICTIM_CANARY_DO_NOT_COPY';
+      const docsPrefix = 'tenant-a/ws/documents';
+      const sessionPrefix = 'tenant-a/ws/sandboxes/sess-1';
+      const stolenKey = `${sessionPrefix}/stolen.txt`;
+      const store = new Map<string, MockObject>([
+        [victimKey, { body: victimBody }],
+        [`${docsPrefix}/readme.txt`, { body: 'hello from documents' }]
+      ]);
+      const r2 = createMockR2Bucket(store);
+
+      const res = await r2EgressHandler(
+        new Request('http://r2.internal/SESSION/stolen.txt', {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': `/DOCS/${victimKey}` }
+        }),
+        { DOCS: r2, SESSION: r2 } as unknown as Cloudflare.Env,
+        makeCtx({
+          buckets: {
+            DOCS: { prefix: `/${docsPrefix}/`, readOnly: true },
+            SESSION: { prefix: `/${sessionPrefix}/` }
+          }
+        })
+      );
+
+      expect(res.status).toBe(404);
+      expect(r2.get).toHaveBeenCalledWith(`${docsPrefix}/${victimKey}`);
+      expect(store.has(stolenKey)).toBe(false);
+      expect(store.get(victimKey)?.body).toBe(victimBody);
+    });
+
+    it('copies an in-prefix object between prefixed bindings', async () => {
+      const docsPrefix = 'tenant-a/ws/documents';
+      const sessionPrefix = 'tenant-a/ws/sandboxes/sess-1';
+      const store = new Map<string, MockObject>([
+        [`${docsPrefix}/readme.txt`, { body: 'hello from documents' }]
+      ]);
+      const r2 = createMockR2Bucket(store);
+
+      const res = await r2EgressHandler(
+        new Request('http://r2.internal/SESSION/copied.txt', {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': '/DOCS/readme.txt' }
+        }),
+        { DOCS: r2, SESSION: r2 } as unknown as Cloudflare.Env,
+        makeCtx({
+          buckets: {
+            DOCS: { prefix: `/${docsPrefix}/`, readOnly: true },
+            SESSION: { prefix: `/${sessionPrefix}/` }
+          }
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(r2.get).toHaveBeenCalledWith(`${docsPrefix}/readme.txt`);
+      expect(store.get(`${sessionPrefix}/copied.txt`)?.body).toBe(
+        'hello from documents'
+      );
+    });
+
+    it('copies an object within the same prefixed binding', async () => {
+      const prefix = 'tenant-a/ws/sandboxes/sess-1';
+      const store = new Map<string, MockObject>([
+        [`${prefix}/source.txt`, { body: 'same binding' }]
+      ]);
+      const r2 = createMockR2Bucket(store);
+
+      const res = await r2EgressHandler(
+        new Request('http://r2.internal/SESSION/copied.txt', {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': '/SESSION/source.txt' }
+        }),
+        { SESSION: r2 } as unknown as Cloudflare.Env,
+        makeCtx({ buckets: { SESSION: { prefix: `/${prefix}/` } } })
+      );
+
+      expect(res.status).toBe(200);
+      expect(r2.get).toHaveBeenCalledWith(`${prefix}/source.txt`);
+      expect(store.get(`${prefix}/copied.txt`)?.body).toBe('same binding');
+    });
+
+    it('copies an object between unprefixed bindings', async () => {
+      const sourceStore = new Map<string, MockObject>([
+        ['source.txt', { body: 'cross binding' }]
+      ]);
+      const destinationStore = new Map<string, MockObject>();
+      const source = createMockR2Bucket(sourceStore);
+      const destination = createMockR2Bucket(destinationStore);
+
+      const res = await r2EgressHandler(
+        new Request('http://r2.internal/SESSION/copied.txt', {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': '/DOCS/source.txt' }
+        }),
+        { DOCS: source, SESSION: destination } as unknown as Cloudflare.Env,
+        makeCtx({
+          buckets: {
+            DOCS: { readOnly: true },
+            SESSION: {}
+          }
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(source.get).toHaveBeenCalledWith('source.txt');
+      expect(destinationStore.get('copied.txt')?.body).toBe('cross binding');
+    });
+
     it('replaces metadata on copy when requested', async () => {
       const store = new Map<string, MockObject>([
         ['source.txt', { body: 'copy me', contentType: 'text/plain' }]
