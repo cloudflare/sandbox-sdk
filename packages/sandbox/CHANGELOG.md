@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.12.9
+
+### Patch Changes
+
+- [#877](https://github.com/cloudflare/sandbox-sdk/pull/877) [`664d8e3`](https://github.com/cloudflare/sandbox-sdk/commit/664d8e36d22f2b8f286a9cac90551113afdb316c) Thanks [@scuffi](https://github.com/scuffi)! - Allow mounted R2 buckets to open object keys containing spaces, symbols, percent signs, and non-ASCII characters.
+
 ## 0.12.8
 
 ### Patch Changes
