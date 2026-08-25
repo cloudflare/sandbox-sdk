@@ -62,6 +62,14 @@ function normalizeObjectKey(value: string): string {
   return value.replace(/^\/+/, '');
 }
 
+function decodeObjectKey(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function trimTrailingSlashes(s: string): string {
   let end = s.length;
   while (end > 0 && s[end - 1] === '/') end--;
@@ -673,7 +681,8 @@ export const r2EgressHandler: OutboundHandler<
     return new Response('Bad Request: empty path', { status: 400 });
   }
 
-  const { bucket: bucketName, key } = parsed;
+  const { bucket: bucketName, key: encodedKey } = parsed;
+  const key = decodeObjectKey(encodedKey);
 
   if (!ctx.params?.buckets || !(bucketName in ctx.params.buckets)) {
     return new Response(
