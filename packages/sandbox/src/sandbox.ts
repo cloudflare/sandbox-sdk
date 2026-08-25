@@ -6733,10 +6733,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `if [ "$FAILED" -ne 0 ]; then rm -f ${shellEscape(tmpPath)}; exit 1; fi`
       ].join('; ');
 
-      const result = await this.execWithSession(script, backupSession, {
-        timeout: 1810_000,
-        origin: 'internal'
-      });
+      // The child shell owns the script's explicit exit; the persistent backup
+      // session observes only the resulting command status.
+      const result = await this.execWithSession(
+        `( ${script} )`,
+        backupSession,
+        {
+          timeout: 1810_000,
+          origin: 'internal'
+        }
+      );
 
       if (result.exitCode !== 0) {
         await this.execWithSession(
