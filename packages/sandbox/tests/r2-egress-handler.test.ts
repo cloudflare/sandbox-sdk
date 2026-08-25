@@ -344,6 +344,47 @@ describe('r2EgressHandler', () => {
       expect(text).toBe('Hello, World!');
     });
 
+    it('resolves encoded object keys exactly once', async () => {
+      const cases = [
+        ['with%23hash.txt', 'with#hash.txt'],
+        [
+          '%E8%AB%8B%E6%B1%82%E6%9B%B8.pdf%23a3f9c2e18b4d',
+          '請求書.pdf#a3f9c2e18b4d'
+        ],
+        ['pct%2520once.txt', 'pct%20once.txt'],
+        ['folder%2Ffile.txt', 'folder/file.txt'],
+        ['bad%escape.txt', 'bad%escape.txt']
+      ];
+
+      for (const [path, key] of cases) {
+        const r2 = createMockR2Bucket(
+          new Map([[key, { body: key, etag: '"test-etag"' }]])
+        );
+        const res = await r2EgressHandler(
+          req('GET', `/MY_BUCKET/${path}`),
+          makeEnv(r2),
+          makeCtx()
+        );
+
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe(key);
+        expect(r2.get).toHaveBeenCalledWith(key);
+      }
+    });
+
+    it('does not decode an encoded separator in the bucket segment', async () => {
+      const r2 = createMockR2Bucket(new Map());
+
+      const res = await r2EgressHandler(
+        req('GET', '/MY_BUCKET%2FOTHER/secret.txt'),
+        makeEnv(r2),
+        makeCtx()
+      );
+
+      expect(res.status).toBe(403);
+      expect(r2.get).not.toHaveBeenCalled();
+    });
+
     it('returns 404 for missing key', async () => {
       const r2 = createMockR2Bucket(new Map());
       const res = await r2EgressHandler(
