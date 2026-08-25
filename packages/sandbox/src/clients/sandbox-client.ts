@@ -1,4 +1,5 @@
-import type { SandboxAPI } from '@repo/shared';
+import type { SandboxAPI, WatchRequest } from '@repo/shared';
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import { BackupClient } from './backup-client';
 import { CommandClient } from './command-client';
 import { FileClient } from './file-client';
@@ -13,7 +14,7 @@ import {
 } from './transport';
 import type { HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
-import { WatchClient } from './watch-client';
+import { WatchClient, watchLocalMountRoute } from './watch-client';
 
 /**
  * Route-based compatibility sandbox client that composes all domain-specific
@@ -44,8 +45,13 @@ export class SandboxClient {
   public readonly tunnels: never = createTunnelsNotImplemented() as never;
 
   private transport: ITransport | null = null;
+  private readonly mountWatchFetch:
+    | ((request: Request) => Promise<Response>)
+    | undefined;
 
   constructor(options: HttpClientOptions) {
+    const stub = options.stub;
+    this.mountWatchFetch = stub ? (request) => stub.fetch(request) : undefined;
     // Create shared transport if WebSocket mode is enabled
     if (options.transportMode === 'websocket' && options.wsUrl) {
       this.transport = createTransport({
@@ -77,6 +83,12 @@ export class SandboxClient {
     this.interpreter = new InterpreterClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
     this.watch = new WatchClient(clientOptions);
+  }
+
+  async [WATCH_LOCAL_MOUNT](
+    request: WatchRequest
+  ): Promise<ReadableStream<Uint8Array>> {
+    return watchLocalMountRoute(this.watch, request, this.mountWatchFetch);
   }
 
   /**
