@@ -23,10 +23,28 @@ export interface BackupOptions {
    */
   gitignore?: boolean;
   /**
-   * Glob patterns to exclude from the backup.
-   * These are passed directly to mksquashfs as wildcard exclude patterns.
+   * Glob patterns to exclude from the backup. Single-component patterns match
+   * recursively, while separators between path components make a pattern
+   * multi-component and relative to the backup directory root. One trailing
+   * `/` is a directory marker removed before classification, so `dist` and
+   * `dist/` are recursive, while `alpha/beta/` remains root-relative. Repeated
+   * trailing separators and empty separators between components are rejected
+   * to keep classification canonical. A trailing `/**` preserves root anchoring,
+   * so use `dist` or the recursive-prefix form rather than `dist/**` to exclude
+   * `dist` directories at any depth. An explicit leading recursive globstar
+   * prefix requests recursion when the normalized target is one component,
+   * including when combined with a trailing `/**`.
    *
-   * @example ['node_modules', '*.log', '.cache']
+   * Absolute or traversing paths, surrounding whitespace, control characters,
+   * explicit `... ` syntax, empty, whole-backup patterns such as `*`, `***`,
+   * `*?`, and `?*`, globstar-only patterns, and recursive multi-component
+   * globstars are rejected with
+   * `INVALID_BACKUP_CONFIG`.
+   *
+   * The SDK and container must use matching versions so they validate and
+   * expand these patterns with the same grammar.
+   *
+   * @example ['node_modules', '*.log', '.cache', 'build/output']
    */
   excludes?: string[];
   /**

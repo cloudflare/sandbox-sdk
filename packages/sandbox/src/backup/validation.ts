@@ -1,7 +1,6 @@
-import type { createLogger } from '@repo/shared';
 import {
   BACKUP_ALLOWED_PREFIXES,
-  normalizeBackupExcludePattern
+  getBackupExcludePatternError
 } from '@repo/shared/backup';
 import { ErrorCode, InvalidBackupConfigError } from '../errors';
 import {
@@ -53,31 +52,20 @@ export function validateBackupDir(dir: string, label: string): void {
   }
 }
 
-export function normalizeBackupExcludes(
-  excludes: string[],
-  logger: ReturnType<typeof createLogger>
-): string[] {
-  const normalizedExcludes: string[] = [];
-
+export function validateBackupExcludes(excludes: string[]): void {
   for (const pattern of excludes) {
-    const normalized = normalizeBackupExcludePattern(pattern);
-    if (normalized === null) {
-      logger.warn(
-        'Exclude pattern reduced to empty after globstar normalization; skipping',
-        { original: pattern }
-      );
-      continue;
+    const validationError = getBackupExcludePatternError(pattern);
+    if (validationError) {
+      const reason = `Invalid BackupOptions.excludes pattern ${JSON.stringify(pattern)}: ${validationError}`;
+      throw new InvalidBackupConfigError({
+        message: reason,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason },
+        timestamp: new Date().toISOString()
+      });
     }
-    if (normalized !== pattern) {
-      logger.warn(
-        'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
-        { original: pattern, normalized }
-      );
-    }
-    normalizedExcludes.push(normalized);
   }
-
-  return normalizedExcludes;
 }
 
 export function resolveBackupCompression(compression: unknown): {
