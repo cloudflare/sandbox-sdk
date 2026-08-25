@@ -23,7 +23,11 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     const pathname = new URL(request.url).pathname;
 
     if (pathname === '/api/watch' && request.method === 'POST') {
-      return this.handleWatch(request, context);
+      return this.handleWatch(request, context, 'public');
+    }
+
+    if (pathname === '/api/watch/mount' && request.method === 'POST') {
+      return this.handleWatch(request, context, 'mount');
     }
 
     if (pathname === '/api/watch/check' && request.method === 'POST') {
@@ -46,20 +50,28 @@ export class WatchHandler extends BaseHandler<Request, Response> {
    */
   private async handleWatch(
     request: Request,
-    context: RequestContext
+    context: RequestContext,
+    mode: 'public' | 'mount'
   ): Promise<Response> {
     const normalizedRequest = await this.parseAndNormalizeWatchRequest(
       request,
-      context
+      context,
+      mode
     );
     if (normalizedRequest instanceof Response) {
       return normalizedRequest;
     }
 
-    const result = await this.watchService.watchDirectory(
-      normalizedRequest.path,
-      normalizedRequest
-    );
+    const result =
+      mode === 'mount'
+        ? await this.watchService.watchMountDirectory(
+            normalizedRequest.path,
+            normalizedRequest
+          )
+        : await this.watchService.watchDirectory(
+            normalizedRequest.path,
+            normalizedRequest
+          );
 
     if (!result.success) {
       return this.createErrorResponse(result.error, context);
@@ -103,7 +115,8 @@ export class WatchHandler extends BaseHandler<Request, Response> {
 
   private async parseAndNormalizeWatchRequest(
     request: Request,
-    context: RequestContext
+    context: RequestContext,
+    mode: 'public' | 'mount'
   ): Promise<WatchRequest | Response> {
     let body: WatchRequest;
     try {
@@ -124,7 +137,7 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       return this.createErrorResponse(validationError, context);
     }
 
-    const pathResult = this.normalizeWatchPath(body.path);
+    const pathResult = this.normalizeWatchPath(body.path, mode);
     if (!pathResult.success) {
       return this.createErrorResponse(pathResult.error, context);
     }
@@ -306,7 +319,10 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     return null;
   }
 
-  private normalizeWatchPath(path: string):
+  private normalizeWatchPath(
+    path: string,
+    mode: 'public' | 'mount' = 'public'
+  ):
     | { success: true; path: string }
     | {
         success: false;
@@ -329,18 +345,30 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       };
     }
 
+    if (mode === 'mount' && !input.startsWith('/')) {
+      return {
+        success: false,
+        error: {
+          message: 'mount watch path must be absolute',
+          code: ErrorCode.VALIDATION_FAILED,
+          details: { path }
+        }
+      };
+    }
+
     const resolved = input.startsWith('/')
       ? pathPosix.resolve(input)
       : pathPosix.resolve(WORKSPACE_ROOT, input);
 
     if (
+      mode === 'public' &&
       resolved !== WORKSPACE_ROOT &&
       !resolved.startsWith(`${WORKSPACE_ROOT}/`)
     ) {
       return {
         success: false,
         error: {
-          message: 'path must be inside /workspace',
+          message: `path must be inside ${WORKSPACE_ROOT}`,
           code: ErrorCode.PERMISSION_DENIED,
           details: {
             path,
