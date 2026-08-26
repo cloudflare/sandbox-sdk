@@ -58,7 +58,7 @@ import {
 } from '@repo/shared';
 import {
   BACKUP_ALLOWED_PREFIXES,
-  normalizeBackupExcludePattern
+  getBackupExcludePatternError
 } from '@repo/shared/backup';
 import {
   getHttpStatus,
@@ -6164,28 +6164,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.backupBucket;
   }
 
-  private normalizeBackupExcludes(excludes: string[]): string[] {
-    const normalizedExcludes: string[] = [];
-
+  private validateBackupExcludes(excludes: string[]): void {
     for (const pattern of excludes) {
-      const normalized = normalizeBackupExcludePattern(pattern);
-      if (normalized === null) {
-        this.logger.warn(
-          'Exclude pattern reduced to empty after globstar normalization; skipping',
-          { original: pattern }
-        );
-        continue;
+      const error = getBackupExcludePatternError(pattern);
+      if (error !== undefined) {
+        throw new InvalidBackupConfigError({
+          message: `BackupOptions.excludes contains an invalid pattern: ${error}`,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: error },
+          timestamp: new Date().toISOString()
+        });
       }
-      if (normalized !== pattern) {
-        this.logger.warn(
-          'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
-          { original: pattern, normalized }
-        );
-      }
-      normalizedExcludes.push(normalized);
     }
-
-    return normalizedExcludes;
   }
 
   private resolveBackupCompression(compression: unknown): {
@@ -6928,7 +6919,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const resolvedCompression = this.resolveBackupCompression(compression);
 
-      const normalizedExcludes = this.normalizeBackupExcludes(excludes);
+      this.validateBackupExcludes(excludes);
 
       backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
@@ -6940,7 +6931,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupSession,
         {
           gitignore,
-          excludes: normalizedExcludes,
+          excludes,
           compression: resolvedCompression
         }
       );
@@ -7131,7 +7122,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const resolvedCompression = this.resolveBackupCompression(compression);
 
-      const normalizedExcludes = this.normalizeBackupExcludes(excludes);
+      this.validateBackupExcludes(excludes);
 
       backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
@@ -7144,7 +7135,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupSession,
         {
           gitignore,
-          excludes: normalizedExcludes,
+          excludes,
           compression: resolvedCompression
         }
       );
