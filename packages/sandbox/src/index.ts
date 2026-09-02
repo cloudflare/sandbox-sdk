@@ -1,7 +1,9 @@
 export { ContainerFiles, type ContainerExecutor, type ReadFileOptions } from "./container-files.js";
 export {
-  type SandboxFileError,
+  SandboxFileError,
+  SandboxProtocolError,
+  type SandboxErrno,
   type SandboxFileErrorCode,
-  type SandboxProtocolError,
+  type SandboxProtocolErrorReason,
 } from "./errors.js";
 export { Sandbox } from "./sandbox.js";

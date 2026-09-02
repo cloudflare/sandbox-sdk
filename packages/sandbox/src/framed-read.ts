@@ -1,4 +1,4 @@
-import { protocolError } from "./errors.js";
+import { SandboxProtocolError } from "./errors.js";
 
 const MAGIC = new Uint8Array([0x53, 0x42, 0x58, 0x46]);
 const PROTOCOL_VERSION = 1;
@@ -16,24 +16,39 @@ type ReadFrame = { kind: "content" } | { kind: "error"; errno: number; detail: s
 export class FramedRead {
   readonly #process: ExecProcess;
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
+  readonly #signal: AbortSignal | undefined;
   #pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
   #settled = false;
 
-  private constructor(process: ExecProcess, reader: ReadableStreamDefaultReader<Uint8Array>) {
+  private constructor(
+    process: ExecProcess,
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal: AbortSignal | undefined,
+  ) {
     this.#process = process;
     this.#reader = reader;
+    this.#signal = signal;
   }
 
-  static open(process: ExecProcess): FramedRead {
+  static open(process: ExecProcess, signal: AbortSignal | undefined): FramedRead {
     if (process.stdout === null) {
       stopProcess(process);
-      throw protocolError("sandbox-shim did not provide stdout");
+      throw new SandboxProtocolError({ reason: "MISSING_STDOUT" });
     }
 
-    return new FramedRead(process, process.stdout.getReader());
+    return new FramedRead(process, process.stdout.getReader(), signal);
   }
 
   async readFrame(): Promise<ReadFrame> {
+    try {
+      return await this.#readFrame();
+    } catch (error) {
+      if (this.#signal?.aborted === true) throw this.#signal.reason;
+      throw error;
+    }
+  }
+
+  async #readFrame(): Promise<ReadFrame> {
     const header = await this.#readExactly(HEADER_LENGTH);
     validateHeader(header);
 
@@ -42,7 +57,7 @@ export class FramedRead {
       return { kind: "content" };
     }
     if (status !== STATUS_FILE_ERROR) {
-      throw protocolError(`sandbox-shim returned unknown status ${status}`);
+      throw new SandboxProtocolError({ reason: "UNKNOWN_STATUS", status });
     }
 
     const errnoBytes = await this.#readExactly(ERROR_PREFIX_LENGTH);
@@ -76,14 +91,16 @@ export class FramedRead {
 
           const exitCode = await this.#process.exitCode;
           if (exitCode !== 0) {
-            throw protocolError(`sandbox-shim exited with code ${exitCode}`);
+            if (this.#signal?.aborted === true) throw this.#signal.reason;
+            throw new SandboxProtocolError({ reason: "UNEXPECTED_EXIT", exitCode });
           }
 
           this.#settled = true;
           controller.close();
         } catch (error) {
-          this.terminate(error);
-          controller.error(error);
+          const failure = this.#signal?.aborted === true ? this.#signal.reason : error;
+          this.terminate(failure);
+          controller.error(failure);
         }
       },
       cancel: (reason) => {
@@ -108,7 +125,7 @@ export class FramedRead {
       if (this.#pending.length === 0) {
         const next = await this.#reader.read();
         if (next.done) {
-          throw protocolError("sandbox-shim closed stdout before completing its frame");
+          throw new SandboxProtocolError({ reason: "TRUNCATED_FRAME" });
         }
         this.#pending = next.value;
       }
@@ -134,7 +151,7 @@ export class FramedRead {
 
     while (true) {
       if (length > limit) {
-        throw protocolError("sandbox-shim error message exceeded its size limit");
+        throw new SandboxProtocolError({ reason: "ERROR_MESSAGE_TOO_LARGE", limit });
       }
       const next = await this.#reader.read();
       if (next.done) break;
@@ -143,7 +160,7 @@ export class FramedRead {
     }
 
     if (length > limit) {
-      throw protocolError("sandbox-shim error message exceeded its size limit");
+      throw new SandboxProtocolError({ reason: "ERROR_MESSAGE_TOO_LARGE", limit });
     }
 
     const bytes = new Uint8Array(length);
@@ -154,8 +171,8 @@ export class FramedRead {
     }
     try {
       return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      throw protocolError("sandbox-shim returned a non-UTF-8 error message");
+    } catch (cause) {
+      throw new SandboxProtocolError({ reason: "INVALID_ERROR_MESSAGE", cause });
     }
   }
 }
@@ -163,11 +180,14 @@ export class FramedRead {
 function validateHeader(header: Uint8Array): void {
   for (let index = 0; index < MAGIC.length; index += 1) {
     if (header[index] !== MAGIC[index]) {
-      throw protocolError("sandbox-shim returned invalid protocol magic");
+      throw new SandboxProtocolError({ reason: "INVALID_MAGIC" });
     }
   }
   if (header[4] !== PROTOCOL_VERSION) {
-    throw protocolError(`sandbox-shim protocol ${header[4]} is not supported`);
+    throw new SandboxProtocolError({
+      reason: "UNSUPPORTED_VERSION",
+      protocolVersion: header[4],
+    });
   }
 }
 

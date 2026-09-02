@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
+import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 
 const encoder = new TextEncoder();
 const SUCCESS_HEADER = new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]);
@@ -77,11 +78,13 @@ describe("ContainerFiles.readFile", () => {
 
     const promise = new ContainerFiles(container).readFile("/missing");
 
+    await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
-      name: "Error",
+      name: "SandboxFileError",
       code: "FILE_NOT_FOUND",
       errno: "ENOENT",
       path: "/missing",
+      detail: "No such file or directory",
       message: "Cannot read '/missing': No such file or directory",
     });
   });
@@ -127,9 +130,14 @@ describe("ContainerFiles.readFile", () => {
     const container = containerWith(
       processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 2, 0])]),
     );
+    const promise = new ContainerFiles(container).readFile("/file");
 
-    await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
+    await expect(promise).rejects.toBeInstanceOf(SandboxProtocolError);
+    await expect(promise).rejects.toMatchObject({
+      name: "SandboxProtocolError",
       code: "SANDBOX_PROTOCOL_ERROR",
+      reason: "UNSUPPORTED_VERSION",
+      protocolVersion: 2,
     });
   });
 
@@ -140,6 +148,8 @@ describe("ContainerFiles.readFile", () => {
 
     await expect(response.arrayBuffer()).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
+      reason: "UNEXPECTED_EXIT",
+      exitCode: 9,
       message: "sandbox-shim exited with code 9",
     });
     expect(process.kill).toHaveBeenCalledOnce();
@@ -191,12 +201,40 @@ describe("ContainerFiles.readFile", () => {
     expect(process.kill).toHaveBeenCalledOnce();
   });
 
+  it("preserves the abort reason when an active read is killed", async () => {
+    const abort = new AbortController();
+    const reason = new Error("caller stopped reading");
+    const process = processFromChunks([new Uint8Array([0x53, 0x42])]);
+    const promise = new ContainerFiles(containerWith(process)).readFile("/file", {
+      signal: abort.signal,
+    });
+
+    abort.abort(reason);
+
+    await expect(promise).rejects.toBe(reason);
+    expect(process.kill).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the abort reason when the killed shim exits nonzero", async () => {
+    const abort = new AbortController();
+    const reason = new Error("caller stopped reading");
+    const process = processFromChunks(successFrame(), 137);
+    const response = await new ContainerFiles(containerWith(process)).readFile("/file", {
+      signal: abort.signal,
+    });
+
+    abort.abort(reason);
+
+    await expect(response.arrayBuffer()).rejects.toBe(reason);
+  });
+
   it("kills the process after a truncated frame", async () => {
     const process = processFromChunks([new Uint8Array([0x53, 0x42])]);
     const container = containerWith(process);
 
     await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
+      reason: "TRUNCATED_FRAME",
     });
     expect(process.kill).toHaveBeenCalledOnce();
   });
@@ -207,7 +245,50 @@ describe("ContainerFiles.readFile", () => {
 
     await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
+      reason: "MISSING_STDOUT",
     });
     expect(process.kill).toHaveBeenCalledOnce();
+  });
+
+  it("recognizes SDK errors after prototype identity is lost", () => {
+    const fileError = Object.assign(new Error("missing"), {
+      name: "SandboxFileError",
+      code: "FILE_NOT_FOUND",
+      path: "/missing",
+      detail: "No such file or directory",
+    });
+    const protocolError = Object.assign(new Error("invalid frame"), {
+      name: "SandboxProtocolError",
+      code: "SANDBOX_PROTOCOL_ERROR",
+      reason: "INVALID_MAGIC",
+    });
+
+    expect(fileError).not.toBeInstanceOf(SandboxFileError);
+    expect(SandboxFileError.is(fileError)).toBe(true);
+    expect(protocolError).not.toBeInstanceOf(SandboxProtocolError);
+    expect(SandboxProtocolError.is(protocolError)).toBe(true);
+  });
+
+  it("keeps public error contract fields as own properties", () => {
+    const fileError = new SandboxFileError({
+      code: "FILE_NOT_FOUND",
+      path: "/missing",
+      detail: "No such file or directory",
+      errno: "ENOENT",
+    });
+    const protocolError = new SandboxProtocolError({
+      reason: "UNEXPECTED_EXIT",
+      exitCode: 9,
+    });
+
+    expect(Object.hasOwn(fileError, "name")).toBe(true);
+    expect(Object.hasOwn(fileError, "code")).toBe(true);
+    expect(Object.hasOwn(fileError, "path")).toBe(true);
+    expect(Object.hasOwn(fileError, "detail")).toBe(true);
+    expect(Object.hasOwn(fileError, "errno")).toBe(true);
+    expect(Object.hasOwn(protocolError, "name")).toBe(true);
+    expect(Object.hasOwn(protocolError, "code")).toBe(true);
+    expect(Object.hasOwn(protocolError, "reason")).toBe(true);
+    expect(Object.hasOwn(protocolError, "exitCode")).toBe(true);
   });
 });

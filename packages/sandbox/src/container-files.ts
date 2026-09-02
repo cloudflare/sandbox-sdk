@@ -1,11 +1,14 @@
-import { fileError } from "./errors.js";
+import { fileErrorFromErrno } from "./errors.js";
 import { FramedRead } from "./framed-read.js";
 
 const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 
 export interface ReadFileOptions {
+  /** Working directory used to resolve a relative path. */
   cwd?: string;
+  /** Linux user or user/group pair used to open the file. */
   user?: string;
+  /** Cancels the native container process without imposing an SDK timeout. */
   signal?: AbortSignal;
 }
 
@@ -18,6 +21,18 @@ export class ContainerFiles {
     this.#container = container;
   }
 
+  /**
+   * Streams a regular file from the running container.
+   *
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @param path - Absolute path, or a relative path when `options.cwd` is provided.
+   * @param options - Native execution options relevant to opening the file.
+   * @returns A binary response whose body applies backpressure to the container process.
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
   async readFile(path: string, options: ReadFileOptions = {}): Promise<Response> {
     validatePath(path, options.cwd);
 
@@ -27,11 +42,11 @@ export class ContainerFiles {
       stderr: "ignore",
     });
 
-    const read = FramedRead.open(process);
+    const read = FramedRead.open(process, options.signal);
     try {
       const frame = await read.readFrame();
       if (frame.kind === "error") {
-        throw fileError(path, frame.errno, frame.detail);
+        throw fileErrorFromErrno(path, frame.errno, frame.detail);
       }
 
       return new Response(read.body(), {
