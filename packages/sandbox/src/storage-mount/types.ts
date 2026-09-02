@@ -46,6 +46,8 @@ export interface LocalSyncMountInfo {
   mountPath: string;
   syncManager: LocalMountSyncManager;
   mounted: boolean;
+  prefix?: string;
+  readOnly: boolean;
 }
 
 export interface R2BindingMountInfo {
