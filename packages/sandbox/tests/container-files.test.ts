@@ -3,6 +3,17 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ContainerFiles } from "../src/container-files.js";
 
 const encoder = new TextEncoder();
+const SUCCESS_HEADER = new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]);
+
+function successFrame(...content: Uint8Array[]): Uint8Array[] {
+  return [SUCCESS_HEADER, ...content];
+}
+
+function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
+  const errno = new Uint8Array(4);
+  new DataView(errno.buffer).setInt32(0, errnoNumber, true);
+  return [new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]), errno, encoder.encode(message)];
+}
 
 function processFromChunks(
   chunks: Uint8Array[],
@@ -62,15 +73,7 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("maps framed filesystem errors to ordinary errors with properties", async () => {
-    const errno = new Uint8Array(4);
-    new DataView(errno.buffer).setInt32(0, 2, true);
-    const container = containerWith(
-      processFromChunks([
-        new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]),
-        errno,
-        encoder.encode("No such file or directory"),
-      ]),
-    );
+    const container = containerWith(processFromChunks(errorFrame(2, "No such file or directory")));
 
     const promise = new ContainerFiles(container).readFile("/missing");
 
@@ -84,15 +87,7 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("maps permission failures", async () => {
-    const errno = new Uint8Array(4);
-    new DataView(errno.buffer).setInt32(0, 13, true);
-    const container = containerWith(
-      processFromChunks([
-        new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]),
-        errno,
-        encoder.encode("Permission denied"),
-      ]),
-    );
+    const container = containerWith(processFromChunks(errorFrame(13, "Permission denied")));
 
     await expect(new ContainerFiles(container).readFile("/private")).rejects.toMatchObject({
       code: "PERMISSION_DENIED",
@@ -102,17 +97,8 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("preserves a framed filesystem error regardless of process exit code", async () => {
-    const errno = new Uint8Array(4);
-    new DataView(errno.buffer).setInt32(0, 2, true);
     const container = containerWith(
-      processFromChunks(
-        [
-          new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]),
-          errno,
-          encoder.encode("No such file or directory"),
-        ],
-        1,
-      ),
+      processFromChunks(errorFrame(2, "No such file or directory"), 1),
     );
 
     await expect(new ContainerFiles(container).readFile("/missing")).rejects.toMatchObject({
@@ -148,21 +134,19 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("errors the response stream when the shim exits unsuccessfully", async () => {
-    const container = containerWith(
-      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0, 1])], 9),
-    );
+    const process = processFromChunks(successFrame(new Uint8Array([1])), 9);
+    const container = containerWith(process);
     const response = await new ContainerFiles(container).readFile("/file");
 
     await expect(response.arrayBuffer()).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
       message: "sandbox-shim exited with code 9",
     });
+    expect(process.kill).toHaveBeenCalledOnce();
   });
 
   it("returns an empty response for an empty file", async () => {
-    const container = containerWith(
-      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0])]),
-    );
+    const container = containerWith(processFromChunks(successFrame()));
 
     const response = await new ContainerFiles(container).readFile("/empty");
 
@@ -170,10 +154,10 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("kills the process when the response body is cancelled", async () => {
-    const streamCancelled = vi.fn();
+    const streamCancelled = vi.fn(() => new Promise<void>(() => undefined));
     const stdout = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]));
+        controller.enqueue(SUCCESS_HEADER);
       },
       cancel: streamCancelled,
     });
@@ -184,6 +168,26 @@ describe("ContainerFiles.readFile", () => {
     await response.body?.cancel("not needed");
 
     expect(streamCancelled).toHaveBeenCalledWith("not needed");
+    expect(process.kill).toHaveBeenCalledOnce();
+  });
+
+  it("kills the process when reading the response body fails", async () => {
+    const streamError = new Error("stdout transport failed");
+    let pullCount = 0;
+    const stdout = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pullCount === 0) {
+          pullCount += 1;
+          controller.enqueue(SUCCESS_HEADER);
+          return;
+        }
+        throw streamError;
+      },
+    });
+    const process = processFromChunks([], 0, stdout);
+    const response = await new ContainerFiles(containerWith(process)).readFile("/file");
+
+    await expect(response.arrayBuffer()).rejects.toBe(streamError);
     expect(process.kill).toHaveBeenCalledOnce();
   });
 
