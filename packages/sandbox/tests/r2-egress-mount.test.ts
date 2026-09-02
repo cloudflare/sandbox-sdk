@@ -1022,10 +1022,42 @@ describe('Sandbox R2 egress mounts', () => {
       localBucket: true,
       readOnly: true
     });
-    await sandbox.unmountBucket('/mnt/local');
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/local', {
+      localBucket: true,
+      readOnly: true
+    });
+
+    expect(client.files.mkdir).toHaveBeenCalledTimes(1);
     expect(client.files.mkdir).toHaveBeenCalledWith('/mnt/local', {
       recursive: true
     });
+
+    await expect(
+      sandbox.mountBucket('MY_BUCKET', '/mnt/local', {
+        localBucket: true,
+        readOnly: false
+      })
+    ).rejects.toThrow('Mount path already in use: /mnt/local');
+
+    const localMount = (
+      sandbox as unknown as {
+        bucketMounts: {
+          registry: {
+            get(
+              path: string
+            ): { syncManager: { interrupt(): void } } | undefined;
+          };
+        };
+      }
+    ).bucketMounts.registry.get('/mnt/local');
+    localMount?.syncManager.interrupt();
+    await sandbox.mountBucket('MY_BUCKET', '/mnt/local', {
+      localBucket: true,
+      readOnly: true
+    });
+    expect(client.files.mkdir).toHaveBeenCalledTimes(2);
+
+    await sandbox.unmountBucket('/mnt/local');
   });
 
   describe('handler prefix translation', () => {

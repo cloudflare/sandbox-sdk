@@ -1,7 +1,10 @@
 import type { Logger, MountCommandResult } from '@repo/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerControlClient } from '../src/container-control';
-import { cleanupBucketMountsForDestroy } from '../src/storage-mount/lifecycle-cleanup';
+import {
+  cleanupBucketMountsForDestroy,
+  cleanupBucketMountsForStop
+} from '../src/storage-mount/lifecycle-cleanup';
 import type { MountOutboundHost } from '../src/storage-mount/outbound';
 import { MountRegistry } from '../src/storage-mount/registry';
 import type { S3FSHost } from '../src/storage-mount/s3fs';
@@ -66,6 +69,33 @@ function createR2Mount(mountPath: string): R2BindingMountInfo {
 }
 
 describe('bucket mount destroy lifecycle cleanup', () => {
+  it('clears runtime-local mount state on stop', async () => {
+    const logger = createLogger();
+    const interrupt = vi.fn();
+    const registry = new MountRegistry();
+    registry.set('/mnt/local', {
+      mountId: 'mount-local',
+      mountType: 'local-sync',
+      bucket: 'MY_BUCKET',
+      mountPath: '/mnt/local',
+      mounted: true,
+      prefix: '/data/',
+      readOnly: false,
+      syncManager: { stop: vi.fn(), interrupt }
+    } as unknown as LocalSyncMountInfo);
+
+    await cleanupBucketMountsForStop({
+      registry,
+      logger,
+      s3fsHost: null,
+      getOutboundHost: () => createOutboundHost(logger),
+      runMountOperation: (operation) => operation()
+    });
+
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(registry.activeMounts.size).toBe(0);
+  });
+
   it('interrupts local sync without waiting for a hung stop', async () => {
     const logger = createLogger();
     const stop = vi.fn(() => new Promise<void>(() => {}));

@@ -1,7 +1,11 @@
 import { chmod, rename, stat, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
-import { logCanonicalEvent, shellEscape } from '@repo/shared';
+import {
+  createAtomicWriteTempPath,
+  logCanonicalEvent,
+  shellEscape
+} from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
@@ -233,7 +237,7 @@ export class FileWriteOperations extends FileReadOperations {
         // Atomic write: stream to a temporary file, then rename into place.
         // Prevents partial reads if another process opens the file mid-write.
         // Preserves the original file's permission bits (e.g. executables).
-        const tmpPath = `${targetPath}.tmp.${crypto.randomUUID()}`;
+        const tmpPath = createAtomicWriteTempPath(targetPath);
         const existingMode = await stat(targetPath)
           .then((s) => s.mode)
           .catch(() => null);
