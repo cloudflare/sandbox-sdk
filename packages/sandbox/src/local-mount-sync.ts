@@ -1,6 +1,16 @@
 import path from 'node:path/posix';
-import type { FileWatchSSEEvent, Logger } from '@repo/shared';
+import {
+  type FileWatchEventType,
+  type FileWatchSSEEvent,
+  getAtomicWriteTargetPath,
+  type Logger
+} from '@repo/shared';
 import type { ContainerControlClient } from './container-control';
+import {
+  abortableByteStream,
+  readLocalMountBytes,
+  uploadLocalMountFile
+} from './local-mount-transfer';
 import { openRemoteSubscription } from './processes/remote-subscription';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
@@ -12,7 +22,10 @@ import type {
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
 const MAX_BACKOFF_MS = 30_000;
-const SYNC_CONCURRENCY = 5;
+export const UPLOAD_DEBOUNCE_MS = 1500;
+const STREAM_TO_CONTAINER_THRESHOLD_BYTES = 4 * 1024 * 1024;
+const DEFAULT_UPLOAD_PART_BYTES = 16 * 1024 * 1024;
+const DEFAULT_STOP_TIMEOUT_MS = 5000;
 
 interface R2ObjectSnapshot {
   etag: string;
@@ -29,14 +42,10 @@ interface LocalMountSyncOptions {
   logger: Logger;
   pollIntervalMs?: number;
   echoSuppressTtlMs?: number;
+  uploadPartBytes?: number;
+  stopTimeoutMs?: number;
 }
 
-/**
- * Manages bidirectional sync between an R2 binding and a container directory.
- *
- * R2 -> Container: polls bucket.list() to detect changes, then transfers diffs.
- * Container -> R2: uses inotifywait via the watch API to detect file changes.
- */
 export class LocalMountSyncManager {
   private readonly bucket: R2Bucket;
   private readonly mountPath: string;
@@ -46,15 +55,22 @@ export class LocalMountSyncManager {
   private readonly runtimeHold: MountRuntimeHold;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;
-
   private readonly echoSuppressTtlMs: number;
-
+  private readonly uploadPartBytes: number;
+  private readonly stopTimeoutMs: number;
   private snapshot: Map<string, R2ObjectSnapshot> = new Map();
   private echoSuppressSet: Set<string> = new Set();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchAbortController: AbortController | null = null;
+  private uploadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pathIntentVersions = new Map<string, number>();
+  private nextPathIntentVersion = 0;
+  private echoSuppressTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private transferQueue: Promise<void> = Promise.resolve();
+  private readonly transferAbortController = new AbortController();
   private running = false;
+  private stopping = false;
   private generation = 0;
   private activePollCycle: Promise<void> | null = null;
   private activeWatchLoop: Promise<void> | null = null;
@@ -68,9 +84,8 @@ export class LocalMountSyncManager {
     if (options.prefix !== undefined) {
       validatePrefix(options.prefix);
     }
-    // R2 keys never have leading slashes. Convert the validated '/'-prefixed
-    // value into bare R2 key format for list() and put().
-    this.prefix = options.prefix?.replace(/^\//, '') || undefined;
+    const normalizedPrefix = options.prefix?.replace(/^\/+|\/+$/g, '');
+    this.prefix = normalizedPrefix ? `${normalizedPrefix}/` : undefined;
     this.readOnly = options.readOnly;
     this.runRuntimeCall = options.runRuntimeCall;
     this.runtimeHold = options.runtimeHold ?? { release: () => {} };
@@ -78,12 +93,10 @@ export class LocalMountSyncManager {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.echoSuppressTtlMs =
       options.echoSuppressTtlMs ?? DEFAULT_ECHO_SUPPRESS_TTL_MS;
+    this.uploadPartBytes = options.uploadPartBytes ?? DEFAULT_UPLOAD_PART_BYTES;
+    this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
-  /**
-   * Start bidirectional sync. Performs initial full sync, then starts
-   * the R2 poll loop and (if not readOnly) the container watch loop.
-   */
   async start(): Promise<void> {
     this.running = true;
     this.generation += 1;
@@ -115,15 +128,21 @@ export class LocalMountSyncManager {
     });
   }
 
-  /**
-   * Stop all sync activity and clean up resources.
-   */
   async stop(): Promise<void> {
-    this.interrupt();
+    this.stopping = true;
+    this.clearScheduledWork(false);
 
-    const pollCycle = this.activePollCycle;
-    const watchLoop = this.activeWatchLoop;
-    await Promise.allSettled([pollCycle, watchLoop].filter(isPromise));
+    const settle = (async () => {
+      if (this.uploadTimers.size > 0) {
+        await delay(UPLOAD_DEBOUNCE_MS);
+      }
+      await this.transferQueue;
+      await Promise.allSettled(
+        [this.activePollCycle, this.activeWatchLoop].filter(isPromise)
+      );
+    })();
+    await waitAtMost(settle, this.stopTimeoutMs);
+    this.interrupt();
 
     this.snapshot.clear();
     this.echoSuppressSet.clear();
@@ -133,9 +152,23 @@ export class LocalMountSyncManager {
     });
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   interrupt(): void {
     this.running = false;
+    this.stopping = true;
+    this.transferAbortController.abort(new Error('local mount sync stopped'));
+    this.clearScheduledWork(true);
 
+    if (!this.runtimeHoldReleased) {
+      this.runtimeHoldReleased = true;
+      this.runtimeHold.release();
+    }
+  }
+
+  private clearScheduledWork(dropUploads: boolean): void {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
@@ -151,9 +184,13 @@ export class LocalMountSyncManager {
       this.watchAbortController = null;
     }
 
-    if (!this.runtimeHoldReleased) {
-      this.runtimeHoldReleased = true;
-      this.runtimeHold.release();
+    if (dropUploads) {
+      for (const timer of this.uploadTimers.values()) clearTimeout(timer);
+      this.uploadTimers.clear();
+      this.pathIntentVersions.clear();
+      for (const timer of this.echoSuppressTimers.values()) clearTimeout(timer);
+      this.echoSuppressTimers.clear();
+      this.echoSuppressSet.clear();
     }
   }
 
@@ -162,24 +199,17 @@ export class LocalMountSyncManager {
     if (!this.isCurrentGeneration(generation)) return;
     const newSnapshot = new Map<string, R2ObjectSnapshot>();
 
-    // No echo suppression needed: this runs before startContainerWatch() in start().
-    // Process in batches to limit concurrent HTTP requests
-    for (let i = 0; i < objects.length; i += SYNC_CONCURRENCY) {
+    // Transfers share one runtime RPC session, so run them serially.
+    for (const obj of objects) {
       if (!this.isCurrentGeneration(generation)) return;
-      const batch = objects.slice(i, i + SYNC_CONCURRENCY);
-      await Promise.all(
-        batch.map(async (obj) => {
-          if (!this.isCurrentGeneration(generation)) return;
-          const containerPath = this.r2KeyToContainerPath(obj.key);
-          newSnapshot.set(obj.key, { etag: obj.etag, size: obj.size });
-          await this.ensureParentDir(containerPath, generation);
-          await this.transferR2ObjectToContainer(
-            obj.key,
-            containerPath,
-            generation
-          );
-        })
+      const containerPath = this.r2KeyToContainerPath(obj.key);
+      await this.ensureParentDir(containerPath, generation);
+      await this.transferR2ObjectToContainer(
+        obj.key,
+        containerPath,
+        generation
       );
+      newSnapshot.set(obj.key, { etag: obj.etag, size: obj.size });
     }
 
     if (!this.isCurrentGeneration(generation)) return;
@@ -190,7 +220,7 @@ export class LocalMountSyncManager {
   }
 
   private schedulePoll(): void {
-    if (!this.running) return;
+    if (!this.running || this.stopping) return;
 
     const backoffMs =
       this.consecutivePollFailures > 0
@@ -204,7 +234,9 @@ export class LocalMountSyncManager {
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
       if (!this.isCurrentGeneration(generation)) return;
-      const cycle = this.pollR2ForChanges(generation)
+      const cycle = this.enqueueTransfer(() =>
+        this.pollR2ForChanges(generation)
+      )
         .then(() => {
           if (this.isCurrentGeneration(generation)) {
             this.consecutivePollFailures = 0;
@@ -233,62 +265,59 @@ export class LocalMountSyncManager {
   private async pollR2ForChanges(generation: number): Promise<void> {
     const objects = await this.listAllR2Objects();
     if (!this.isCurrentGeneration(generation)) return;
-    const newSnapshot = new Map<string, R2ObjectSnapshot>();
+    const newSnapshot = new Map(this.snapshot);
+    const listedKeys = new Set(objects.map((object) => object.key));
 
-    // Collect changed objects first, then transfer in batches
-    const changed: Array<{ key: string; action: 'created' | 'modified' }> = [];
+    const changed: Array<{
+      key: string;
+      etag: string;
+      size: number;
+      action: 'created' | 'modified';
+    }> = [];
     for (const obj of objects) {
-      newSnapshot.set(obj.key, { etag: obj.etag, size: obj.size });
       const existing = this.snapshot.get(obj.key);
       if (!existing || existing.etag !== obj.etag) {
         changed.push({
           key: obj.key,
+          etag: obj.etag,
+          size: obj.size,
           action: existing ? 'modified' : 'created'
         });
       }
     }
 
-    for (let i = 0; i < changed.length; i += SYNC_CONCURRENCY) {
-      const batch = changed.slice(i, i + SYNC_CONCURRENCY);
-      await Promise.all(
-        batch.map(async ({ key, action }) => {
-          try {
-            if (!this.isCurrentGeneration(generation)) return;
-            const containerPath = this.r2KeyToContainerPath(key);
-            await this.ensureParentDir(containerPath, generation);
-            if (!this.isCurrentGeneration(generation)) return;
-            this.suppressEcho(containerPath);
-            await this.transferR2ObjectToContainer(
-              key,
-              containerPath,
-              generation
-            );
-            this.logger.debug('R2 -> Container: synced object', {
-              key,
-              action
-            });
-          } catch (error) {
-            this.logger.error(
-              `R2 -> Container: failed to sync object ${key}`,
-              error instanceof Error ? error : new Error(String(error))
-            );
-          }
-        })
-      );
+    for (const { key, etag, size, action } of changed) {
+      try {
+        if (!this.isCurrentGeneration(generation)) return;
+        const containerPath = this.r2KeyToContainerPath(key);
+        await this.ensureParentDir(containerPath, generation);
+        await this.withEchoSuppression(containerPath, () =>
+          this.transferR2ObjectToContainer(key, containerPath, generation)
+        );
+        newSnapshot.set(key, { etag, size });
+        this.logger.debug('R2 -> Container: synced object', { key, action });
+      } catch (error) {
+        this.logger.error(
+          `R2 -> Container: failed to sync object ${key}`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
     }
 
     for (const [key] of this.snapshot) {
-      if (!newSnapshot.has(key)) {
+      if (!listedKeys.has(key)) {
         const containerPath = this.r2KeyToContainerPath(key);
-        this.suppressEcho(containerPath);
 
         try {
           if (!this.isCurrentGeneration(generation)) return;
-          await this.runRuntimeCallIfCurrent(
-            generation,
-            'mount.local.deleteFile',
-            (control) => control.files.deleteFile(containerPath)
+          await this.withEchoSuppression(containerPath, () =>
+            this.runRuntimeCallIfCurrent(
+              generation,
+              'mount.local.deleteFile',
+              (control) => control.files.deleteFile(containerPath)
+            )
           );
+          newSnapshot.delete(key);
           this.logger.debug('R2 -> Container: deleted file', { key });
         } catch (error) {
           this.logger.error(
@@ -333,16 +362,32 @@ export class LocalMountSyncManager {
     const obj = await this.bucket.get(key);
     if (!obj) return;
 
-    const arrayBuffer = await obj.arrayBuffer();
-    const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
+    if (obj.size > STREAM_TO_CONTAINER_THRESHOLD_BYTES) {
+      const body = abortableByteStream(
+        obj.body,
+        this.transferAbortController.signal
+      );
+      try {
+        await this.runRuntimeCallIfCurrent(
+          generation,
+          'mount.local.writeFileStream',
+          (control) => control.files.writeFileStream(containerPath, body.stream)
+        );
+      } catch (error) {
+        body.cancel(error);
+        throw error;
+      }
+      return;
+    }
 
+    const base64 = uint8ArrayToBase64(
+      await readLocalMountBytes(obj.body, this.transferAbortController.signal)
+    );
     await this.runRuntimeCallIfCurrent(
       generation,
       'mount.local.writeFile',
       (control) =>
-        control.files.writeFile(containerPath, base64, {
-          encoding: 'base64'
-        })
+        control.files.writeFile(containerPath, base64, { encoding: 'base64' })
     );
   }
 
@@ -372,18 +417,18 @@ export class LocalMountSyncManager {
   }
 
   private runWatchWithRetry(): void {
-    if (!this.running) return;
+    if (!this.running || this.stopping) return;
 
     const generation = this.generation;
     const loop = this.runContainerWatchLoop(generation)
       .then(() => {
-        if (!this.isCurrentGeneration(generation)) return;
+        if (!this.isCurrentGeneration(generation) || this.stopping) return;
         // Stream ended cleanly (e.g. server closed it). Reconnect unless stopped.
         this.consecutiveWatchFailures = 0;
         this.scheduleWatchReconnect();
       })
       .catch((error) => {
-        if (!this.isCurrentGeneration(generation)) return;
+        if (!this.isCurrentGeneration(generation) || this.stopping) return;
         this.consecutiveWatchFailures++;
         this.logger.error(
           'Container watch loop failed',
@@ -400,7 +445,7 @@ export class LocalMountSyncManager {
   }
 
   private scheduleWatchReconnect(): void {
-    if (!this.running) return;
+    if (!this.running || this.stopping) return;
 
     const backoffMs =
       this.consecutiveWatchFailures > 0
@@ -444,7 +489,7 @@ export class LocalMountSyncManager {
           stream,
           this.watchAbortController?.signal
         )) {
-          if (!this.isCurrentGeneration(generation)) break;
+          if (!this.isCurrentGeneration(generation) || this.stopping) break;
 
           // Successful event received — reset failure counter
           this.consecutiveWatchFailures = 0;
@@ -453,6 +498,13 @@ export class LocalMountSyncManager {
           if (event.isDirectory) continue;
 
           const containerPath = event.path;
+          const atomicWriteTarget = getAtomicWriteTargetPath(containerPath);
+          if (
+            atomicWriteTarget &&
+            this.echoSuppressSet.has(atomicWriteTarget)
+          ) {
+            continue;
+          }
 
           // Skip echo from our own R2 -> Container writes
           if (this.echoSuppressSet.has(containerPath)) continue;
@@ -465,25 +517,24 @@ export class LocalMountSyncManager {
               case 'create':
               case 'modify':
               case 'move_to': {
-                await this.uploadFileToR2(containerPath, r2Key, generation);
-                this.logger.debug('Container -> R2: synced file', {
-                  path: containerPath,
-                  key: r2Key,
-                  action: event.eventType
-                });
+                this.scheduleUpload(
+                  containerPath,
+                  r2Key,
+                  generation,
+                  event.eventType
+                );
                 break;
               }
 
               case 'delete':
               case 'move_from': {
-                if (!this.isCurrentGeneration(generation)) break;
-                await this.bucket.delete(r2Key);
-                if (!this.isCurrentGeneration(generation)) break;
-                this.snapshot.delete(r2Key);
-                this.logger.debug('Container -> R2: deleted object', {
-                  path: containerPath,
-                  key: r2Key
-                });
+                const intentVersion = this.replacePathIntent(containerPath);
+                await this.deleteObjectFromR2(
+                  containerPath,
+                  r2Key,
+                  generation,
+                  intentVersion
+                );
                 break;
               }
             }
@@ -498,32 +549,157 @@ export class LocalMountSyncManager {
     );
   }
 
-  /**
-   * Read a container file and upload it to R2, then update the local
-   * snapshot so the next poll cycle doesn't echo the write back.
-   */
+  private scheduleUpload(
+    containerPath: string,
+    r2Key: string,
+    generation: number,
+    action: FileWatchEventType
+  ): void {
+    const intentVersion = this.replacePathIntent(containerPath);
+    this.scheduleUploadAttempt(
+      containerPath,
+      r2Key,
+      generation,
+      action,
+      intentVersion
+    );
+  }
+
+  private scheduleUploadAttempt(
+    containerPath: string,
+    r2Key: string,
+    generation: number,
+    action: FileWatchEventType,
+    intentVersion: number
+  ): void {
+    const isCurrent = () =>
+      this.isCurrentPathIntent(containerPath, intentVersion, generation);
+    this.cancelScheduledUpload(containerPath);
+    this.uploadTimers.set(
+      containerPath,
+      setTimeout(() => {
+        this.uploadTimers.delete(containerPath);
+        void this.enqueueTransfer(async () => {
+          if (!isCurrent()) return;
+          await this.uploadFileToR2(containerPath, r2Key, generation);
+          if (!isCurrent()) return;
+          this.pathIntentVersions.delete(containerPath);
+          this.logger.debug('Container -> R2: synced file', {
+            path: containerPath,
+            key: r2Key,
+            action
+          });
+        }).catch((error) => {
+          if (!isCurrent()) return;
+          this.logger.error(
+            `Container -> R2 sync failed for ${containerPath}`,
+            error instanceof Error ? error : new Error(String(error))
+          );
+          this.scheduleUploadAttempt(
+            containerPath,
+            r2Key,
+            generation,
+            action,
+            intentVersion
+          );
+        });
+      }, UPLOAD_DEBOUNCE_MS)
+    );
+  }
+
+  private async deleteObjectFromR2(
+    containerPath: string,
+    r2Key: string,
+    generation: number,
+    intentVersion: number
+  ): Promise<void> {
+    const isCurrent = () =>
+      this.isCurrentPathIntent(containerPath, intentVersion, generation);
+    try {
+      await this.enqueueTransfer(async () => {
+        if (!isCurrent()) return;
+        await this.bucket.delete(r2Key);
+        if (!isCurrent()) return;
+        this.snapshot.delete(r2Key);
+        this.pathIntentVersions.delete(containerPath);
+        this.logger.debug('Container -> R2: deleted object', {
+          path: containerPath,
+          key: r2Key
+        });
+      });
+    } catch (error) {
+      if (!isCurrent()) return;
+      this.logger.error(
+        `Container -> R2 sync failed for ${containerPath}`,
+        error instanceof Error ? error : new Error(String(error))
+      );
+      this.cancelScheduledUpload(containerPath);
+      this.uploadTimers.set(
+        containerPath,
+        setTimeout(() => {
+          this.uploadTimers.delete(containerPath);
+          void this.deleteObjectFromR2(
+            containerPath,
+            r2Key,
+            generation,
+            intentVersion
+          );
+        }, UPLOAD_DEBOUNCE_MS)
+      );
+    }
+  }
+
+  private replacePathIntent(containerPath: string): number {
+    this.cancelScheduledUpload(containerPath);
+    this.nextPathIntentVersion += 1;
+    this.pathIntentVersions.set(containerPath, this.nextPathIntentVersion);
+    return this.nextPathIntentVersion;
+  }
+
+  private isCurrentPathIntent(
+    containerPath: string,
+    intentVersion: number,
+    generation: number
+  ): boolean {
+    return (
+      this.isCurrentGeneration(generation) &&
+      this.pathIntentVersions.get(containerPath) === intentVersion
+    );
+  }
+
+  private cancelScheduledUpload(containerPath: string): void {
+    const timer = this.uploadTimers.get(containerPath);
+    if (timer) clearTimeout(timer);
+    this.uploadTimers.delete(containerPath);
+  }
+
   private async uploadFileToR2(
     containerPath: string,
     r2Key: string,
-    generation?: number
+    generation: number
   ): Promise<void> {
-    const result = await this.runRuntimeCallIfCurrent(
+    const file = await this.runRuntimeCallIfCurrent(
       generation,
       'mount.local.readFile',
-      (control) =>
-        control.files.readFile(containerPath, {
-          encoding: 'base64'
-        })
+      (control) => control.files.readFile(containerPath, { encoding: 'none' })
     );
-    if (!this.isCurrentOrUnscoped(generation)) return;
-    const bytes = base64ToUint8Array(result.content);
-    await this.bucket.put(r2Key, bytes);
-    if (!this.isCurrentOrUnscoped(generation)) return;
+    await uploadLocalMountFile({
+      bucket: this.bucket,
+      key: r2Key,
+      file,
+      partBytes: this.uploadPartBytes,
+      signal: this.transferAbortController.signal
+    });
 
+    if (!this.isCurrentGeneration(generation)) return;
     const head = await this.bucket.head(r2Key);
-    if (head) {
-      this.snapshot.set(r2Key, { etag: head.etag, size: head.size });
-    }
+    if (head) this.snapshot.set(r2Key, { etag: head.etag, size: head.size });
+  }
+
+  private enqueueTransfer(operation: () => Promise<void>): Promise<void> {
+    const task = this.transferQueue.then(operation);
+    this.transferQueue = task.catch(() => {});
+    return task;
   }
 
   private async runRuntimeCallIfCurrent<T>(
@@ -542,19 +718,32 @@ export class LocalMountSyncManager {
     });
   }
 
-  private isCurrentOrUnscoped(generation: number | undefined): boolean {
-    return generation === undefined || this.isCurrentGeneration(generation);
-  }
-
   private isCurrentGeneration(generation: number): boolean {
     return this.running && this.generation === generation;
   }
 
-  private suppressEcho(containerPath: string): void {
+  private async withEchoSuppression<T>(
+    containerPath: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const existingTimer = this.echoSuppressTimers.get(containerPath);
+    if (existingTimer) clearTimeout(existingTimer);
+    this.echoSuppressTimers.delete(containerPath);
     this.echoSuppressSet.add(containerPath);
-    setTimeout(() => {
-      this.echoSuppressSet.delete(containerPath);
-    }, this.echoSuppressTtlMs);
+    try {
+      return await operation();
+    } finally {
+      if (!this.running) {
+        this.echoSuppressSet.delete(containerPath);
+      } else {
+        const timer = setTimeout(() => {
+          if (this.echoSuppressTimers.get(containerPath) !== timer) return;
+          this.echoSuppressTimers.delete(containerPath);
+          this.echoSuppressSet.delete(containerPath);
+        }, this.echoSuppressTtlMs);
+        this.echoSuppressTimers.set(containerPath, timer);
+      }
+    }
   }
 
   private r2KeyToContainerPath(key: string): string {
@@ -571,7 +760,7 @@ export class LocalMountSyncManager {
     const resolved = path.resolve(containerPath);
     const mount = path.resolve(this.mountPath);
 
-    if (!resolved.startsWith(mount)) return null;
+    if (resolved !== mount && !resolved.startsWith(`${mount}/`)) return null;
 
     const relativePath = path.relative(mount, resolved);
     if (!relativePath || relativePath.startsWith('..')) return null;
@@ -580,14 +769,28 @@ export class LocalMountSyncManager {
   }
 }
 
+async function waitAtMost(promise: Promise<unknown>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function isPromise<T>(value: Promise<T> | null): value is Promise<T> {
   return value !== null;
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(base64, 'base64'));
 }
