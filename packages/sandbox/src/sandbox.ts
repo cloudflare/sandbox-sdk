@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import { ContainerFiles } from "./container-files.js";
 
+/** Durable Object base class for a container-backed sandbox. */
 export abstract class Sandbox<Env, Props = {}> extends DurableObject<Env, Props> {
   readonly files: ContainerFiles;
 

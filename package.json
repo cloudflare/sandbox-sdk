@@ -10,7 +10,7 @@
     "check": "vp check && cargo check --workspace",
     "example:deploy": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 deploy --config examples/read-file/wrangler.jsonc",
     "example:types": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 types --config examples/read-file/wrangler.jsonc --include-runtime=false",
-    "test": "vp test --run --passWithNoTests && cargo test --workspace"
+    "test": "cargo build --workspace && vp test --run --passWithNoTests && cargo test --workspace"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260902.1",

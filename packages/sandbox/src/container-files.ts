@@ -1,5 +1,5 @@
 import { fileErrorFromErrno } from "./errors.js";
-import { FramedRead } from "./framed-read.js";
+import { FramedRead, observeAbort } from "./framed-read.js";
 
 const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 
@@ -12,8 +12,15 @@ export interface ReadFileOptions {
   signal?: AbortSignal;
 }
 
+/** Native container capability required by {@link ContainerFiles}. */
 export type ContainerExecutor = Pick<Container, "exec">;
 
+/**
+ * File operations backed by a native container.
+ *
+ * The container image must provide the SDK-compatible shim at
+ * `/usr/local/bin/sandbox-shim`.
+ */
 export class ContainerFiles {
   readonly #container: ContainerExecutor;
 
@@ -28,21 +35,31 @@ export class ContainerFiles {
    *
    * @param path - Absolute path, or a relative path when `options.cwd` is provided.
    * @param options - Native execution options relevant to opening the file.
-   * @returns A binary response whose body applies backpressure to the container process.
+   * @returns A binary response whose body applies backpressure to the container process. A
+   *   file-streaming or native transport failure can surface while the body is consumed.
    * @throws {TypeError} The path is empty, contains NUL, or is relative without `cwd`.
-   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxFileError} The container reports a filesystem failure before returning the
+   *   response. A late file-streaming failure errors the response body with the same error type.
    * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
    */
   async readFile(path: string, options: ReadFileOptions = {}): Promise<Response> {
     validatePath(path, options.cwd);
 
-    const process = await this.#container.exec([SHIM_PATH, "read", path], {
-      ...options,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    const abort = observeAbort(options.signal);
+    let process: ExecProcess;
+    try {
+      const execution = this.#container.exec([SHIM_PATH, "read", path], {
+        ...options,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      process = await (abort === undefined ? execution : Promise.race([abort.promise, execution]));
+    } catch (error) {
+      abort?.dispose();
+      throw error;
+    }
 
-    const read = FramedRead.open(process, options.signal);
+    const read = FramedRead.open(process, path, abort);
     try {
       const frame = await read.readFrame();
       if (frame.kind === "error") {

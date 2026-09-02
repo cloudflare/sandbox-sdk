@@ -6,6 +6,9 @@ use std::path::Path;
 
 const SUCCESS_HEADER: &[u8; 6] = b"SBXF\x01\x00";
 const FILE_ERROR_HEADER: &[u8; 6] = b"SBXF\x01\x01";
+const EIO: i32 = 5;
+const EISDIR: i32 = 21;
+const EINVAL: i32 = 22;
 
 #[cfg(target_os = "linux")]
 const O_NONBLOCK: i32 = 0x800;
@@ -40,7 +43,7 @@ fn open_regular(path: &Path) -> io::Result<File> {
     let metadata = file.metadata()?;
 
     if !metadata.is_file() {
-        let errno = if metadata.is_dir() { 21 } else { 22 };
+        let errno = if metadata.is_dir() { EISDIR } else { EINVAL };
         return Err(io::Error::from_raw_os_error(errno));
     }
 
@@ -49,7 +52,7 @@ fn open_regular(path: &Path) -> io::Result<File> {
 
 fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
     output.write_all(FILE_ERROR_HEADER)?;
-    output.write_all(&error.raw_os_error().unwrap_or_default().to_le_bytes())?;
+    output.write_all(&error.raw_os_error().unwrap_or(EIO).to_le_bytes())?;
     output.write_all(error.to_string().as_bytes())
 }
 
@@ -57,7 +60,15 @@ fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
+    #[cfg(unix)]
+    use std::sync::mpsc;
+    #[cfg(unix)]
+    use std::thread;
+    #[cfg(unix)]
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -125,6 +136,15 @@ mod tests {
     }
 
     #[test]
+    fn frames_eio_when_an_error_has_no_os_errno() {
+        let mut output = Vec::new();
+        write_error(&mut output, &io::Error::other("read failed")).unwrap();
+
+        assert_eq!(&output[..6], b"SBXF\x01\x01");
+        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), EIO);
+    }
+
+    #[test]
     fn rejects_directories_as_non_regular_files() {
         let temp = TempDir::new();
         let output = read(&temp.0);
@@ -148,6 +168,27 @@ mod tests {
 
         assert_eq!(&output[..6], b"SBXF\x01\x00");
         assert_eq!(&output[6..], b"linked");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_fifo_without_waiting_for_a_writer() {
+        let temp = TempDir::new();
+        let path = temp.0.join("pipe");
+        let status = Command::new("mkfifo").arg(&path).status().unwrap();
+        assert!(status.success());
+
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || sender.send(read(&path)).unwrap());
+        let output = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("FIFO inspection should not block on a writer");
+
+        assert_eq!(&output[..6], b"SBXF\x01\x01");
+        assert_eq!(
+            i32::from_le_bytes(output[6..10].try_into().unwrap()),
+            EINVAL
+        );
     }
 
     #[test]

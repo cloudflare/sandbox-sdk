@@ -1,4 +1,4 @@
-import { SandboxProtocolError } from "./errors.js";
+import { fileErrorFromExit, SandboxProtocolError } from "./errors.js";
 
 const MAGIC = new Uint8Array([0x53, 0x42, 0x58, 0x46]);
 const PROTOCOL_VERSION = 1;
@@ -13,42 +13,65 @@ type StreamCancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Arra
 
 type ReadFrame = { kind: "content" } | { kind: "error"; errno: number; detail: string };
 
+/** A single abort event shared across execution, framing, and body streaming. */
+export interface AbortOutcome {
+  readonly promise: Promise<never>;
+  dispose(): void;
+}
+
+/** Registers before native process listeners so an abort-induced process exit cannot win the race. */
+export function observeAbort(signal: AbortSignal | undefined): AbortOutcome | undefined {
+  if (signal === undefined) return undefined;
+
+  let dispose: () => void = () => undefined;
+  const promise = new Promise<never>((_, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+
+    const onAbort = () => {
+      dispose();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    dispose = () => signal.removeEventListener("abort", onAbort);
+  });
+  void promise.catch(() => undefined);
+  return { promise, dispose };
+}
+
 export class FramedRead {
   readonly #process: ExecProcess;
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
-  readonly #signal: AbortSignal | undefined;
+  readonly #path: string;
+  readonly #abort: AbortOutcome | undefined;
   #pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
   #settled = false;
 
   private constructor(
     process: ExecProcess,
     reader: ReadableStreamDefaultReader<Uint8Array>,
-    signal: AbortSignal | undefined,
+    path: string,
+    abort: AbortOutcome | undefined,
   ) {
     this.#process = process;
     this.#reader = reader;
-    this.#signal = signal;
+    this.#path = path;
+    this.#abort = abort;
   }
 
-  static open(process: ExecProcess, signal: AbortSignal | undefined): FramedRead {
+  static open(process: ExecProcess, path: string, abort: AbortOutcome | undefined): FramedRead {
     if (process.stdout === null) {
+      abort?.dispose();
       stopProcess(process);
       throw new SandboxProtocolError({ reason: "MISSING_STDOUT" });
     }
 
-    return new FramedRead(process, process.stdout.getReader(), signal);
+    return new FramedRead(process, process.stdout.getReader(), path, abort);
   }
 
   async readFrame(): Promise<ReadFrame> {
-    try {
-      return await this.#readFrame();
-    } catch (error) {
-      if (this.#signal?.aborted === true) throw this.#signal.reason;
-      throw error;
-    }
-  }
-
-  async #readFrame(): Promise<ReadFrame> {
     const header = await this.#readExactly(HEADER_LENGTH);
     validateHeader(header);
 
@@ -66,6 +89,9 @@ export class FramedRead {
       errnoBytes.byteOffset,
       ERROR_PREFIX_LENGTH,
     ).getInt32(0, true);
+    if (errno <= 0) {
+      throw new SandboxProtocolError({ reason: "INVALID_ERRNO", errnoNumber: errno });
+    }
     const detail = await this.#readTextToEnd(MAX_ERROR_MESSAGE_LENGTH);
     return { kind: "error", errno, detail };
   }
@@ -83,24 +109,23 @@ export class FramedRead {
         }
 
         try {
-          const next = await this.#reader.read();
+          const next = await this.#waitFor(this.#reader.read());
           if (!next.done) {
             controller.enqueue(next.value);
             return;
           }
 
-          const exitCode = await this.#process.exitCode;
+          const exitCode = await this.#waitFor(this.#process.exitCode);
           if (exitCode !== 0) {
-            if (this.#signal?.aborted === true) throw this.#signal.reason;
-            throw new SandboxProtocolError({ reason: "UNEXPECTED_EXIT", exitCode });
+            throw fileErrorFromExit(this.#path, exitCode);
           }
 
           this.#settled = true;
+          this.#abort?.dispose();
           controller.close();
         } catch (error) {
-          const failure = this.#signal?.aborted === true ? this.#signal.reason : error;
-          this.terminate(failure);
-          controller.error(failure);
+          this.terminate(error);
+          controller.error(error);
         }
       },
       cancel: (reason) => {
@@ -113,6 +138,7 @@ export class FramedRead {
     if (this.#settled) return;
 
     this.#settled = true;
+    this.#abort?.dispose();
     stopProcess(this.#process);
     void this.#reader.cancel(reason).catch(() => undefined);
   }
@@ -123,7 +149,7 @@ export class FramedRead {
 
     while (offset < length) {
       if (this.#pending.length === 0) {
-        const next = await this.#reader.read();
+        const next = await this.#waitFor(this.#reader.read());
         if (next.done) {
           throw new SandboxProtocolError({ reason: "TRUNCATED_FRAME" });
         }
@@ -153,7 +179,7 @@ export class FramedRead {
       if (length > limit) {
         throw new SandboxProtocolError({ reason: "ERROR_MESSAGE_TOO_LARGE", limit });
       }
-      const next = await this.#reader.read();
+      const next = await this.#waitFor(this.#reader.read());
       if (next.done) break;
       chunks.push(next.value);
       length += next.value.length;
@@ -175,6 +201,11 @@ export class FramedRead {
       throw new SandboxProtocolError({ reason: "INVALID_ERROR_MESSAGE", cause });
     }
   }
+
+  #waitFor<T>(operation: Promise<T>): Promise<T> {
+    if (this.#abort === undefined) return operation;
+    return Promise.race([this.#abort.promise, operation]);
+  }
 }
 
 function validateHeader(header: Uint8Array): void {
@@ -193,7 +224,7 @@ function validateHeader(header: Uint8Array): void {
 
 function stopProcess(process: ExecProcess): void {
   try {
-    process.kill();
+    process.kill(9);
   } catch {
     // The process may already have exited.
   }
