@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "types": ["@cloudflare/workers-types/experimental"]
   },
-  "include": ["packages/**/*.ts", "vite.config.ts"]
+  "include": ["examples/**/*.ts", "packages/**/*.ts", "vite.config.ts"]
 }

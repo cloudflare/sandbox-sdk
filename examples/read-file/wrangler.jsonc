@@ -1,0 +1,30 @@
+{
+  "name": "sandbox-sdk-subsequent-read-file",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-02",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "ReadFileSandbox",
+      },
+    ],
+  },
+  "exports": {
+    "ReadFileSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+      "container": {
+        "images": [
+          {
+            "binding": "SANDBOX_IMAGE",
+            "image": "../../Dockerfile.e2e",
+          },
+        ],
+      },
+    },
+  },
+  "observability": {
+    "enabled": true,
+  },
+}
