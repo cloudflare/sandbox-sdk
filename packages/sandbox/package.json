@@ -1,0 +1,20 @@
+{
+  "name": "@cloudflare/sandbox",
+  "version": "1.0.0-next.0",
+  "description": "Cloudflare Sandbox SDK",
+  "license": "Apache-2.0",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

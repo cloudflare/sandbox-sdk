@@ -1,0 +1,20 @@
+{
+  "name": "sandbox-sdk",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "vp pack && cargo build --workspace",
+    "check": "vp check && cargo check --workspace",
+    "test": "vp test --run --passWithNoTests && cargo test --workspace"
+  },
+  "devDependencies": {
+    "vite-plus": "0.3.0"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "packageManager": "npm@11.16.0"
+}
