@@ -1036,6 +1036,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
+  // Container generation the cached defaultSession was created against.
+  // `defaultSession` is rehydrated from durable storage on cold start while
+  // containerGeneration is memory-only and restarts at 0, so the initial -1
+  // forces one re-initialization per DO instance: a session id restored from
+  // storage is a claim about a container that may since have been replaced.
+  private defaultSessionGeneration = -1;
   // Incremented whenever the container stops. Used to invalidate
   // in-flight default-session initialization that started against a
   // now-dead container.
@@ -1877,10 +1883,45 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      if (this.activeMounts.has(mountPath)) {
-        throw new InvalidMountConfigError(
-          `Mount path already in use: ${mountPath}`
-        );
+      const readOnly = options.readOnly ?? false;
+      const existingMount = this.activeMounts.get(mountPath);
+      if (existingMount) {
+        if (
+          existingMount.mountType !== 'local-sync' ||
+          !existingMount.mounted ||
+          existingMount.bucket !== bucket ||
+          existingMount.prefix !== options.prefix ||
+          existingMount.readOnly !== readOnly
+        ) {
+          throw new InvalidMountConfigError(
+            `Mount path already in use: ${mountPath}`
+          );
+        }
+
+        if (existingMount.containerGeneration === this.containerGeneration) {
+          // A local-sync mount is a plain directory, so callers cannot probe
+          // the container (`mountpoint -q`) to find out whether it is already
+          // mounted. Treat a repeat mount of the same bucket, prefix and mode
+          // as the no-op it is instead of failing the caller.
+          this.logger.debug('Local mount already active, skipping mount', {
+            mountPath,
+            bucket
+          });
+          mountOutcome = 'success';
+          return;
+        }
+
+        // The container this mount syncs through has been replaced, so its
+        // sync manager is writing through a session the current container
+        // never had. Retire it and mount again against the live container.
+        this.logger.debug('Replacing local mount from a stale container', {
+          mountPath,
+          bucket,
+          mountGeneration: existingMount.containerGeneration,
+          containerGeneration: this.containerGeneration
+        });
+        await existingMount.syncManager.stop().catch(() => {});
+        this.activeMounts.delete(mountPath);
       }
 
       const sessionId = await this.ensureDefaultSession();
@@ -1889,7 +1930,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         bucket: r2Binding,
         mountPath,
         prefix: options.prefix,
-        readOnly: options.readOnly ?? false,
+        readOnly,
         client: this.client,
         sessionId,
         logger: this.logger
@@ -1901,7 +1942,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         bucket,
         mountPath,
         syncManager,
-        mounted: false
+        mounted: false,
+        prefix: options.prefix,
+        readOnly,
+        containerGeneration: this.containerGeneration
       };
       this.activeMounts.set(mountPath, mountInfo);
 
@@ -3878,8 +3922,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async ensureDefaultSession(): Promise<string> {
     const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-    // Fast path: session already initialized in this instance
-    if (this.defaultSession === sessionId) {
+    // Fast path: session already initialized against the current container.
+    // A session id cached for an earlier generation — including one restored
+    // from storage after this DO was evicted — names a session the current
+    // container runtime may never have created, so re-initialize instead.
+    if (
+      this.defaultSession === sessionId &&
+      this.defaultSessionGeneration === this.containerGeneration
+    ) {
       return this.defaultSession;
     }
 
@@ -3906,8 +3956,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // targets the new container.
       if (isSessionInitInvalidated(err)) {
         // Fast path: a concurrent caller may have already initialized the
-        // session by the time we get here.
-        if (this.defaultSession === sessionId) return this.defaultSession;
+        // session against the current generation by the time we get here.
+        if (
+          this.defaultSession === sessionId &&
+          this.defaultSessionGeneration === this.containerGeneration
+        ) {
+          return this.defaultSession;
+        }
         // Join an in-flight init for the current generation that was started
         // by a concurrent caller rather than starting a parallel one. The guard
         // `freshPending !== init` prevents joining the same slot that just
@@ -3977,6 +4032,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('defaultSession', sessionId);
     await this.capturePlacementId(placementId);
     this.defaultSession = sessionId;
+    this.defaultSessionGeneration = generation;
     this.logger.debug('Default session initialized', { sessionId });
     return sessionId;
   }
