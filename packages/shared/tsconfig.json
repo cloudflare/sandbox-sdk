@@ -1,7 +1,0 @@
-{
-  "extends": "@repo/typescript-config/declarations.json",
-  "compilerOptions": {
-    "outDir": "dist"
-  },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
-}
