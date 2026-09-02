@@ -8,6 +8,8 @@ const MAX_ERROR_MESSAGE_LENGTH = 64 * 1024;
 const STATUS_OK = 0;
 const STATUS_FILE_ERROR = 1;
 
+type StreamCancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
+
 export interface ReadFileOptions {
   cwd?: string;
   user?: string;
@@ -89,9 +91,6 @@ export class ContainerFiles {
 }
 
 function validatePath(path: string, options: ReadFileOptions): void {
-  if (typeof path !== "string") {
-    throw new TypeError("path must be a string");
-  }
   if (path.length === 0) {
     throw new TypeError("path must not be empty");
   }
@@ -118,12 +117,13 @@ function fileError(path: string, errnoNumber: number, detail: string): SandboxFi
   const errno = errnoName(errnoNumber);
   const code = fileErrorCode(errnoNumber);
   const suffix = detail.length > 0 ? detail : (errno ?? `errno ${errnoNumber}`);
-  const error = new Error(`Cannot read '${path}': ${suffix}`) as SandboxFileError;
-  error.code = code;
+  const error: SandboxFileError = Object.assign(new Error(`Cannot read '${path}': ${suffix}`), {
+    code,
+    path,
+  });
   if (errno !== undefined) {
     error.errno = errno;
   }
-  error.path = path;
   return error;
 }
 
@@ -179,7 +179,7 @@ async function ensureCleanExit(process: ExecProcess): Promise<void> {
 async function cancelProcess(
   process: ExecProcess,
   cursor: StreamCursor,
-  reason: unknown,
+  reason: StreamCancellationReason,
 ): Promise<void> {
   await cursor.cancel(reason).catch(() => undefined);
   stopProcess(process);
@@ -260,7 +260,7 @@ class StreamCursor {
     }
   }
 
-  cancel(reason: unknown): Promise<void> {
+  cancel(reason: StreamCancellationReason): Promise<void> {
     return this.#reader.cancel(reason);
   }
 
