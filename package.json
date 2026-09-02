@@ -11,6 +11,7 @@
     "test": "vp test --run --passWithNoTests && cargo test --workspace"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260902.1",
     "vite-plus": "0.3.0"
   },
   "engines": {

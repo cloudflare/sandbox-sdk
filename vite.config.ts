@@ -11,6 +11,9 @@ export default defineConfig({
     },
   },
   pack: {
+    deps: {
+      neverBundle: ["cloudflare:workers"],
+    },
     dts: true,
     format: ["esm"],
   },

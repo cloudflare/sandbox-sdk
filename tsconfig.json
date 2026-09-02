@@ -5,7 +5,8 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types/experimental"]
   },
   "include": ["packages/**/*.ts", "vite.config.ts"]
 }
