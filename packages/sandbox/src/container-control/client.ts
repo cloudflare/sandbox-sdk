@@ -81,7 +81,8 @@ import type {
   SandboxTransport,
   SandboxTunnelsAPI,
   SandboxUtilsAPI,
-  SandboxWatchAPI
+  SandboxWatchAPI,
+  WatchRequest
 } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import {
@@ -95,6 +96,10 @@ import {
   type RPCTransportContext,
   type RPCTransportErrorKind
 } from '@repo/shared/errors';
+import {
+  type InternalSandboxWatchAPI,
+  WATCH_LOCAL_MOUNT
+} from '@repo/shared/internal';
 import type { SandboxClient } from '../clients/sandbox-client';
 import { createErrorFromResponse } from '../errors/adapter';
 import { OperationInterruptedError, SandboxError } from '../errors/classes';
@@ -202,6 +207,19 @@ export function translateRPCError(
   if (error instanceof SandboxError) throw error;
 
   if (error instanceof Error) {
+    if (
+      context.operation === 'watch.watchMount' &&
+      error.name === 'TypeError'
+    ) {
+      throw createErrorFromResponse({
+        code: ErrorCode.UNSUPPORTED_CAPABILITY,
+        message: 'The container does not support local bucket mount watches',
+        context: { capability: 'watchMount' },
+        httpStatus: getHttpStatus(ErrorCode.UNSUPPORTED_CAPABILITY),
+        timestamp: new Date().toISOString()
+      });
+    }
+
     // Format (1): propagated error properties. Distinguish from arbitrary
     // Node/system errors (e.g. `Error.code === 'ENOENT'`) by checking the
     // code against the ErrorCode registry.
@@ -1228,6 +1246,11 @@ export class ContainerControlClient {
       this.getSessionEstablished,
       this.getSpanAttrs
     );
+  }
+  [WATCH_LOCAL_MOUNT](
+    request: WatchRequest
+  ): Promise<ReadableStream<Uint8Array>> {
+    return (this.watch as InternalSandboxWatchAPI).watchMount(request);
   }
   get tunnels(): SandboxTunnelsAPI {
     return wrapStub(

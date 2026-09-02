@@ -181,6 +181,9 @@ jobs:
           name: build-${{ inputs.artifact_key || github.sha }}
           path: packages
 
+      - name: Install inotify tools
+        run: sudo apt-get update && sudo apt-get install -y inotify-tools
+
       - name: Container unit tests (Bun)
         run: npm test -w @repo/sandbox-container
         timeout-minutes: 5
