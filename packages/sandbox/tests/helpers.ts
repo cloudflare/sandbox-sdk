@@ -28,7 +28,7 @@ export function contiguousErrorFrame(errnoNumber: number, detail: string): Uint8
 
 function frameHeader(kind: number, length: number): Uint8Array {
   const header = new Uint8Array(10);
-  header.set([0x53, 0x42, 0x58, 0x46, 3, kind]);
+  header.set([0x53, 0x42, 0x58, 0x46, 1, kind]);
   new DataView(header.buffer).setUint32(6, length, true);
   return header;
 }
@@ -73,7 +73,7 @@ export function readProcess(
 }
 
 interface WriteProcessOptions {
-  stderr?: ReadableStream<Uint8Array> | null;
+  control?: ReadableStream<Uint8Array> | null;
   stdin?: WritableStream<Uint8Array> | null;
   exitCode?: number | Promise<number>;
 }
@@ -82,9 +82,9 @@ export function writeProcess(options: WriteProcessOptions = {}) {
   return processDouble({
     stdin: options.stdin === undefined ? new WritableStream<Uint8Array>() : options.stdin,
     stdout:
-      options.stderr === undefined
+      options.control === undefined
         ? readableChunks([SUCCESS_HEADER, SUCCESS_HEADER])
-        : options.stderr,
+        : options.control,
     stderr: null,
     exitCode: options.exitCode,
   });

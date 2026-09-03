@@ -4,7 +4,7 @@ import { SandboxProtocolError } from "./errors.js";
 export const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 
 const MAGIC = new Uint8Array([0x53, 0x42, 0x58, 0x46]);
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 1;
 const HEADER_LENGTH = 10;
 const ERROR_PREFIX_LENGTH = 4;
 const MAX_ERROR_MESSAGE_LENGTH = 64 * 1024;
@@ -77,21 +77,21 @@ export class ShimSession {
     }
   }
 
-  openControl(): ShimControl {
+  openReadControl(): ShimControl {
     if (this.process.stderr === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stderr" });
     }
     return new ShimControl(this.process.stderr.getReader(), this);
   }
 
-  openOutputControl(): ShimControl {
+  openWriteControl(): ShimControl {
     if (this.process.stdout === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
     }
     return new ShimControl(this.process.stdout.getReader(), this);
   }
 
-  openOutput(): ReadableStreamDefaultReader<Uint8Array> {
+  openReadData(): ReadableStreamDefaultReader<Uint8Array> {
     if (this.process.stdout === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
     }

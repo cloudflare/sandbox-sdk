@@ -18,8 +18,8 @@ export async function readFile(
   let output: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   try {
-    control = session.openControl();
-    output = session.openOutput();
+    control = session.openReadControl();
+    output = session.openReadData();
     const opening = await control.readFrame();
     if (opening.kind === "fileError") {
       await control.expectEnd();

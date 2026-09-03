@@ -15,7 +15,6 @@ describe("Sandbox errors", () => {
     const protocolError = Object.assign(new Error("invalid control"), {
       name: "SandboxProtocolError",
       code: "SANDBOX_PROTOCOL_ERROR",
-      reason: "INCOMPATIBLE_SHIM",
       detail: "sandbox-shim returned invalid control data",
     });
 
@@ -36,7 +35,6 @@ describe("Sandbox errors", () => {
     const missingDetail = Object.assign(new Error("invalid control"), {
       name: "SandboxProtocolError",
       code: "SANDBOX_PROTOCOL_ERROR",
-      reason: "INCOMPATIBLE_SHIM",
     });
 
     expect(SandboxFileError.is(missingErrno)).toBe(false);
@@ -51,22 +49,11 @@ describe("Sandbox errors", () => {
       path: "/missing",
       detail: "No such file or directory",
     });
-    const renameError = new SandboxFileError({
-      code: "EXDEV",
-      errno: 18,
-      operation: "rename",
-      path: "/source",
-      destination: "/destination",
-      detail: "Cross-device link",
-    });
     const protocolError = new SandboxProtocolError({ detail: "invalid control" });
 
     for (const field of ["name", "code", "errno", "operation", "path", "detail"]) {
       expect(Object.hasOwn(fileError, field)).toBe(true);
     }
-    expect(Object.hasOwn(fileError, "destination")).toBe(false);
-    expect(Object.hasOwn(renameError, "destination")).toBe(true);
-    expect(Object.hasOwn(protocolError, "reason")).toBe(true);
     expect(Object.hasOwn(protocolError, "detail")).toBe(true);
   });
 });

@@ -22,16 +22,16 @@ fn main() {
 fn run(
     mut args: impl Iterator<Item = OsString>,
     input: impl Read,
-    mut data: impl Write,
-    mut control: impl Write,
+    mut stdout: impl Write,
+    mut stderr: impl Write,
 ) -> Result<(), String> {
     let Some(command) = args.next() else {
         return Err("missing command".into());
     };
 
     match command.to_str() {
-        Some("read") => read_file::run(args, &mut data, &mut control),
-        Some("write") => write_file::run(args, input, &mut data),
+        Some("read") => read_file::run(args, &mut stdout, &mut stderr),
+        Some("write") => write_file::run(args, input, &mut stdout),
         _ => Err("unknown command".into()),
     }
 }
@@ -42,28 +42,28 @@ mod tests {
 
     #[test]
     fn rejects_unknown_commands_without_writing_protocol_bytes() {
-        let mut data = Vec::new();
-        let mut control = Vec::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
         let result = run(
             [OsString::from("unknown")].into_iter(),
             io::empty(),
-            &mut data,
-            &mut control,
+            &mut stdout,
+            &mut stderr,
         );
 
         assert_eq!(result.unwrap_err(), "unknown command");
-        assert!(data.is_empty());
-        assert!(control.is_empty());
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
     }
 
     #[test]
     fn rejects_missing_commands_without_writing_protocol_bytes() {
-        let mut data = Vec::new();
-        let mut control = Vec::new();
-        let result = run(std::iter::empty(), io::empty(), &mut data, &mut control);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(std::iter::empty(), io::empty(), &mut stdout, &mut stderr);
 
         assert_eq!(result.unwrap_err(), "missing command");
-        assert!(data.is_empty());
-        assert!(control.is_empty());
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
     }
 }

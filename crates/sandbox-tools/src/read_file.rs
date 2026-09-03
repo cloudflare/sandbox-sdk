@@ -66,7 +66,7 @@ mod tests {
         let mut frames = Vec::new();
         while !bytes.is_empty() {
             assert_eq!(&bytes[..4], b"SBXF");
-            assert_eq!(bytes[4], 3);
+            assert_eq!(bytes[4], 1);
             let kind = bytes[5];
             let length = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
             frames.push((kind, &bytes[10..10 + length]));

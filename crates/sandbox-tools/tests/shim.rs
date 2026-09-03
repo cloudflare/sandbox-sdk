@@ -44,7 +44,7 @@ fn read_command_separates_control_and_content() {
 
     assert!(output.status.success());
     assert_eq!(output.stdout, b"hello\0sandbox");
-    assert_eq!(output.stderr, b"SBXF\x03\x00\0\0\0\0SBXF\x03\x00\0\0\0\0");
+    assert_eq!(output.stderr, b"SBXF\x01\x00\0\0\0\0SBXF\x01\x00\0\0\0\0");
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn read_command_emits_native_open_error() {
 
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
-    assert_eq!(&output.stderr[..6], b"SBXF\x03\x01");
+    assert_eq!(&output.stderr[..6], b"SBXF\x01\x01");
     assert_eq!(
         i32::from_le_bytes(output.stderr[10..14].try_into().unwrap()),
         2
@@ -77,8 +77,8 @@ fn read_command_emits_native_read_error() {
 
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
-    assert_eq!(&output.stderr[..10], b"SBXF\x03\x00\0\0\0\0");
-    assert_eq!(&output.stderr[10..16], b"SBXF\x03\x01");
+    assert_eq!(&output.stderr[..10], b"SBXF\x01\x00\0\0\0\0");
+    assert_eq!(&output.stderr[10..16], b"SBXF\x01\x01");
     assert_eq!(
         i32::from_le_bytes(output.stderr[20..24].try_into().unwrap()),
         21
@@ -99,7 +99,7 @@ fn write_command_acknowledges_open_before_consuming_stdin() {
     let mut opening = [0; 10];
 
     stdout.read_exact(&mut opening).unwrap();
-    assert_eq!(&opening, b"SBXF\x03\x00\0\0\0\0");
+    assert_eq!(&opening, b"SBXF\x01\x00\0\0\0\0");
 
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"streamed content").unwrap();
@@ -108,11 +108,12 @@ fn write_command_acknowledges_open_before_consuming_stdin() {
     let mut terminal = Vec::new();
     stdout.read_to_end(&mut terminal).unwrap();
     assert!(child.wait().unwrap().success());
-    assert_eq!(terminal, b"SBXF\x03\x00\0\0\0\0");
+    assert_eq!(terminal, b"SBXF\x01\x00\0\0\0\0");
     assert_eq!(fs::read(path).unwrap(), b"streamed content");
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn write_command_emits_native_destination_error() {
     let mut child = Command::new(SHIM)
         .args(["write", "/dev/full"])
@@ -125,7 +126,7 @@ fn write_command_emits_native_destination_error() {
     let output = child.wait_with_output().unwrap();
 
     assert!(output.status.success());
-    assert_eq!(&output.stdout[..16], b"SBXF\x03\x00\0\0\0\0SBXF\x03\x01");
+    assert_eq!(&output.stdout[..16], b"SBXF\x01\x00\0\0\0\0SBXF\x01\x01");
     assert_eq!(
         i32::from_le_bytes(output.stdout[20..24].try_into().unwrap()),
         28

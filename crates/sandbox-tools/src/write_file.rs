@@ -23,11 +23,19 @@ pub(crate) fn run(
 }
 
 fn stream(path: &Path, mut input: impl Read, output: &mut impl Write) -> io::Result<()> {
-    let mut file = match File::create(path) {
+    let file = match File::create(path) {
         Ok(file) => file,
         Err(error) => return write_file_error(output, &error),
     };
 
+    stream_contents(&mut input, file, output)
+}
+
+fn stream_contents(
+    mut input: impl Read,
+    mut file: impl Write,
+    output: &mut impl Write,
+) -> io::Result<()> {
     write_success(output)?;
     let mut buffer = [0; BUFFER_SIZE];
 
@@ -63,7 +71,7 @@ mod tests {
 
         stream(&path, &b"new\0bytes"[..], &mut output).unwrap();
 
-        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0SBXF\x03\x00\0\0\0\0");
+        assert_eq!(output, b"SBXF\x01\x00\0\0\0\0SBXF\x01\x00\0\0\0\0");
         assert_eq!(fs::read(path).unwrap(), b"new\0bytes");
     }
 
@@ -82,7 +90,7 @@ mod tests {
 
         stream(&temp.0, Unreadable, &mut output).unwrap();
 
-        assert_eq!(&output[..6], b"SBXF\x03\x01");
+        assert_eq!(&output[..6], b"SBXF\x01\x01");
         assert_eq!(i32::from_le_bytes(output[10..14].try_into().unwrap()), 21);
     }
 
@@ -102,17 +110,29 @@ mod tests {
         let error = stream(&temp.0.join("data"), FailingInput, &mut output).unwrap_err();
 
         assert_eq!(error.to_string(), "stdin failed");
-        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0");
+        assert_eq!(output, b"SBXF\x01\x00\0\0\0\0");
     }
 
     #[test]
     fn frames_destination_failures_after_the_opening_success() {
+        struct Full;
+
+        impl Write for Full {
+            fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from_raw_os_error(28))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
         let mut output = Vec::new();
 
-        stream(Path::new("/dev/full"), &b"content"[..], &mut output).unwrap();
+        stream_contents(&b"content"[..], Full, &mut output).unwrap();
 
-        assert_eq!(&output[..10], b"SBXF\x03\x00\0\0\0\0");
-        assert_eq!(&output[10..16], b"SBXF\x03\x01");
+        assert_eq!(&output[..10], b"SBXF\x01\x00\0\0\0\0");
+        assert_eq!(&output[10..16], b"SBXF\x01\x01");
         assert_eq!(i32::from_le_bytes(output[20..24].try_into().unwrap()), 28);
     }
 

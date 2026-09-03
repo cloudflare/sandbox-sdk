@@ -86,7 +86,7 @@ describe("ContainerFiles.writeFile", () => {
       },
       { highWaterMark: 0 },
     );
-    const promise = new ContainerFiles(containerWith(writeProcess({ stderr: stdout }))).writeFile(
+    const promise = new ContainerFiles(containerWith(writeProcess({ control: stdout }))).writeFile(
       "/file",
       source,
     );
@@ -107,7 +107,7 @@ describe("ContainerFiles.writeFile", () => {
       cancel: cancelled,
     });
     const getReader = vi.spyOn(source, "getReader");
-    const process = writeProcess({ stderr: readableChunks([errorFrame(21, "Is a directory")]) });
+    const process = writeProcess({ control: readableChunks([errorFrame(21, "Is a directory")]) });
 
     const promise = new ContainerFiles(containerWith(process)).writeFile("/directory", source);
 
@@ -125,7 +125,7 @@ describe("ContainerFiles.writeFile", () => {
 
   it("maps terminal filesystem errors", async () => {
     const process = writeProcess({
-      stderr: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+      control: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
     });
 
     await expect(
@@ -138,6 +138,28 @@ describe("ContainerFiles.writeFile", () => {
     expect(process.kill).toHaveBeenCalledWith(9);
   });
 
+  it("does not wait for more source data after a terminal filesystem error", async () => {
+    const cancelled = vi.fn();
+    let pulls = 0;
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) controller.enqueue(new Uint8Array([1]));
+        else return new Promise<void>(() => undefined);
+      },
+      cancel: cancelled,
+    });
+    const process = writeProcess({
+      control: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+    });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", source),
+    ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
+    expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ code: "ENOSPC" }));
+    expect(process.kill).toHaveBeenCalledWith(9);
+  });
+
   it("prefers a terminal filesystem error over the resulting stdin failure", async () => {
     const pipeError = new Error("stdin closed");
     const process = writeProcess({
@@ -146,7 +168,7 @@ describe("ContainerFiles.writeFile", () => {
           throw pipeError;
         },
       }),
-      stderr: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+      control: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
     });
 
     await expect(
@@ -162,7 +184,7 @@ describe("ContainerFiles.writeFile", () => {
       },
     });
     const process = writeProcess({
-      stderr: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+      control: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
     });
 
     await expect(
@@ -171,13 +193,12 @@ describe("ContainerFiles.writeFile", () => {
   });
 
   it("reports a missing terminal frame as a protocol failure", async () => {
-    const process = writeProcess({ stderr: readableChunks([SUCCESS_HEADER]), exitCode: 9 });
+    const process = writeProcess({ control: readableChunks([SUCCESS_HEADER]), exitCode: 9 });
 
     await expect(
       new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
     ).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
-      reason: "INCOMPATIBLE_SHIM",
     });
   });
 
@@ -188,7 +209,7 @@ describe("ContainerFiles.writeFile", () => {
         controller.error(sourceError);
       },
     });
-    const process = writeProcess({ stderr: readableChunks([SUCCESS_HEADER]), exitCode: 1 });
+    const process = writeProcess({ control: readableChunks([SUCCESS_HEADER]), exitCode: 1 });
 
     const promise = new ContainerFiles(containerWith(process)).writeFile("/file", source);
 
@@ -246,7 +267,7 @@ describe("ContainerFiles.writeFile", () => {
     const source = readableChunks([new Uint8Array([1])]);
     const process = writeProcess({
       stdin,
-      stderr: readableChunks([SUCCESS_HEADER], false),
+      control: readableChunks([SUCCESS_HEADER], false),
       exitCode: new Promise<number>(() => undefined),
     });
     const promise = new ContainerFiles(containerWith(process)).writeFile("/file", source, {
@@ -261,7 +282,7 @@ describe("ContainerFiles.writeFile", () => {
   });
 
   it("rejects missing native process streams", async () => {
-    const missingStdout = writeProcess({ stderr: null });
+    const missingStdout = writeProcess({ control: null });
     const missingStdin = writeProcess({ stdin: null });
 
     await expect(

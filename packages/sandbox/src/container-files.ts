@@ -21,7 +21,7 @@ export type ContainerExecutor = Pick<Container, "exec">;
 /**
  * File operations backed by a native container.
  *
- * The container image must provide the SDK-compatible shim at
+ * The container image must provide the matching shim at
  * `/usr/local/bin/sandbox-shim`.
  */
 export class ContainerFiles {

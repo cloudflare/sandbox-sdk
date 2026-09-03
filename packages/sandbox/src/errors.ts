@@ -1,16 +1,5 @@
 import { constants } from "node:os";
 
-const SANDBOX_FILE_OPERATIONS = [
-  "readFile",
-  "writeFile",
-  "stat",
-  "lstat",
-  "readDirectory",
-  "mkdir",
-  "rename",
-  "remove",
-] as const;
-
 /** Symbolic Linux errno, or `UNKNOWN` when the runtime does not name it. */
 export type SandboxFileErrorCode = `E${string}` | "UNKNOWN";
 
@@ -27,7 +16,7 @@ for (const preferred of ["EAGAIN", "EDEADLK", "EOPNOTSUPP"] as const) {
 }
 
 /** Filesystem operation that failed. */
-export type SandboxFileOperation = (typeof SANDBOX_FILE_OPERATIONS)[number];
+export type SandboxFileOperation = "readFile" | "writeFile";
 
 /** Construction contract for {@link SandboxFileError}. */
 export interface SandboxFileErrorOptions {
@@ -35,7 +24,6 @@ export interface SandboxFileErrorOptions {
   errno: number;
   operation: SandboxFileOperation;
   path: string;
-  destination?: string;
   detail: string;
 }
 
@@ -47,7 +35,6 @@ export class SandboxFileError extends Error {
   readonly operation: SandboxFileOperation;
   readonly path: string;
   readonly detail: string;
-  declare readonly destination?: string;
 
   constructor(options: SandboxFileErrorOptions) {
     if (!Number.isInteger(options.errno) || options.errno <= 0) {
@@ -59,7 +46,6 @@ export class SandboxFileError extends Error {
     this.operation = options.operation;
     this.path = options.path;
     this.detail = options.detail;
-    if (options.destination !== undefined) this.destination = options.destination;
   }
 
   /** Recognizes local and JSRPC-crossed SandboxFileError values. */
@@ -76,8 +62,6 @@ export class SandboxFileError extends Error {
   }
 }
 
-export type SandboxProtocolErrorReason = "INCOMPATIBLE_SHIM";
-
 /** Construction contract for {@link SandboxProtocolError}. */
 export interface SandboxProtocolErrorOptions {
   detail: string;
@@ -88,7 +72,6 @@ export interface SandboxProtocolErrorOptions {
 export class SandboxProtocolError extends Error {
   override readonly name = "SandboxProtocolError";
   readonly code = "SANDBOX_PROTOCOL_ERROR";
-  readonly reason: SandboxProtocolErrorReason = "INCOMPATIBLE_SHIM";
   readonly detail: string;
 
   constructor(options: SandboxProtocolErrorOptions) {
@@ -102,7 +85,6 @@ export class SandboxProtocolError extends Error {
       cause instanceof Error &&
       cause.name === "SandboxProtocolError" &&
       hasOwn(cause, "code", (value) => value === "SANDBOX_PROTOCOL_ERROR") &&
-      hasOwn(cause, "reason", (value) => value === "INCOMPATIBLE_SHIM") &&
       hasOwn(cause, "detail", isString)
     );
   }

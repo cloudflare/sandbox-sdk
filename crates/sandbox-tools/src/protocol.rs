@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 const MAGIC: &[u8; 4] = b"SBXF";
-const VERSION: u8 = 3;
+const VERSION: u8 = 1;
 const SUCCESS: u8 = 0;
 const FILE_ERROR: u8 = 1;
 const EIO: i32 = 5;
@@ -47,7 +47,7 @@ mod tests {
 
         write_success(&mut output).unwrap();
 
-        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0");
+        assert_eq!(output, b"SBXF\x01\x00\0\0\0\0");
     }
 
     #[test]
@@ -56,7 +56,7 @@ mod tests {
 
         write_file_error(&mut output, &io::Error::from_raw_os_error(13)).unwrap();
 
-        assert_eq!(&output[..6], b"SBXF\x03\x01");
+        assert_eq!(&output[..6], b"SBXF\x01\x01");
         assert_eq!(
             u32::from_le_bytes(output[6..10].try_into().unwrap()) as usize,
             output.len() - 10

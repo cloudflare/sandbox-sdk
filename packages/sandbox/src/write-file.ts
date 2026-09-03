@@ -29,7 +29,7 @@ export async function writeFile(
       stdout: "pipe",
       stderr: "ignore",
     });
-    control = session.openOutputControl();
+    control = session.openWriteControl();
     input = session.openInput();
 
     const opening = await control.readFrame();
@@ -37,15 +37,13 @@ export async function writeFile(
     expectSuccess(opening, path);
 
     sourceReader = source.getReader();
-    const terminal = terminalResult(session, control);
     const pumping = pumpSource(session, sourceReader, input);
-    const first = await Promise.race([terminal, pumping]);
+    const terminal = terminalResult(session, control);
+    const first = await Promise.race([pumping, terminal]);
 
     if (first.kind === "frame" || first.kind === "failure") {
-      const pump = await pumping;
-      if (pump.kind === "sourceFailure") throw pump.error;
       handleTerminal(first, path);
-      handlePump(pump);
+      handlePump(await pumping);
     } else if (first.kind === "sourceFailure") {
       throw first.error;
     } else if (first.kind === "inputFailure") {
@@ -86,6 +84,7 @@ async function pumpSource(
   source: ReadableStreamDefaultReader<Uint8Array>,
   input: WritableStreamDefaultWriter<Uint8Array>,
 ): Promise<PumpResult> {
+  // Keep this explicit pump: direct pipeTo() can reject after Container stdin accepts every byte.
   while (true) {
     try {
       await session.waitFor(input.ready);

@@ -110,7 +110,7 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("rejects malformed control output", async () => {
-    const malformed = new Uint8Array([0, 0, 0, 0, 3, 0, 0, 0, 0, 0]);
+    const malformed = new Uint8Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
 
     await expect(
       new ContainerFiles(containerWith(readProcess([malformed]))).readFile("/file"),

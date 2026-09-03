@@ -12,6 +12,5 @@ export {
   type SandboxFileOperation,
   type SandboxFileErrorOptions,
   type SandboxProtocolErrorOptions,
-  type SandboxProtocolErrorReason,
 } from "./errors.js";
 export { Sandbox } from "./sandbox.js";
