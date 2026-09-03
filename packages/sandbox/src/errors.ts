@@ -1,19 +1,53 @@
 const SANDBOX_FILE_ERROR_CODES = [
-  "FILE_NOT_FOUND",
-  "PERMISSION_DENIED",
-  "NOT_A_REGULAR_FILE",
-  "FILE_READ_ERROR",
-] as const;
-
-const SANDBOX_ERRNOS = [
   "EPERM",
   "ENOENT",
+  "ESRCH",
+  "EINTR",
   "EIO",
+  "ENXIO",
+  "E2BIG",
+  "ENOEXEC",
+  "EBADF",
+  "ECHILD",
+  "EAGAIN",
+  "ENOMEM",
   "EACCES",
+  "EFAULT",
+  "EBUSY",
+  "EEXIST",
+  "EXDEV",
+  "ENODEV",
   "ENOTDIR",
   "EISDIR",
   "EINVAL",
+  "ENFILE",
+  "EMFILE",
+  "ENOTTY",
+  "ETXTBSY",
+  "EFBIG",
+  "ENOSPC",
+  "ESPIPE",
+  "EROFS",
+  "EMLINK",
+  "EPIPE",
+  "ENAMETOOLONG",
+  "ENOLCK",
+  "ENOSYS",
+  "ENOTEMPTY",
   "ELOOP",
+  "EOVERFLOW",
+  "UNKNOWN",
+] as const;
+
+const SANDBOX_FILE_OPERATIONS = [
+  "readFile",
+  "writeFile",
+  "stat",
+  "lstat",
+  "readDirectory",
+  "mkdir",
+  "rename",
+  "remove",
 ] as const;
 
 const SANDBOX_PROTOCOL_ERROR_REASONS = [
@@ -27,43 +61,61 @@ const SANDBOX_PROTOCOL_ERROR_REASONS = [
   "INVALID_ERROR_MESSAGE",
 ] as const;
 
-/** Stable category for a sandbox file failure. */
+/** Symbolic Linux errno, or `UNKNOWN` when the shim reports an unmapped errno. */
 export type SandboxFileErrorCode = (typeof SANDBOX_FILE_ERROR_CODES)[number];
-/** Symbolic Linux errno recognized by the SDK. */
-export type SandboxErrno = (typeof SANDBOX_ERRNOS)[number];
+/** Filesystem operation that failed. */
+export type SandboxFileOperation = (typeof SANDBOX_FILE_OPERATIONS)[number];
 /** Stable category for an SDK-to-shim protocol failure. */
 export type SandboxProtocolErrorReason = (typeof SANDBOX_PROTOCOL_ERROR_REASONS)[number];
 
-interface FileErrorMetadata {
-  code: SandboxFileErrorCode;
-  errno: SandboxErrno;
-}
-
-const FILE_ERROR_METADATA: ReadonlyMap<number, FileErrorMetadata> = new Map([
-  [1, { code: "PERMISSION_DENIED", errno: "EPERM" }],
-  [2, { code: "FILE_NOT_FOUND", errno: "ENOENT" }],
-  [5, { code: "FILE_READ_ERROR", errno: "EIO" }],
-  [13, { code: "PERMISSION_DENIED", errno: "EACCES" }],
-  [20, { code: "FILE_READ_ERROR", errno: "ENOTDIR" }],
-  [21, { code: "NOT_A_REGULAR_FILE", errno: "EISDIR" }],
-  [22, { code: "NOT_A_REGULAR_FILE", errno: "EINVAL" }],
-  [40, { code: "FILE_READ_ERROR", errno: "ELOOP" }],
+const FILE_ERROR_CODES_BY_ERRNO: ReadonlyMap<number, SandboxFileErrorCode> = new Map([
+  [1, "EPERM"],
+  [2, "ENOENT"],
+  [3, "ESRCH"],
+  [4, "EINTR"],
+  [5, "EIO"],
+  [6, "ENXIO"],
+  [7, "E2BIG"],
+  [8, "ENOEXEC"],
+  [9, "EBADF"],
+  [10, "ECHILD"],
+  [11, "EAGAIN"],
+  [12, "ENOMEM"],
+  [13, "EACCES"],
+  [14, "EFAULT"],
+  [16, "EBUSY"],
+  [17, "EEXIST"],
+  [18, "EXDEV"],
+  [19, "ENODEV"],
+  [20, "ENOTDIR"],
+  [21, "EISDIR"],
+  [22, "EINVAL"],
+  [23, "ENFILE"],
+  [24, "EMFILE"],
+  [25, "ENOTTY"],
+  [26, "ETXTBSY"],
+  [27, "EFBIG"],
+  [28, "ENOSPC"],
+  [29, "ESPIPE"],
+  [30, "EROFS"],
+  [31, "EMLINK"],
+  [32, "EPIPE"],
+  [36, "ENAMETOOLONG"],
+  [37, "ENOLCK"],
+  [38, "ENOSYS"],
+  [39, "ENOTEMPTY"],
+  [40, "ELOOP"],
+  [75, "EOVERFLOW"],
 ]);
 
 /** Construction contract for {@link SandboxFileError}. */
-export type SandboxFileErrorOptions =
-  | {
-      path: string;
-      detail: string;
-      errnoNumber: number;
-      exitCode?: never;
-    }
-  | {
-      path: string;
-      detail: string;
-      errnoNumber?: never;
-      exitCode: number;
-    };
+export interface SandboxFileErrorOptions {
+  code: SandboxFileErrorCode;
+  operation: SandboxFileOperation;
+  path: string;
+  destination?: string;
+  detail: string;
+}
 
 /**
  * A filesystem or file-streaming failure reported by the sandbox container.
@@ -75,23 +127,19 @@ export type SandboxFileErrorOptions =
 export class SandboxFileError extends Error {
   override readonly name = "SandboxFileError";
   readonly code: SandboxFileErrorCode;
+  readonly operation: SandboxFileOperation;
   readonly path: string;
   readonly detail: string;
-  declare readonly errnoNumber?: number;
-  declare readonly errno?: SandboxErrno;
-  declare readonly exitCode?: number;
+  declare readonly destination?: string;
 
   constructor(options: SandboxFileErrorOptions) {
     validateFileErrorOptions(options);
-    super(`Cannot read '${options.path}': ${options.detail}`);
-    const metadata =
-      options.errnoNumber === undefined ? undefined : FILE_ERROR_METADATA.get(options.errnoNumber);
-    this.code = metadata?.code ?? "FILE_READ_ERROR";
+    super(`${options.operation} '${options.path}': ${options.detail}`);
+    this.code = options.code;
+    this.operation = options.operation;
     this.path = options.path;
     this.detail = options.detail;
-    if (options.errnoNumber !== undefined) this.errnoNumber = options.errnoNumber;
-    if (metadata !== undefined) this.errno = metadata.errno;
-    if (options.exitCode !== undefined) this.exitCode = options.exitCode;
+    if (options.destination !== undefined) this.destination = options.destination;
   }
 
   /** Recognizes local and JSRPC-crossed SandboxFileError values. */
@@ -101,58 +149,33 @@ export class SandboxFileError extends Error {
       cause.name !== "SandboxFileError" ||
       !hasOwnProperty(cause, "code", isString) ||
       !SANDBOX_FILE_ERROR_CODES.some((code) => code === cause.code) ||
+      !hasOwnProperty(cause, "operation", isString) ||
+      !SANDBOX_FILE_OPERATIONS.some((operation) => operation === cause.operation) ||
       !hasOwnProperty(cause, "path", isString) ||
       !hasOwnProperty(cause, "detail", isString)
     ) {
       return false;
     }
 
-    const ownsErrnoNumber = Object.hasOwn(cause, "errnoNumber");
-    const ownsExitCode = Object.hasOwn(cause, "exitCode");
-    if (ownsErrnoNumber === ownsExitCode) return false;
-
-    if (ownsExitCode) {
-      return (
-        hasOwnProperty(cause, "exitCode", isInteger) &&
-        cause.code === "FILE_READ_ERROR" &&
-        !Object.hasOwn(cause, "errno")
-      );
-    }
-
-    if (!hasOwnProperty(cause, "errnoNumber", isInteger) || cause.errnoNumber <= 0) return false;
-    const metadata = FILE_ERROR_METADATA.get(cause.errnoNumber);
-    if (metadata === undefined) {
-      return cause.code === "FILE_READ_ERROR" && !Object.hasOwn(cause, "errno");
-    }
-
-    return (
-      cause.code === metadata.code &&
-      hasOwnProperty(cause, "errno", isString) &&
-      cause.errno === metadata.errno
-    );
+    return !Object.hasOwn(cause, "destination") || hasOwnProperty(cause, "destination", isString);
   }
 }
 
 function validateFileErrorOptions(options: SandboxFileErrorOptions): void {
+  if (!isString(options.code) || !SANDBOX_FILE_ERROR_CODES.some((code) => code === options.code)) {
+    throw new TypeError("SandboxFileError code is invalid");
+  }
+  if (
+    !isString(options.operation) ||
+    !SANDBOX_FILE_OPERATIONS.some((operation) => operation === options.operation)
+  ) {
+    throw new TypeError("SandboxFileError operation is invalid");
+  }
   if (!isString(options.path) || !isString(options.detail)) {
     throw new TypeError("SandboxFileError path and detail must be strings");
   }
-
-  const hasExitCode = options.exitCode !== undefined;
-  const hasErrnoNumber = options.errnoNumber !== undefined;
-  if (hasExitCode === hasErrnoNumber) {
-    throw new TypeError("SandboxFileError requires exactly one numeric error source");
-  }
-
-  if (hasExitCode) {
-    if (!Number.isInteger(options.exitCode)) {
-      throw new TypeError("SandboxFileError exitCode must be an integer");
-    }
-    return;
-  }
-
-  if (!Number.isInteger(options.errnoNumber) || options.errnoNumber <= 0) {
-    throw new TypeError("SandboxFileError errnoNumber must be a positive integer");
+  if (options.destination !== undefined && !isString(options.destination)) {
+    throw new TypeError("SandboxFileError destination must be a string");
   }
 }
 
@@ -293,23 +316,30 @@ function validateProtocolErrorOptions(options: SandboxProtocolErrorOptions): voi
 }
 
 export function fileErrorFromErrno(
+  operation: SandboxFileOperation,
   path: string,
   errnoNumber: number,
   detail: string,
 ): SandboxFileError {
-  const metadata = FILE_ERROR_METADATA.get(errnoNumber);
+  const code = FILE_ERROR_CODES_BY_ERRNO.get(errnoNumber) ?? "UNKNOWN";
   return new SandboxFileError({
+    code,
+    operation,
     path,
-    detail: detail.length > 0 ? detail : (metadata?.errno ?? `errno ${errnoNumber}`),
-    errnoNumber,
+    detail: detail.length > 0 ? detail : code,
   });
 }
 
-export function fileErrorFromExit(path: string, exitCode: number): SandboxFileError {
+export function fileErrorFromExit(
+  operation: SandboxFileOperation,
+  path: string,
+  exitCode: number,
+): SandboxFileError {
   return new SandboxFileError({
+    code: "EIO",
+    operation,
     path,
     detail: `sandbox-shim exited with code ${exitCode}`,
-    exitCode,
   });
 }
 

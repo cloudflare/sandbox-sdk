@@ -117,7 +117,7 @@ export class FramedRead {
 
           const exitCode = await this.#waitFor(this.#process.exitCode);
           if (exitCode !== 0) {
-            throw fileErrorFromExit(this.#path, exitCode);
+            throw fileErrorFromExit("readFile", this.#path, exitCode);
           }
 
           this.#settled = true;

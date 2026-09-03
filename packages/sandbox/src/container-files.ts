@@ -63,7 +63,7 @@ export class ContainerFiles {
     try {
       const frame = await read.readFrame();
       if (frame.kind === "error") {
-        throw fileErrorFromErrno(path, frame.errno, frame.detail);
+        throw fileErrorFromErrno("readFile", path, frame.errno, frame.detail);
       }
 
       return new Response(read.body(), {

@@ -99,11 +99,11 @@ describe("ContainerFiles.readFile", () => {
     await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
       name: "SandboxFileError",
-      code: "FILE_NOT_FOUND",
-      errno: "ENOENT",
+      code: "ENOENT",
+      operation: "readFile",
       path: "/missing",
       detail: "No such file or directory",
-      message: "Cannot read '/missing': No such file or directory",
+      message: "readFile '/missing': No such file or directory",
     });
   });
 
@@ -111,28 +111,31 @@ describe("ContainerFiles.readFile", () => {
     const container = containerWith(processFromChunks(errorFrame(13, "Permission denied")));
 
     await expect(new ContainerFiles(container).readFile("/private")).rejects.toMatchObject({
-      code: "PERMISSION_DENIED",
-      errno: "EACCES",
+      code: "EACCES",
+      operation: "readFile",
       path: "/private",
     });
   });
 
   it("maps recognized Linux errno values", async () => {
     const cases = [
-      { errnoNumber: 1, code: "PERMISSION_DENIED", errno: "EPERM" },
-      { errnoNumber: 5, code: "FILE_READ_ERROR", errno: "EIO" },
-      { errnoNumber: 20, code: "FILE_READ_ERROR", errno: "ENOTDIR" },
-      { errnoNumber: 21, code: "NOT_A_REGULAR_FILE", errno: "EISDIR" },
-      { errnoNumber: 22, code: "NOT_A_REGULAR_FILE", errno: "EINVAL" },
-      { errnoNumber: 40, code: "FILE_READ_ERROR", errno: "ELOOP" },
+      { errnoNumber: 1, code: "EPERM" },
+      { errnoNumber: 5, code: "EIO" },
+      { errnoNumber: 20, code: "ENOTDIR" },
+      { errnoNumber: 21, code: "EISDIR" },
+      { errnoNumber: 22, code: "EINVAL" },
+      { errnoNumber: 40, code: "ELOOP" },
     ] as const;
 
     for (const expected of cases) {
       const container = containerWith(
-        processFromChunks(errorFrame(expected.errnoNumber, expected.errno)),
+        processFromChunks(errorFrame(expected.errnoNumber, expected.code)),
       );
 
-      await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject(expected);
+      await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
+        code: expected.code,
+        operation: "readFile",
+      });
     }
   });
 
@@ -142,8 +145,8 @@ describe("ContainerFiles.readFile", () => {
     const promise = new ContainerFiles(container).readFile("/file");
 
     await expect(promise).rejects.toMatchObject({
-      code: "FILE_READ_ERROR",
-      errnoNumber: 1234,
+      code: "UNKNOWN",
+      operation: "readFile",
       path: "/file",
       detail: "Unknown error",
     });
@@ -167,8 +170,8 @@ describe("ContainerFiles.readFile", () => {
     );
 
     await expect(new ContainerFiles(container).readFile("/missing")).rejects.toMatchObject({
-      code: "FILE_NOT_FOUND",
-      errno: "ENOENT",
+      code: "ENOENT",
+      operation: "readFile",
     });
   });
 
@@ -267,10 +270,11 @@ describe("ContainerFiles.readFile", () => {
 
     await expect(response.arrayBuffer()).rejects.toMatchObject({
       name: "SandboxFileError",
-      code: "FILE_READ_ERROR",
+      code: "EIO",
+      operation: "readFile",
       path: "/file",
-      exitCode: 9,
-      message: "Cannot read '/file': sandbox-shim exited with code 9",
+      detail: "sandbox-shim exited with code 9",
+      message: "readFile '/file': sandbox-shim exited with code 9",
     });
     expect(process.kill).toHaveBeenCalledOnce();
   });

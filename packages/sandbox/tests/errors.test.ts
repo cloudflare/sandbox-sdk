@@ -6,11 +6,10 @@ describe("Sandbox errors", () => {
   it("recognizes errors after prototype identity is lost", () => {
     const fileError = Object.assign(new Error("missing"), {
       name: "SandboxFileError",
-      code: "FILE_NOT_FOUND",
+      code: "ENOENT",
+      operation: "readFile",
       path: "/missing",
       detail: "No such file or directory",
-      errnoNumber: 2,
-      errno: "ENOENT",
     });
     const protocolError = Object.assign(new Error("invalid frame"), {
       name: "SandboxProtocolError",
@@ -19,10 +18,10 @@ describe("Sandbox errors", () => {
     });
     const lateFileError = Object.assign(new Error("late failure"), {
       name: "SandboxFileError",
-      code: "FILE_READ_ERROR",
+      code: "EIO",
+      operation: "readFile",
       path: "/file",
       detail: "sandbox-shim exited with code 9",
-      exitCode: 9,
     });
     const invalidMessageError = Object.assign(new Error("invalid message"), {
       name: "SandboxProtocolError",
@@ -42,10 +41,10 @@ describe("Sandbox errors", () => {
   it("rejects malformed crossed errors", () => {
     const invalidFileError = Object.assign(new Error("missing"), {
       name: "SandboxFileError",
-      code: "FILE_NOT_FOUND",
+      code: "ENOENT",
+      operation: "readFile",
       path: 42,
       detail: "No such file or directory",
-      errnoNumber: 2,
     });
     const incompleteProtocolError = Object.assign(new Error("unsupported"), {
       name: "SandboxProtocolError",
@@ -55,10 +54,9 @@ describe("Sandbox errors", () => {
     const inconsistentFileError = Object.assign(new Error("denied"), {
       name: "SandboxFileError",
       code: "FILE_NOT_FOUND",
+      operation: "readFile",
       path: "/private",
       detail: "Permission denied",
-      errnoNumber: 13,
-      errno: "EACCES",
     });
     const inconsistentProtocolError = Object.assign(new Error("invalid frame"), {
       name: "SandboxProtocolError",
@@ -73,20 +71,12 @@ describe("Sandbox errors", () => {
     expect(SandboxProtocolError.is(inconsistentProtocolError)).toBe(false);
   });
 
-  it("rejects invalid construction metadata", () => {
+  it("rejects invalid protocol construction metadata", () => {
     const contradictoryProtocolOptions = {
       reason: "INVALID_MAGIC" as const,
       status: 9,
     };
 
-    expect(
-      () =>
-        new SandboxFileError({
-          path: "/missing",
-          detail: "Invalid errno",
-          errnoNumber: 0,
-        }),
-    ).toThrow(TypeError);
     expect(() => new SandboxProtocolError({ reason: "UNKNOWN_STATUS", status: 256 })).toThrow(
       TypeError,
     );
@@ -95,21 +85,31 @@ describe("Sandbox errors", () => {
 
   it("keeps contract fields as own properties", () => {
     const fileError = new SandboxFileError({
+      code: "ENOENT",
+      operation: "readFile",
       path: "/missing",
       detail: "No such file or directory",
-      errnoNumber: 2,
     });
     const protocolError = new SandboxProtocolError({
       reason: "UNKNOWN_STATUS",
       status: 9,
     });
+    const renameError = new SandboxFileError({
+      code: "EXDEV",
+      operation: "rename",
+      path: "/source",
+      destination: "/destination",
+      detail: "Cross-device link",
+    });
 
     expect(Object.hasOwn(fileError, "name")).toBe(true);
     expect(Object.hasOwn(fileError, "code")).toBe(true);
+    expect(Object.hasOwn(fileError, "operation")).toBe(true);
     expect(Object.hasOwn(fileError, "path")).toBe(true);
     expect(Object.hasOwn(fileError, "detail")).toBe(true);
-    expect(Object.hasOwn(fileError, "errnoNumber")).toBe(true);
-    expect(Object.hasOwn(fileError, "errno")).toBe(true);
+    expect(Object.hasOwn(fileError, "destination")).toBe(false);
+    expect(Object.hasOwn(renameError, "destination")).toBe(true);
+    expect(SandboxFileError.is(renameError)).toBe(true);
     expect(Object.hasOwn(protocolError, "name")).toBe(true);
     expect(Object.hasOwn(protocolError, "code")).toBe(true);
     expect(Object.hasOwn(protocolError, "reason")).toBe(true);

@@ -63,9 +63,8 @@ describe("sandbox-shim contract", () => {
         new ContainerFiles({ exec: vi.fn().mockResolvedValue(process) }).readFile(path),
       ).rejects.toMatchObject({
         name: "SandboxFileError",
-        code: "FILE_NOT_FOUND",
-        errnoNumber: 2,
-        errno: "ENOENT",
+        code: "ENOENT",
+        operation: "readFile",
         path,
       });
     } finally {

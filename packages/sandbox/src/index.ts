@@ -2,8 +2,8 @@ export { ContainerFiles, type ContainerExecutor, type ReadFileOptions } from "./
 export {
   SandboxFileError,
   SandboxProtocolError,
-  type SandboxErrno,
   type SandboxFileErrorCode,
+  type SandboxFileOperation,
   type SandboxFileErrorOptions,
   type SandboxProtocolErrorOptions,
   type SandboxProtocolErrorReason,

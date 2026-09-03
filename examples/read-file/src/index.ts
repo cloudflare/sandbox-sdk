@@ -91,13 +91,15 @@ export default {
 function errorResponse(cause: unknown): Response {
   if (SandboxFileError.is(cause)) {
     switch (cause.code) {
-      case "FILE_NOT_FOUND":
+      case "ENOENT":
         return new Response("File not found", { status: 404 });
-      case "PERMISSION_DENIED":
+      case "EACCES":
+      case "EPERM":
         return new Response("Permission denied", { status: 403 });
-      case "NOT_A_REGULAR_FILE":
+      case "EISDIR":
+      case "EINVAL":
         return new Response("Path is not a regular file", { status: 400 });
-      case "FILE_READ_ERROR":
+      default:
         return new Response("File could not be read", { status: 500 });
     }
   }
