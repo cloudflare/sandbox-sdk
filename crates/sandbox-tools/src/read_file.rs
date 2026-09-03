@@ -1,18 +1,12 @@
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 const SUCCESS_HEADER: &[u8; 6] = b"SBXF\x01\x00";
 const FILE_ERROR_HEADER: &[u8; 6] = b"SBXF\x01\x01";
 const EIO: i32 = 5;
-const EISDIR: i32 = 21;
-const EINVAL: i32 = 22;
-
-const O_NONBLOCK: i32 = 0x800;
-
 pub(crate) fn stream(path: &Path, mut output: impl Write) -> io::Result<()> {
-    let mut file = match open_regular(path) {
+    let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) => return write_error(&mut output, &error),
     };
@@ -20,22 +14,6 @@ pub(crate) fn stream(path: &Path, mut output: impl Write) -> io::Result<()> {
     output.write_all(SUCCESS_HEADER)?;
     io::copy(&mut file, &mut output)?;
     Ok(())
-}
-
-fn open_regular(path: &Path) -> io::Result<File> {
-    let mut options = File::options();
-    options.read(true);
-    options.custom_flags(O_NONBLOCK);
-
-    let file = options.open(path)?;
-    let metadata = file.metadata()?;
-
-    if !metadata.is_file() {
-        let errno = if metadata.is_dir() { EISDIR } else { EINVAL };
-        return Err(io::Error::from_raw_os_error(errno));
-    }
-
-    Ok(file)
 }
 
 fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
@@ -129,12 +107,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_directories_as_non_regular_files() {
+    fn reports_directory_failure_after_the_open_succeeds() {
         let temp = TempDir::new();
-        let output = read(&temp.0);
+        let mut output = Vec::new();
 
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 21);
+        let error = stream(&temp.0, &mut output).unwrap_err();
+
+        assert_eq!(error.raw_os_error(), Some(21));
+        assert_eq!(output, b"SBXF\x01\x00");
     }
 
     #[test]
@@ -154,23 +134,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fifo_without_waiting_for_a_writer() {
+    fn streams_fifo_bytes_after_a_writer_connects() {
         let temp = TempDir::new();
         let path = temp.0.join("pipe");
         let status = Command::new("mkfifo").arg(&path).status().unwrap();
         assert!(status.success());
 
         let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || sender.send(read(&path)).unwrap());
+        let read_path = path.clone();
+        thread::spawn(move || sender.send(read(&read_path)).unwrap());
+        fs::write(path, b"from fifo").unwrap();
         let output = receiver
             .recv_timeout(Duration::from_secs(1))
-            .expect("FIFO inspection should not block on a writer");
+            .expect("FIFO read should finish after its writer closes");
 
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(
-            i32::from_le_bytes(output[6..10].try_into().unwrap()),
-            EINVAL
-        );
+        assert_eq!(&output[..6], b"SBXF\x01\x00");
+        assert_eq!(&output[6..], b"from fifo");
     }
 
     #[test]

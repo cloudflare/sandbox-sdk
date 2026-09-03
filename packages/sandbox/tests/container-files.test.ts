@@ -191,6 +191,15 @@ describe("ContainerFiles.readFile", () => {
     expect(container.exec).not.toHaveBeenCalled();
   });
 
+  it("requires an absolute cwd before launching exec", async () => {
+    const container = containerWith(processFromChunks([]));
+
+    await expect(
+      new ContainerFiles(container).readFile("relative.txt", { cwd: "workspace" }),
+    ).rejects.toThrow("cwd must be an absolute path");
+    expect(container.exec).not.toHaveBeenCalled();
+  });
+
   it("rejects empty and NUL-containing paths before launching exec", async () => {
     const container = containerWith(processFromChunks([]));
     const files = new ContainerFiles(container);

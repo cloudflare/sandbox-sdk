@@ -29,7 +29,7 @@ export class ContainerFiles {
   }
 
   /**
-   * Streams a regular file from the running container.
+   * Streams bytes from a path in the running container using native Linux file semantics.
    *
    * Native container, transport, and abort failures propagate unchanged.
    *
@@ -82,6 +82,9 @@ function validatePath(path: string, cwd: string | undefined): void {
   }
   if (path.includes("\0")) {
     throw new TypeError("path cannot contain NUL characters");
+  }
+  if (cwd !== undefined && !cwd.startsWith("/")) {
+    throw new TypeError("cwd must be an absolute path");
   }
   if (!path.startsWith("/") && cwd === undefined) {
     throw new TypeError("cwd is required when path is relative");
