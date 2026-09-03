@@ -1,6 +1,6 @@
 import { Sandbox, SandboxFileError, SandboxProtocolError } from "@cloudflare/sandbox";
 
-const READABLE_PATHS = new Set(["/fixture.txt", "/missing.txt"]);
+const READABLE_PATHS = new Set(["/fixture.txt", "/missing.txt", "/written.txt"]);
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 interface Env {
@@ -37,6 +37,33 @@ export class ReadFileSandbox extends Sandbox<Env> {
     return response;
   }
 
+  /** Starts the example container when needed, then streams a request body into a file. */
+  async startAndWriteFile(path: string, content: ReadableStream<Uint8Array>): Promise<void> {
+    const container = this.ctx.container;
+    if (container === undefined) {
+      throw new Error("Container attachment is unavailable");
+    }
+
+    const durableObjectID = this.ctx.id.toString();
+    console.log({
+      event: "sandbox.write.requested",
+      durableObjectID,
+      path,
+      running: container.running,
+    });
+    if (!container.running) {
+      container.start({
+        image: this.env.SANDBOX_IMAGE,
+        instance: "lite",
+        enableInternet: false,
+      });
+      console.log({ event: "sandbox.container.start-requested", durableObjectID });
+    }
+
+    await this.files.writeFile(path, content);
+    console.log({ event: "sandbox.write.completed", durableObjectID, path });
+  }
+
   /** Stops and removes this Durable Object's current container instance. */
   async destroyContainer(): Promise<void> {
     const container = this.ctx.container;
@@ -69,16 +96,27 @@ export default {
         await sandbox.destroyContainer();
         return new Response(null, { status: 204 });
       }
-      if (request.method !== "GET") {
+      if (request.method !== "GET" && request.method !== "PUT") {
         return new Response("Method not allowed", {
           status: 405,
-          headers: { Allow: "GET, DELETE" },
+          headers: { Allow: "GET, PUT, DELETE" },
         });
       }
 
       const path = url.searchParams.get("path") ?? "/fixture.txt";
       if (!READABLE_PATHS.has(path)) {
         return new Response("Path is not available in this example", { status: 400 });
+      }
+
+      if (request.method === "PUT") {
+        if (path !== "/written.txt") {
+          return new Response("Only /written.txt is writable in this example", { status: 400 });
+        }
+        if (request.body === null) {
+          return new Response("Request body is required", { status: 400 });
+        }
+        await sandbox.startAndWriteFile(path, request.body);
+        return new Response(null, { status: 204 });
       }
 
       return await sandbox.startAndReadFile(path);
