@@ -60,8 +60,19 @@ export class ReadFileSandbox extends Sandbox<Env> {
       console.log({ event: "sandbox.container.start-requested", durableObjectID });
     }
 
-    await this.files.writeFile(path, content);
-    console.log({ event: "sandbox.write.completed", durableObjectID, path });
+    try {
+      await this.files.writeFile(path, content);
+      console.log({ event: "sandbox.write.completed", durableObjectID, path });
+    } catch (cause) {
+      console.error({
+        event: "sandbox.write.failed",
+        durableObjectID,
+        path,
+        errorName: cause instanceof Error ? cause.name : "UnknownError",
+        errorMessage: cause instanceof Error ? cause.message : String(cause),
+      });
+      throw cause;
+    }
   }
 
   /** Stops and removes this Durable Object's current container instance. */
@@ -121,6 +132,7 @@ export default {
 
       return await sandbox.startAndReadFile(path);
     } catch (cause) {
+      console.error({ event: "sandbox.request.failed", cause });
       return errorResponse(cause);
     }
   },
