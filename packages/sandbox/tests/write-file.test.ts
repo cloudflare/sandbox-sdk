@@ -2,67 +2,15 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
 import { SandboxFileError } from "../src/errors.js";
-
-const encoder = new TextEncoder();
-const SUCCESS_HEADER = new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]);
-
-function errorFrame(errnoNumber: number, detail: string): Uint8Array {
-  const message = encoder.encode(detail);
-  const frame = new Uint8Array(10 + message.length);
-  frame.set([0x53, 0x42, 0x58, 0x46, 1, 1]);
-  new DataView(frame.buffer).setInt32(6, errnoNumber, true);
-  frame.set(message, 10);
-  return frame;
-}
-
-function readableChunks(chunks: Uint8Array[], close = true): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk);
-      if (close) controller.close();
-    },
-  });
-}
-
-interface WriteProcessOptions {
-  stdout?: ReadableStream<Uint8Array> | null;
-  stdin?: WritableStream<Uint8Array> | null;
-  exitCode?: number | Promise<number>;
-}
-
-function writeProcess(options: WriteProcessOptions = {}) {
-  return {
-    stdin: options.stdin === undefined ? new WritableStream<Uint8Array>() : options.stdin,
-    stdout:
-      options.stdout === undefined
-        ? readableChunks([SUCCESS_HEADER, SUCCESS_HEADER])
-        : options.stdout,
-    stderr: null,
-    pid: 1,
-    isPty: false,
-    exitCode: Promise.resolve(options.exitCode ?? 0),
-    output: vi.fn(),
-    kill: vi.fn(),
-    resize: vi.fn(),
-  };
-}
-
-function containerWith(process: ExecProcess) {
-  return { exec: vi.fn().mockResolvedValue(process) };
-}
-
-interface Deferred<Value> {
-  promise: Promise<Value>;
-  resolve(value: Value): void;
-}
-
-function deferred<Value>(): Deferred<Value> {
-  let resolvePromise: (value: Value) => void = () => undefined;
-  const promise = new Promise<Value>((resolve) => {
-    resolvePromise = (value) => resolve(value);
-  });
-  return { promise, resolve: resolvePromise };
-}
+import {
+  containerWith,
+  contiguousErrorFrame as errorFrame,
+  deferred,
+  encoder,
+  readableChunks,
+  SUCCESS_HEADER,
+  writeProcess,
+} from "./helpers.js";
 
 describe("ContainerFiles.writeFile", () => {
   it("streams bytes and forwards native options", async () => {
@@ -186,6 +134,33 @@ describe("ContainerFiles.writeFile", () => {
     expect(process.kill).toHaveBeenCalledWith(9);
   });
 
+  it("prefers a terminal filesystem error over the resulting stdin failure", async () => {
+    const pipeError = new Error("stdin closed");
+    const process = writeProcess({
+      stdin: new WritableStream<Uint8Array>({
+        write() {
+          throw pipeError;
+        },
+      }),
+      stdout: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+    });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array([1])),
+    ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
+  });
+
+  it("rejects output after the terminal success frame", async () => {
+    const process = writeProcess({
+      stdout: readableChunks([SUCCESS_HEADER, SUCCESS_HEADER, new Uint8Array([1])]),
+    });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
+    ).rejects.toMatchObject({ reason: "TRAILING_DATA" });
+    expect(process.kill).toHaveBeenCalledWith(9);
+  });
+
   it("preserves source failures and terminates the process", async () => {
     const sourceError = new Error("source failed");
     const source = new ReadableStream<Uint8Array>({
@@ -277,6 +252,22 @@ describe("ContainerFiles.writeFile", () => {
     ).rejects.toMatchObject({ reason: "MISSING_STDIN" });
     expect(missingStdout.kill).toHaveBeenCalledWith(9);
     expect(missingStdin.kill).toHaveBeenCalledWith(9);
+  });
+
+  it("cleans up when a native stream lock cannot be acquired", async () => {
+    const stdin = new WritableStream<Uint8Array>();
+    const existingWriter = stdin.getWriter();
+    const process = writeProcess({ stdin });
+    const cancelled = vi.fn();
+    const source = new ReadableStream<Uint8Array>({ cancel: cancelled });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", source),
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(process.kill).toHaveBeenCalledWith(9);
+    expect(cancelled).toHaveBeenCalledOnce();
+
+    existingWriter.releaseLock();
   });
 
   it("validates paths before launching or cancelling a source", async () => {

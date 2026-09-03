@@ -2,63 +2,15 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
 import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
-
-const encoder = new TextEncoder();
-const SUCCESS_HEADER = new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]);
-
-function successFrame(...content: Uint8Array[]): Uint8Array[] {
-  return [SUCCESS_HEADER, ...content];
-}
-
-function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
-  return errorFrameBytes(errnoNumber, encoder.encode(message));
-}
-
-function errorFrameBytes(errnoNumber: number, detail: Uint8Array): Uint8Array[] {
-  const errno = new Uint8Array(4);
-  new DataView(errno.buffer).setInt32(0, errnoNumber, true);
-  return [new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]), errno, detail];
-}
-
-function processFromChunks(
-  chunks: Uint8Array[],
-  exitCode: number | Promise<number> = 0,
-  stdout: ReadableStream<Uint8Array> | null = new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk);
-      controller.close();
-    },
-  }),
-) {
-  return {
-    stdin: null,
-    stdout,
-    stderr: null,
-    pid: 1,
-    isPty: false,
-    exitCode: Promise.resolve(exitCode),
-    output: vi.fn(),
-    kill: vi.fn(),
-    resize: vi.fn(),
-  };
-}
-
-function containerWith(process: ExecProcess) {
-  return { exec: vi.fn().mockResolvedValue(process) };
-}
-
-interface Deferred<Value> {
-  promise: Promise<Value>;
-  resolve(value: Value): void;
-}
-
-function deferred<Value>(): Deferred<Value> {
-  let resolvePromise: (value: Value) => void = () => undefined;
-  const promise = new Promise<Value>((resolve) => {
-    resolvePromise = (value) => resolve(value);
-  });
-  return { promise, resolve: resolvePromise };
-}
+import {
+  containerWith,
+  deferred,
+  errorFrame,
+  errorFrameBytes,
+  readProcess as processFromChunks,
+  SUCCESS_HEADER,
+  successFrame,
+} from "./helpers.js";
 
 describe("ContainerFiles.readFile", () => {
   it("returns a streaming octet response and forwards native options", async () => {

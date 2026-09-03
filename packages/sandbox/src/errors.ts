@@ -1,76 +1,4 @@
-const SANDBOX_FILE_ERROR_CODES = [
-  "EPERM",
-  "ENOENT",
-  "ESRCH",
-  "EINTR",
-  "EIO",
-  "ENXIO",
-  "E2BIG",
-  "ENOEXEC",
-  "EBADF",
-  "ECHILD",
-  "EAGAIN",
-  "ENOMEM",
-  "EACCES",
-  "EFAULT",
-  "EBUSY",
-  "EEXIST",
-  "EXDEV",
-  "ENODEV",
-  "ENOTDIR",
-  "EISDIR",
-  "EINVAL",
-  "ENFILE",
-  "EMFILE",
-  "ENOTTY",
-  "ETXTBSY",
-  "EFBIG",
-  "ENOSPC",
-  "ESPIPE",
-  "EROFS",
-  "EMLINK",
-  "EPIPE",
-  "ENAMETOOLONG",
-  "ENOLCK",
-  "ENOSYS",
-  "ENOTEMPTY",
-  "ELOOP",
-  "EOVERFLOW",
-  "EDQUOT",
-  "UNKNOWN",
-] as const;
-
-const SANDBOX_FILE_OPERATIONS = [
-  "readFile",
-  "writeFile",
-  "stat",
-  "lstat",
-  "readDirectory",
-  "mkdir",
-  "rename",
-  "remove",
-] as const;
-
-const SANDBOX_PROTOCOL_ERROR_REASONS = [
-  "MISSING_STDIN",
-  "MISSING_STDOUT",
-  "INVALID_MAGIC",
-  "UNSUPPORTED_VERSION",
-  "UNKNOWN_STATUS",
-  "TRUNCATED_FRAME",
-  "INVALID_ERRNO",
-  "ERROR_MESSAGE_TOO_LARGE",
-  "INVALID_ERROR_MESSAGE",
-] as const;
-
-/** Symbolic Linux errno, or `UNKNOWN` when the shim reports an unmapped errno. */
-export type SandboxFileErrorCode = (typeof SANDBOX_FILE_ERROR_CODES)[number];
-/** Filesystem operation that failed. */
-export type SandboxFileOperation = (typeof SANDBOX_FILE_OPERATIONS)[number];
-/** Stable category for an SDK-to-shim protocol failure. */
-export type SandboxProtocolErrorReason = (typeof SANDBOX_PROTOCOL_ERROR_REASONS)[number];
-
-const FILE_ERROR_CODES_BY_ERRNO: ReadonlyMap<number, SandboxFileErrorCode> = new Map([
+const FILE_ERROR_CODE_ENTRIES = [
   [1, "EPERM"],
   [2, "ENOENT"],
   [3, "ESRCH"],
@@ -109,7 +37,43 @@ const FILE_ERROR_CODES_BY_ERRNO: ReadonlyMap<number, SandboxFileErrorCode> = new
   [40, "ELOOP"],
   [75, "EOVERFLOW"],
   [122, "EDQUOT"],
-]);
+] as const;
+
+const SANDBOX_FILE_OPERATIONS = [
+  "readFile",
+  "writeFile",
+  "stat",
+  "lstat",
+  "readDirectory",
+  "mkdir",
+  "rename",
+  "remove",
+] as const;
+
+const SANDBOX_PROTOCOL_ERROR_REASONS = [
+  "MISSING_STDIN",
+  "MISSING_STDOUT",
+  "INVALID_MAGIC",
+  "UNSUPPORTED_VERSION",
+  "UNKNOWN_STATUS",
+  "TRUNCATED_FRAME",
+  "TRAILING_DATA",
+  "INVALID_ERRNO",
+  "ERROR_MESSAGE_TOO_LARGE",
+  "INVALID_ERROR_MESSAGE",
+] as const;
+
+type KnownFileErrorCode = (typeof FILE_ERROR_CODE_ENTRIES)[number][1];
+/** Symbolic Linux errno, or `UNKNOWN` when the shim reports an unmapped errno. */
+export type SandboxFileErrorCode = KnownFileErrorCode | "UNKNOWN";
+/** Filesystem operation that failed. */
+export type SandboxFileOperation = (typeof SANDBOX_FILE_OPERATIONS)[number];
+/** Stable category for an SDK-to-shim protocol failure. */
+export type SandboxProtocolErrorReason = (typeof SANDBOX_PROTOCOL_ERROR_REASONS)[number];
+
+const FILE_ERROR_CODES_BY_ERRNO: ReadonlyMap<number, KnownFileErrorCode> = new Map(
+  FILE_ERROR_CODE_ENTRIES,
+);
 
 /** Construction contract for {@link SandboxFileError}. */
 export interface SandboxFileErrorOptions {
@@ -151,7 +115,7 @@ export class SandboxFileError extends Error {
       !(cause instanceof Error) ||
       cause.name !== "SandboxFileError" ||
       !hasOwnProperty(cause, "code", isString) ||
-      !SANDBOX_FILE_ERROR_CODES.some((code) => code === cause.code) ||
+      !isFileErrorCode(cause.code) ||
       !hasOwnProperty(cause, "operation", isString) ||
       !SANDBOX_FILE_OPERATIONS.some((operation) => operation === cause.operation) ||
       !hasOwnProperty(cause, "path", isString) ||
@@ -165,7 +129,7 @@ export class SandboxFileError extends Error {
 }
 
 function validateFileErrorOptions(options: SandboxFileErrorOptions): void {
-  if (!isString(options.code) || !SANDBOX_FILE_ERROR_CODES.some((code) => code === options.code)) {
+  if (!isString(options.code) || !isFileErrorCode(options.code)) {
     throw new TypeError("SandboxFileError code is invalid");
   }
   if (
@@ -182,9 +146,20 @@ function validateFileErrorOptions(options: SandboxFileErrorOptions): void {
   }
 }
 
+function isFileErrorCode(value: string): value is SandboxFileErrorCode {
+  return value === "UNKNOWN" || FILE_ERROR_CODE_ENTRIES.some(([, code]) => code === value);
+}
+
 /** Construction contract for {@link SandboxProtocolError}. */
 export type SandboxProtocolErrorOptions =
-  | { reason: "MISSING_STDIN" | "MISSING_STDOUT" | "INVALID_MAGIC" | "TRUNCATED_FRAME" }
+  | {
+      reason:
+        | "MISSING_STDIN"
+        | "MISSING_STDOUT"
+        | "INVALID_MAGIC"
+        | "TRUNCATED_FRAME"
+        | "TRAILING_DATA";
+    }
   | { reason: "UNSUPPORTED_VERSION"; protocolVersion: number }
   | { reason: "UNKNOWN_STATUS"; status: number }
   | { reason: "INVALID_ERRNO"; errnoNumber: number }
@@ -234,6 +209,7 @@ export class SandboxProtocolError extends Error {
       case "MISSING_STDOUT":
       case "INVALID_MAGIC":
       case "TRUNCATED_FRAME":
+      case "TRAILING_DATA":
         return hasOnlyProtocolMetadata(cause);
       case "UNSUPPORTED_VERSION":
         return (
@@ -363,6 +339,8 @@ function protocolErrorMessage(options: SandboxProtocolErrorOptions): string {
       return `sandbox-shim returned unknown status ${options.status}`;
     case "TRUNCATED_FRAME":
       return "sandbox-shim closed stdout before completing its frame";
+    case "TRAILING_DATA":
+      return "sandbox-shim returned data after its terminal frame";
     case "INVALID_ERRNO":
       if (!Number.isInteger(options.errnoNumber) || options.errnoNumber > 0) {
         throw new TypeError("SandboxProtocolError invalid errno must be a non-positive integer");

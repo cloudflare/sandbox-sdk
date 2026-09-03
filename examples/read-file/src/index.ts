@@ -138,7 +138,10 @@ function errorResponse(cause: unknown): Response {
       case "EINVAL":
         return new Response("Path is not a regular file", { status: 400 });
       default:
-        return new Response("File could not be read", { status: 500 });
+        return new Response(
+          cause.operation === "writeFile" ? "File could not be written" : "File could not be read",
+          { status: 500 },
+        );
     }
   }
 
