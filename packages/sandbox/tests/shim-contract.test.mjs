@@ -15,7 +15,11 @@ function nativeContainer() {
     exec(command, options) {
       const child = spawn(SHIM_PATH, command.slice(1), {
         cwd: options.cwd,
-        stdio: [options.stdin === "pipe" ? "pipe" : "ignore", "pipe", "ignore"],
+        stdio: [
+          options.stdin === "pipe" ? "pipe" : "ignore",
+          options.stdout === "pipe" ? "pipe" : "ignore",
+          options.stderr === "pipe" ? "pipe" : "ignore",
+        ],
       });
       const exitCode = new Promise((resolve, reject) => {
         child.once("error", reject);
@@ -24,7 +28,7 @@ function nativeContainer() {
       return Promise.resolve({
         stdin: child.stdin === null ? null : Writable.toWeb(child.stdin),
         stdout: child.stdout === null ? null : Readable.toWeb(child.stdout),
-        stderr: null,
+        stderr: child.stderr === null ? null : Readable.toWeb(child.stderr),
         pid: child.pid,
         isPty: false,
         exitCode,

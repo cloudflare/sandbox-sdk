@@ -1,10 +1,9 @@
 use std::io::{self, Write};
 
 const MAGIC: &[u8; 4] = b"SBXF";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 const SUCCESS: u8 = 0;
 const FILE_ERROR: u8 = 1;
-const DATA: u8 = 2;
 const EIO: i32 = 5;
 
 pub(crate) fn write_success(output: &mut impl Write) -> io::Result<()> {
@@ -22,13 +21,6 @@ pub(crate) fn write_file_error(output: &mut impl Write, error: &io::Error) -> io
     output.write_all(&error.raw_os_error().unwrap_or(EIO).to_le_bytes())?;
     output.write_all(detail.as_bytes())?;
     output.flush()
-}
-
-pub(crate) fn write_data(output: &mut impl Write, data: &[u8]) -> io::Result<()> {
-    if data.is_empty() {
-        return Ok(());
-    }
-    write_frame(output, DATA, data)
 }
 
 fn write_frame(output: &mut impl Write, kind: u8, payload: &[u8]) -> io::Result<()> {
@@ -55,16 +47,7 @@ mod tests {
 
         write_success(&mut output).unwrap();
 
-        assert_eq!(output, b"SBXF\x02\x00\0\0\0\0");
-    }
-
-    #[test]
-    fn encodes_data() {
-        let mut output = Vec::new();
-
-        write_data(&mut output, b"data").unwrap();
-
-        assert_eq!(output, b"SBXF\x02\x02\x04\0\0\0data");
+        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0");
     }
 
     #[test]
@@ -73,7 +56,7 @@ mod tests {
 
         write_file_error(&mut output, &io::Error::from_raw_os_error(13)).unwrap();
 
-        assert_eq!(&output[..6], b"SBXF\x02\x01");
+        assert_eq!(&output[..6], b"SBXF\x03\x01");
         assert_eq!(
             u32::from_le_bytes(output[6..10].try_into().unwrap()) as usize,
             output.len() - 10

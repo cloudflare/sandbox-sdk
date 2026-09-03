@@ -1,6 +1,6 @@
 import type { ContainerExecutor, ReadFileOptions } from "./container-files.js";
-import { fileErrorFromErrno, fileErrorFromExit, SandboxProtocolError } from "./errors.js";
-import { SHIM_PATH, ShimOutput, ShimSession } from "./shim.js";
+import { fileErrorFromErrno } from "./errors.js";
+import { SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 
@@ -12,74 +12,75 @@ export async function readFile(
   const session = await ShimSession.start(container, [SHIM_PATH, "read", path], {
     ...options,
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
-  let output: ShimOutput | undefined;
+  let control: ShimControl | undefined;
+  let output: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   try {
+    control = session.openControl();
     output = session.openOutput();
-    const opening = await output.readFrame();
+    const opening = await control.readFrame();
     if (opening.kind === "fileError") {
-      await output.expectEnd();
+      await control.expectEnd();
       throw fileErrorFromErrno("readFile", path, opening.errno, opening.detail);
     }
-    if (opening.kind !== "success") {
-      throw new SandboxProtocolError({ reason: "UNEXPECTED_FRAME" });
-    }
 
-    const body = responseBody(session, output, path);
-    return new Response(body, {
+    return new Response(responseBody(session, control, output, path), {
       headers: { "Content-Type": "application/octet-stream" },
     });
   } catch (error) {
-    session.terminate();
-    output?.discard(error);
+    terminateRead(session, control, output, error);
     throw error;
   }
 }
 
-function responseBody(session: ShimSession, output: ShimOutput, path: string) {
+function responseBody(
+  session: ShimSession,
+  control: ShimControl,
+  output: ReadableStreamDefaultReader<Uint8Array>,
+  path: string,
+) {
   return new ReadableStream<Uint8Array>({
     pull: async (controller) => {
       try {
-        const frame = await output.readFrame();
-        if (frame.kind === "data") {
-          controller.enqueue(frame.value);
+        const next = await session.waitFor(output.read());
+        if (!next.done) {
+          controller.enqueue(next.value);
           return;
         }
-        if (frame.kind === "fileError") {
-          await output.expectEnd();
-          throw fileErrorFromErrno("readFile", path, frame.errno, frame.detail);
-        }
 
-        await output.expectEnd();
-        const exitCode = await session.waitFor(session.process.exitCode);
-        if (exitCode !== 0) {
-          throw fileErrorFromExit("readFile", path, exitCode);
+        const terminal = await control.readFrame();
+        await control.expectEnd();
+        if (terminal.kind === "fileError") {
+          throw fileErrorFromErrno("readFile", path, terminal.errno, terminal.detail);
         }
 
         output.releaseLock();
+        control.releaseLock();
         session.finish();
         controller.close();
       } catch (error) {
-        let failure = error;
-        if (SandboxProtocolError.is(error) && error.reason === "TRUNCATED_FRAME") {
-          try {
-            const exitCode = await session.waitFor(session.process.exitCode);
-            if (exitCode !== 0) failure = fileErrorFromExit("readFile", path, exitCode);
-          } catch (abortReason) {
-            failure = abortReason;
-          }
-        }
-        terminateRead(session, output, failure);
-        controller.error(failure);
+        terminateRead(session, control, output, error);
+        controller.error(error);
       }
     },
-    cancel: (reason: CancellationReason) => terminateRead(session, output, reason),
+    cancel: (reason: CancellationReason) => terminateRead(session, control, output, reason),
   });
 }
 
-function terminateRead(session: ShimSession, output: ShimOutput, reason: CancellationReason): void {
+function terminateRead(
+  session: ShimSession,
+  control: ShimControl | undefined,
+  output: ReadableStreamDefaultReader<Uint8Array> | undefined,
+  reason: CancellationReason,
+): void {
   session.terminate();
-  output.discard(reason);
+  control?.discard(reason);
+  if (output !== undefined) {
+    void output.cancel(reason).then(
+      () => output.releaseLock(),
+      () => output.releaseLock(),
+    );
+  }
 }

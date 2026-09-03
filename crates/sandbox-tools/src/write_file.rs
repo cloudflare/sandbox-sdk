@@ -10,7 +10,7 @@ const BUFFER_SIZE: usize = 8 * 1024;
 pub(crate) fn run(
     mut args: impl Iterator<Item = OsString>,
     input: impl Read,
-    output: &mut impl Write,
+    control: &mut impl Write,
 ) -> Result<(), String> {
     let Some(path) = args.next() else {
         return Err("write requires a path".into());
@@ -19,7 +19,7 @@ pub(crate) fn run(
         return Err("write accepts exactly one path".into());
     }
 
-    stream(Path::new(&path), input, output).map_err(|error| error.to_string())
+    stream(Path::new(&path), input, control).map_err(|error| error.to_string())
 }
 
 fn stream(path: &Path, mut input: impl Read, output: &mut impl Write) -> io::Result<()> {
@@ -63,7 +63,7 @@ mod tests {
 
         stream(&path, &b"new\0bytes"[..], &mut output).unwrap();
 
-        assert_eq!(output, b"SBXF\x02\x00\0\0\0\0SBXF\x02\x00\0\0\0\0");
+        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0SBXF\x03\x00\0\0\0\0");
         assert_eq!(fs::read(path).unwrap(), b"new\0bytes");
     }
 
@@ -82,7 +82,7 @@ mod tests {
 
         stream(&temp.0, Unreadable, &mut output).unwrap();
 
-        assert_eq!(&output[..6], b"SBXF\x02\x01");
+        assert_eq!(&output[..6], b"SBXF\x03\x01");
         assert_eq!(i32::from_le_bytes(output[10..14].try_into().unwrap()), 21);
     }
 
@@ -102,7 +102,7 @@ mod tests {
         let error = stream(&temp.0.join("data"), FailingInput, &mut output).unwrap_err();
 
         assert_eq!(error.to_string(), "stdin failed");
-        assert_eq!(output, b"SBXF\x02\x00\0\0\0\0");
+        assert_eq!(output, b"SBXF\x03\x00\0\0\0\0");
     }
 
     #[test]
@@ -111,8 +111,8 @@ mod tests {
 
         stream(Path::new("/dev/full"), &b"content"[..], &mut output).unwrap();
 
-        assert_eq!(&output[..10], b"SBXF\x02\x00\0\0\0\0");
-        assert_eq!(&output[10..16], b"SBXF\x02\x01");
+        assert_eq!(&output[..10], b"SBXF\x03\x00\0\0\0\0");
+        assert_eq!(&output[10..16], b"SBXF\x03\x01");
         assert_eq!(i32::from_le_bytes(output[20..24].try_into().unwrap()), 28);
     }
 

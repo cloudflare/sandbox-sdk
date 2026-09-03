@@ -1,6 +1,6 @@
 import type { ContainerExecutor, WriteFileOptions } from "./container-files.js";
-import { fileErrorFromErrno, fileErrorFromExit, SandboxProtocolError } from "./errors.js";
-import { SHIM_PATH, type ShimFrame, ShimOutput, ShimSession } from "./shim.js";
+import { fileErrorFromErrno, SandboxProtocolError } from "./errors.js";
+import { SHIM_PATH, type ShimControlFrame, ShimControl, ShimSession } from "./shim.js";
 
 type FailureReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 type PumpResult =
@@ -8,7 +8,7 @@ type PumpResult =
   | { readonly kind: "sourceFailure"; readonly error: FailureReason }
   | { readonly kind: "inputFailure"; readonly error: FailureReason };
 type TerminalResult =
-  | { readonly kind: "frame"; readonly frame: ShimFrame }
+  | { readonly kind: "frame"; readonly frame: ShimControlFrame }
   | { readonly kind: "failure"; readonly error: FailureReason };
 
 export async function writeFile(
@@ -18,7 +18,7 @@ export async function writeFile(
   options: WriteFileOptions,
 ): Promise<void> {
   let session: ShimSession | undefined;
-  let output: ShimOutput | undefined;
+  let control: ShimControl | undefined;
   let input: WritableStreamDefaultWriter<Uint8Array> | undefined;
   let sourceReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -29,15 +29,15 @@ export async function writeFile(
       stdout: "pipe",
       stderr: "ignore",
     });
-    output = session.openOutput();
+    control = session.openOutputControl();
     input = session.openInput();
 
-    const opening = await output.readFrame();
-    if (opening.kind === "fileError") await output.expectEnd();
-    expectControlFrame(opening, path);
+    const opening = await control.readFrame();
+    if (opening.kind === "fileError") await control.expectEnd();
+    expectSuccess(opening, path);
 
     sourceReader = source.getReader();
-    const terminal = terminalResult(session, output, path);
+    const terminal = terminalResult(session, control);
     const pumping = pumpSource(session, sourceReader, input);
     const first = await Promise.race([terminal, pumping]);
 
@@ -51,7 +51,7 @@ export async function writeFile(
     } else if (first.kind === "inputFailure") {
       const result = await terminal;
       if (result.kind === "frame" && result.frame.kind === "fileError") {
-        expectControlFrame(result.frame, path);
+        expectSuccess(result.frame, path);
       }
       if (result.kind === "failure") throw result.error;
       throw first.error;
@@ -60,16 +60,18 @@ export async function writeFile(
     }
 
     const exitCode = await session.waitFor(session.process.exitCode);
-    if (exitCode !== 0) throw fileErrorFromExit("writeFile", path, exitCode);
+    if (exitCode !== 0) {
+      throw new SandboxProtocolError({ detail: `sandbox-shim exited with code ${exitCode}` });
+    }
 
     sourceReader.releaseLock();
     input.releaseLock();
-    output.releaseLock();
+    control.releaseLock();
     session.finish();
   } catch (error) {
     session?.terminate();
     if (input !== undefined) discardInput(input, error);
-    output?.discard(error);
+    control?.discard(error);
     if (sourceReader === undefined) {
       void source.cancel(error).catch(() => undefined);
     } else {
@@ -119,45 +121,28 @@ async function pumpSource(
   }
 }
 
-async function terminalResult(
-  session: ShimSession,
-  output: ShimOutput,
-  path: string,
-): Promise<TerminalResult> {
+async function terminalResult(session: ShimSession, control: ShimControl): Promise<TerminalResult> {
   try {
-    const frame = await output.readFrame();
-    await output.expectEnd();
+    const frame = await control.readFrame();
+    await control.expectEnd();
     return { kind: "frame", frame };
   } catch (error) {
-    if (SandboxProtocolError.is(error) && error.reason === "TRUNCATED_FRAME") {
-      try {
-        const exitCode = await session.waitFor(session.process.exitCode);
-        if (exitCode !== 0) {
-          return { kind: "failure", error: fileErrorFromExit("writeFile", path, exitCode) };
-        }
-      } catch (abortReason) {
-        return { kind: "failure", error: abortReason };
-      }
-    }
     return { kind: "failure", error };
   }
 }
 
 function handleTerminal(result: TerminalResult, path: string): void {
   if (result.kind === "failure") throw result.error;
-  expectControlFrame(result.frame, path);
+  expectSuccess(result.frame, path);
 }
 
 function handlePump(result: PumpResult): void {
   if (result.kind !== "complete") throw result.error;
 }
 
-function expectControlFrame(frame: ShimFrame, path: string): void {
+function expectSuccess(frame: ShimControlFrame, path: string): void {
   if (frame.kind === "fileError") {
     throw fileErrorFromErrno("writeFile", path, frame.errno, frame.detail);
-  }
-  if (frame.kind !== "success") {
-    throw new SandboxProtocolError({ reason: "UNEXPECTED_FRAME" });
   }
 }
 

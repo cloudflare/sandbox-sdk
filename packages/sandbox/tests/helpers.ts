@@ -3,8 +3,8 @@ import { vi } from "vite-plus/test";
 export const encoder = new TextEncoder();
 export const SUCCESS_HEADER = frameHeader(0, 0);
 
-export function successFrame(...content: Uint8Array[]): Uint8Array[] {
-  return [SUCCESS_HEADER, ...content.map(dataFrame), SUCCESS_HEADER];
+export function successFrame(): Uint8Array[] {
+  return [SUCCESS_HEADER, SUCCESS_HEADER];
 }
 
 export function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
@@ -26,16 +26,9 @@ export function contiguousErrorFrame(errnoNumber: number, detail: string): Uint8
   return frame;
 }
 
-export function dataFrame(content: Uint8Array): Uint8Array {
-  const frame = new Uint8Array(10 + content.length);
-  frame.set(frameHeader(2, content.length));
-  frame.set(content, 10);
-  return frame;
-}
-
 function frameHeader(kind: number, length: number): Uint8Array {
   const header = new Uint8Array(10);
-  header.set([0x53, 0x42, 0x58, 0x46, 2, kind]);
+  header.set([0x53, 0x42, 0x58, 0x46, 3, kind]);
   new DataView(header.buffer).setUint32(6, length, true);
   return header;
 }
@@ -51,6 +44,7 @@ export function readableChunks(chunks: Uint8Array[], close = true): ReadableStre
 
 interface ProcessOptions {
   stdout: ReadableStream<Uint8Array> | null;
+  stderr: ReadableStream<Uint8Array> | null;
   stdin: WritableStream<Uint8Array> | null;
   exitCode?: number | Promise<number>;
 }
@@ -59,7 +53,7 @@ function processDouble(options: ProcessOptions) {
   return {
     stdin: options.stdin,
     stdout: options.stdout,
-    stderr: null,
+    stderr: options.stderr,
     pid: 1,
     isPty: false,
     exitCode: Promise.resolve(options.exitCode ?? 0),
@@ -72,13 +66,14 @@ function processDouble(options: ProcessOptions) {
 export function readProcess(
   chunks: Uint8Array[],
   exitCode: number | Promise<number> = 0,
-  stdout: ReadableStream<Uint8Array> | null = readableChunks(chunks),
+  stdout: ReadableStream<Uint8Array> | null = readableChunks([]),
+  stderr: ReadableStream<Uint8Array> | null = readableChunks(chunks),
 ) {
-  return processDouble({ stdin: null, stdout, exitCode });
+  return processDouble({ stdin: null, stdout, stderr, exitCode });
 }
 
 interface WriteProcessOptions {
-  stdout?: ReadableStream<Uint8Array> | null;
+  stderr?: ReadableStream<Uint8Array> | null;
   stdin?: WritableStream<Uint8Array> | null;
   exitCode?: number | Promise<number>;
 }
@@ -87,9 +82,10 @@ export function writeProcess(options: WriteProcessOptions = {}) {
   return processDouble({
     stdin: options.stdin === undefined ? new WritableStream<Uint8Array>() : options.stdin,
     stdout:
-      options.stdout === undefined
+      options.stderr === undefined
         ? readableChunks([SUCCESS_HEADER, SUCCESS_HEADER])
-        : options.stdout,
+        : options.stderr,
+    stderr: null,
     exitCode: options.exitCode,
   });
 }

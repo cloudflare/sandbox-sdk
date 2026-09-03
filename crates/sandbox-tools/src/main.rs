@@ -12,6 +12,7 @@ fn main() {
         std::env::args_os().skip(1),
         io::stdin().lock(),
         io::stdout().lock(),
+        io::stderr().lock(),
     ) {
         eprintln!("sandbox-shim: {error}");
         std::process::exit(1);
@@ -21,15 +22,16 @@ fn main() {
 fn run(
     mut args: impl Iterator<Item = OsString>,
     input: impl Read,
-    mut output: impl Write,
+    mut data: impl Write,
+    mut control: impl Write,
 ) -> Result<(), String> {
     let Some(command) = args.next() else {
         return Err("missing command".into());
     };
 
     match command.to_str() {
-        Some("read") => read_file::run(args, &mut output),
-        Some("write") => write_file::run(args, input, &mut output),
+        Some("read") => read_file::run(args, &mut data, &mut control),
+        Some("write") => write_file::run(args, input, &mut data),
         _ => Err("unknown command".into()),
     }
 }
@@ -40,23 +42,28 @@ mod tests {
 
     #[test]
     fn rejects_unknown_commands_without_writing_protocol_bytes() {
-        let mut output = Vec::new();
+        let mut data = Vec::new();
+        let mut control = Vec::new();
         let result = run(
             [OsString::from("unknown")].into_iter(),
             io::empty(),
-            &mut output,
+            &mut data,
+            &mut control,
         );
 
         assert_eq!(result.unwrap_err(), "unknown command");
-        assert!(output.is_empty());
+        assert!(data.is_empty());
+        assert!(control.is_empty());
     }
 
     #[test]
     fn rejects_missing_commands_without_writing_protocol_bytes() {
-        let mut output = Vec::new();
-        let result = run(std::iter::empty(), io::empty(), &mut output);
+        let mut data = Vec::new();
+        let mut control = Vec::new();
+        let result = run(std::iter::empty(), io::empty(), &mut data, &mut control);
 
         assert_eq!(result.unwrap_err(), "missing command");
-        assert!(output.is_empty());
+        assert!(data.is_empty());
+        assert!(control.is_empty());
     }
 }

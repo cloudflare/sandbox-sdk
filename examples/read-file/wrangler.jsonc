@@ -2,6 +2,8 @@
   "name": "sandbox-sdk-subsequent-read-file",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
+  // The SDK resolves native Linux errno names through node:os.
+  "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
       {
