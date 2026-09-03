@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::{self, Write};
-#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -10,17 +9,7 @@ const EIO: i32 = 5;
 const EISDIR: i32 = 21;
 const EINVAL: i32 = 22;
 
-#[cfg(target_os = "linux")]
 const O_NONBLOCK: i32 = 0x800;
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "dragonfly"
-))]
-const O_NONBLOCK: i32 = 0x4;
 
 pub(crate) fn stream(path: &Path, mut output: impl Write) -> io::Result<()> {
     let mut file = match open_regular(path) {
@@ -36,7 +25,6 @@ pub(crate) fn stream(path: &Path, mut output: impl Write) -> io::Result<()> {
 fn open_regular(path: &Path) -> io::Result<File> {
     let mut options = File::options();
     options.read(true);
-    #[cfg(unix)]
     options.custom_flags(O_NONBLOCK);
 
     let file = options.open(path)?;
@@ -60,14 +48,10 @@ fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
-    #[cfg(unix)]
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
-    #[cfg(unix)]
     use std::sync::mpsc;
-    #[cfg(unix)]
     use std::thread;
-    #[cfg(unix)]
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -153,7 +137,6 @@ mod tests {
         assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 21);
     }
 
-    #[cfg(unix)]
     #[test]
     fn follows_symlinks() {
         use std::os::unix::fs::symlink;
@@ -170,7 +153,6 @@ mod tests {
         assert_eq!(&output[6..], b"linked");
     }
 
-    #[cfg(unix)]
     #[test]
     fn rejects_fifo_without_waiting_for_a_writer() {
         let temp = TempDir::new();

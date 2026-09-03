@@ -6,11 +6,13 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "vp pack && cargo build --workspace",
-    "check": "vp check && cargo check --workspace",
+    "build": "vp pack && npm run shim:build",
+    "check": "vp check && npm run shim:check",
     "example:deploy": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 deploy --config examples/read-file/wrangler.jsonc",
     "example:types": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 types --config examples/read-file/wrangler.jsonc --include-runtime=false",
-    "test": "cargo build --workspace && vp test --run --passWithNoTests && cargo test --workspace"
+    "shim:build": "docker build --platform linux/amd64 --target image -f images/sandbox-tools/Dockerfile .",
+    "shim:check": "docker build --platform linux/amd64 --target verify -f images/sandbox-tools/Dockerfile .",
+    "test": "vp test --run --passWithNoTests && npm run shim:check"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260902.1",
