@@ -16,13 +16,6 @@ export class ReadWriteFilesSandbox extends Sandbox<Env> {
       throw new Error("Container attachment is unavailable");
     }
 
-    const durableObjectID = this.ctx.id.toString();
-    console.log({
-      event: "sandbox.read.requested",
-      durableObjectID,
-      path,
-      running: container.running,
-    });
     if (!container.running) {
       container.start({
         image: this.env.SANDBOX_IMAGE,
@@ -30,12 +23,9 @@ export class ReadWriteFilesSandbox extends Sandbox<Env> {
         enableInternet: false,
         labels: { example: "read-write", workspace: sandboxName },
       });
-      console.log({ event: "sandbox.container.start-requested", durableObjectID });
     }
 
-    const response = await this.files.readFile(path);
-    console.log({ event: "sandbox.read.response-ready", durableObjectID, path });
-    return response;
+    return this.files.readFile(path);
   }
 
   /** Starts the example container when needed, then streams a request body into a file. */
@@ -49,13 +39,6 @@ export class ReadWriteFilesSandbox extends Sandbox<Env> {
       throw new Error("Container attachment is unavailable");
     }
 
-    const durableObjectID = this.ctx.id.toString();
-    console.log({
-      event: "sandbox.write.requested",
-      durableObjectID,
-      path,
-      running: container.running,
-    });
     if (!container.running) {
       container.start({
         image: this.env.SANDBOX_IMAGE,
@@ -63,22 +46,9 @@ export class ReadWriteFilesSandbox extends Sandbox<Env> {
         enableInternet: false,
         labels: { example: "read-write", workspace: sandboxName },
       });
-      console.log({ event: "sandbox.container.start-requested", durableObjectID });
     }
 
-    try {
-      await this.files.writeFile(path, content);
-      console.log({ event: "sandbox.write.completed", durableObjectID, path });
-    } catch (cause) {
-      console.error({
-        event: "sandbox.write.failed",
-        durableObjectID,
-        path,
-        errorName: cause instanceof Error ? cause.name : "UnknownError",
-        errorMessage: cause instanceof Error ? cause.message : String(cause),
-      });
-      throw cause;
-    }
+    await this.files.writeFile(path, content);
   }
 
   /** Stops and removes this Durable Object's current container instance. */
@@ -88,10 +58,7 @@ export class ReadWriteFilesSandbox extends Sandbox<Env> {
       throw new Error("Container attachment is unavailable");
     }
 
-    const durableObjectID = this.ctx.id.toString();
-    console.log({ event: "sandbox.container.destroy-requested", durableObjectID });
     await container.destroy();
-    console.log({ event: "sandbox.container.destroyed", durableObjectID });
   }
 }
 
@@ -138,7 +105,6 @@ export default {
 
       return await sandbox.startAndReadFile(path, sandboxName);
     } catch (cause) {
-      console.error({ event: "sandbox.request.failed", cause });
       return errorResponse(cause);
     }
   },

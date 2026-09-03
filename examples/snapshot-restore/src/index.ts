@@ -134,7 +134,6 @@ export default {
 
       return new Response("Not found", { status: 404 });
     } catch (cause) {
-      console.error({ event: "snapshot-example.request.failed", cause });
       return errorResponse(cause);
     }
   },
