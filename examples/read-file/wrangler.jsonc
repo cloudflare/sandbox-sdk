@@ -18,7 +18,7 @@
         "images": [
           {
             "binding": "SANDBOX_IMAGE",
-            "image": "../../Dockerfile.e2e",
+            "image": "../../Dockerfile",
           },
         ],
       },

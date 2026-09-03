@@ -10,8 +10,8 @@
     "check": "vp check && npm run shim:check",
     "example:deploy": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 deploy --config examples/read-file/wrangler.jsonc",
     "example:types": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 types --config examples/read-file/wrangler.jsonc --include-runtime=false",
-    "shim:build": "docker build --platform linux/amd64 --target image -f images/sandbox-tools/Dockerfile .",
-    "shim:check": "docker build --platform linux/amd64 --target verify -f images/sandbox-tools/Dockerfile .",
+    "shim:build": "docker build --platform linux/amd64 --target image .",
+    "shim:check": "docker build --platform linux/amd64 --target verify .",
     "test": "vp test --run --passWithNoTests && npm run shim:check"
   },
   "devDependencies": {
