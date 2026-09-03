@@ -36,6 +36,7 @@ const SANDBOX_FILE_ERROR_CODES = [
   "ENOTEMPTY",
   "ELOOP",
   "EOVERFLOW",
+  "EDQUOT",
   "UNKNOWN",
 ] as const;
 
@@ -51,6 +52,7 @@ const SANDBOX_FILE_OPERATIONS = [
 ] as const;
 
 const SANDBOX_PROTOCOL_ERROR_REASONS = [
+  "MISSING_STDIN",
   "MISSING_STDOUT",
   "INVALID_MAGIC",
   "UNSUPPORTED_VERSION",
@@ -106,6 +108,7 @@ const FILE_ERROR_CODES_BY_ERRNO: ReadonlyMap<number, SandboxFileErrorCode> = new
   [39, "ENOTEMPTY"],
   [40, "ELOOP"],
   [75, "EOVERFLOW"],
+  [122, "EDQUOT"],
 ]);
 
 /** Construction contract for {@link SandboxFileError}. */
@@ -181,7 +184,7 @@ function validateFileErrorOptions(options: SandboxFileErrorOptions): void {
 
 /** Construction contract for {@link SandboxProtocolError}. */
 export type SandboxProtocolErrorOptions =
-  | { reason: "MISSING_STDOUT" | "INVALID_MAGIC" | "TRUNCATED_FRAME" }
+  | { reason: "MISSING_STDIN" | "MISSING_STDOUT" | "INVALID_MAGIC" | "TRUNCATED_FRAME" }
   | { reason: "UNSUPPORTED_VERSION"; protocolVersion: number }
   | { reason: "UNKNOWN_STATUS"; status: number }
   | { reason: "INVALID_ERRNO"; errnoNumber: number }
@@ -227,6 +230,7 @@ export class SandboxProtocolError extends Error {
     }
 
     switch (cause.reason) {
+      case "MISSING_STDIN":
       case "MISSING_STDOUT":
       case "INVALID_MAGIC":
       case "TRUNCATED_FRAME":
@@ -345,6 +349,8 @@ export function fileErrorFromExit(
 
 function protocolErrorMessage(options: SandboxProtocolErrorOptions): string {
   switch (options.reason) {
+    case "MISSING_STDIN":
+      return "sandbox-shim did not provide stdin";
     case "MISSING_STDOUT":
       return "sandbox-shim did not provide stdout";
     case "INVALID_MAGIC":

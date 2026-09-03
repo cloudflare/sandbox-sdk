@@ -222,7 +222,7 @@ function validateHeader(header: Uint8Array): void {
   }
 }
 
-function stopProcess(process: ExecProcess): void {
+export function stopProcess(process: ExecProcess): void {
   try {
     process.kill(9);
   } catch {

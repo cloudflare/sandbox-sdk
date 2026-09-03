@@ -1,4 +1,10 @@
-export { ContainerFiles, type ContainerExecutor, type ReadFileOptions } from "./container-files.js";
+export {
+  ContainerFiles,
+  type ContainerExecutor,
+  type FileContent,
+  type ReadFileOptions,
+  type WriteFileOptions,
+} from "./container-files.js";
 export {
   SandboxFileError,
   SandboxProtocolError,
