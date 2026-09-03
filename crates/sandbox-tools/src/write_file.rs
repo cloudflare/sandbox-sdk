@@ -1,65 +1,58 @@
+use crate::protocol::{write_file_error, write_success};
+
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-const SUCCESS_HEADER: &[u8; 6] = b"SBXF\x01\x00";
-const FILE_ERROR_HEADER: &[u8; 6] = b"SBXF\x01\x01";
-const EIO: i32 = 5;
+const BUFFER_SIZE: usize = 8 * 1024;
 
-pub(crate) fn stream(path: &Path, mut input: impl Read, mut output: impl Write) -> io::Result<()> {
-    let mut file = match File::create(path) {
-        Ok(file) => file,
-        Err(error) => return write_error(&mut output, &error),
+pub(crate) fn run(
+    mut args: impl Iterator<Item = OsString>,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<(), String> {
+    let Some(path) = args.next() else {
+        return Err("write requires a path".into());
     };
-
-    output.write_all(SUCCESS_HEADER)?;
-    output.flush()?;
-
-    if let Err(error) = io::copy(&mut input, &mut file).and_then(|_| file.flush()) {
-        return write_error(&mut output, &error);
+    if args.next().is_some() {
+        return Err("write accepts exactly one path".into());
     }
 
-    output.write_all(SUCCESS_HEADER)
+    stream(Path::new(&path), input, output).map_err(|error| error.to_string())
 }
 
-fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
-    output.write_all(FILE_ERROR_HEADER)?;
-    output.write_all(&error.raw_os_error().unwrap_or(EIO).to_le_bytes())?;
-    output.write_all(error.to_string().as_bytes())
+fn stream(path: &Path, mut input: impl Read, output: &mut impl Write) -> io::Result<()> {
+    let mut file = match File::create(path) {
+        Ok(file) => file,
+        Err(error) => return write_file_error(output, &error),
+    };
+
+    write_success(output)?;
+    let mut buffer = [0; BUFFER_SIZE];
+
+    loop {
+        let length = input.read(&mut buffer)?;
+        if length == 0 {
+            break;
+        }
+        if let Err(error) = file.write_all(&buffer[..length]) {
+            return write_file_error(output, &error);
+        }
+    }
+    if let Err(error) = file.flush() {
+        return write_file_error(output, &error);
+    }
+    drop(file);
+
+    write_success(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
-
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock should be after the Unix epoch")
-                .as_nanos();
-            let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "sandbox-shim-write-{}-{nonce}-{sequence}",
-                std::process::id()
-            ));
-            fs::create_dir(&path).expect("temp directory should be created");
-            Self(path)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn creates_and_truncates_files_between_success_frames() {
@@ -94,22 +87,48 @@ mod tests {
     }
 
     #[test]
-    fn frames_write_failures_after_the_opening_success() {
+    fn input_failures_are_not_framed_as_filesystem_errors() {
         struct FailingInput;
 
         impl Read for FailingInput {
             fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::from_raw_os_error(28))
+                Err(io::Error::other("stdin failed"))
             }
         }
 
         let temp = TempDir::new();
         let mut output = Vec::new();
 
-        stream(&temp.0.join("data"), FailingInput, &mut output).unwrap();
+        let error = stream(&temp.0.join("data"), FailingInput, &mut output).unwrap_err();
+
+        assert_eq!(error.to_string(), "stdin failed");
+        assert_eq!(output, b"SBXF\x01\x00");
+    }
+
+    #[test]
+    fn frames_destination_failures_after_the_opening_success() {
+        let mut output = Vec::new();
+
+        stream(Path::new("/dev/full"), &b"content"[..], &mut output).unwrap();
 
         assert_eq!(&output[..6], b"SBXF\x01\x00");
         assert_eq!(&output[6..12], b"SBXF\x01\x01");
         assert_eq!(i32::from_le_bytes(output[12..16].try_into().unwrap()), 28);
+    }
+
+    #[test]
+    fn command_owns_its_argument_shape() {
+        let mut output = Vec::new();
+
+        let missing = run(std::iter::empty(), io::empty(), &mut output);
+        let extra = run(
+            [OsString::from("/file"), OsString::from("extra")].into_iter(),
+            io::empty(),
+            &mut output,
+        );
+
+        assert_eq!(missing.unwrap_err(), "write requires a path");
+        assert_eq!(extra.unwrap_err(), "write accepts exactly one path");
+        assert!(output.is_empty());
     }
 }

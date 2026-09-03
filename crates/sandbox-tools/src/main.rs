@@ -1,9 +1,11 @@
+mod protocol;
 mod read_file;
+#[cfg(test)]
+mod test_support;
 mod write_file;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::Path;
 
 fn main() {
     if let Err(error) = run(
@@ -25,19 +27,11 @@ fn run(
         return Err("missing command".into());
     };
 
-    let Some(path) = args.next() else {
-        return Err("command requires a path".into());
-    };
-    if args.next().is_some() {
-        return Err("command accepts exactly one path".into());
-    }
-
     match command.to_str() {
-        Some("read") => read_file::stream(Path::new(&path), &mut output),
-        Some("write") => write_file::stream(Path::new(&path), input, &mut output),
-        _ => return Err("unknown command".into()),
+        Some("read") => read_file::run(args, &mut output),
+        Some("write") => write_file::run(args, input, &mut output),
+        _ => Err("unknown command".into()),
     }
-    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -48,12 +42,21 @@ mod tests {
     fn rejects_unknown_commands_without_writing_protocol_bytes() {
         let mut output = Vec::new();
         let result = run(
-            [OsString::from("unknown"), OsString::from("/file")].into_iter(),
+            [OsString::from("unknown")].into_iter(),
             io::empty(),
             &mut output,
         );
 
         assert_eq!(result.unwrap_err(), "unknown command");
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn rejects_missing_commands_without_writing_protocol_bytes() {
+        let mut output = Vec::new();
+        let result = run(std::iter::empty(), io::empty(), &mut output);
+
+        assert_eq!(result.unwrap_err(), "missing command");
         assert!(output.is_empty());
     }
 }

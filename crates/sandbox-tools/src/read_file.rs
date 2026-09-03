@@ -1,63 +1,58 @@
+use crate::protocol::{write_file_error, write_success};
+
+use std::ffi::OsString;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
-const SUCCESS_HEADER: &[u8; 6] = b"SBXF\x01\x00";
-const FILE_ERROR_HEADER: &[u8; 6] = b"SBXF\x01\x01";
-const EIO: i32 = 5;
-pub(crate) fn stream(path: &Path, mut output: impl Write) -> io::Result<()> {
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => return write_error(&mut output, &error),
-    };
+const BUFFER_SIZE: usize = 8 * 1024;
 
-    output.write_all(SUCCESS_HEADER)?;
-    io::copy(&mut file, &mut output)?;
-    Ok(())
+pub(crate) fn run(
+    mut args: impl Iterator<Item = OsString>,
+    output: &mut impl Write,
+) -> Result<(), String> {
+    let Some(path) = args.next() else {
+        return Err("read requires a path".into());
+    };
+    if args.next().is_some() {
+        return Err("read accepts exactly one path".into());
+    }
+
+    stream(Path::new(&path), output).map_err(|error| error.to_string())
 }
 
-fn write_error(mut output: impl Write, error: &io::Error) -> io::Result<()> {
-    output.write_all(FILE_ERROR_HEADER)?;
-    output.write_all(&error.raw_os_error().unwrap_or(EIO).to_le_bytes())?;
-    output.write_all(error.to_string().as_bytes())
+fn stream(path: &Path, output: &mut impl Write) -> io::Result<()> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => return write_file_error(output, &error),
+    };
+    let mut buffer = [0; BUFFER_SIZE];
+    let first = match file.read(&mut buffer) {
+        Ok(length) => length,
+        Err(error) => return write_file_error(output, &error),
+    };
+
+    write_success(output)?;
+    output.write_all(&buffer[..first])?;
+
+    loop {
+        let length = file.read(&mut buffer)?;
+        if length == 0 {
+            return Ok(());
+        }
+        output.write_all(&buffer[..length])?;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::fs;
     use std::process::Command;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
-
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock should be after the Unix epoch")
-                .as_nanos();
-            let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "sandbox-shim-{}-{nonce}-{sequence}",
-                std::process::id()
-            ));
-            fs::create_dir(&path).expect("temp directory should be created");
-            Self(path)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn read(path: &Path) -> Vec<u8> {
         let mut output = Vec::new();
@@ -89,32 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn frames_permission_errno() {
-        let mut output = Vec::new();
-        write_error(&mut output, &io::Error::from_raw_os_error(13)).unwrap();
-
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 13);
-    }
-
-    #[test]
-    fn frames_eio_when_an_error_has_no_os_errno() {
-        let mut output = Vec::new();
-        write_error(&mut output, &io::Error::other("read failed")).unwrap();
-
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), EIO);
-    }
-
-    #[test]
-    fn reports_directory_failure_after_the_open_succeeds() {
+    fn frames_directory_errno_before_success() {
         let temp = TempDir::new();
         let mut output = Vec::new();
 
-        let error = stream(&temp.0, &mut output).unwrap_err();
+        stream(&temp.0, &mut output).unwrap();
 
-        assert_eq!(error.raw_os_error(), Some(21));
-        assert_eq!(output, b"SBXF\x01\x00");
+        assert_eq!(&output[..6], b"SBXF\x01\x01");
+        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 21);
     }
 
     #[test]
@@ -184,5 +161,20 @@ mod tests {
 
         assert_eq!(output.total, size + 6);
         assert!(output.largest_write < size);
+    }
+
+    #[test]
+    fn command_owns_its_argument_shape() {
+        let mut output = Vec::new();
+
+        let missing = run(std::iter::empty(), &mut output);
+        let extra = run(
+            [OsString::from("/file"), OsString::from("extra")].into_iter(),
+            &mut output,
+        );
+
+        assert_eq!(missing.unwrap_err(), "read requires a path");
+        assert_eq!(extra.unwrap_err(), "read accepts exactly one path");
+        assert!(output.is_empty());
     }
 }
