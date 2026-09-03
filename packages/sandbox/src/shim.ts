@@ -4,19 +4,22 @@ import type { ContainerExecutor } from "./container-files.js";
 export const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 
 const MAGIC = new Uint8Array([0x53, 0x42, 0x58, 0x46]);
-const PROTOCOL_VERSION = 1;
-const HEADER_LENGTH = 6;
+const PROTOCOL_VERSION = 2;
+const HEADER_LENGTH = 10;
 const ERROR_PREFIX_LENGTH = 4;
 const MAX_ERROR_MESSAGE_LENGTH = 64 * 1024;
+const MAX_DATA_LENGTH = 64 * 1024;
 
-const STATUS_OK = 0;
-const STATUS_FILE_ERROR = 1;
+const FRAME_SUCCESS = 0;
+const FRAME_FILE_ERROR = 1;
+const FRAME_DATA = 2;
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 
 export type ShimFrame =
   | { readonly kind: "success" }
-  | { readonly kind: "fileError"; readonly errno: number; readonly detail: string };
+  | { readonly kind: "fileError"; readonly errno: number; readonly detail: string }
+  | { readonly kind: "data"; readonly value: Uint8Array };
 
 class AbortMonitor {
   readonly #promise: Promise<never> | undefined;
@@ -126,36 +129,49 @@ export class ShimOutput {
   async readFrame(): Promise<ShimFrame> {
     const header = await this.#readExactly(HEADER_LENGTH);
     validateHeader(header);
+    const frameKind = header[5];
+    const payloadLength = new DataView(header.buffer, header.byteOffset + 6, 4).getUint32(0, true);
 
-    const status = header[5];
-    if (status === STATUS_OK) return { kind: "success" };
-    if (status !== STATUS_FILE_ERROR) {
-      throw new SandboxProtocolError({ reason: "UNKNOWN_STATUS", status });
+    if (frameKind === FRAME_SUCCESS) {
+      if (payloadLength !== 0) throw new SandboxProtocolError({ reason: "UNEXPECTED_FRAME" });
+      return { kind: "success" };
+    }
+    if (frameKind === FRAME_DATA) {
+      if (payloadLength === 0 || payloadLength > MAX_DATA_LENGTH) {
+        throw new SandboxProtocolError({ reason: "UNEXPECTED_FRAME" });
+      }
+      return { kind: "data", value: await this.#readExactly(payloadLength) };
+    }
+    if (frameKind !== FRAME_FILE_ERROR) {
+      throw new SandboxProtocolError({ reason: "UNKNOWN_STATUS", status: frameKind });
+    }
+    if (payloadLength < ERROR_PREFIX_LENGTH) {
+      throw new SandboxProtocolError({ reason: "UNEXPECTED_FRAME" });
+    }
+    if (payloadLength > ERROR_PREFIX_LENGTH + MAX_ERROR_MESSAGE_LENGTH) {
+      throw new SandboxProtocolError({
+        reason: "ERROR_MESSAGE_TOO_LARGE",
+        limit: MAX_ERROR_MESSAGE_LENGTH,
+      });
     }
 
-    const errnoBytes = await this.#readExactly(ERROR_PREFIX_LENGTH);
-    const errno = new DataView(
-      errnoBytes.buffer,
-      errnoBytes.byteOffset,
-      ERROR_PREFIX_LENGTH,
-    ).getInt32(0, true);
+    const payload = await this.#readExactly(payloadLength);
+    const errno = new DataView(payload.buffer, payload.byteOffset, ERROR_PREFIX_LENGTH).getInt32(
+      0,
+      true,
+    );
     if (errno <= 0) {
       throw new SandboxProtocolError({ reason: "INVALID_ERRNO", errnoNumber: errno });
     }
-    const detail = await this.#readTextToEnd(MAX_ERROR_MESSAGE_LENGTH);
+    const detail = decodeErrorDetail(payload.subarray(ERROR_PREFIX_LENGTH));
     return { kind: "fileError", errno, detail };
   }
 
-  read(): Promise<ReadableStreamReadResult<Uint8Array>> {
-    if (this.#pending.length === 0) return this.#session.waitFor(this.#reader.read());
-
-    const value = this.#pending;
-    this.#pending = new Uint8Array();
-    return Promise.resolve({ done: false, value });
-  }
-
   async expectEnd(): Promise<void> {
-    const trailing = await this.read();
+    const trailing =
+      this.#pending.length === 0
+        ? await this.#session.waitFor(this.#reader.read())
+        : { done: false as const, value: this.#pending };
     if (!trailing.done) {
       throw new SandboxProtocolError({ reason: "TRAILING_DATA" });
     }
@@ -193,42 +209,13 @@ export class ShimOutput {
 
     return result;
   }
+}
 
-  async #readTextToEnd(limit: number): Promise<string> {
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-
-    if (this.#pending.length > 0) {
-      chunks.push(this.#pending);
-      length += this.#pending.length;
-      this.#pending = new Uint8Array();
-    }
-
-    while (true) {
-      if (length > limit) {
-        throw new SandboxProtocolError({ reason: "ERROR_MESSAGE_TOO_LARGE", limit });
-      }
-      const next = await this.#session.waitFor(this.#reader.read());
-      if (next.done) break;
-      chunks.push(next.value);
-      length += next.value.length;
-    }
-
-    if (length > limit) {
-      throw new SandboxProtocolError({ reason: "ERROR_MESSAGE_TOO_LARGE", limit });
-    }
-
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch (cause) {
-      throw new SandboxProtocolError({ reason: "INVALID_ERROR_MESSAGE", cause });
-    }
+function decodeErrorDetail(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (cause) {
+    throw new SandboxProtocolError({ reason: "INVALID_ERROR_MESSAGE", cause });
   }
 }
 

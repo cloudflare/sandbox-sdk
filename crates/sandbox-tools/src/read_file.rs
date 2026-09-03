@@ -1,4 +1,4 @@
-use crate::protocol::{write_file_error, write_success};
+use crate::protocol::{write_data, write_file_error, write_success};
 
 use std::ffi::OsString;
 use std::fs::File;
@@ -22,25 +22,27 @@ pub(crate) fn run(
 }
 
 fn stream(path: &Path, output: &mut impl Write) -> io::Result<()> {
-    let mut file = match File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) => return write_file_error(output, &error),
     };
-    let mut buffer = [0; BUFFER_SIZE];
-    let first = match file.read(&mut buffer) {
-        Ok(length) => length,
-        Err(error) => return write_file_error(output, &error),
-    };
 
+    stream_contents(file, output)
+}
+
+fn stream_contents(mut input: impl Read, output: &mut impl Write) -> io::Result<()> {
     write_success(output)?;
-    output.write_all(&buffer[..first])?;
+    let mut buffer = [0; BUFFER_SIZE];
 
     loop {
-        let length = file.read(&mut buffer)?;
+        let length = match input.read(&mut buffer) {
+            Ok(length) => length,
+            Err(error) => return write_file_error(output, &error),
+        };
         if length == 0 {
-            return Ok(());
+            return write_success(output);
         }
-        output.write_all(&buffer[..length])?;
+        write_data(output, &buffer[..length])?;
     }
 }
 
@@ -54,6 +56,19 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    fn frames(mut bytes: &[u8]) -> Vec<(u8, &[u8])> {
+        let mut frames = Vec::new();
+        while !bytes.is_empty() {
+            assert_eq!(&bytes[..4], b"SBXF");
+            assert_eq!(bytes[4], 2);
+            let kind = bytes[5];
+            let length = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
+            frames.push((kind, &bytes[10..10 + length]));
+            bytes = &bytes[10 + length..];
+        }
+        frames
+    }
+
     fn read(path: &Path) -> Vec<u8> {
         let mut output = Vec::new();
         stream(path, &mut output).expect("framed read should succeed");
@@ -61,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn streams_regular_file_bytes_after_success_header() {
+    fn streams_regular_file_bytes_between_success_frames() {
         let temp = TempDir::new();
         let path = temp.0.join("data.bin");
         let data = b"hello\0sandbox\xff";
@@ -69,8 +84,7 @@ mod tests {
 
         let output = read(&path);
 
-        assert_eq!(&output[..6], b"SBXF\x01\x00");
-        assert_eq!(&output[6..], data);
+        assert_eq!(frames(&output), vec![(0, &[][..]), (2, data), (0, &[][..])]);
     }
 
     #[test]
@@ -78,20 +92,51 @@ mod tests {
         let temp = TempDir::new();
         let output = read(&temp.0.join("missing"));
 
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 2);
-        assert!(!output[10..].is_empty());
+        let decoded = frames(&output);
+        assert_eq!(decoded[0].0, 1);
+        assert_eq!(i32::from_le_bytes(decoded[0].1[..4].try_into().unwrap()), 2);
+        assert!(!decoded[0].1[4..].is_empty());
     }
 
     #[test]
-    fn frames_directory_errno_before_success() {
+    fn frames_directory_errno_after_opening_success() {
         let temp = TempDir::new();
         let mut output = Vec::new();
 
         stream(&temp.0, &mut output).unwrap();
 
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(i32::from_le_bytes(output[6..10].try_into().unwrap()), 21);
+        let decoded = frames(&output);
+        assert_eq!(decoded[0], (0, &[][..]));
+        assert_eq!(decoded[1].0, 1);
+        assert_eq!(
+            i32::from_le_bytes(decoded[1].1[..4].try_into().unwrap()),
+            21
+        );
+    }
+
+    #[test]
+    fn frames_read_errors_after_streamed_data() {
+        struct FailingReader(bool);
+
+        impl Read for FailingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.0 {
+                    return Err(io::Error::from_raw_os_error(5));
+                }
+                self.0 = true;
+                buffer[..4].copy_from_slice(b"data");
+                Ok(4)
+            }
+        }
+
+        let mut output = Vec::new();
+        stream_contents(FailingReader(false), &mut output).unwrap();
+
+        let decoded = frames(&output);
+        assert_eq!(decoded[0], (0, &[][..]));
+        assert_eq!(decoded[1], (2, &b"data"[..]));
+        assert_eq!(decoded[2].0, 1);
+        assert_eq!(i32::from_le_bytes(decoded[2].1[..4].try_into().unwrap()), 5);
     }
 
     #[test]
@@ -106,8 +151,10 @@ mod tests {
 
         let output = read(&link);
 
-        assert_eq!(&output[..6], b"SBXF\x01\x00");
-        assert_eq!(&output[6..], b"linked");
+        assert_eq!(
+            frames(&output),
+            vec![(0, &[][..]), (2, &b"linked"[..]), (0, &[][..])]
+        );
     }
 
     #[test]
@@ -125,8 +172,10 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("FIFO read should finish after its writer closes");
 
-        assert_eq!(&output[..6], b"SBXF\x01\x00");
-        assert_eq!(&output[6..], b"from fifo");
+        assert_eq!(
+            frames(&output),
+            vec![(0, &[][..]), (2, &b"from fifo"[..]), (0, &[][..])]
+        );
     }
 
     #[test]
@@ -159,7 +208,7 @@ mod tests {
 
         stream(&path, &mut output).unwrap();
 
-        assert_eq!(output.total, size + 6);
+        assert_eq!(output.total, size + (size / BUFFER_SIZE + 2) * 10);
         assert!(output.largest_write < size);
     }
 

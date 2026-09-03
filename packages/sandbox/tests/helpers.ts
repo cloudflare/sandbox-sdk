@@ -1,10 +1,10 @@
 import { vi } from "vite-plus/test";
 
 export const encoder = new TextEncoder();
-export const SUCCESS_HEADER = new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0]);
+export const SUCCESS_HEADER = frameHeader(0, 0);
 
 export function successFrame(...content: Uint8Array[]): Uint8Array[] {
-  return [SUCCESS_HEADER, ...content];
+  return [SUCCESS_HEADER, ...content.map(dataFrame), SUCCESS_HEADER];
 }
 
 export function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
@@ -14,16 +14,30 @@ export function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
 export function errorFrameBytes(errnoNumber: number, detail: Uint8Array): Uint8Array[] {
   const errno = new Uint8Array(4);
   new DataView(errno.buffer).setInt32(0, errnoNumber, true);
-  return [new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 1]), errno, detail];
+  return [frameHeader(1, errno.length + detail.length), errno, detail];
 }
 
 export function contiguousErrorFrame(errnoNumber: number, detail: string): Uint8Array {
   const message = encoder.encode(detail);
-  const frame = new Uint8Array(10 + message.length);
-  frame.set([0x53, 0x42, 0x58, 0x46, 1, 1]);
-  new DataView(frame.buffer).setInt32(6, errnoNumber, true);
-  frame.set(message, 10);
+  const frame = new Uint8Array(14 + message.length);
+  frame.set(frameHeader(1, 4 + message.length));
+  new DataView(frame.buffer).setInt32(10, errnoNumber, true);
+  frame.set(message, 14);
   return frame;
+}
+
+export function dataFrame(content: Uint8Array): Uint8Array {
+  const frame = new Uint8Array(10 + content.length);
+  frame.set(frameHeader(2, content.length));
+  frame.set(content, 10);
+  return frame;
+}
+
+function frameHeader(kind: number, length: number): Uint8Array {
+  const header = new Uint8Array(10);
+  header.set([0x53, 0x42, 0x58, 0x46, 2, kind]);
+  new DataView(header.buffer).setUint32(6, length, true);
+  return header;
 }
 
 export function readableChunks(chunks: Uint8Array[], close = true): ReadableStream<Uint8Array> {

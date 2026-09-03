@@ -150,6 +150,34 @@ describe("ContainerFiles.writeFile", () => {
     ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
   });
 
+  it("preserves a source failure that races a terminal filesystem error", async () => {
+    const sourceError = new Error("source failed");
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(sourceError);
+      },
+    });
+    const process = writeProcess({
+      stdout: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
+    });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", source),
+    ).rejects.toBe(sourceError);
+  });
+
+  it("maps a missing terminal frame from a failed shim process", async () => {
+    const process = writeProcess({ stdout: readableChunks([SUCCESS_HEADER]), exitCode: 9 });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
+    ).rejects.toMatchObject({
+      code: "EIO",
+      operation: "writeFile",
+      detail: "sandbox-shim exited with code 9",
+    });
+  });
+
   it("rejects output after the terminal success frame", async () => {
     const process = writeProcess({
       stdout: readableChunks([SUCCESS_HEADER, SUCCESS_HEADER, new Uint8Array([1])]),

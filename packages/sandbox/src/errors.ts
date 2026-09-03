@@ -56,6 +56,7 @@ const SANDBOX_PROTOCOL_ERROR_REASONS = [
   "INVALID_MAGIC",
   "UNSUPPORTED_VERSION",
   "UNKNOWN_STATUS",
+  "UNEXPECTED_FRAME",
   "TRUNCATED_FRAME",
   "TRAILING_DATA",
   "INVALID_ERRNO",
@@ -157,6 +158,7 @@ export type SandboxProtocolErrorOptions =
         | "MISSING_STDIN"
         | "MISSING_STDOUT"
         | "INVALID_MAGIC"
+        | "UNEXPECTED_FRAME"
         | "TRUNCATED_FRAME"
         | "TRAILING_DATA";
     }
@@ -208,6 +210,7 @@ export class SandboxProtocolError extends Error {
       case "MISSING_STDIN":
       case "MISSING_STDOUT":
       case "INVALID_MAGIC":
+      case "UNEXPECTED_FRAME":
       case "TRUNCATED_FRAME":
       case "TRAILING_DATA":
         return hasOnlyProtocolMetadata(cause);
@@ -337,6 +340,8 @@ function protocolErrorMessage(options: SandboxProtocolErrorOptions): string {
     case "UNKNOWN_STATUS":
       requireProtocolByte(options.status, "status");
       return `sandbox-shim returned unknown status ${options.status}`;
+    case "UNEXPECTED_FRAME":
+      return "sandbox-shim returned a frame that is not valid in this position";
     case "TRUNCATED_FRAME":
       return "sandbox-shim closed stdout before completing its frame";
     case "TRAILING_DATA":

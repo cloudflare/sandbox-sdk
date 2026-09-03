@@ -4,6 +4,7 @@ import { ContainerFiles } from "../src/container-files.js";
 import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import {
   containerWith,
+  dataFrame,
   deferred,
   errorFrame,
   errorFrameBytes,
@@ -15,11 +16,7 @@ import {
 describe("ContainerFiles.readFile", () => {
   it("returns a streaming octet response and forwards native options", async () => {
     const signal = new AbortController().signal;
-    const process = processFromChunks([
-      new Uint8Array([0x53, 0x42]),
-      new Uint8Array([0x58, 0x46, 1, 0, 1, 2]),
-      new Uint8Array([3]),
-    ]);
+    const process = processFromChunks(successFrame(new Uint8Array([1, 2, 3])));
     const container = containerWith(process);
 
     const response = await new ContainerFiles(container).readFile("data.bin", {
@@ -165,7 +162,7 @@ describe("ContainerFiles.readFile", () => {
 
   it("rejects invalid protocol magic", async () => {
     const container = containerWith(
-      processFromChunks([new Uint8Array([0x00, 0x42, 0x58, 0x46, 1, 0])]),
+      processFromChunks([new Uint8Array([0x00, 0x42, 0x58, 0x46, 2, 0, 0, 0, 0, 0])]),
     );
 
     await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
@@ -176,7 +173,7 @@ describe("ContainerFiles.readFile", () => {
 
   it("rejects incompatible shim protocols", async () => {
     const container = containerWith(
-      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 2, 0])]),
+      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 0, 0, 0, 0, 0])]),
     );
     const promise = new ContainerFiles(container).readFile("/file");
 
@@ -185,13 +182,13 @@ describe("ContainerFiles.readFile", () => {
       name: "SandboxProtocolError",
       code: "SANDBOX_PROTOCOL_ERROR",
       reason: "UNSUPPORTED_VERSION",
-      protocolVersion: 2,
+      protocolVersion: 1,
     });
   });
 
   it("rejects unknown protocol statuses", async () => {
     const container = containerWith(
-      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 1, 9])]),
+      processFromChunks([new Uint8Array([0x53, 0x42, 0x58, 0x46, 2, 9, 0, 0, 0, 0])]),
     );
 
     await expect(new ContainerFiles(container).readFile("/file")).rejects.toMatchObject({
@@ -199,6 +196,14 @@ describe("ContainerFiles.readFile", () => {
       reason: "UNKNOWN_STATUS",
       status: 9,
     });
+  });
+
+  it("rejects data frames in the opening position", async () => {
+    const process = processFromChunks([dataFrame(new Uint8Array([1]))]);
+
+    await expect(
+      new ContainerFiles(containerWith(process)).readFile("/file"),
+    ).rejects.toMatchObject({ reason: "UNEXPECTED_FRAME" });
   });
 
   it("rejects non-UTF-8 filesystem error details", async () => {
@@ -240,12 +245,35 @@ describe("ContainerFiles.readFile", () => {
     expect(process.kill).toHaveBeenCalledOnce();
   });
 
+  it("preserves filesystem errors reported after streamed data", async () => {
+    const process = processFromChunks([
+      SUCCESS_HEADER,
+      dataFrame(new Uint8Array([1, 2, 3])),
+      ...errorFrame(5, "Input/output error"),
+    ]);
+    const response = await new ContainerFiles(containerWith(process)).readFile("/device");
+
+    await expect(response.arrayBuffer()).rejects.toMatchObject({
+      code: "EIO",
+      operation: "readFile",
+      path: "/device",
+      detail: "Input/output error",
+    });
+  });
+
   it("returns an empty response for an empty file", async () => {
     const container = containerWith(processFromChunks(successFrame()));
 
     const response = await new ContainerFiles(container).readFile("/empty");
 
     expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  it("rejects bytes after the terminal read frame", async () => {
+    const process = processFromChunks([...successFrame(), new Uint8Array([1])]);
+    const response = await new ContainerFiles(containerWith(process)).readFile("/empty");
+
+    await expect(response.arrayBuffer()).rejects.toMatchObject({ reason: "TRAILING_DATA" });
   });
 
   it("kills the process when the response body is cancelled", async () => {

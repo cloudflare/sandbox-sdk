@@ -18,8 +18,21 @@ FROM toolchain AS build
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 RUN cargo build --release --locked --package sandbox-tools
 
+FROM alpine:3.23 AS contract
+RUN apk add --no-cache nodejs npm
+WORKDIR /src
+COPY package.json package-lock.json tsconfig.json vite.config.ts ./
+COPY packages/sandbox/package.json packages/sandbox/package.json
+RUN npm ci
+COPY packages/sandbox packages/sandbox
+COPY --from=build /src/target/release/sandbox-shim /usr/local/bin/sandbox-shim
+ENV SANDBOX_SHIM_PATH=/usr/local/bin/sandbox-shim
+RUN npm exec -- vp test --run packages/sandbox/tests/shim-contract.test.mjs
+RUN touch /contract-passed
+
 FROM toolchain AS verify
 COPY --from=check /checks-passed /checks-passed
+COPY --from=contract /contract-passed /contract-passed
 COPY --from=build /src/target/release/sandbox-shim /tmp/sandbox-shim
 RUN readelf -h /tmp/sandbox-shim | grep -F "Class:                             ELF64"
 RUN readelf -h /tmp/sandbox-shim | grep -F "Data:                              2's complement, little endian"

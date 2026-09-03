@@ -43,7 +43,10 @@ fn read_command_emits_protocol_and_content() {
         .unwrap();
 
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"SBXF\x01\x00hello\0sandbox");
+    assert_eq!(
+        output.stdout,
+        b"SBXF\x02\x00\0\0\0\0SBXF\x02\x02\x0d\0\0\0hello\0sandboxSBXF\x02\x00\0\0\0\0"
+    );
 }
 
 #[test]
@@ -57,15 +60,15 @@ fn read_command_emits_native_open_error() {
         .unwrap();
 
     assert!(output.status.success());
-    assert_eq!(&output.stdout[..6], b"SBXF\x01\x01");
+    assert_eq!(&output.stdout[..6], b"SBXF\x02\x01");
     assert_eq!(
-        i32::from_le_bytes(output.stdout[6..10].try_into().unwrap()),
+        i32::from_le_bytes(output.stdout[10..14].try_into().unwrap()),
         2
     );
 }
 
 #[test]
-fn read_command_emits_native_first_read_error() {
+fn read_command_emits_native_read_error() {
     let temp = TempDir::new();
 
     let output = Command::new(SHIM)
@@ -74,9 +77,10 @@ fn read_command_emits_native_first_read_error() {
         .unwrap();
 
     assert!(output.status.success());
-    assert_eq!(&output.stdout[..6], b"SBXF\x01\x01");
+    assert_eq!(&output.stdout[..10], b"SBXF\x02\x00\0\0\0\0");
+    assert_eq!(&output.stdout[10..16], b"SBXF\x02\x01");
     assert_eq!(
-        i32::from_le_bytes(output.stdout[6..10].try_into().unwrap()),
+        i32::from_le_bytes(output.stdout[20..24].try_into().unwrap()),
         21
     );
 }
@@ -92,10 +96,10 @@ fn write_command_acknowledges_open_before_consuming_stdin() {
         .spawn()
         .unwrap();
     let mut stdout = child.stdout.take().unwrap();
-    let mut opening = [0; 6];
+    let mut opening = [0; 10];
 
     stdout.read_exact(&mut opening).unwrap();
-    assert_eq!(&opening, b"SBXF\x01\x00");
+    assert_eq!(&opening, b"SBXF\x02\x00\0\0\0\0");
 
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"streamed content").unwrap();
@@ -104,7 +108,7 @@ fn write_command_acknowledges_open_before_consuming_stdin() {
     let mut terminal = Vec::new();
     stdout.read_to_end(&mut terminal).unwrap();
     assert!(child.wait().unwrap().success());
-    assert_eq!(terminal, b"SBXF\x01\x00");
+    assert_eq!(terminal, b"SBXF\x02\x00\0\0\0\0");
     assert_eq!(fs::read(path).unwrap(), b"streamed content");
 }
 
@@ -121,9 +125,9 @@ fn write_command_emits_native_destination_error() {
     let output = child.wait_with_output().unwrap();
 
     assert!(output.status.success());
-    assert_eq!(&output.stdout[..12], b"SBXF\x01\x00SBXF\x01\x01");
+    assert_eq!(&output.stdout[..16], b"SBXF\x02\x00\0\0\0\0SBXF\x02\x01");
     assert_eq!(
-        i32::from_le_bytes(output.stdout[12..16].try_into().unwrap()),
+        i32::from_le_bytes(output.stdout[20..24].try_into().unwrap()),
         28
     );
 }
