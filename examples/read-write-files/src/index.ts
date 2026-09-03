@@ -4,13 +4,13 @@ const READABLE_PATHS = new Set(["/fixture.txt", "/missing.txt", "/written.txt"])
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 interface Env {
-  SANDBOX: DurableObjectNamespace<ReadFileSandbox>;
+  SANDBOX: DurableObjectNamespace<ReadWriteFilesSandbox>;
   SANDBOX_IMAGE: string;
 }
 
-export class ReadFileSandbox extends Sandbox<Env> {
+export class ReadWriteFilesSandbox extends Sandbox<Env> {
   /** Starts the example container when needed, then streams one allowed file. */
-  async startAndReadFile(path: string): Promise<Response> {
+  async startAndReadFile(path: string, sandboxName: string): Promise<Response> {
     const container = this.ctx.container;
     if (container === undefined) {
       throw new Error("Container attachment is unavailable");
@@ -28,6 +28,7 @@ export class ReadFileSandbox extends Sandbox<Env> {
         image: this.env.SANDBOX_IMAGE,
         instance: "lite",
         enableInternet: false,
+        labels: { example: "read-write", workspace: sandboxName },
       });
       console.log({ event: "sandbox.container.start-requested", durableObjectID });
     }
@@ -38,7 +39,11 @@ export class ReadFileSandbox extends Sandbox<Env> {
   }
 
   /** Starts the example container when needed, then streams a request body into a file. */
-  async startAndWriteFile(path: string, content: ReadableStream<Uint8Array>): Promise<void> {
+  async startAndWriteFile(
+    path: string,
+    content: ReadableStream<Uint8Array>,
+    sandboxName: string,
+  ): Promise<void> {
     const container = this.ctx.container;
     if (container === undefined) {
       throw new Error("Container attachment is unavailable");
@@ -56,6 +61,7 @@ export class ReadFileSandbox extends Sandbox<Env> {
         image: this.env.SANDBOX_IMAGE,
         instance: "lite",
         enableInternet: false,
+        labels: { example: "read-write", workspace: sandboxName },
       });
       console.log({ event: "sandbox.container.start-requested", durableObjectID });
     }
@@ -126,11 +132,11 @@ export default {
         if (request.body === null) {
           return new Response("Request body is required", { status: 400 });
         }
-        await sandbox.startAndWriteFile(path, request.body);
+        await sandbox.startAndWriteFile(path, request.body, sandboxName);
         return new Response(null, { status: 204 });
       }
 
-      return await sandbox.startAndReadFile(path);
+      return await sandbox.startAndReadFile(path, sandboxName);
     } catch (cause) {
       console.error({ event: "sandbox.request.failed", cause });
       return errorResponse(cause);

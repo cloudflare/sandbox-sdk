@@ -40,10 +40,6 @@ RUN readelf -h /tmp/sandbox-shim | grep -F "Machine:                           A
 RUN ! readelf -l /tmp/sandbox-shim | grep -F "INTERP"
 RUN ! readelf -d /tmp/sandbox-shim | grep -F "(NEEDED)"
 
+# This image is a donor stage for user-owned runtime images, not a runnable container.
 FROM scratch AS image
 COPY --from=build /src/target/release/sandbox-shim /usr/local/bin/sandbox-shim
-
-FROM alpine:3.23 AS e2e
-COPY --from=build /src/target/release/sandbox-shim /usr/local/bin/sandbox-shim
-RUN printf 'hello from sandbox\n' > /fixture.txt
-CMD ["sleep", "infinity"]

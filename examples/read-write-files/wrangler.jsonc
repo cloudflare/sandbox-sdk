@@ -1,5 +1,5 @@
 {
-  "name": "sandbox-sdk-subsequent-read-file",
+  "name": "sandbox-sdk-subsequent-read-write-files",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
   // The SDK resolves native Linux errno names through node:os.
@@ -8,19 +8,19 @@
     "bindings": [
       {
         "name": "SANDBOX",
-        "class_name": "ReadFileSandbox",
+        "class_name": "ReadWriteFilesSandbox",
       },
     ],
   },
   "exports": {
-    "ReadFileSandbox": {
+    "ReadWriteFilesSandbox": {
       "type": "durable-object",
       "storage": "sqlite",
       "container": {
         "images": [
           {
             "binding": "SANDBOX_IMAGE",
-            "image": "../../Dockerfile",
+            "image": "./Dockerfile",
           },
         ],
       },

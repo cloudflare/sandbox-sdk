@@ -1,0 +1,31 @@
+{
+  "name": "sandbox-sdk-subsequent-instance-lifecycle",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "InstanceLifecycleSandbox",
+      },
+    ],
+  },
+  "exports": {
+    "InstanceLifecycleSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+      "container": {
+        "images": [
+          {
+            "binding": "SANDBOX_IMAGE",
+            "image": "./Dockerfile",
+          },
+        ],
+      },
+    },
+  },
+  "observability": {
+    "enabled": true,
+  },
+}
