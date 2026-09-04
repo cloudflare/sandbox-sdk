@@ -1,4 +1,4 @@
-import type { ContainerExecutor, WriteFileOptions } from "./container-files.js";
+import type { ContainerExecutor, FileOperationOptions } from "./container-files.js";
 import { fileErrorFromErrno, protocolError } from "./errors.js";
 import { SHIM_PATH, type ShimControlFrame, ShimControl, ShimSession } from "./shim.js";
 
@@ -15,7 +15,7 @@ export async function writeFile(
   container: ContainerExecutor,
   path: string,
   source: ReadableStream<Uint8Array>,
-  options: WriteFileOptions,
+  options: FileOperationOptions,
 ): Promise<void> {
   let session: ShimSession | undefined;
   let control: ShimControl | undefined;

@@ -1,4 +1,4 @@
-import type { ContainerExecutor, ReadFileOptions } from "./container-files.js";
+import type { ContainerExecutor, FileOperationOptions } from "./container-files.js";
 import { fileErrorFromErrno, protocolError } from "./errors.js";
 import { SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
 
@@ -7,7 +7,7 @@ type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["ca
 export async function readFile(
   container: ContainerExecutor,
   path: string,
-  options: ReadFileOptions,
+  options: FileOperationOptions,
 ): Promise<Response> {
   const session = await ShimSession.start(container, [SHIM_PATH, "read", path], {
     ...options,

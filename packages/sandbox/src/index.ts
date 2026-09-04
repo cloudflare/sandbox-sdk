@@ -1,17 +1,12 @@
-export {
+export type {
   ContainerFiles,
-  type ContainerExecutor,
-  type FileContent,
-  type MkdirOptions,
-  type ReadDirectoryOptions,
-  type ReadFileOptions,
-  type RemoveOptions,
-  type RenameOptions,
-  type SandboxDirectoryEntry,
-  type SandboxFileStat,
-  type SandboxFileType,
-  type StatOptions,
-  type WriteFileOptions,
+  FileOperationOptions,
+  MkdirOptions,
+  RemoveOptions,
 } from "./container-files.js";
+export type { FileContent } from "./file-content.js";
+export type { SandboxDirectoryEntry } from "./read-directory.js";
+export type { SandboxFileType } from "./file-type.js";
+export type { SandboxFileStat } from "./stat-file.js";
 export { SandboxFileError, SandboxProtocolError } from "./errors.js";
 export { Sandbox } from "./sandbox.js";

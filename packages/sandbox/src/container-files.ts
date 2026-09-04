@@ -8,7 +8,7 @@ import { readFile as readContainerFile } from "./read-file.js";
 import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
 
-interface FileOperationOptions {
+export interface FileOperationOptions {
   /** Working directory used to resolve a relative path. */
   cwd?: string;
   /** Linux user or user/group pair used to open the file. */
@@ -17,11 +17,6 @@ interface FileOperationOptions {
   signal?: AbortSignal;
 }
 
-export type ReadFileOptions = FileOperationOptions;
-export type WriteFileOptions = FileOperationOptions;
-export type StatOptions = FileOperationOptions;
-export type ReadDirectoryOptions = FileOperationOptions;
-export type RenameOptions = FileOperationOptions;
 export type RemoveOptions = FileOperationOptions & {
   /** Permits removing a directory tree without following symlinks. */
   recursive?: boolean;
@@ -32,10 +27,6 @@ export type MkdirOptions = FileOperationOptions & {
   /** Creates missing parent directories and accepts an existing target directory. */
   recursive?: boolean;
 };
-export type { FileContent } from "./file-content.js";
-export type { SandboxDirectoryEntry } from "./read-directory.js";
-export type { SandboxFileType } from "./file-type.js";
-export type { SandboxFileStat } from "./stat-file.js";
 
 /** Native container capability required by {@link ContainerFiles}. */
 export type ContainerExecutor = Pick<Container, "exec">;
@@ -67,7 +58,7 @@ export class ContainerFiles {
    *   response. A late file-streaming failure errors the response body with the same error type.
    * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
    */
-  async readFile(path: string, options: ReadFileOptions = {}): Promise<Response> {
+  async readFile(path: string, options: FileOperationOptions = {}): Promise<Response> {
     validatePath(path, options.cwd);
     return readContainerFile(this.#container, path, options);
   }
@@ -86,7 +77,7 @@ export class ContainerFiles {
   async writeFile(
     path: string,
     content: FileContent,
-    options: WriteFileOptions = {},
+    options: FileOperationOptions = {},
   ): Promise<void> {
     validatePath(path, options.cwd);
     await writeContainerFile(this.#container, path, fileContentStream(content), options);
@@ -101,7 +92,7 @@ export class ContainerFiles {
    * @throws {SandboxFileError} The container reports a filesystem failure.
    * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
    */
-  async stat(path: string, options: StatOptions = {}): Promise<SandboxFileStat> {
+  async stat(path: string, options: FileOperationOptions = {}): Promise<SandboxFileStat> {
     validatePath(path, options.cwd);
     return statFile(this.#container, path, options, "stat");
   }
@@ -115,7 +106,7 @@ export class ContainerFiles {
    * @throws {SandboxFileError} The container reports a filesystem failure.
    * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
    */
-  async lstat(path: string, options: StatOptions = {}): Promise<SandboxFileStat> {
+  async lstat(path: string, options: FileOperationOptions = {}): Promise<SandboxFileStat> {
     validatePath(path, options.cwd);
     return statFile(this.#container, path, options, "lstat");
   }
@@ -134,7 +125,7 @@ export class ContainerFiles {
    */
   async readDirectory(
     path: string,
-    options: ReadDirectoryOptions = {},
+    options: FileOperationOptions = {},
   ): Promise<SandboxDirectoryEntry[]> {
     validatePath(path, options.cwd);
     return readContainerDirectory(this.#container, path, options);
@@ -175,7 +166,11 @@ export class ContainerFiles {
    * @throws {SandboxFileError} The container reports a filesystem failure.
    * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
    */
-  async rename(source: string, destination: string, options: RenameOptions = {}): Promise<void> {
+  async rename(
+    source: string,
+    destination: string,
+    options: FileOperationOptions = {},
+  ): Promise<void> {
     validatePath(source, options.cwd);
     validatePath(destination, options.cwd);
     await runFileCommand(this.#container, {

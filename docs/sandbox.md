@@ -2,8 +2,8 @@
 
 Package: `@cloudflare/sandbox`
 
-The package exports `Sandbox`, `ContainerFiles`, `SandboxFileError`,
-`SandboxProtocolError`, and the types listed below.
+The package exports `Sandbox`, the `SandboxFileError` and
+`SandboxProtocolError` recognizers, and the types listed below.
 
 ## `Sandbox<Env, Props = {}>`
 
@@ -18,8 +18,8 @@ Abstract Durable Object base class. The constructor requires
 
 ## `ContainerFiles`
 
-Constructed with a container that exposes `exec`. The container image must
-provide `/usr/local/bin/sandbox-shim`.
+Available as `sandbox.files`. The container image must provide
+`/usr/local/bin/sandbox-shim`.
 
 ### `readFile(path, options?): Promise<Response>`
 
@@ -94,9 +94,9 @@ transactional; failure or cancellation can leave partial effects.
 | `user`   | `string`      | Linux user, or `user:group`, used to open the file.           |
 | `signal` | `AbortSignal` | Cancels the native container process.                         |
 
-`MkdirOptions` also accepts `recursive?: boolean`. `RemoveOptions` accepts
-`recursive?: boolean` and `force?: boolean`. `RenameOptions` uses the common
-options above; `cwd` resolves both relative paths.
+The common fields form `FileOperationOptions`. `MkdirOptions` also accepts
+`recursive?: boolean`. `RemoveOptions` accepts `recursive?: boolean` and
+`force?: boolean`. For `rename`, `cwd` resolves both relative paths.
 
 `path` must be non-empty and must not contain `NUL`. Relative `path` requires
 `cwd`. `cwd`, when set, must be absolute. Violations throw `TypeError`.
