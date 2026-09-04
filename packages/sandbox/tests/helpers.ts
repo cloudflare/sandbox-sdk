@@ -11,7 +11,7 @@ export function errorFrame(errnoNumber: number, message: string): Uint8Array[] {
   return errorFrameBytes(errnoNumber, encoder.encode(message));
 }
 
-export function errorFrameBytes(errnoNumber: number, detail: Uint8Array): Uint8Array[] {
+function errorFrameBytes(errnoNumber: number, detail: Uint8Array): Uint8Array[] {
   const errno = new Uint8Array(4);
   new DataView(errno.buffer).setInt32(0, errnoNumber, true);
   return [frameHeader(1, errno.length + detail.length), errno, detail];

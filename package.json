@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "vp pack && npm run shim:build",
-    "check": "vp check && npm run shim:check",
+    "check": "vp check && npm run knip && npm run shim:check",
     "example:deploy": "npm run example:files:deploy",
     "example:types": "npm run example:files:types",
     "example:files:deploy": "npm run shim:build && npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 deploy --config examples/files/wrangler.jsonc",
@@ -16,12 +16,16 @@
     "example:snapshot-restore:types": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 types examples/snapshot-restore/worker-configuration.d.ts --config examples/snapshot-restore/wrangler.jsonc --include-runtime=false",
     "example:instance-lifecycle:deploy": "npm run shim:build && npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 deploy --config examples/instance-lifecycle/wrangler.jsonc",
     "example:instance-lifecycle:types": "npx --yes https://pkg.pr.new/wrangler@96d2d37d18f1e6742148d7d52d73dafe32aa97c3 types examples/instance-lifecycle/worker-configuration.d.ts --config examples/instance-lifecycle/wrangler.jsonc --include-runtime=false",
+    "knip": "knip",
     "shim:build": "docker build --platform linux/amd64 --target image --tag sandbox-tools:local --file images/sandbox-tools/Dockerfile .",
     "shim:check": "docker build --platform linux/amd64 --target verify --file images/sandbox-tools/Dockerfile .",
     "test": "vp test --run --passWithNoTests && npm run shim:check"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260902.1",
+    "@types/node": "24.13.3",
+    "knip": "6.34.0",
+    "typescript": "6.0.3",
     "vite-plus": "0.3.0"
   },
   "engines": {
