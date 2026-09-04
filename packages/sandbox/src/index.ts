@@ -13,12 +13,5 @@ export {
   type StatOptions,
   type WriteFileOptions,
 } from "./container-files.js";
-export {
-  SandboxFileError,
-  SandboxProtocolError,
-  type SandboxFileErrorCode,
-  type SandboxFileOperation,
-  type SandboxFileErrorOptions,
-  type SandboxProtocolErrorOptions,
-} from "./errors.js";
+export { SandboxFileError, SandboxProtocolError } from "./errors.js";
 export { Sandbox } from "./sandbox.js";

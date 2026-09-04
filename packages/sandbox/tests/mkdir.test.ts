@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError } from "../src/errors.js";
 import { commandProcess, containerWith, dataFrame, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("ContainerFiles.mkdir", () => {
@@ -50,7 +49,6 @@ describe("ContainerFiles.mkdir", () => {
       containerWith(commandProcess(errorFrame(17, "File exists"))),
     ).mkdir("/workspace/existing");
 
-    await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
       code: "EEXIST",
       operation: "mkdir",

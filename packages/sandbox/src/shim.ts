@@ -1,5 +1,5 @@
 import type { ContainerExecutor } from "./container-files.js";
-import { SandboxProtocolError } from "./errors.js";
+import { protocolError } from "./errors.js";
 
 export const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 
@@ -81,28 +81,28 @@ export class ShimSession {
 
   openStderrControl(): ShimControl {
     if (this.process.stderr === null) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stderr" });
+      throw protocolError("sandbox-shim did not provide stderr");
     }
     return new ShimControl(this.process.stderr.getReader(), this);
   }
 
   openStdoutControl(): ShimControl {
     if (this.process.stdout === null) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
+      throw protocolError("sandbox-shim did not provide stdout");
     }
     return new ShimControl(this.process.stdout.getReader(), this);
   }
 
   openStdoutReader(): ReadableStreamDefaultReader<Uint8Array> {
     if (this.process.stdout === null) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
+      throw protocolError("sandbox-shim did not provide stdout");
     }
     return this.process.stdout.getReader();
   }
 
   openStdinWriter(): WritableStreamDefaultWriter<Uint8Array> {
     if (this.process.stdin === null) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdin" });
+      throw protocolError("sandbox-shim did not provide stdin");
     }
     return this.process.stdin.getWriter();
   }
@@ -147,7 +147,7 @@ export class ShimControl {
 
     if (frameKind === FRAME_SUCCESS) {
       if (payloadLength !== 0) {
-        throw new SandboxProtocolError({ detail: "sandbox-shim returned invalid control data" });
+        throw protocolError("sandbox-shim returned invalid control data");
       }
       return { kind: "success" };
     }
@@ -155,17 +155,13 @@ export class ShimControl {
       return { kind: "data", payload: await this.#readExactly(payloadLength) };
     }
     if (frameKind !== FRAME_FILE_ERROR) {
-      throw new SandboxProtocolError({
-        detail: `sandbox-shim returned unknown control status ${frameKind}`,
-      });
+      throw protocolError(`sandbox-shim returned unknown control status ${frameKind}`);
     }
     if (payloadLength < ERROR_PREFIX_LENGTH) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim returned invalid control data" });
+      throw protocolError("sandbox-shim returned invalid control data");
     }
     if (payloadLength > ERROR_PREFIX_LENGTH + MAX_ERROR_MESSAGE_LENGTH) {
-      throw new SandboxProtocolError({
-        detail: "sandbox-shim error message exceeded its size limit",
-      });
+      throw protocolError("sandbox-shim error message exceeded its size limit");
     }
 
     const payload = await this.#readExactly(payloadLength);
@@ -174,7 +170,7 @@ export class ShimControl {
       true,
     );
     if (errno <= 0) {
-      throw new SandboxProtocolError({ detail: `sandbox-shim returned invalid errno ${errno}` });
+      throw protocolError(`sandbox-shim returned invalid errno ${errno}`);
     }
     return {
       kind: "fileError",
@@ -189,7 +185,7 @@ export class ShimControl {
         ? await this.#session.waitFor(this.#reader.read())
         : { done: false as const, value: this.#pending };
     if (!trailing.done) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim returned trailing control data" });
+      throw protocolError("sandbox-shim returned trailing control data");
     }
   }
 
@@ -212,9 +208,7 @@ export class ShimControl {
       if (this.#pending.length === 0) {
         const next = await this.#session.waitFor(this.#reader.read());
         if (next.done) {
-          throw new SandboxProtocolError({
-            detail: "sandbox-shim returned truncated control data",
-          });
+          throw protocolError("sandbox-shim returned truncated control data");
         }
         this.#pending = next.value;
       }
@@ -233,22 +227,17 @@ function decodeErrorDetail(bytes: Uint8Array): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (cause) {
-    throw new SandboxProtocolError({
-      detail: "sandbox-shim returned a non-UTF-8 error message",
-      cause,
-    });
+    throw protocolError("sandbox-shim returned a non-UTF-8 error message", cause);
   }
 }
 
 function validateHeader(header: Uint8Array): void {
   for (let index = 0; index < MAGIC.length; index += 1) {
     if (header[index] !== MAGIC[index]) {
-      throw new SandboxProtocolError({ detail: "sandbox-shim returned invalid protocol magic" });
+      throw protocolError("sandbox-shim returned invalid protocol magic");
     }
   }
   if (header[4] !== PROTOCOL_VERSION) {
-    throw new SandboxProtocolError({
-      detail: `sandbox-shim protocol ${header[4]} is not supported`,
-    });
+    throw protocolError(`sandbox-shim protocol ${header[4]} is not supported`);
   }
 }

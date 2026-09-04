@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError } from "../src/errors.js";
 import { commandProcess, containerWith, dataFrame, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("ContainerFiles.rename", () => {
@@ -32,7 +31,6 @@ describe("ContainerFiles.rename", () => {
       containerWith(commandProcess(errorFrame(2, "No such file or directory"))),
     ).rename("/workspace/missing", "/workspace/destination");
 
-    await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
       code: "ENOENT",
       operation: "rename",

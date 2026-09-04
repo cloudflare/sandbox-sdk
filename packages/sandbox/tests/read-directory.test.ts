@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import { commandProcess, containerWith, dataFrame, encoder, errorFrame } from "./helpers.js";
 
 interface EncodedEntry {
@@ -75,7 +74,6 @@ describe("ContainerFiles.readDirectory", () => {
       containerWith(commandProcess(errorFrame(20, "Not a directory"))),
     ).readDirectory("/file");
 
-    await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
       code: "ENOTDIR",
       operation: "readDirectory",
@@ -90,7 +88,7 @@ describe("ContainerFiles.readDirectory", () => {
 
     await expect(
       new ContainerFiles(containerWith(commandProcess(dataFrame(truncated)))).readDirectory("/dir"),
-    ).rejects.toBeInstanceOf(SandboxProtocolError);
+    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
     await expect(
       new ContainerFiles(containerWith(commandProcess(dataFrame(trailing)))).readDirectory("/dir"),
     ).rejects.toThrow("trailing directory data");

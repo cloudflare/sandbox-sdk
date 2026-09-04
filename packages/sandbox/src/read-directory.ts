@@ -1,5 +1,5 @@
 import type { ContainerExecutor } from "./container-files.js";
-import { SandboxProtocolError } from "./errors.js";
+import { protocolError } from "./errors.js";
 import { runFileCommand } from "./file-command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
 
@@ -40,7 +40,7 @@ function decodeEntries(payload: Uint8Array): SandboxDirectoryEntry[] {
   }
 
   if (offset !== payload.length) {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned trailing directory data" });
+    throw protocolError("sandbox-shim returned trailing directory data");
   }
   return entries;
 }
@@ -48,28 +48,28 @@ function decodeEntries(payload: Uint8Array): SandboxDirectoryEntry[] {
 function readByte(payload: Uint8Array, offset: number): number {
   const value = payload[offset];
   if (value === undefined) {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned truncated directory data" });
+    throw protocolError("sandbox-shim returned truncated directory data");
   }
   return value;
 }
 
 function readUint16(view: DataView, offset: number): number {
   if (offset + 2 > view.byteLength) {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned truncated directory data" });
+    throw protocolError("sandbox-shim returned truncated directory data");
   }
   return view.getUint16(offset, true);
 }
 
 function readUint32(view: DataView, offset: number): number {
   if (offset + 4 > view.byteLength) {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned truncated directory data" });
+    throw protocolError("sandbox-shim returned truncated directory data");
   }
   return view.getUint32(offset, true);
 }
 
 function readBytes(payload: Uint8Array, offset: number, length: number): Uint8Array {
   if (offset + length > payload.length) {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned truncated directory data" });
+    throw protocolError("sandbox-shim returned truncated directory data");
   }
   return payload.subarray(offset, offset + length);
 }
@@ -78,9 +78,6 @@ function decodeText(bytes: Uint8Array): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (cause) {
-    throw new SandboxProtocolError({
-      detail: "sandbox-shim returned invalid UTF-8 in directory entry name",
-      cause,
-    });
+    throw protocolError("sandbox-shim returned invalid UTF-8 in directory entry name", cause);
   }
 }

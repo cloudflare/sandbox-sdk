@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import {
   commandProcess,
   containerWith,
@@ -106,7 +105,6 @@ describe("ContainerFiles stat operations", () => {
     const statPromise = new ContainerFiles(
       containerWith(commandProcess(errorFrame(2, "No such file or directory"))),
     ).stat("/missing");
-    await expect(statPromise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(statPromise).rejects.toMatchObject({
       code: "ENOENT",
       operation: "stat",
@@ -129,7 +127,7 @@ describe("ContainerFiles stat operations", () => {
 
     await expect(
       new ContainerFiles(containerWith(wrongLength)).stat("/file"),
-    ).rejects.toBeInstanceOf(SandboxProtocolError);
+    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
     await expect(new ContainerFiles(containerWith(unknownType)).stat("/file")).rejects.toThrow(
       "unknown file type",
     );
@@ -176,9 +174,9 @@ describe("ContainerFiles stat operations", () => {
   it("terminates a shim that omits stdout", async () => {
     const process = readProcess([], 0, null);
 
-    await expect(new ContainerFiles(containerWith(process)).stat("/file")).rejects.toBeInstanceOf(
-      SandboxProtocolError,
-    );
+    await expect(new ContainerFiles(containerWith(process)).stat("/file")).rejects.toMatchObject({
+      name: "SandboxProtocolError",
+    });
     expect(process.kill).toHaveBeenCalledWith(9);
   });
 

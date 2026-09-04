@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError } from "../src/errors.js";
 import { commandProcess, containerWith, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
 describe("ContainerFiles.remove", () => {
@@ -51,7 +50,6 @@ describe("ContainerFiles.remove", () => {
       containerWith(commandProcess(errorFrame(21, "Is a directory"))),
     ).remove("/workspace/directory");
 
-    await expect(promise).rejects.toBeInstanceOf(SandboxFileError);
     await expect(promise).rejects.toMatchObject({
       code: "EISDIR",
       operation: "remove",

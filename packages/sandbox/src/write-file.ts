@@ -1,5 +1,5 @@
 import type { ContainerExecutor, WriteFileOptions } from "./container-files.js";
-import { fileErrorFromErrno, SandboxProtocolError } from "./errors.js";
+import { fileErrorFromErrno, protocolError } from "./errors.js";
 import { SHIM_PATH, type ShimControlFrame, ShimControl, ShimSession } from "./shim.js";
 
 type FailureReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
@@ -59,7 +59,7 @@ export async function writeFile(
 
     const exitCode = await session.waitFor(session.process.exitCode);
     if (exitCode !== 0) {
-      throw new SandboxProtocolError({ detail: `sandbox-shim exited with code ${exitCode}` });
+      throw protocolError(`sandbox-shim exited with code ${exitCode}`);
     }
 
     sourceReader.releaseLock();
@@ -144,7 +144,7 @@ function expectSuccess(frame: ShimControlFrame, path: string): void {
     throw fileErrorFromErrno({ operation: "writeFile", path }, frame.errno, frame.detail);
   }
   if (frame.kind !== "success") {
-    throw new SandboxProtocolError({ detail: "sandbox-shim returned data while writing a file" });
+    throw protocolError("sandbox-shim returned data while writing a file");
   }
 }
 

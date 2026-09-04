@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import {
   containerWith,
   contiguousErrorFrame as errorFrame,
@@ -120,7 +119,9 @@ describe("ContainerFiles.writeFile", () => {
       detail: "Is a directory",
     });
     expect(getReader).not.toHaveBeenCalled();
-    expect(cancelled).toHaveBeenCalledWith(expect.any(SandboxFileError));
+    expect(cancelled).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "SandboxFileError", code: "EISDIR" }),
+    );
     expect(process.kill).toHaveBeenCalledWith(9);
   });
 
@@ -208,7 +209,7 @@ describe("ContainerFiles.writeFile", () => {
 
     await expect(
       new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
-    ).rejects.toBeInstanceOf(SandboxProtocolError);
+    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
   });
 
   it("preserves source failures and terminates the process", async () => {

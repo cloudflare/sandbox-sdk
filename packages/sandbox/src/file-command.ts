@@ -1,5 +1,5 @@
 import type { ContainerExecutor } from "./container-files.js";
-import { fileErrorFromErrno, SandboxProtocolError, type FileErrorContext } from "./errors.js";
+import { fileErrorFromErrno, type FileErrorContext, protocolError } from "./errors.js";
 import { SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
 
 interface FileCommandRequest {
@@ -35,17 +35,16 @@ export async function runFileCommand(
       throw fileErrorFromErrno(request.error, frame.errno, frame.detail);
     }
     if (frame.kind !== request.expected) {
-      throw new SandboxProtocolError({
-        detail:
-          request.expected === "data"
-            ? "sandbox-shim did not return command data"
-            : "sandbox-shim did not confirm command completion",
-      });
+      throw protocolError(
+        request.expected === "data"
+          ? "sandbox-shim did not return command data"
+          : "sandbox-shim did not confirm command completion",
+      );
     }
 
     const exitCode = await session.waitFor(session.process.exitCode);
     if (exitCode !== 0) {
-      throw new SandboxProtocolError({ detail: `sandbox-shim exited with code ${exitCode}` });
+      throw protocolError(`sandbox-shim exited with code ${exitCode}`);
     }
 
     control.releaseLock();

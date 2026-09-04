@@ -1,7 +1,18 @@
 import { constants } from "node:os";
 
 /** Symbolic Linux errno, or `UNKNOWN` when the runtime does not name it. */
-export type SandboxFileErrorCode = `E${string}` | "UNKNOWN";
+type SandboxFileErrorCode = `E${string}` | "UNKNOWN";
+
+const FILE_OPERATIONS = [
+  "readFile",
+  "writeFile",
+  "stat",
+  "lstat",
+  "readDirectory",
+  "mkdir",
+  "rename",
+  "remove",
+] as const;
 
 const CANONICAL_ERRNO_NAMES = new Map<number, SandboxFileErrorCode>();
 for (const [name, value] of Object.entries(constants.errno)) {
@@ -16,15 +27,7 @@ for (const preferred of ["EAGAIN", "EDEADLK", "EOPNOTSUPP"] as const) {
 }
 
 /** Filesystem operation that failed. */
-export type SandboxFileOperation =
-  | "readFile"
-  | "writeFile"
-  | "stat"
-  | "lstat"
-  | "readDirectory"
-  | "mkdir"
-  | "rename"
-  | "remove";
+type SandboxFileOperation = (typeof FILE_OPERATIONS)[number];
 
 type SinglePathFileOperation = Exclude<SandboxFileOperation, "rename">;
 
@@ -40,81 +43,86 @@ export type FileErrorContext =
       destination: string;
     };
 
-/** Construction contract for {@link SandboxFileError}. */
-export type SandboxFileErrorOptions = FileErrorContext & {
-  code: SandboxFileErrorCode;
-  errno: number;
-  detail: string;
-};
-
 /** A native Linux filesystem failure reported by the sandbox container. */
-export class SandboxFileError extends Error {
+export interface SandboxFileError extends Error {
+  readonly name: "SandboxFileError";
+  readonly code: SandboxFileErrorCode;
+  readonly operation: SandboxFileOperation;
+  readonly path: string;
+  readonly destination?: string;
+  readonly detail: string;
+}
+
+class FileError extends Error implements SandboxFileError {
   override readonly name = "SandboxFileError";
   readonly code: SandboxFileErrorCode;
-  readonly errno: number;
   readonly operation: SandboxFileOperation;
   readonly path: string;
   readonly destination?: string;
   readonly detail: string;
 
-  constructor(options: SandboxFileErrorOptions) {
-    if (!Number.isInteger(options.errno) || options.errno <= 0) {
-      throw new TypeError("SandboxFileError errno must be a positive integer");
-    }
+  constructor(context: FileErrorContext, code: SandboxFileErrorCode, detail: string) {
     const subject =
-      options.destination === undefined
-        ? `'${options.path}'`
-        : `'${options.path}' to '${options.destination}'`;
-    super(`${options.operation} ${subject}: ${options.detail}`);
-    this.code = options.code;
-    this.errno = options.errno;
-    this.operation = options.operation;
-    this.path = options.path;
-    if (options.destination !== undefined) this.destination = options.destination;
-    this.detail = options.detail;
+      context.destination === undefined
+        ? `'${context.path}'`
+        : `'${context.path}' to '${context.destination}'`;
+    super(`${context.operation} ${subject}: ${detail}`);
+    this.code = code;
+    this.operation = context.operation;
+    this.path = context.path;
+    if (context.destination !== undefined) this.destination = context.destination;
+    this.detail = detail;
   }
+}
 
+export const SandboxFileError = {
   /** Recognizes local and JSRPC-crossed SandboxFileError values. */
-  static is(cause: unknown): cause is SandboxFileError {
+  is(cause: unknown): cause is SandboxFileError {
     return (
       cause instanceof Error &&
       cause.name === "SandboxFileError" &&
-      hasOwn(cause, "code", isString) &&
-      hasOwn(cause, "errno", isPositiveInteger) &&
-      hasOwn(cause, "operation", isString) &&
+      hasOwn(cause, "code", isFileErrorCode) &&
+      hasOwn(cause, "operation", isFileOperation) &&
       hasOwn(cause, "path", isString) &&
       hasOptionalOwn(cause, "destination", isString) &&
       hasOwn(cause, "detail", isString)
     );
-  }
-}
-
-/** Construction contract for {@link SandboxProtocolError}. */
-export interface SandboxProtocolErrorOptions {
-  detail: string;
-  cause?: unknown;
-}
+  },
+};
 
 /** An incompatible or malformed exchange with `sandbox-shim`. */
-export class SandboxProtocolError extends Error {
+export interface SandboxProtocolError extends Error {
+  readonly name: "SandboxProtocolError";
+  readonly code: "SANDBOX_PROTOCOL_ERROR";
+  readonly detail: string;
+}
+
+/* oxlint-disable anti-slop/no-unknown-parameters -- Error causes and RPC guards are arbitrary. */
+class ProtocolError extends Error implements SandboxProtocolError {
   override readonly name = "SandboxProtocolError";
   readonly code = "SANDBOX_PROTOCOL_ERROR";
   readonly detail: string;
 
-  constructor(options: SandboxProtocolErrorOptions) {
-    super(options.detail, Object.hasOwn(options, "cause") ? { cause: options.cause } : undefined);
-    this.detail = options.detail;
+  constructor(detail: string, cause?: unknown) {
+    super(detail, cause === undefined ? undefined : { cause });
+    this.detail = detail;
   }
+}
 
+export const SandboxProtocolError = {
   /** Recognizes local and JSRPC-crossed SandboxProtocolError values. */
-  static is(cause: unknown): cause is SandboxProtocolError {
+  is(cause: unknown): cause is SandboxProtocolError {
     return (
       cause instanceof Error &&
       cause.name === "SandboxProtocolError" &&
       hasOwn(cause, "code", (value) => value === "SANDBOX_PROTOCOL_ERROR") &&
       hasOwn(cause, "detail", isString)
     );
-  }
+  },
+};
+
+export function protocolError(detail: string, cause?: unknown): SandboxProtocolError {
+  return new ProtocolError(detail, cause);
 }
 
 export function fileErrorFromErrno(
@@ -123,15 +131,9 @@ export function fileErrorFromErrno(
   detail: string,
 ): SandboxFileError {
   const code = CANONICAL_ERRNO_NAMES.get(errno) ?? "UNKNOWN";
-  return new SandboxFileError({
-    ...context,
-    code,
-    errno,
-    detail: detail.length > 0 ? detail : code,
-  });
+  return new FileError(context, code, detail.length > 0 ? detail : code);
 }
 
-/* oxlint-disable anti-slop/no-unknown-parameters -- JSRPC boundary parses serialized fields. */
 function hasOwn<Key extends string, Value>(
   owner: Error,
   key: Key,
@@ -155,8 +157,12 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- RPC boundary validation.
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+function isFileErrorCode(value: unknown): value is SandboxFileErrorCode {
+  return isString(value) && (value === "UNKNOWN" || /^E[A-Z0-9]+$/.test(value));
 }
+
+function isFileOperation(value: unknown): value is SandboxFileOperation {
+  return FILE_OPERATIONS.some((operation) => operation === value);
+}
+
 /* oxlint-enable anti-slop/no-unknown-parameters */

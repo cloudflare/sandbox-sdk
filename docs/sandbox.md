@@ -113,14 +113,14 @@ A Linux filesystem failure reported by the container.
 | Field         | Type                                                                                                                 | Description                             |
 | ------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | `name`        | `"SandboxFileError"`                                                                                                 | Error name.                             |
-| `code`        | `` `E${string}` `` \| `"UNKNOWN"`                                                                                    | Symbolic errno, or `UNKNOWN`.           |
-| `errno`       | `number`                                                                                                             | Positive Linux errno.                   |
+| `code`        | `` `E${string}` `` \| `"UNKNOWN"`                                                                                    | Symbolic Linux errno.                   |
 | `operation`   | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` \| `"rename"` \| `"remove"` | Failed operation.                       |
 | `path`        | `string`                                                                                                             | Path passed to the operation.           |
 | `destination` | `string \| undefined`                                                                                                | Destination path for a failed `rename`. |
 | `detail`      | `string`                                                                                                             | Failure detail from the shim.           |
 
-`SandboxFileError.is(cause)` is true for local and JSRPC-crossed values.
+`SandboxFileError.is(cause)` recognizes local and JSRPC-crossed values. The
+exported value is a recognizer, not a public error constructor.
 
 ## `SandboxProtocolError`
 
@@ -132,6 +132,7 @@ An incompatible or malformed exchange with `sandbox-shim`.
 | `code`   | `"SANDBOX_PROTOCOL_ERROR"` | Stable error code. |
 | `detail` | `string`                   | Failure detail.    |
 
-`SandboxProtocolError.is(cause)` is true for local and JSRPC-crossed values.
+`SandboxProtocolError.is(cause)` recognizes local and JSRPC-crossed values. The
+exported value is a recognizer, not a public error constructor.
 
 Native container, transport, abort, and source-stream failures are not wrapped.

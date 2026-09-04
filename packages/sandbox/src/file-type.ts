@@ -1,4 +1,4 @@
-import { SandboxProtocolError } from "./errors.js";
+import { protocolError } from "./errors.js";
 
 export type SandboxFileType =
   | "file"
@@ -26,6 +26,6 @@ export function decodeFileType(value: number | undefined): SandboxFileType {
     case 6:
       return "socket";
     default:
-      throw new SandboxProtocolError({ detail: "sandbox-shim returned an unknown file type" });
+      throw protocolError("sandbox-shim returned an unknown file type");
   }
 }
