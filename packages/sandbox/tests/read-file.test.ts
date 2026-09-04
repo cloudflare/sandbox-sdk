@@ -96,7 +96,18 @@ describe("ContainerFiles.readFile", () => {
   it("validates paths before launching exec", async () => {
     const container = containerWith(readProcess([]));
     const files = new ContainerFiles(container);
+    const stringLike = {
+      length: 1,
+      includes: () => false,
+      startsWith: () => true,
+    };
 
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(files.readFile(stringLike)).rejects.toThrow("path must be a string");
+    // @ts-expect-error Runtime callers can cross the TypeScript interface.
+    await expect(files.readFile("/file", { cwd: stringLike })).rejects.toThrow(
+      "cwd must be a string",
+    );
     await expect(files.readFile("relative.txt")).rejects.toThrow(
       "cwd is required when path is relative",
     );

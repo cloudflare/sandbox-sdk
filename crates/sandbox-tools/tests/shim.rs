@@ -137,6 +137,29 @@ fn read_directory_command_emits_all_entries() {
 }
 
 #[test]
+fn rename_command_moves_the_source() {
+    let temp = TempDir::new();
+    let source = temp.0.join("source");
+    let destination = temp.0.join("destination");
+    fs::write(&source, b"content").unwrap();
+
+    let output = Command::new(SHIM)
+        .args([
+            "rename",
+            source.to_str().unwrap(),
+            destination.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"SBXF\x01\x00\0\0\0\0");
+    assert!(output.stderr.is_empty());
+    assert!(!source.exists());
+    assert_eq!(fs::read(destination).unwrap(), b"content");
+}
+
+#[test]
 fn write_command_acknowledges_open_before_consuming_stdin() {
     let temp = TempDir::new();
     let path = temp.0.join("content.bin");

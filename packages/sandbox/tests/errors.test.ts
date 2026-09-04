@@ -54,6 +54,22 @@ describe("Sandbox errors", () => {
     for (const field of ["name", "code", "errno", "operation", "path", "detail"]) {
       expect(Object.hasOwn(fileError, field)).toBe(true);
     }
+    expect(SandboxFileError.is(fileError)).toBe(true);
     expect(Object.hasOwn(protocolError, "detail")).toBe(true);
+  });
+
+  it("includes rename destinations in the stable error contract", () => {
+    const error = new SandboxFileError({
+      code: "ENOENT",
+      errno: 2,
+      operation: "rename",
+      path: "/source",
+      destination: "/destination",
+      detail: "No such file or directory",
+    });
+
+    expect(error.message).toBe("rename '/source' to '/destination': No such file or directory");
+    expect(Object.hasOwn(error, "destination")).toBe(true);
+    expect(SandboxFileError.is(error)).toBe(true);
   });
 });

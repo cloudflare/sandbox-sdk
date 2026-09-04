@@ -1,38 +1,27 @@
 import type { ContainerExecutor } from "./container-files.js";
-import { fileErrorFromErrno, SandboxProtocolError, type SandboxFileOperation } from "./errors.js";
+import { fileErrorFromErrno, SandboxProtocolError, type FileErrorContext } from "./errors.js";
 import { SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
 
-type FileCommandOperation = Extract<
-  SandboxFileOperation,
-  "stat" | "lstat" | "readDirectory" | "mkdir"
->;
+interface FileCommandRequest {
+  command: readonly string[];
+  options: ContainerExecOptions;
+  error: FileErrorContext;
+}
 
 export function runFileCommand(
   container: ContainerExecutor,
-  command: readonly string[],
-  options: ContainerExecOptions,
-  operation: FileCommandOperation,
-  path: string,
-  expected: "data",
+  request: FileCommandRequest & { expected: "data" },
 ): Promise<Uint8Array>;
 export function runFileCommand(
   container: ContainerExecutor,
-  command: readonly string[],
-  options: ContainerExecOptions,
-  operation: FileCommandOperation,
-  path: string,
-  expected: "success",
+  request: FileCommandRequest & { expected: "success" },
 ): Promise<void>;
 export async function runFileCommand(
   container: ContainerExecutor,
-  command: readonly string[],
-  options: ContainerExecOptions,
-  operation: FileCommandOperation,
-  path: string,
-  expected: "data" | "success",
+  request: FileCommandRequest & { expected: "data" | "success" },
 ): Promise<Uint8Array | void> {
-  const session = await ShimSession.start(container, [SHIM_PATH, ...command], {
-    ...options,
+  const session = await ShimSession.start(container, [SHIM_PATH, ...request.command], {
+    ...request.options,
     stdout: "pipe",
     stderr: "ignore",
   });
@@ -43,12 +32,12 @@ export async function runFileCommand(
     const frame = await control.readFrame();
     await control.expectEnd();
     if (frame.kind === "fileError") {
-      throw fileErrorFromErrno(operation, path, frame.errno, frame.detail);
+      throw fileErrorFromErrno(request.error, frame.errno, frame.detail);
     }
-    if (frame.kind !== expected) {
+    if (frame.kind !== request.expected) {
       throw new SandboxProtocolError({
         detail:
-          expected === "data"
+          request.expected === "data"
             ? "sandbox-shim did not return command data"
             : "sandbox-shim did not confirm command completion",
       });

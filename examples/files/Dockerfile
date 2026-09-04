@@ -6,5 +6,6 @@ COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shi
 RUN mkdir -p /workspace/directory \
     && printf 'hello from sandbox\n' > /workspace/fixture.txt \
     && printf 'nested file\n' > /workspace/directory/nested.txt \
+    && printf 'rename me\n' > /workspace/rename-source.txt \
     && ln -s fixture.txt /workspace/link.txt
 CMD ["sleep", "infinity"]

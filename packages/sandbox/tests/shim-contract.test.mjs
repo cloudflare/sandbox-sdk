@@ -134,6 +134,29 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     }
   });
 
+  it("renames files and symlinks with native replacement semantics", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const files = new ContainerFiles(nativeContainer());
+      const source = join(directory, "source.txt");
+      const destination = join(directory, "destination.txt");
+      const link = join(directory, "source-link");
+      const renamedLink = join(directory, "renamed-link");
+      await writeFile(source, "source");
+      await writeFile(destination, "destination");
+      await symlink("destination.txt", link);
+
+      await files.rename(source, destination);
+      await files.rename(link, renamedLink);
+
+      await expect(files.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(destination, "utf8")).toBe("source");
+      await expect(files.lstat(renamedLink)).resolves.toMatchObject({ type: "symlink" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("preserves native open and read errors", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {

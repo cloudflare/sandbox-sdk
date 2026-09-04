@@ -141,7 +141,7 @@ function handlePump(result: PumpResult): void {
 
 function expectSuccess(frame: ShimControlFrame, path: string): void {
   if (frame.kind === "fileError") {
-    throw fileErrorFromErrno("writeFile", path, frame.errno, frame.detail);
+    throw fileErrorFromErrno({ operation: "writeFile", path }, frame.errno, frame.detail);
   }
   if (frame.kind !== "success") {
     throw new SandboxProtocolError({ detail: "sandbox-shim returned data while writing a file" });

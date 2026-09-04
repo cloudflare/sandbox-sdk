@@ -22,14 +22,12 @@ export async function statFile(
   options: ContainerExecOptions,
   operation: Extract<SandboxFileOperation, "stat" | "lstat">,
 ): Promise<SandboxFileStat> {
-  const payload = await runFileCommand(
-    container,
-    [operation, path],
+  const payload = await runFileCommand(container, {
+    command: [operation, path],
     options,
-    operation,
-    path,
-    "data",
-  );
+    error: { operation, path },
+    expected: "data",
+  });
   if (payload.length !== STAT_PAYLOAD_LENGTH) {
     throw new SandboxProtocolError({ detail: `sandbox-shim returned invalid ${operation} data` });
   }

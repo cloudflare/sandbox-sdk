@@ -5,6 +5,7 @@ export {
   type MkdirOptions,
   type ReadDirectoryOptions,
   type ReadFileOptions,
+  type RenameOptions,
   type SandboxDirectoryEntry,
   type SandboxFileStat,
   type SandboxFileType,

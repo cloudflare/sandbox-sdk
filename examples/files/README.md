@@ -27,6 +27,9 @@ curl --request PUT \
 
 curl --request PUT \
   "$WORKER_URL/directory?sandbox=demo&path=/workspace/created/nested&recursive=true"
+
+curl --request POST \
+  "$WORKER_URL/rename?sandbox=demo&path=/workspace/rename-source.txt&destination=/workspace/rename-destination.txt"
 ```
 
 Destroy the current physical execution when finished:

@@ -22,16 +22,29 @@ export type SandboxFileOperation =
   | "stat"
   | "lstat"
   | "readDirectory"
-  | "mkdir";
+  | "mkdir"
+  | "rename";
+
+type SinglePathFileOperation = Exclude<SandboxFileOperation, "rename">;
+
+export type FileErrorContext =
+  | {
+      operation: SinglePathFileOperation;
+      path: string;
+      destination?: undefined;
+    }
+  | {
+      operation: "rename";
+      path: string;
+      destination: string;
+    };
 
 /** Construction contract for {@link SandboxFileError}. */
-export interface SandboxFileErrorOptions {
+export type SandboxFileErrorOptions = FileErrorContext & {
   code: SandboxFileErrorCode;
   errno: number;
-  operation: SandboxFileOperation;
-  path: string;
   detail: string;
-}
+};
 
 /** A native Linux filesystem failure reported by the sandbox container. */
 export class SandboxFileError extends Error {
@@ -40,17 +53,23 @@ export class SandboxFileError extends Error {
   readonly errno: number;
   readonly operation: SandboxFileOperation;
   readonly path: string;
+  readonly destination?: string;
   readonly detail: string;
 
   constructor(options: SandboxFileErrorOptions) {
     if (!Number.isInteger(options.errno) || options.errno <= 0) {
       throw new TypeError("SandboxFileError errno must be a positive integer");
     }
-    super(`${options.operation} '${options.path}': ${options.detail}`);
+    const subject =
+      options.destination === undefined
+        ? `'${options.path}'`
+        : `'${options.path}' to '${options.destination}'`;
+    super(`${options.operation} ${subject}: ${options.detail}`);
     this.code = options.code;
     this.errno = options.errno;
     this.operation = options.operation;
     this.path = options.path;
+    if (options.destination !== undefined) this.destination = options.destination;
     this.detail = options.detail;
   }
 
@@ -63,6 +82,7 @@ export class SandboxFileError extends Error {
       hasOwn(cause, "errno", isPositiveInteger) &&
       hasOwn(cause, "operation", isString) &&
       hasOwn(cause, "path", isString) &&
+      hasOptionalOwn(cause, "destination", isString) &&
       hasOwn(cause, "detail", isString)
     );
   }
@@ -97,17 +117,15 @@ export class SandboxProtocolError extends Error {
 }
 
 export function fileErrorFromErrno(
-  operation: SandboxFileOperation,
-  path: string,
+  context: FileErrorContext,
   errno: number,
   detail: string,
 ): SandboxFileError {
   const code = CANONICAL_ERRNO_NAMES.get(errno) ?? "UNKNOWN";
   return new SandboxFileError({
+    ...context,
     code,
     errno,
-    operation,
-    path,
     detail: detail.length > 0 ? detail : code,
   });
 }
@@ -120,6 +138,15 @@ function hasOwn<Key extends string, Value>(
 ): owner is Error & Record<Key, Value> {
   const descriptor = Object.getOwnPropertyDescriptor(owner, key);
   return descriptor !== undefined && predicate(descriptor.value);
+}
+
+function hasOptionalOwn<Key extends string, Value>(
+  owner: Error,
+  key: Key,
+  predicate: (value: unknown) => value is Value,
+): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  return descriptor === undefined || descriptor.value === undefined || predicate(descriptor.value);
 }
 
 function isString(value: unknown): value is string {

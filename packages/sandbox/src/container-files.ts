@@ -21,6 +21,7 @@ export type ReadFileOptions = FileOperationOptions;
 export type WriteFileOptions = FileOperationOptions;
 export type StatOptions = FileOperationOptions;
 export type ReadDirectoryOptions = FileOperationOptions;
+export type RenameOptions = FileOperationOptions;
 export type MkdirOptions = FileOperationOptions & {
   /** Creates missing parent directories and accepts an existing target directory. */
   recursive?: boolean;
@@ -149,11 +150,46 @@ export class ContainerFiles {
     validatePath(path, options.cwd);
     const { recursive = false, ...execOptions } = options;
     const command = recursive ? ["mkdir", path, "--recursive"] : ["mkdir", path];
-    await runFileCommand(this.#container, command, execOptions, "mkdir", path, "success");
+    await runFileCommand(this.#container, {
+      command,
+      options: execOptions,
+      error: { operation: "mkdir", path },
+      expected: "success",
+    });
+  }
+
+  /**
+   * Renames a file, directory, or symlink using native Linux filesystem semantics.
+   *
+   * Existing destinations are replaced when Linux permits it. Cross-filesystem renames fail
+   * with `EXDEV`; the SDK does not fall back to copying and removing the source.
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} A path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async rename(source: string, destination: string, options: RenameOptions = {}): Promise<void> {
+    validatePath(source, options.cwd);
+    validatePath(destination, options.cwd);
+    await runFileCommand(this.#container, {
+      command: ["rename", source, destination],
+      options,
+      error: { operation: "rename", path: source, destination },
+      expected: "success",
+    });
   }
 }
 
 function validatePath(path: string, cwd: string | undefined): void {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Public representation validation.
+  if (typeof path !== "string") {
+    throw new TypeError("path must be a string");
+  }
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Public representation validation.
+  if (cwd !== undefined && typeof cwd !== "string") {
+    throw new TypeError("cwd must be a string");
+  }
   if (path.length === 0) {
     throw new TypeError("path must not be empty");
   }

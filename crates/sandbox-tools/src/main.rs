@@ -3,6 +3,7 @@ mod mkdir;
 mod protocol;
 mod read_directory;
 mod read_file;
+mod rename;
 mod stat_file;
 #[cfg(test)]
 mod test_support;
@@ -37,6 +38,7 @@ fn run(
         Some("mkdir") => mkdir::run(args, &mut stdout),
         Some("read-directory") => read_directory::run(args, &mut stdout),
         Some("read") => read_file::run(args, &mut stdout, &mut stderr),
+        Some("rename") => rename::run(args, &mut stdout),
         Some("lstat") => stat_file::run(args, false, &mut stdout),
         Some("stat") => stat_file::run(args, true, &mut stdout),
         Some("write") => write_file::run(args, input, &mut stdout),

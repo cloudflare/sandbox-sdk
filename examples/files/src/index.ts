@@ -15,6 +15,8 @@ const ACCESSIBLE_PATHS = new Set([
   "/workspace/fixture.txt",
   "/workspace/link.txt",
   "/workspace/missing.txt",
+  "/workspace/rename-destination.txt",
+  "/workspace/rename-source.txt",
   "/workspace/written.txt",
 ]);
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -65,6 +67,12 @@ export class FilesSandbox extends Sandbox<Env> {
     await this.files.mkdir(path, { recursive });
   }
 
+  /** Renames one allowed workspace path. */
+  async rename(source: string, destination: string, sandboxName: string): Promise<void> {
+    this.ensureRunning(sandboxName);
+    await this.files.rename(source, destination);
+  }
+
   /** Stops and removes this Durable Object's current container instance. */
   async destroyContainer(): Promise<void> {
     const container = this.requireContainer();
@@ -103,8 +111,9 @@ export default {
       );
     }
 
+    const requestedPath = url.searchParams.get("path");
     const defaultPath = url.pathname === "/directory" ? "/workspace" : "/workspace/fixture.txt";
-    const path = url.searchParams.get("path") ?? defaultPath;
+    const path = requestedPath ?? defaultPath;
     if (!ACCESSIBLE_PATHS.has(path)) {
       return new Response("Path is not available in this example", { status: 400 });
     }
@@ -140,6 +149,17 @@ export default {
       if (url.pathname === "/directory" && request.method === "PUT") {
         const recursive = url.searchParams.get("recursive") === "true";
         await sandbox.mkdir(path, recursive, sandboxName);
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/rename" && request.method === "POST") {
+        if (requestedPath === null) {
+          return new Response("Source is required", { status: 400 });
+        }
+        const destination = url.searchParams.get("destination");
+        if (destination === null || !ACCESSIBLE_PATHS.has(destination)) {
+          return new Response("Destination is not available in this example", { status: 400 });
+        }
+        await sandbox.rename(path, destination, sandboxName);
         return new Response(null, { status: 204 });
       }
 

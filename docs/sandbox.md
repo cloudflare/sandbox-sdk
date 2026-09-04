@@ -73,6 +73,12 @@ Creates one directory by default. With `recursive: true`, it creates missing
 parents and accepts an existing target directory. Recursive creation is not
 transactional; failure or cancellation can leave some parent directories.
 
+### `rename(source, destination, options?): Promise<void>`
+
+Renames a file, directory, or symlink. Native Linux replacement rules apply.
+Cross-filesystem renames reject with `EXDEV`; the SDK does not fall back to
+copying and removing the source.
+
 ### Options
 
 | Field    | Type          | Description                                                   |
@@ -81,7 +87,8 @@ transactional; failure or cancellation can leave some parent directories.
 | `user`   | `string`      | Linux user, or `user:group`, used to open the file.           |
 | `signal` | `AbortSignal` | Cancels the native container process.                         |
 
-`MkdirOptions` also accepts `recursive?: boolean`.
+`MkdirOptions` also accepts `recursive?: boolean`. `RenameOptions` uses the
+common options above; `cwd` resolves both relative paths.
 
 `path` must be non-empty and must not contain `NUL`. Relative `path` requires
 `cwd`. `cwd`, when set, must be absolute. Violations throw `TypeError`.
@@ -95,14 +102,15 @@ transactional; failure or cancellation can leave some parent directories.
 
 A Linux filesystem failure reported by the container.
 
-| Field       | Type                                                                                     | Description                   |
-| ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- |
-| `name`      | `"SandboxFileError"`                                                                     | Error name.                   |
-| `code`      | `` `E${string}` `` \| `"UNKNOWN"`                                                        | Symbolic errno, or `UNKNOWN`. |
-| `errno`     | `number`                                                                                 | Positive Linux errno.         |
-| `operation` | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` | Failed operation.             |
-| `path`      | `string`                                                                                 | Path passed to the operation. |
-| `detail`    | `string`                                                                                 | Failure detail from the shim. |
+| Field         | Type                                                                                                   | Description                             |
+| ------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| `name`        | `"SandboxFileError"`                                                                                   | Error name.                             |
+| `code`        | `` `E${string}` `` \| `"UNKNOWN"`                                                                      | Symbolic errno, or `UNKNOWN`.           |
+| `errno`       | `number`                                                                                               | Positive Linux errno.                   |
+| `operation`   | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` \| `"rename"` | Failed operation.                       |
+| `path`        | `string`                                                                                               | Path passed to the operation.           |
+| `destination` | `string \| undefined`                                                                                  | Destination path for a failed `rename`. |
+| `detail`      | `string`                                                                                               | Failure detail from the shim.           |
 
 `SandboxFileError.is(cause)` is true for local and JSRPC-crossed values.
 

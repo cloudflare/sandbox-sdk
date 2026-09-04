@@ -13,14 +13,12 @@ export async function readDirectory(
   path: string,
   options: ContainerExecOptions,
 ): Promise<SandboxDirectoryEntry[]> {
-  const payload = await runFileCommand(
-    container,
-    ["read-directory", path],
+  const payload = await runFileCommand(container, {
+    command: ["read-directory", path],
     options,
-    "readDirectory",
-    path,
-    "data",
-  );
+    error: { operation: "readDirectory", path },
+    expected: "data",
+  });
   return decodeEntries(payload);
 }
 

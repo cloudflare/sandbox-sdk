@@ -23,7 +23,7 @@ export async function readFile(
     const opening = await control.readFrame();
     if (opening.kind === "fileError") {
       await control.expectEnd();
-      throw fileErrorFromErrno("readFile", path, opening.errno, opening.detail);
+      throw fileErrorFromErrno({ operation: "readFile", path }, opening.errno, opening.detail);
     }
     if (opening.kind !== "success") {
       throw new SandboxProtocolError({ detail: "sandbox-shim returned data before file bytes" });
@@ -56,7 +56,11 @@ function responseBody(
         const terminal = await control.readFrame();
         await control.expectEnd();
         if (terminal.kind === "fileError") {
-          throw fileErrorFromErrno("readFile", path, terminal.errno, terminal.detail);
+          throw fileErrorFromErrno(
+            { operation: "readFile", path },
+            terminal.errno,
+            terminal.detail,
+          );
         }
         if (terminal.kind !== "success") {
           throw new SandboxProtocolError({ detail: "sandbox-shim returned data after file bytes" });
