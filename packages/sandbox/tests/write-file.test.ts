@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ContainerFiles } from "../src/container-files.js";
-import { SandboxFileError } from "../src/errors.js";
+import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import {
   containerWith,
   contiguousErrorFrame as errorFrame,
+  dataFrame,
   deferred,
   encoder,
   readableChunks,
@@ -200,6 +201,14 @@ describe("ContainerFiles.writeFile", () => {
     ).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
     });
+  });
+
+  it("rejects metadata frames in the file write protocol", async () => {
+    const process = writeProcess({ control: readableChunks(dataFrame(new Uint8Array([1]))) });
+
+    await expect(
+      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
+    ).rejects.toBeInstanceOf(SandboxProtocolError);
   });
 
   it("preserves source failures and terminates the process", async () => {

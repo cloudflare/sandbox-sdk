@@ -4,6 +4,7 @@ import { ContainerFiles } from "../src/container-files.js";
 import { SandboxFileError, SandboxProtocolError } from "../src/errors.js";
 import {
   containerWith,
+  dataFrame,
   deferred,
   errorFrame,
   readableChunks,
@@ -115,6 +116,21 @@ describe("ContainerFiles.readFile", () => {
     await expect(
       new ContainerFiles(containerWith(readProcess([malformed]))).readFile("/file"),
     ).rejects.toBeInstanceOf(SandboxProtocolError);
+  });
+
+  it("rejects metadata frames in the file byte protocol", async () => {
+    const openingData = readProcess(dataFrame(new Uint8Array([1])));
+    const terminalData = readProcess(
+      [SUCCESS_HEADER, ...dataFrame(new Uint8Array([1]))],
+      0,
+      readableChunks([]),
+    );
+
+    await expect(
+      new ContainerFiles(containerWith(openingData)).readFile("/file"),
+    ).rejects.toBeInstanceOf(SandboxProtocolError);
+    const response = await new ContainerFiles(containerWith(terminalData)).readFile("/file");
+    await expect(response.arrayBuffer()).rejects.toBeInstanceOf(SandboxProtocolError);
   });
 
   it("kills the process when the response body is cancelled", async () => {

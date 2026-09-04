@@ -3,6 +3,9 @@ export {
   type ContainerExecutor,
   type FileContent,
   type ReadFileOptions,
+  type SandboxFileStat,
+  type SandboxFileType,
+  type StatOptions,
   type WriteFileOptions,
 } from "./container-files.js";
 export {

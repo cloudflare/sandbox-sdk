@@ -1,5 +1,7 @@
+mod file_type;
 mod protocol;
 mod read_file;
+mod stat_file;
 #[cfg(test)]
 mod test_support;
 mod write_file;
@@ -31,6 +33,8 @@ fn run(
 
     match command.to_str() {
         Some("read") => read_file::run(args, &mut stdout, &mut stderr),
+        Some("lstat") => stat_file::run(args, false, &mut stdout),
+        Some("stat") => stat_file::run(args, true, &mut stdout),
         Some("write") => write_file::run(args, input, &mut stdout),
         _ => Err("unknown command".into()),
     }

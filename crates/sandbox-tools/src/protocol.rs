@@ -4,10 +4,15 @@ const MAGIC: &[u8; 4] = b"SBXF";
 const VERSION: u8 = 1;
 const SUCCESS: u8 = 0;
 const FILE_ERROR: u8 = 1;
+const DATA: u8 = 2;
 const EIO: i32 = 5;
 
 pub(crate) fn write_success(output: &mut impl Write) -> io::Result<()> {
     write_frame(output, SUCCESS, &[])
+}
+
+pub(crate) fn write_data(output: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    write_frame(output, DATA, payload)
 }
 
 pub(crate) fn write_file_error(output: &mut impl Write, error: &io::Error) -> io::Result<()> {
@@ -72,5 +77,14 @@ mod tests {
         write_file_error(&mut output, &io::Error::other("operation failed")).unwrap();
 
         assert_eq!(i32::from_le_bytes(output[10..14].try_into().unwrap()), EIO);
+    }
+
+    #[test]
+    fn encodes_data() {
+        let mut output = Vec::new();
+
+        write_data(&mut output, b"metadata").unwrap();
+
+        assert_eq!(output, b"SBXF\x01\x02\x08\0\0\0metadata");
     }
 }

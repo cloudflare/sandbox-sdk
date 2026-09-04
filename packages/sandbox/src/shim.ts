@@ -11,12 +11,14 @@ const MAX_ERROR_MESSAGE_LENGTH = 64 * 1024;
 
 const FRAME_SUCCESS = 0;
 const FRAME_FILE_ERROR = 1;
+const FRAME_DATA = 2;
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 
 export type ShimControlFrame =
   | { readonly kind: "success" }
-  | { readonly kind: "fileError"; readonly errno: number; readonly detail: string };
+  | { readonly kind: "fileError"; readonly errno: number; readonly detail: string }
+  | { readonly kind: "data"; readonly payload: Uint8Array };
 
 class AbortMonitor {
   readonly #promise: Promise<never> | undefined;
@@ -77,28 +79,28 @@ export class ShimSession {
     }
   }
 
-  openReadControl(): ShimControl {
+  openStderrControl(): ShimControl {
     if (this.process.stderr === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stderr" });
     }
     return new ShimControl(this.process.stderr.getReader(), this);
   }
 
-  openWriteControl(): ShimControl {
+  openStdoutControl(): ShimControl {
     if (this.process.stdout === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
     }
     return new ShimControl(this.process.stdout.getReader(), this);
   }
 
-  openReadData(): ReadableStreamDefaultReader<Uint8Array> {
+  openStdoutReader(): ReadableStreamDefaultReader<Uint8Array> {
     if (this.process.stdout === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdout" });
     }
     return this.process.stdout.getReader();
   }
 
-  openInput(): WritableStreamDefaultWriter<Uint8Array> {
+  openStdinWriter(): WritableStreamDefaultWriter<Uint8Array> {
     if (this.process.stdin === null) {
       throw new SandboxProtocolError({ detail: "sandbox-shim did not provide stdin" });
     }
@@ -148,6 +150,9 @@ export class ShimControl {
         throw new SandboxProtocolError({ detail: "sandbox-shim returned invalid control data" });
       }
       return { kind: "success" };
+    }
+    if (frameKind === FRAME_DATA) {
+      return { kind: "data", payload: await this.#readExactly(payloadLength) };
     }
     if (frameKind !== FRAME_FILE_ERROR) {
       throw new SandboxProtocolError({

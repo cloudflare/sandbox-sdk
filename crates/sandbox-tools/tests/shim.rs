@@ -86,6 +86,31 @@ fn read_command_emits_native_read_error() {
 }
 
 #[test]
+fn stat_command_emits_file_metadata() {
+    let temp = TempDir::new();
+    let path = temp.0.join("content.bin");
+    fs::write(&path, b"metadata").unwrap();
+
+    let output = Command::new(SHIM)
+        .args(["stat", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(&output.stdout[..6], b"SBXF\x01\x02");
+    assert_eq!(
+        u32::from_le_bytes(output.stdout[6..10].try_into().unwrap()),
+        45
+    );
+    assert_eq!(output.stdout[10], 0);
+    assert_eq!(
+        u64::from_le_bytes(output.stdout[11..19].try_into().unwrap()),
+        8
+    );
+}
+
+#[test]
 fn write_command_acknowledges_open_before_consuming_stdin() {
     let temp = TempDir::new();
     let path = temp.0.join("content.bin");

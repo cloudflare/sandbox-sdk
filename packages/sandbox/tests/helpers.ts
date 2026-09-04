@@ -17,6 +17,10 @@ export function errorFrameBytes(errnoNumber: number, detail: Uint8Array): Uint8A
   return [frameHeader(1, errno.length + detail.length), errno, detail];
 }
 
+export function dataFrame(payload: Uint8Array): Uint8Array[] {
+  return [frameHeader(2, payload.length), payload];
+}
+
 export function contiguousErrorFrame(errnoNumber: number, detail: string): Uint8Array {
   const message = encoder.encode(detail);
   const frame = new Uint8Array(14 + message.length);
@@ -70,6 +74,15 @@ export function readProcess(
   stderr: ReadableStream<Uint8Array> | null = readableChunks(chunks),
 ) {
   return processDouble({ stdin: null, stdout, stderr, exitCode });
+}
+
+export function commandProcess(chunks: Uint8Array[], exitCode: number | Promise<number> = 0) {
+  return processDouble({
+    stdin: null,
+    stdout: readableChunks(chunks),
+    stderr: null,
+    exitCode,
+  });
 }
 
 interface WriteProcessOptions {

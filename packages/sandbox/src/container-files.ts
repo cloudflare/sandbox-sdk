@@ -1,5 +1,6 @@
 import { type FileContent, fileContentStream } from "./file-content.js";
 import { readFile as readContainerFile } from "./read-file.js";
+import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
 
 interface FileOperationOptions {
@@ -13,7 +14,10 @@ interface FileOperationOptions {
 
 export type ReadFileOptions = FileOperationOptions;
 export type WriteFileOptions = FileOperationOptions;
+export type StatOptions = FileOperationOptions;
 export type { FileContent } from "./file-content.js";
+export type { SandboxFileType } from "./file-type.js";
+export type { SandboxFileStat } from "./stat-file.js";
 
 /** Native container capability required by {@link ContainerFiles}. */
 export type ContainerExecutor = Pick<Container, "exec">;
@@ -68,6 +72,34 @@ export class ContainerFiles {
   ): Promise<void> {
     validatePath(path, options.cwd);
     await writeContainerFile(this.#container, path, fileContentStream(content), options);
+  }
+
+  /**
+   * Returns metadata for a path using native Linux filesystem semantics.
+   *
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async stat(path: string, options: StatOptions = {}): Promise<SandboxFileStat> {
+    validatePath(path, options.cwd);
+    return statFile(this.#container, path, options, "stat");
+  }
+
+  /**
+   * Returns metadata for a path without following its final symlink.
+   *
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async lstat(path: string, options: StatOptions = {}): Promise<SandboxFileStat> {
+    validatePath(path, options.cwd);
+    return statFile(this.#container, path, options, "lstat");
   }
 }
 

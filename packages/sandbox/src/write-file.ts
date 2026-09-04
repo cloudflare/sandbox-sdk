@@ -29,8 +29,8 @@ export async function writeFile(
       stdout: "pipe",
       stderr: "ignore",
     });
-    control = session.openWriteControl();
-    input = session.openInput();
+    control = session.openStdoutControl();
+    input = session.openStdinWriter();
 
     const opening = await control.readFrame();
     if (opening.kind === "fileError") await control.expectEnd();
@@ -142,6 +142,9 @@ function handlePump(result: PumpResult): void {
 function expectSuccess(frame: ShimControlFrame, path: string): void {
   if (frame.kind === "fileError") {
     throw fileErrorFromErrno("writeFile", path, frame.errno, frame.detail);
+  }
+  if (frame.kind !== "success") {
+    throw new SandboxProtocolError({ detail: "sandbox-shim returned data while writing a file" });
   }
 }
 

@@ -1,5 +1,5 @@
 import type { ContainerExecutor, ReadFileOptions } from "./container-files.js";
-import { fileErrorFromErrno } from "./errors.js";
+import { fileErrorFromErrno, SandboxProtocolError } from "./errors.js";
 import { SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
@@ -18,12 +18,15 @@ export async function readFile(
   let output: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   try {
-    control = session.openReadControl();
-    output = session.openReadData();
+    control = session.openStderrControl();
+    output = session.openStdoutReader();
     const opening = await control.readFrame();
     if (opening.kind === "fileError") {
       await control.expectEnd();
       throw fileErrorFromErrno("readFile", path, opening.errno, opening.detail);
+    }
+    if (opening.kind !== "success") {
+      throw new SandboxProtocolError({ detail: "sandbox-shim returned data before file bytes" });
     }
 
     return new Response(responseBody(session, control, output, path), {
@@ -54,6 +57,9 @@ function responseBody(
         await control.expectEnd();
         if (terminal.kind === "fileError") {
           throw fileErrorFromErrno("readFile", path, terminal.errno, terminal.detail);
+        }
+        if (terminal.kind !== "success") {
+          throw new SandboxProtocolError({ detail: "sandbox-shim returned data after file bytes" });
         }
 
         output.releaseLock();
