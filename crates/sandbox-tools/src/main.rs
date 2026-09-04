@@ -1,5 +1,6 @@
 mod file_type;
 mod protocol;
+mod read_directory;
 mod read_file;
 mod stat_file;
 #[cfg(test)]
@@ -32,6 +33,7 @@ fn run(
     };
 
     match command.to_str() {
+        Some("read-directory") => read_directory::run(args, &mut stdout),
         Some("read") => read_file::run(args, &mut stdout, &mut stderr),
         Some("lstat") => stat_file::run(args, false, &mut stdout),
         Some("stat") => stat_file::run(args, true, &mut stdout),

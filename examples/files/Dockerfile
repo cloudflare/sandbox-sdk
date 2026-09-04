@@ -3,5 +3,8 @@ FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
 
 FROM alpine:3.23
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
-RUN printf 'hello from sandbox\n' > /fixture.txt
+RUN mkdir -p /workspace/directory \
+    && printf 'hello from sandbox\n' > /workspace/fixture.txt \
+    && printf 'nested file\n' > /workspace/directory/nested.txt \
+    && ln -s fixture.txt /workspace/link.txt
 CMD ["sleep", "infinity"]

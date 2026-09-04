@@ -111,6 +111,32 @@ fn stat_command_emits_file_metadata() {
 }
 
 #[test]
+fn read_directory_command_emits_all_entries() {
+    let temp = TempDir::new();
+    for name in ["charlie", "alpha", "bravo"] {
+        fs::write(temp.0.join(name), b"").unwrap();
+    }
+
+    let output = Command::new(SHIM)
+        .args(["read-directory", temp.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(&output.stdout[..6], b"SBXF\x01\x02");
+    let payload_length = u32::from_le_bytes(output.stdout[6..10].try_into().unwrap()) as usize;
+    assert_eq!(payload_length, output.stdout.len() - 10);
+    assert_eq!(
+        u32::from_le_bytes(output.stdout[10..14].try_into().unwrap()),
+        3
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("alpha"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("bravo"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("charlie"));
+}
+
+#[test]
 fn write_command_acknowledges_open_before_consuming_stdin() {
     let temp = TempDir::new();
     let path = temp.0.join("content.bin");

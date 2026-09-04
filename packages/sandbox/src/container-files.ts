@@ -1,4 +1,8 @@
 import { type FileContent, fileContentStream } from "./file-content.js";
+import {
+  readDirectory as readContainerDirectory,
+  type SandboxDirectoryEntry,
+} from "./read-directory.js";
 import { readFile as readContainerFile } from "./read-file.js";
 import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
@@ -15,7 +19,9 @@ interface FileOperationOptions {
 export type ReadFileOptions = FileOperationOptions;
 export type WriteFileOptions = FileOperationOptions;
 export type StatOptions = FileOperationOptions;
+export type ReadDirectoryOptions = FileOperationOptions;
 export type { FileContent } from "./file-content.js";
+export type { SandboxDirectoryEntry } from "./read-directory.js";
 export type { SandboxFileType } from "./file-type.js";
 export type { SandboxFileStat } from "./stat-file.js";
 
@@ -100,6 +106,26 @@ export class ContainerFiles {
   async lstat(path: string, options: StatOptions = {}): Promise<SandboxFileStat> {
     validatePath(path, options.cwd);
     return statFile(this.#container, path, options, "lstat");
+  }
+
+  /**
+   * Returns the immediate entries from a directory in native enumeration order.
+   *
+   * The directory path may resolve through a symlink, but entry types describe the entries
+   * themselves and do not follow symlinks. The operation does not recurse or retrieve metadata
+   * for each child.
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async readDirectory(
+    path: string,
+    options: ReadDirectoryOptions = {},
+  ): Promise<SandboxDirectoryEntry[]> {
+    validatePath(path, options.cwd);
+    return readContainerDirectory(this.#container, path, options);
   }
 }
 

@@ -2,8 +2,8 @@
 
 `@cloudflare/sandbox` is a Durable Object base class for a container-backed
 sandbox. A named sandbox is a Durable Object. Cloudflare starts and restores
-the attached container. The SDK streams files in and out of that container
-using native Linux semantics.
+the attached container. The SDK accesses its filesystem using native Linux
+semantics.
 
 Container lifecycle stays on `this.ctx.container`.
 
@@ -13,7 +13,7 @@ Container lifecycle stays on `this.ctx.container`.
 
 ## Examples
 
-- [Read and write files](examples/read-write-files)
+- [Files](examples/files)
 - [Snapshot and restore](examples/snapshot-restore)
 - [Container instance lifecycle](examples/instance-lifecycle)
 

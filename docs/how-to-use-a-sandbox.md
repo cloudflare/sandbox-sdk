@@ -1,7 +1,7 @@
 # How to use a sandbox in a Worker
 
-This guide attaches a container-backed sandbox to a Worker and reads or writes
-files in it.
+This guide attaches a container-backed sandbox to a Worker and accesses files
+in it.
 
 The container image must provide `/usr/local/bin/sandbox-shim`. Copy it into
 your own base image:
@@ -62,6 +62,11 @@ export class MySandbox extends Sandbox<Env> {
   async write(path: string, content: ReadableStream<Uint8Array>): Promise<void> {
     this.ensureRunning();
     await this.files.writeFile(path, content);
+  }
+
+  async list(path: string) {
+    this.ensureRunning();
+    return this.files.readDirectory(path);
   }
 
   private ensureRunning(): void {

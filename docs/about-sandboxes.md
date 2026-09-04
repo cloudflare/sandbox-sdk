@@ -10,7 +10,7 @@ to start, snapshot, stop, or destroy it.
 
 ## What the SDK owns
 
-The SDK is the file transport between the Worker and a matching
+The SDK provides filesystem access between the Worker and a matching
 `sandbox-shim` in the container. It maps Linux filesystem failures to
 `SandboxFileError` and protocol mismatches to `SandboxProtocolError`. It does
 not decide when the container runs.

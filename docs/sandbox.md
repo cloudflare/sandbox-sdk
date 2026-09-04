@@ -33,6 +33,40 @@ Creates or truncates `path` and streams `content` into it. The destination is
 opened before a caller-provided stream is consumed. A later failure can leave a
 created, truncated, or partially written file.
 
+### `stat(path, options?): Promise<SandboxFileStat>`
+
+Returns metadata for a path, following its final symlink.
+
+### `lstat(path, options?): Promise<SandboxFileStat>`
+
+Returns metadata without following the path's final symlink.
+
+| Field        | Type                                                                                             | Description                      |
+| ------------ | ------------------------------------------------------------------------------------------------ | -------------------------------- |
+| `type`       | `"file" \| "directory" \| "symlink" \| "blockDevice" \| "characterDevice" \| "fifo" \| "socket"` | Native Linux file type.          |
+| `size`       | `bigint`                                                                                         | Size in bytes.                   |
+| `mode`       | `number`                                                                                         | Full Linux mode, including type. |
+| `uid`        | `number`                                                                                         | Numeric Linux user ID.           |
+| `gid`        | `number`                                                                                         | Numeric Linux group ID.          |
+| `accessedAt` | `Date`                                                                                           | Last access time.                |
+| `modifiedAt` | `Date`                                                                                           | Last content modification time.  |
+| `changedAt`  | `Date`                                                                                           | Last metadata change time.       |
+
+### `readDirectory(path, options?): Promise<SandboxDirectoryEntry[]>`
+
+Returns all immediate entries in native enumeration order. The directory path
+may resolve through a symlink, but entry types describe the entries themselves
+and do not follow symlinks. The operation does not recurse or retrieve full
+metadata for each child.
+
+| Field  | Type              | Description                      |
+| ------ | ----------------- | -------------------------------- |
+| `name` | `string`          | Immediate child's UTF-8 name.    |
+| `type` | `SandboxFileType` | Non-following native entry type. |
+
+Directory names that are not valid UTF-8 produce `SandboxFileError` with
+`EILSEQ`.
+
 ### Options
 
 | Field    | Type          | Description                                                   |
@@ -53,14 +87,14 @@ created, truncated, or partially written file.
 
 A Linux filesystem failure reported by the container.
 
-| Field       | Type                              | Description                   |
-| ----------- | --------------------------------- | ----------------------------- |
-| `name`      | `"SandboxFileError"`              | Error name.                   |
-| `code`      | `` `E${string}` `` \| `"UNKNOWN"` | Symbolic errno, or `UNKNOWN`. |
-| `errno`     | `number`                          | Positive Linux errno.         |
-| `operation` | `"readFile"` \| `"writeFile"`     | Failed operation.             |
-| `path`      | `string`                          | Path passed to the operation. |
-| `detail`    | `string`                          | Failure detail from the shim. |
+| Field       | Type                                                                        | Description                   |
+| ----------- | --------------------------------------------------------------------------- | ----------------------------- |
+| `name`      | `"SandboxFileError"`                                                        | Error name.                   |
+| `code`      | `` `E${string}` `` \| `"UNKNOWN"`                                           | Symbolic errno, or `UNKNOWN`. |
+| `errno`     | `number`                                                                    | Positive Linux errno.         |
+| `operation` | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` | Failed operation.             |
+| `path`      | `string`                                                                    | Path passed to the operation. |
+| `detail`    | `string`                                                                    | Failure detail from the shim. |
 
 `SandboxFileError.is(cause)` is true for local and JSRPC-crossed values.
 

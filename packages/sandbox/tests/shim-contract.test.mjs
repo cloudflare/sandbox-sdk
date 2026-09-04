@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -73,6 +73,43 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
       await new ContainerFiles(nativeContainer()).writeFile(path, content);
 
       expect(new Uint8Array(await readFile(path))).toEqual(content);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns complete metadata and native directory entries", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      await writeFile(join(directory, "bravo.txt"), "bravo");
+      await writeFile(join(directory, "alpha.txt"), "alpha");
+      await mkdir(join(directory, "charlie"));
+      await symlink("alpha.txt", join(directory, "current"));
+      const files = new ContainerFiles(nativeContainer());
+
+      const stat = await files.stat(join(directory, "alpha.txt"));
+      expect(stat).toMatchObject({ type: "file", size: 5n });
+      expect(stat.mode & 0o170000).toBe(0o100000);
+      expect(stat.uid).toBeTypeOf("number");
+      expect(stat.gid).toBeTypeOf("number");
+      expect(stat.accessedAt).toBeInstanceOf(Date);
+      expect(stat.modifiedAt).toBeInstanceOf(Date);
+      expect(stat.changedAt).toBeInstanceOf(Date);
+      await expect(files.lstat(join(directory, "current"))).resolves.toMatchObject({
+        type: "symlink",
+      });
+      await expect(files.stat("/dev/null")).resolves.toMatchObject({ type: "characterDevice" });
+
+      const entries = await files.readDirectory(directory);
+      expect(entries).toHaveLength(4);
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          { name: "alpha.txt", type: "file" },
+          { name: "bravo.txt", type: "file" },
+          { name: "charlie", type: "directory" },
+          { name: "current", type: "symlink" },
+        ]),
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
