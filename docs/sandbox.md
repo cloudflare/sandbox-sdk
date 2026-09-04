@@ -67,6 +67,12 @@ metadata for each child.
 Directory names that are not valid UTF-8 produce `SandboxFileError` with
 `EILSEQ`.
 
+### `mkdir(path, options?): Promise<void>`
+
+Creates one directory by default. With `recursive: true`, it creates missing
+parents and accepts an existing target directory. Recursive creation is not
+transactional; failure or cancellation can leave some parent directories.
+
 ### Options
 
 | Field    | Type          | Description                                                   |
@@ -74,6 +80,8 @@ Directory names that are not valid UTF-8 produce `SandboxFileError` with
 | `cwd`    | `string`      | Absolute working directory used to resolve a relative `path`. |
 | `user`   | `string`      | Linux user, or `user:group`, used to open the file.           |
 | `signal` | `AbortSignal` | Cancels the native container process.                         |
+
+`MkdirOptions` also accepts `recursive?: boolean`.
 
 `path` must be non-empty and must not contain `NUL`. Relative `path` requires
 `cwd`. `cwd`, when set, must be absolute. Violations throw `TypeError`.
@@ -87,14 +95,14 @@ Directory names that are not valid UTF-8 produce `SandboxFileError` with
 
 A Linux filesystem failure reported by the container.
 
-| Field       | Type                                                                        | Description                   |
-| ----------- | --------------------------------------------------------------------------- | ----------------------------- |
-| `name`      | `"SandboxFileError"`                                                        | Error name.                   |
-| `code`      | `` `E${string}` `` \| `"UNKNOWN"`                                           | Symbolic errno, or `UNKNOWN`. |
-| `errno`     | `number`                                                                    | Positive Linux errno.         |
-| `operation` | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` | Failed operation.             |
-| `path`      | `string`                                                                    | Path passed to the operation. |
-| `detail`    | `string`                                                                    | Failure detail from the shim. |
+| Field       | Type                                                                                     | Description                   |
+| ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- |
+| `name`      | `"SandboxFileError"`                                                                     | Error name.                   |
+| `code`      | `` `E${string}` `` \| `"UNKNOWN"`                                                        | Symbolic errno, or `UNKNOWN`. |
+| `errno`     | `number`                                                                                 | Positive Linux errno.         |
+| `operation` | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` | Failed operation.             |
+| `path`      | `string`                                                                                 | Path passed to the operation. |
+| `detail`    | `string`                                                                                 | Failure detail from the shim. |
 
 `SandboxFileError.is(cause)` is true for local and JSRPC-crossed values.
 

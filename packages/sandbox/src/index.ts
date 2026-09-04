@@ -2,6 +2,7 @@ export {
   ContainerFiles,
   type ContainerExecutor,
   type FileContent,
+  type MkdirOptions,
   type ReadDirectoryOptions,
   type ReadFileOptions,
   type SandboxDirectoryEntry,

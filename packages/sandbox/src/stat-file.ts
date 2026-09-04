@@ -1,7 +1,7 @@
 import type { ContainerExecutor } from "./container-files.js";
 import { SandboxProtocolError, type SandboxFileOperation } from "./errors.js";
+import { runFileCommand } from "./file-command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
-import { runFileQuery } from "./file-query.js";
 
 const STAT_PAYLOAD_LENGTH = 45;
 
@@ -22,7 +22,14 @@ export async function statFile(
   options: ContainerExecOptions,
   operation: Extract<SandboxFileOperation, "stat" | "lstat">,
 ): Promise<SandboxFileStat> {
-  const payload = await runFileQuery(container, [operation, path], options, operation, path);
+  const payload = await runFileCommand(
+    container,
+    [operation, path],
+    options,
+    operation,
+    path,
+    "data",
+  );
   if (payload.length !== STAT_PAYLOAD_LENGTH) {
     throw new SandboxProtocolError({ detail: `sandbox-shim returned invalid ${operation} data` });
   }

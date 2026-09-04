@@ -10,6 +10,8 @@ const ACCESSIBLE_PATHS = new Set([
   "/workspace",
   "/workspace/directory",
   "/workspace/directory/nested.txt",
+  "/workspace/created",
+  "/workspace/created/nested",
   "/workspace/fixture.txt",
   "/workspace/link.txt",
   "/workspace/missing.txt",
@@ -55,6 +57,12 @@ export class FilesSandbox extends Sandbox<Env> {
   async readDirectory(path: string, sandboxName: string): Promise<SandboxDirectoryEntry[]> {
     this.ensureRunning(sandboxName);
     return this.files.readDirectory(path);
+  }
+
+  /** Creates an allowed workspace directory. */
+  async mkdir(path: string, recursive: boolean, sandboxName: string): Promise<void> {
+    this.ensureRunning(sandboxName);
+    await this.files.mkdir(path, { recursive });
   }
 
   /** Stops and removes this Durable Object's current container instance. */
@@ -129,6 +137,11 @@ export default {
       if (url.pathname === "/directory" && request.method === "GET") {
         return Response.json(await sandbox.readDirectory(path, sandboxName));
       }
+      if (url.pathname === "/directory" && request.method === "PUT") {
+        const recursive = url.searchParams.get("recursive") === "true";
+        await sandbox.mkdir(path, recursive, sandboxName);
+        return new Response(null, { status: 204 });
+      }
 
       return new Response("Not found", { status: 404 });
     } catch (cause) {
@@ -158,6 +171,8 @@ function errorResponse(cause: unknown): Response {
       case "EACCES":
       case "EPERM":
         return new Response("Permission denied", { status: 403 });
+      case "EEXIST":
+        return new Response("Path already exists", { status: 409 });
       case "EISDIR":
       case "ENOTDIR":
       case "EINVAL":

@@ -1,4 +1,5 @@
 mod file_type;
+mod mkdir;
 mod protocol;
 mod read_directory;
 mod read_file;
@@ -33,6 +34,7 @@ fn run(
     };
 
     match command.to_str() {
+        Some("mkdir") => mkdir::run(args, &mut stdout),
         Some("read-directory") => read_directory::run(args, &mut stdout),
         Some("read") => read_file::run(args, &mut stdout, &mut stderr),
         Some("lstat") => stat_file::run(args, false, &mut stdout),

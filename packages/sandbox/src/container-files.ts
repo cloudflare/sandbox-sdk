@@ -1,3 +1,4 @@
+import { runFileCommand } from "./file-command.js";
 import { type FileContent, fileContentStream } from "./file-content.js";
 import {
   readDirectory as readContainerDirectory,
@@ -20,6 +21,10 @@ export type ReadFileOptions = FileOperationOptions;
 export type WriteFileOptions = FileOperationOptions;
 export type StatOptions = FileOperationOptions;
 export type ReadDirectoryOptions = FileOperationOptions;
+export type MkdirOptions = FileOperationOptions & {
+  /** Creates missing parent directories and accepts an existing target directory. */
+  recursive?: boolean;
+};
 export type { FileContent } from "./file-content.js";
 export type { SandboxDirectoryEntry } from "./read-directory.js";
 export type { SandboxFileType } from "./file-type.js";
@@ -126,6 +131,25 @@ export class ContainerFiles {
   ): Promise<SandboxDirectoryEntry[]> {
     validatePath(path, options.cwd);
     return readContainerDirectory(this.#container, path, options);
+  }
+
+  /**
+   * Creates a directory using native Linux filesystem semantics.
+   *
+   * By default only the final directory is created. With `recursive`, missing parents are
+   * created and an existing target directory is accepted. Partial parent creation can remain
+   * after failure or cancellation.
+   * Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
+    validatePath(path, options.cwd);
+    const { recursive = false, ...execOptions } = options;
+    const command = recursive ? ["mkdir", path, "--recursive"] : ["mkdir", path];
+    await runFileCommand(this.#container, command, execOptions, "mkdir", path, "success");
   }
 }
 

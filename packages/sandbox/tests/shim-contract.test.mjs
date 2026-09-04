@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir as nativeMkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -83,7 +83,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     try {
       await writeFile(join(directory, "bravo.txt"), "bravo");
       await writeFile(join(directory, "alpha.txt"), "alpha");
-      await mkdir(join(directory, "charlie"));
+      await nativeMkdir(join(directory, "charlie"));
       await symlink("alpha.txt", join(directory, "current"));
       const files = new ContainerFiles(nativeContainer());
 
@@ -110,6 +110,25 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
           { name: "current", type: "symlink" },
         ]),
       );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("creates single and recursive directories", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const files = new ContainerFiles(nativeContainer());
+      const single = join(directory, "single");
+      const nested = join(directory, "parent", "child");
+
+      await files.mkdir(single);
+      await files.mkdir(nested, { recursive: true });
+
+      await expect(files.stat(single)).resolves.toMatchObject({ type: "directory" });
+      await expect(files.stat(nested)).resolves.toMatchObject({ type: "directory" });
+      await expect(files.mkdir(single)).rejects.toMatchObject({ code: "EEXIST" });
+      await expect(files.mkdir(single, { recursive: true })).resolves.toBeUndefined();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

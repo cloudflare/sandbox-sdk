@@ -21,6 +21,12 @@ printf 'saved in the sandbox\n' | \
 curl "$WORKER_URL/stat?sandbox=demo&path=/workspace/link.txt"
 curl "$WORKER_URL/lstat?sandbox=demo&path=/workspace/link.txt"
 curl "$WORKER_URL/directory?sandbox=demo&path=/workspace"
+
+curl --request PUT \
+  "$WORKER_URL/directory?sandbox=demo&path=/workspace/created"
+
+curl --request PUT \
+  "$WORKER_URL/directory?sandbox=demo&path=/workspace/created/nested&recursive=true"
 ```
 
 Destroy the current physical execution when finished:

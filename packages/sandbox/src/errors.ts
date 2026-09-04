@@ -16,7 +16,13 @@ for (const preferred of ["EAGAIN", "EDEADLK", "EOPNOTSUPP"] as const) {
 }
 
 /** Filesystem operation that failed. */
-export type SandboxFileOperation = "readFile" | "writeFile" | "stat" | "lstat" | "readDirectory";
+export type SandboxFileOperation =
+  | "readFile"
+  | "writeFile"
+  | "stat"
+  | "lstat"
+  | "readDirectory"
+  | "mkdir";
 
 /** Construction contract for {@link SandboxFileError}. */
 export interface SandboxFileErrorOptions {
