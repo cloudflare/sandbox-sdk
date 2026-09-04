@@ -79,6 +79,13 @@ Renames a file, directory, or symlink. Native Linux replacement rules apply.
 Cross-filesystem renames reject with `EXDEV`; the SDK does not fall back to
 copying and removing the source.
 
+### `remove(path, options?): Promise<void>`
+
+Removes a file or symlink by default and rejects a directory. With
+`recursive: true`, it removes a directory tree without following symlinks.
+With `force: true`, a missing target is accepted. Recursive removal is not
+transactional; failure or cancellation can leave partial effects.
+
 ### Options
 
 | Field    | Type          | Description                                                   |
@@ -87,8 +94,9 @@ copying and removing the source.
 | `user`   | `string`      | Linux user, or `user:group`, used to open the file.           |
 | `signal` | `AbortSignal` | Cancels the native container process.                         |
 
-`MkdirOptions` also accepts `recursive?: boolean`. `RenameOptions` uses the
-common options above; `cwd` resolves both relative paths.
+`MkdirOptions` also accepts `recursive?: boolean`. `RemoveOptions` accepts
+`recursive?: boolean` and `force?: boolean`. `RenameOptions` uses the common
+options above; `cwd` resolves both relative paths.
 
 `path` must be non-empty and must not contain `NUL`. Relative `path` requires
 `cwd`. `cwd`, when set, must be absolute. Violations throw `TypeError`.
@@ -102,15 +110,15 @@ common options above; `cwd` resolves both relative paths.
 
 A Linux filesystem failure reported by the container.
 
-| Field         | Type                                                                                                   | Description                             |
-| ------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| `name`        | `"SandboxFileError"`                                                                                   | Error name.                             |
-| `code`        | `` `E${string}` `` \| `"UNKNOWN"`                                                                      | Symbolic errno, or `UNKNOWN`.           |
-| `errno`       | `number`                                                                                               | Positive Linux errno.                   |
-| `operation`   | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` \| `"rename"` | Failed operation.                       |
-| `path`        | `string`                                                                                               | Path passed to the operation.           |
-| `destination` | `string \| undefined`                                                                                  | Destination path for a failed `rename`. |
-| `detail`      | `string`                                                                                               | Failure detail from the shim.           |
+| Field         | Type                                                                                                                 | Description                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `name`        | `"SandboxFileError"`                                                                                                 | Error name.                             |
+| `code`        | `` `E${string}` `` \| `"UNKNOWN"`                                                                                    | Symbolic errno, or `UNKNOWN`.           |
+| `errno`       | `number`                                                                                                             | Positive Linux errno.                   |
+| `operation`   | `"readFile"` \| `"writeFile"` \| `"stat"` \| `"lstat"` \| `"readDirectory"` \| `"mkdir"` \| `"rename"` \| `"remove"` | Failed operation.                       |
+| `path`        | `string`                                                                                                             | Path passed to the operation.           |
+| `destination` | `string \| undefined`                                                                                                | Destination path for a failed `rename`. |
+| `detail`      | `string`                                                                                                             | Failure detail from the shim.           |
 
 `SandboxFileError.is(cause)` is true for local and JSRPC-crossed values.
 

@@ -160,6 +160,23 @@ fn rename_command_moves_the_source() {
 }
 
 #[test]
+fn remove_command_removes_a_file() {
+    let temp = TempDir::new();
+    let path = temp.0.join("content.bin");
+    fs::write(&path, b"content").unwrap();
+
+    let output = Command::new(SHIM)
+        .args(["remove", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"SBXF\x01\x00\0\0\0\0");
+    assert!(output.stderr.is_empty());
+    assert!(!path.exists());
+}
+
+#[test]
 fn write_command_acknowledges_open_before_consuming_stdin() {
     let temp = TempDir::new();
     let path = temp.0.join("content.bin");

@@ -27,3 +27,11 @@ impl Drop for TempDir {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+pub(crate) fn assert_file_error_errno(output: &[u8], errno: i32) {
+    assert_eq!(&output[..6], b"SBXF\x01\x01");
+    assert_eq!(
+        i32::from_le_bytes(output[10..14].try_into().unwrap()),
+        errno
+    );
+}

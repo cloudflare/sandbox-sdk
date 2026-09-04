@@ -30,7 +30,7 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::test_support::{TempDir, assert_file_error_errno};
     use std::fs;
     use std::path::PathBuf;
 
@@ -42,14 +42,6 @@ mod tests {
         let mut output = Vec::new();
         run(args.into_iter(), &mut output).unwrap();
         output
-    }
-
-    fn assert_errno(output: &[u8], errno: i32) {
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(
-            i32::from_le_bytes(output[10..14].try_into().unwrap()),
-            errno
-        );
     }
 
     #[test]
@@ -64,7 +56,7 @@ mod tests {
         assert!(nested.is_dir());
         assert_eq!(execute(single.clone(), true), b"SBXF\x01\x00\0\0\0\0");
 
-        assert_errno(&execute(single, false), 17);
+        assert_file_error_errno(&execute(single, false), 17);
     }
 
     #[test]
@@ -73,8 +65,8 @@ mod tests {
         let path = temp.0.join("file");
         fs::write(&path, b"").unwrap();
 
-        assert_errno(&execute(path, true), 17);
-        assert_errno(&execute(temp.0.join("missing/child"), false), 2);
+        assert_file_error_errno(&execute(path, true), 17);
+        assert_file_error_errno(&execute(temp.0.join("missing/child"), false), 2);
     }
 
     #[test]

@@ -157,6 +157,39 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     }
   });
 
+  it("removes files, symlinks, and directory trees", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const files = new ContainerFiles(nativeContainer());
+      const file = join(directory, "file.txt");
+      const tree = join(directory, "tree");
+      const external = join(directory, "external");
+      const link = join(directory, "external-link");
+      await writeFile(file, "content");
+      await nativeMkdir(tree);
+      await nativeMkdir(external);
+      await writeFile(join(tree, "nested.txt"), "nested");
+      await writeFile(join(external, "keep.txt"), "keep");
+      await symlink(external, link);
+      await symlink(external, join(tree, "nested-link"));
+
+      await files.remove(file);
+      await files.remove(link);
+      await files.remove(tree, { recursive: true });
+      await files.remove(join(directory, "missing"), { force: true });
+
+      await expect(files.stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(files.lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(files.stat(tree)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(files.readFile(join(external, "keep.txt"))).resolves.toBeInstanceOf(Response);
+      await expect(files.remove(external, { force: true })).rejects.toMatchObject({
+        operation: "remove",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("preserves native open and read errors", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {

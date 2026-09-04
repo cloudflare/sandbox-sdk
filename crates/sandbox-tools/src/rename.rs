@@ -28,21 +28,13 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TempDir;
+    use crate::test_support::{TempDir, assert_file_error_errno};
     use std::fs;
 
     fn execute(source: OsString, destination: OsString) -> Vec<u8> {
         let mut output = Vec::new();
         run([source, destination].into_iter(), &mut output).unwrap();
         output
-    }
-
-    fn assert_errno(output: &[u8], errno: i32) {
-        assert_eq!(&output[..6], b"SBXF\x01\x01");
-        assert_eq!(
-            i32::from_le_bytes(output[10..14].try_into().unwrap()),
-            errno
-        );
     }
 
     #[test]
@@ -68,7 +60,7 @@ mod tests {
     fn reports_native_rename_errors() {
         let temp = TempDir::new();
 
-        assert_errno(
+        assert_file_error_errno(
             &execute(
                 temp.0.join("missing").into_os_string(),
                 temp.0.join("destination").into_os_string(),

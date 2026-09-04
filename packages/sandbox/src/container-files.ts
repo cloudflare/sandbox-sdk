@@ -22,6 +22,12 @@ export type WriteFileOptions = FileOperationOptions;
 export type StatOptions = FileOperationOptions;
 export type ReadDirectoryOptions = FileOperationOptions;
 export type RenameOptions = FileOperationOptions;
+export type RemoveOptions = FileOperationOptions & {
+  /** Permits removing a directory tree without following symlinks. */
+  recursive?: boolean;
+  /** Ignores a missing target. */
+  force?: boolean;
+};
 export type MkdirOptions = FileOperationOptions & {
   /** Creates missing parent directories and accepts an existing target directory. */
   recursive?: boolean;
@@ -176,6 +182,31 @@ export class ContainerFiles {
       command: ["rename", source, destination],
       options,
       error: { operation: "rename", path: source, destination },
+      expected: "success",
+    });
+  }
+
+  /**
+   * Removes a file or symlink using native Linux filesystem semantics.
+   *
+   * Directories are rejected unless `recursive` is set. Recursive removal does not follow
+   * symlinks and can leave partial effects after failure or cancellation. `force` ignores only
+   * a missing target. Native container, transport, and abort failures propagate unchanged.
+   *
+   * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
+   * @throws {SandboxFileError} The container reports a filesystem failure.
+   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   */
+  async remove(path: string, options: RemoveOptions = {}): Promise<void> {
+    validatePath(path, options.cwd);
+    const { recursive = false, force = false, ...execOptions } = options;
+    const command = ["remove", path];
+    if (recursive) command.push("--recursive");
+    if (force) command.push("--force");
+    await runFileCommand(this.#container, {
+      command,
+      options: execOptions,
+      error: { operation: "remove", path },
       expected: "success",
     });
   }

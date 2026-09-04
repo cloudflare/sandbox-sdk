@@ -23,7 +23,8 @@ export type SandboxFileOperation =
   | "lstat"
   | "readDirectory"
   | "mkdir"
-  | "rename";
+  | "rename"
+  | "remove";
 
 type SinglePathFileOperation = Exclude<SandboxFileOperation, "rename">;
 

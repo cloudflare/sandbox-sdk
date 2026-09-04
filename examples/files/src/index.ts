@@ -17,6 +17,10 @@ const ACCESSIBLE_PATHS = new Set([
   "/workspace/missing.txt",
   "/workspace/rename-destination.txt",
   "/workspace/rename-source.txt",
+  "/workspace/remove-directory",
+  "/workspace/remove-directory/nested.txt",
+  "/workspace/remove-file.txt",
+  "/workspace/remove-link",
   "/workspace/written.txt",
 ]);
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -71,6 +75,17 @@ export class FilesSandbox extends Sandbox<Env> {
   async rename(source: string, destination: string, sandboxName: string): Promise<void> {
     this.ensureRunning(sandboxName);
     await this.files.rename(source, destination);
+  }
+
+  /** Removes one allowed workspace path. */
+  async remove(
+    path: string,
+    recursive: boolean,
+    force: boolean,
+    sandboxName: string,
+  ): Promise<void> {
+    this.ensureRunning(sandboxName);
+    await this.files.remove(path, { recursive, force });
   }
 
   /** Stops and removes this Durable Object's current container instance. */
@@ -160,6 +175,15 @@ export default {
           return new Response("Destination is not available in this example", { status: 400 });
         }
         await sandbox.rename(path, destination, sandboxName);
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/remove" && request.method === "DELETE") {
+        if (requestedPath === null) {
+          return new Response("Path is required", { status: 400 });
+        }
+        const recursive = url.searchParams.get("recursive") === "true";
+        const force = url.searchParams.get("force") === "true";
+        await sandbox.remove(path, recursive, force, sandboxName);
         return new Response(null, { status: 204 });
       }
 

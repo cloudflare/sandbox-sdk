@@ -1,7 +1,7 @@
 # Files
 
-This example keeps all `ContainerFiles` operations in one Worker. It reads and writes
-file bytes, inspects metadata, and lists immediate directory entries.
+This example keeps all `ContainerFiles` operations in one Worker. It transfers file
+bytes, inspects metadata, lists directory entries, and mutates workspace paths.
 
 Build the local shim donor and deploy the example:
 
@@ -30,6 +30,12 @@ curl --request PUT \
 
 curl --request POST \
   "$WORKER_URL/rename?sandbox=demo&path=/workspace/rename-source.txt&destination=/workspace/rename-destination.txt"
+
+curl --request DELETE \
+  "$WORKER_URL/remove?sandbox=demo&path=/workspace/remove-file.txt"
+
+curl --request DELETE \
+  "$WORKER_URL/remove?sandbox=demo&path=/workspace/remove-directory&recursive=true"
 ```
 
 Destroy the current physical execution when finished:
