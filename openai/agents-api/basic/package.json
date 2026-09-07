@@ -1,0 +1,52 @@
+{
+  "name": "cloudflare-openai-agents-api-basic",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Basic Cloudflare Worker for webhook-managed OpenAI Agents API sessions.",
+  "cloudflare": {
+    "bindings": {
+      "OPENAI_API_KEY": {
+        "description": "OpenAI application key used by the TypeScript SDK to create sessions, submit input, and retrieve results."
+      },
+      "OPENAI_AGENT_ID": {
+        "description": "OpenAI agent ID configured in the executor Worker."
+      },
+      "EXECUTOR_URL": {
+        "description": "Deployed OpenAI Agents API executor Worker URL without the /webhook path."
+      },
+      "EXECUTOR_CLIENT_SECRET": {
+        "description": "Bearer token configured on the executor Worker for manual Container cleanup."
+      },
+      "TASK_TIMEOUT_SECONDS": {
+        "description": "Maximum duration of one agent task in seconds (default: 600)."
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "postinstall": "npm run cf-typegen",
+    "cf-typegen": "wrangler types --env-file .dev.vars.example",
+    "typecheck": "wrangler types --env-file .dev.vars.example --check && tsc --noEmit --project tsconfig.json",
+    "test": "npm run test:workers",
+    "test:workers": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@openai/agents-api-preview": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.17",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.102.0"
+  },
+  "license": "Apache-2.0"
+}
