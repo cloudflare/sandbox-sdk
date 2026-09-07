@@ -1,0 +1,63 @@
+{
+  "name": "cloudflare-openai-agents-api-executor",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "OpenAI Agents API executor on Cloudflare Workers and Durable Object Containers.",
+  "cloudflare": {
+    "bindings": {
+      "OPENAI_EXECUTOR_API_KEY": {
+        "description": "Restricted OpenAI project key passed only to the Codex executor. Grant List models read access and disable other permissions where possible."
+      },
+      "EXECUTOR_CLIENT_SECRET": {
+        "description": "Bearer token that protects manual executor cleanup requests. Generate one with `openssl rand -hex 32`."
+      },
+      "EXECUTOR_KEEP_ALIVE_SECONDS": {
+        "description": "Seconds before the executor lifecycle deadline expires (default: 30). Lifecycle events and active session checks re-arm the deadline."
+      },
+      "EXECUTOR_PREWARM_ENABLED": {
+        "description": "Start self-hosted executor Containers when agent.session.created arrives (default: true)."
+      },
+      "EXECUTOR_SNAPSHOTS_ENABLED": {
+        "description": "Snapshot the whole Container when a session is confirmed idle and restore it on the next start (default: true)."
+      },
+      "OPENAI_API_KEY": {
+        "description": "OpenAI controller key used to retrieve session state for webhook-driven provisioning. Configure this together with OPENAI_AGENT_ID and OPENAI_WEBHOOK_SECRET."
+      },
+      "OPENAI_AGENT_ID": {
+        "description": "OpenAI agent ID served by the webhook. Sessions for other agents are ignored."
+      },
+      "OPENAI_WEBHOOK_SECRET": {
+        "description": "Signing secret for the required OpenAI webhook. Configure this together with OPENAI_API_KEY and OPENAI_AGENT_ID after registering the deployed /webhook URL."
+      }
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "postinstall": "npm run cf-typegen",
+    "test": "npm run test:workers && npm run test:node",
+    "test:watch": "vitest --config vitest.config.ts",
+    "typecheck": "wrangler types --env-file .dev.vars.example --check && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "cf-typegen": "wrangler types --env-file .dev.vars.example",
+    "test:workers": "vitest run --config vitest.config.ts",
+    "test:node": "vitest run --config vitest.node.config.ts"
+  },
+  "dependencies": {
+    "openai": "^7.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.17",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.102.0"
+  },
+  "license": "Apache-2.0"
+}

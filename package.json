@@ -39,7 +39,8 @@
     "sites/*",
     "examples/*",
     "bridge/worker",
-    "devin"
+    "devin",
+    "openai/*"
   ],
   "devDependencies": {
     "@biomejs/biome": "2.3.7",

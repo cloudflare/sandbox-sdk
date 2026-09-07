@@ -1,0 +1,13 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+
+# Restricted OpenAI key passed only to executor Containers.
+OPENAI_EXECUTOR_API_KEY=sk-replace-restricted-executor-key
+
+# Generate independently with: openssl rand -hex 32
+EXECUTOR_CLIENT_SECRET=replace-with-a-long-random-value
+
+# The webhook returns a server error until all three values are configured and
+# the signing secret is no longer pending.
+OPENAI_API_KEY=sk-replace-controller-key
+OPENAI_AGENT_ID=agent_replace-me
+OPENAI_WEBHOOK_SECRET=pending-webhook-registration

@@ -50,6 +50,7 @@ jobs:
             packages/*/node_modules
             examples/*/node_modules
             sites/*/node_modules
+            openai/*/node_modules
           key: node-modules-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci --prefer-offline --no-audit --no-fund
