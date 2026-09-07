@@ -42,8 +42,8 @@ Export a container-enabled Durable Object and bind it as `SANDBOX`:
 }
 ```
 
-Extend `Sandbox` and start the attached container before the first file
-operation:
+Extend `Sandbox`. Start the container from application code before using
+`this.files`:
 
 ```ts
 import { Sandbox } from "@cloudflare/sandbox";
@@ -55,21 +55,6 @@ interface Env {
 
 export class MySandbox extends Sandbox<Env> {
   async read(path: string): Promise<Response> {
-    this.ensureRunning();
-    return this.files.readFile(path);
-  }
-
-  async write(path: string, content: ReadableStream<Uint8Array>): Promise<void> {
-    this.ensureRunning();
-    await this.files.writeFile(path, content);
-  }
-
-  async list(path: string) {
-    this.ensureRunning();
-    return this.files.readDirectory(path);
-  }
-
-  private ensureRunning(): void {
     const container = this.ctx.container;
     if (container === undefined) {
       throw new Error("Sandbox requires a container-enabled Durable Object");
@@ -81,9 +66,13 @@ export class MySandbox extends Sandbox<Env> {
         enableInternet: false,
       });
     }
+    return this.files.readFile(path);
   }
 }
 ```
+
+If a container is already running, the code above reuses it. To start from a
+new image, destroy the current execution first.
 
 Route work to a stable sandbox name:
 
@@ -100,5 +89,5 @@ If the file is missing, `readFile` throws `SandboxFileError` with `code`
 `ENOENT`. After a JSRPC hop, recognize it with `SandboxFileError.is(cause)`.
 
 For method options, error fields, and accepted write content, see
-[Sandbox SDK reference](sandbox.md). For why identity and lifecycle stay on the
-Durable Object and Container APIs, see [About sandboxes](about-sandboxes.md).
+[Sandbox SDK reference](sandbox.md). For identity, deployments, and
+failures, see [About sandboxes](about-sandboxes.md).

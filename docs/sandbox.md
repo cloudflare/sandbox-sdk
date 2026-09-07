@@ -14,7 +14,9 @@ Abstract Durable Object base class. The constructor requires
 | ------- | ---------------- | ----------------------------------------------- |
 | `files` | `ContainerFiles` | File operations against the attached container. |
 
-`Sandbox` does not wrap Container Instance lifecycle. Use `this.ctx.container`.
+`Sandbox` does not wrap Container Instance lifecycle. Use `this.ctx.container`
+to start, snapshot, signal, or destroy the execution. `this.files` requires a
+running container.
 
 ## `ContainerFiles`
 
