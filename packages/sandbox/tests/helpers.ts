@@ -107,6 +107,10 @@ export function containerWith(process: ExecProcess) {
   return { exec: vi.fn().mockResolvedValue(process) };
 }
 
+export function containerRejecting(error: Error) {
+  return { exec: vi.fn().mockRejectedValue(error) };
+}
+
 export interface Deferred<Value> {
   promise: Promise<Value>;
   resolve(value: Value): void;

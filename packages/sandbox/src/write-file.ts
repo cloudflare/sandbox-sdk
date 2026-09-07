@@ -1,6 +1,12 @@
-import type { ContainerExecutor, FileOperationOptions } from "./container-files.js";
+import type { FileOperationOptions } from "./files.js";
 import { fileErrorFromErrno, protocolError } from "./errors.js";
-import { SHIM_PATH, type ShimControlFrame, ShimControl, ShimSession } from "./shim.js";
+import {
+  type ContainerExecutor,
+  SHIM_PATH,
+  type ShimControlFrame,
+  ShimControl,
+  ShimSession,
+} from "./shim.js";
 
 type FailureReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 type PumpResult =

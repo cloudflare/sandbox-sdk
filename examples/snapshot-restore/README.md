@@ -1,8 +1,8 @@
 # Snapshot and restore
 
 This example checkpoints a sandbox with the native Container API and stores only its
-active snapshot reference in Durable Object storage. The SDK does not wrap snapshot
-or lifecycle operations.
+active snapshot reference in Durable Object storage. `Files` provides file operations;
+it does not wrap snapshot or lifecycle operations.
 
 Build the local shim donor and deploy the example:
 

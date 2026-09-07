@@ -1,26 +1,18 @@
-# Sandbox SDK reference
+# Files reference
 
 Package: `@cloudflare/sandbox`
 
-The package exports `Sandbox`, the `SandboxFileError` and
+The package exports `Files`, the `SandboxFileError` and
 `SandboxProtocolError` recognizers, and the types listed below.
 
-## `Sandbox<Env, Props = {}>`
+## `new Files(container)`
 
-Abstract Durable Object base class. The constructor requires
-`ctx.container`. It throws if the Durable Object is not container-enabled.
+Adds structured file operations to an attached Container. Pass a `Container`
+from a container-enabled Durable Object.
 
-| Member  | Type             | Description                                     |
-| ------- | ---------------- | ----------------------------------------------- |
-| `files` | `ContainerFiles` | File operations against the attached container. |
-
-`Sandbox` does not wrap Container Instance lifecycle. Use `this.ctx.container`
-to start, snapshot, signal, or destroy the execution. `this.files` requires a
-running container.
-
-## `ContainerFiles`
-
-Available as `sandbox.files`. The container image must provide
+`Files` does not start, snapshot, signal, or destroy the execution. Use the
+native Container API for lifecycle and process execution. File operations
+require a running container whose image provides
 `/usr/local/bin/sandbox-shim`.
 
 ### `readFile(path, options?): Promise<Response>`
@@ -78,8 +70,8 @@ transactional; failure or cancellation can leave some parent directories.
 ### `rename(source, destination, options?): Promise<void>`
 
 Renames a file, directory, or symlink. Native Linux replacement rules apply.
-Cross-filesystem renames reject with `EXDEV`; the SDK does not fall back to
-copying and removing the source.
+Cross-filesystem renames reject with `EXDEV`; no copy-and-remove fallback is
+attempted.
 
 ### `remove(path, options?): Promise<void>`
 

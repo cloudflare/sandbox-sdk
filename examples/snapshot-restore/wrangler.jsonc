@@ -1,8 +1,8 @@
 {
-  "name": "sandbox-sdk-subsequent-snapshot-restore",
+  "name": "sandbox-snapshot-restore-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
-  // The SDK resolves native Linux errno names through node:os.
+  // Files resolves native Linux errno names through node:os.
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [

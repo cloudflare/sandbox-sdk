@@ -9,13 +9,13 @@ survives container restarts, snapshot restore, and explicit destroy.
 
 ## Filesystem and lifecycle
 
-`Sandbox` exposes `this.files` for Linux filesystem operations. The container
+`Files` provides Linux file operations for an attached container. The container
 image must provide `/usr/local/bin/sandbox-shim`. Linux filesystem failures
 become `SandboxFileError`. Malformed shim output becomes
 `SandboxProtocolError`.
 
 The application starts, snapshots, signals, and destroys the container
-through `this.ctx.container`. `this.files` requires a running container.
+through `this.ctx.container`. File operations require a running container.
 
 Reusing a named sandbox preserves filesystem state for as long as the
 current execution, or a restored snapshot of it, remains. Destroying the

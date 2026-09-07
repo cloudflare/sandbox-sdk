@@ -1,13 +1,12 @@
 # Cloudflare Sandbox SDK
 
-`@cloudflare/sandbox` is a Durable Object base class for a container-backed
-sandbox. A named sandbox is a Durable Object. The application starts and
-destroys the attached container through `this.ctx.container`. The SDK reads
-and writes the container filesystem using native Linux semantics.
+Build a sandbox as a container-enabled Durable Object. Use native Container
+APIs for lifecycle and process execution. Add `@cloudflare/sandbox` when you
+need structured, streaming file operations with native Linux semantics.
 
 - [About sandboxes](docs/about-sandboxes.md)
 - [How to use a sandbox in a Worker](docs/how-to-use-a-sandbox.md)
-- [Sandbox SDK reference](docs/sandbox.md)
+- [Files reference](docs/sandbox.md)
 
 ## Examples
 

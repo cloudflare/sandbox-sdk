@@ -1,5 +1,7 @@
+import { DurableObject } from "cloudflare:workers";
+
 import {
-  Sandbox,
+  Files,
   type SandboxDirectoryEntry,
   SandboxFileError,
   type SandboxFileStat,
@@ -30,7 +32,14 @@ interface Env {
   SANDBOX_IMAGE: string;
 }
 
-export class FilesSandbox extends Sandbox<Env> {
+export class FilesSandbox extends DurableObject<Env> {
+  readonly files: Files;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.files = new Files(this.requireContainer());
+  }
+
   /** Streams one allowed file from the example workspace. */
   async readFile(path: string, sandboxName: string): Promise<Response> {
     this.ensureRunning(sandboxName);

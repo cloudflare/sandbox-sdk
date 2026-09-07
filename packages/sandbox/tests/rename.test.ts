@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 import { commandProcess, containerWith, dataFrame, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
-describe("ContainerFiles.rename", () => {
+describe("Files.rename", () => {
   it("renames one path and forwards native options", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
     const signal = new AbortController().signal;
 
-    await new ContainerFiles(container).rename("source", "destination", {
+    await new Files(container).rename("source", "destination", {
       cwd: "/workspace",
       user: "1000:1000",
       signal,
@@ -27,7 +27,7 @@ describe("ContainerFiles.rename", () => {
   });
 
   it("maps native errors with both paths", async () => {
-    const promise = new ContainerFiles(
+    const promise = new Files(
       containerWith(commandProcess(errorFrame(2, "No such file or directory"))),
     ).rename("/workspace/missing", "/workspace/destination");
 
@@ -42,15 +42,15 @@ describe("ContainerFiles.rename", () => {
   it("validates the destination path", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
 
-    await expect(
-      new ContainerFiles(container).rename("/workspace/source", "relative"),
-    ).rejects.toThrow("cwd is required when path is relative");
+    await expect(new Files(container).rename("/workspace/source", "relative")).rejects.toThrow(
+      "cwd is required when path is relative",
+    );
     expect(container.exec).not.toHaveBeenCalled();
   });
 
   it("rejects non-string path representations", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
-    const files = new ContainerFiles(container);
+    const files = new Files(container);
     const stringLike = {
       length: 1,
       includes: () => false,
@@ -64,7 +64,7 @@ describe("ContainerFiles.rename", () => {
 
   it("rejects unexpected command data", async () => {
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(new Uint8Array([1]))))).rename(
+      new Files(containerWith(commandProcess(dataFrame(new Uint8Array([1]))))).rename(
         "/workspace/source",
         "/workspace/destination",
       ),

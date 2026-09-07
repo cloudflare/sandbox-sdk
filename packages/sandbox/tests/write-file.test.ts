@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 import {
   containerWith,
   contiguousErrorFrame as errorFrame,
@@ -12,7 +12,7 @@ import {
   writeProcess,
 } from "./helpers.js";
 
-describe("ContainerFiles.writeFile", () => {
+describe("Files.writeFile", () => {
   it("streams bytes and forwards native options", async () => {
     const written: Uint8Array[] = [];
     const stdin = new WritableStream<Uint8Array>({
@@ -24,7 +24,7 @@ describe("ContainerFiles.writeFile", () => {
     const container = containerWith(process);
     const signal = new AbortController().signal;
 
-    await new ContainerFiles(container).writeFile("data.bin", "hello", {
+    await new Files(container).writeFile("data.bin", "hello", {
       cwd: "/workspace",
       user: "1000:1000",
       signal,
@@ -63,7 +63,7 @@ describe("ContainerFiles.writeFile", () => {
         }),
       });
 
-      await new ContainerFiles(containerWith(process)).writeFile("/file", input);
+      await new Files(containerWith(process)).writeFile("/file", input);
 
       expect(written).toEqual([1, 2]);
     }
@@ -86,7 +86,7 @@ describe("ContainerFiles.writeFile", () => {
       },
       { highWaterMark: 0 },
     );
-    const promise = new ContainerFiles(containerWith(writeProcess({ control: stdout }))).writeFile(
+    const promise = new Files(containerWith(writeProcess({ control: stdout }))).writeFile(
       "/file",
       source,
     );
@@ -109,7 +109,7 @@ describe("ContainerFiles.writeFile", () => {
     const getReader = vi.spyOn(source, "getReader");
     const process = writeProcess({ control: readableChunks([errorFrame(21, "Is a directory")]) });
 
-    const promise = new ContainerFiles(containerWith(process)).writeFile("/directory", source);
+    const promise = new Files(containerWith(process)).writeFile("/directory", source);
 
     await expect(promise).rejects.toMatchObject({
       name: "SandboxFileError",
@@ -131,7 +131,7 @@ describe("ContainerFiles.writeFile", () => {
     });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array([1])),
+      new Files(containerWith(process)).writeFile("/file", new Uint8Array([1])),
     ).rejects.toMatchObject({
       code: "ENOSPC",
       operation: "writeFile",
@@ -156,7 +156,7 @@ describe("ContainerFiles.writeFile", () => {
     });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", source),
+      new Files(containerWith(process)).writeFile("/file", source),
     ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
     expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ code: "ENOSPC" }));
     expect(process.kill).toHaveBeenCalledWith(9);
@@ -174,7 +174,7 @@ describe("ContainerFiles.writeFile", () => {
     });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array([1])),
+      new Files(containerWith(process)).writeFile("/file", new Uint8Array([1])),
     ).rejects.toMatchObject({ code: "ENOSPC", operation: "writeFile" });
   });
 
@@ -189,16 +189,16 @@ describe("ContainerFiles.writeFile", () => {
       control: readableChunks([SUCCESS_HEADER, errorFrame(28, "No space left on device")]),
     });
 
-    await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", source),
-    ).rejects.toBe(sourceError);
+    await expect(new Files(containerWith(process)).writeFile("/file", source)).rejects.toBe(
+      sourceError,
+    );
   });
 
   it("reports a missing terminal frame as a protocol failure", async () => {
     const process = writeProcess({ control: readableChunks([SUCCESS_HEADER]), exitCode: 9 });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
+      new Files(containerWith(process)).writeFile("/file", new Uint8Array()),
     ).rejects.toMatchObject({
       code: "SANDBOX_PROTOCOL_ERROR",
     });
@@ -208,7 +208,7 @@ describe("ContainerFiles.writeFile", () => {
     const process = writeProcess({ control: readableChunks(dataFrame(new Uint8Array([1]))) });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", new Uint8Array()),
+      new Files(containerWith(process)).writeFile("/file", new Uint8Array()),
     ).rejects.toMatchObject({ name: "SandboxProtocolError" });
   });
 
@@ -221,7 +221,7 @@ describe("ContainerFiles.writeFile", () => {
     });
     const process = writeProcess({ control: readableChunks([SUCCESS_HEADER]), exitCode: 1 });
 
-    const promise = new ContainerFiles(containerWith(process)).writeFile("/file", source);
+    const promise = new Files(containerWith(process)).writeFile("/file", source);
 
     await expect(promise).rejects.toBe(sourceError);
     expect(process.kill).toHaveBeenCalledWith(9);
@@ -251,10 +251,7 @@ describe("ContainerFiles.writeFile", () => {
       },
       { highWaterMark: 0 },
     );
-    const promise = new ContainerFiles(containerWith(writeProcess({ stdin }))).writeFile(
-      "/file",
-      source,
-    );
+    const promise = new Files(containerWith(writeProcess({ stdin }))).writeFile("/file", source);
 
     await writeStarted.promise;
     expect(pulls).toBe(1);
@@ -280,7 +277,7 @@ describe("ContainerFiles.writeFile", () => {
       control: readableChunks([SUCCESS_HEADER], false),
       exitCode: new Promise<number>(() => undefined),
     });
-    const promise = new ContainerFiles(containerWith(process)).writeFile("/file", source, {
+    const promise = new Files(containerWith(process)).writeFile("/file", source, {
       signal: abort.signal,
     });
 
@@ -296,10 +293,10 @@ describe("ContainerFiles.writeFile", () => {
     const missingStdin = writeProcess({ stdin: null });
 
     await expect(
-      new ContainerFiles(containerWith(missingStdout)).writeFile("/file", "content"),
+      new Files(containerWith(missingStdout)).writeFile("/file", "content"),
     ).rejects.toMatchObject({ code: "SANDBOX_PROTOCOL_ERROR" });
     await expect(
-      new ContainerFiles(containerWith(missingStdin)).writeFile("/file", "content"),
+      new Files(containerWith(missingStdin)).writeFile("/file", "content"),
     ).rejects.toMatchObject({ code: "SANDBOX_PROTOCOL_ERROR" });
     expect(missingStdout.kill).toHaveBeenCalledWith(9);
     expect(missingStdin.kill).toHaveBeenCalledWith(9);
@@ -313,7 +310,7 @@ describe("ContainerFiles.writeFile", () => {
     const source = new ReadableStream<Uint8Array>({ cancel: cancelled });
 
     await expect(
-      new ContainerFiles(containerWith(process)).writeFile("/file", source),
+      new Files(containerWith(process)).writeFile("/file", source),
     ).rejects.toBeInstanceOf(TypeError);
     expect(process.kill).toHaveBeenCalledWith(9);
     expect(cancelled).toHaveBeenCalledOnce();
@@ -326,7 +323,7 @@ describe("ContainerFiles.writeFile", () => {
     const source = new ReadableStream<Uint8Array>({ cancel: cancelled });
     const container = containerWith(writeProcess());
 
-    await expect(new ContainerFiles(container).writeFile("relative", source)).rejects.toThrow(
+    await expect(new Files(container).writeFile("relative", source)).rejects.toThrow(
       "cwd is required when path is relative",
     );
     expect(container.exec).not.toHaveBeenCalled();

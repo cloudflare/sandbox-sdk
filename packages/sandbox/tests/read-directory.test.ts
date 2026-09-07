@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
-import { commandProcess, containerWith, dataFrame, encoder, errorFrame } from "./helpers.js";
+import { Files } from "../src/files.js";
+import {
+  commandProcess,
+  containerRejecting,
+  containerWith,
+  dataFrame,
+  encoder,
+  errorFrame,
+} from "./helpers.js";
 
 interface EncodedEntry {
   name: string;
@@ -28,7 +35,7 @@ function directoryPayload(entries: EncodedEntry[]): Uint8Array {
   return payload;
 }
 
-describe("ContainerFiles.readDirectory", () => {
+describe("Files.readDirectory", () => {
   it("returns typed entries in the shim's native order", async () => {
     const payload = directoryPayload([
       { name: "delta.txt", type: 0 },
@@ -38,7 +45,7 @@ describe("ContainerFiles.readDirectory", () => {
     const container = containerWith(commandProcess(dataFrame(payload)));
     const signal = new AbortController().signal;
 
-    const entries = await new ContainerFiles(container).readDirectory("workspace", {
+    const entries = await new Files(container).readDirectory("workspace", {
       cwd: "/home",
       user: "1000:1000",
       signal,
@@ -63,14 +70,14 @@ describe("ContainerFiles.readDirectory", () => {
 
   it("returns an empty array for an empty directory", async () => {
     await expect(
-      new ContainerFiles(
-        containerWith(commandProcess(dataFrame(directoryPayload([])))),
-      ).readDirectory("/dir"),
+      new Files(containerWith(commandProcess(dataFrame(directoryPayload([]))))).readDirectory(
+        "/dir",
+      ),
     ).resolves.toEqual([]);
   });
 
   it("maps filesystem errors", async () => {
-    const promise = new ContainerFiles(
+    const promise = new Files(
       containerWith(commandProcess(errorFrame(20, "Not a directory"))),
     ).readDirectory("/file");
 
@@ -87,15 +94,13 @@ describe("ContainerFiles.readDirectory", () => {
     const unknownType = directoryPayload([{ name: "file", type: 9 }]);
 
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(truncated)))).readDirectory("/dir"),
+      new Files(containerWith(commandProcess(dataFrame(truncated)))).readDirectory("/dir"),
     ).rejects.toMatchObject({ name: "SandboxProtocolError" });
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(trailing)))).readDirectory("/dir"),
+      new Files(containerWith(commandProcess(dataFrame(trailing)))).readDirectory("/dir"),
     ).rejects.toThrow("trailing directory data");
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(unknownType)))).readDirectory(
-        "/dir",
-      ),
+      new Files(containerWith(commandProcess(dataFrame(unknownType)))).readDirectory("/dir"),
     ).rejects.toThrow("unknown file type");
   });
 
@@ -103,14 +108,14 @@ describe("ContainerFiles.readDirectory", () => {
     const payload = new Uint8Array([1, 0, 0, 0, 0, 1, 0, 0xff]);
 
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(payload)))).readDirectory("/dir"),
+      new Files(containerWith(commandProcess(dataFrame(payload)))).readDirectory("/dir"),
     ).rejects.toThrow("invalid UTF-8 in directory entry name");
   });
 
   it("propagates native exec errors unchanged", async () => {
     const nativeError = new Error("container is not running");
-    const container = { exec: vi.fn().mockRejectedValue(nativeError) };
+    const container = containerRejecting(nativeError);
 
-    await expect(new ContainerFiles(container).readDirectory("/dir")).rejects.toBe(nativeError);
+    await expect(new Files(container).readDirectory("/dir")).rejects.toBe(nativeError);
   });
 });

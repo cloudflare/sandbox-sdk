@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/sandbox",
   "version": "1.0.0-next.0",
-  "description": "Cloudflare Sandbox SDK",
+  "description": "Structured file operations for Cloudflare Containers",
   "license": "Apache-2.0",
   "files": [
     "dist"

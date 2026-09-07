@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 import { commandProcess, containerWith, errorFrame, SUCCESS_HEADER } from "./helpers.js";
 
-describe("ContainerFiles.remove", () => {
+describe("Files.remove", () => {
   it("removes one path and forwards native options", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
     const signal = new AbortController().signal;
 
-    await new ContainerFiles(container).remove("file.txt", {
+    await new Files(container).remove("file.txt", {
       cwd: "/workspace",
       user: "1000:1000",
       signal,
@@ -29,7 +29,7 @@ describe("ContainerFiles.remove", () => {
   it("requests recursive and forced removal explicitly", async () => {
     const container = containerWith(commandProcess([SUCCESS_HEADER]));
 
-    await new ContainerFiles(container).remove("directory", {
+    await new Files(container).remove("directory", {
       cwd: "/workspace",
       recursive: true,
       force: true,
@@ -46,7 +46,7 @@ describe("ContainerFiles.remove", () => {
   });
 
   it("maps native filesystem errors", async () => {
-    const promise = new ContainerFiles(
+    const promise = new Files(
       containerWith(commandProcess(errorFrame(21, "Is a directory"))),
     ).remove("/workspace/directory");
 

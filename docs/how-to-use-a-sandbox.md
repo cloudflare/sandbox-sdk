@@ -42,23 +42,28 @@ Export a container-enabled Durable Object and bind it as `SANDBOX`:
 }
 ```
 
-Extend `Sandbox`. Start the container from application code before using
-`this.files`:
+Extend `DurableObject` and construct `Files` with its container. Start the
+container from application code before using the file operations:
 
 ```ts
-import { Sandbox } from "@cloudflare/sandbox";
+import { Files } from "@cloudflare/sandbox";
+import { DurableObject } from "cloudflare:workers";
 
 interface Env {
   SANDBOX: DurableObjectNamespace<MySandbox>;
   SANDBOX_IMAGE: string;
 }
 
-export class MySandbox extends Sandbox<Env> {
+export class MySandbox extends DurableObject<Env> {
+  readonly files: Files;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.files = new Files(this.requireContainer());
+  }
+
   async read(path: string): Promise<Response> {
-    const container = this.ctx.container;
-    if (container === undefined) {
-      throw new Error("Sandbox requires a container-enabled Durable Object");
-    }
+    const container = this.requireContainer();
     if (!container.running) {
       container.start({
         image: this.env.SANDBOX_IMAGE,
@@ -67,6 +72,14 @@ export class MySandbox extends Sandbox<Env> {
       });
     }
     return this.files.readFile(path);
+  }
+
+  private requireContainer(): Container {
+    const container = this.ctx.container;
+    if (container === undefined) {
+      throw new Error("Container attachment is unavailable");
+    }
+    return container;
   }
 }
 ```
@@ -89,5 +102,5 @@ If the file is missing, `readFile` throws `SandboxFileError` with `code`
 `ENOENT`. After a JSRPC hop, recognize it with `SandboxFileError.is(cause)`.
 
 For method options, error fields, and accepted write content, see
-[Sandbox SDK reference](sandbox.md). For identity, deployments, and
+[Files reference](sandbox.md). For identity, deployments, and
 failures, see [About sandboxes](about-sandboxes.md).

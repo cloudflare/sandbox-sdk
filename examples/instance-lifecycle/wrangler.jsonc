@@ -1,8 +1,7 @@
 {
-  "name": "sandbox-sdk-subsequent-instance-lifecycle",
+  "name": "container-instance-lifecycle-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
-  "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
       {

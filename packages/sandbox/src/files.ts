@@ -5,6 +5,7 @@ import {
   type SandboxDirectoryEntry,
 } from "./read-directory.js";
 import { readFile as readContainerFile } from "./read-file.js";
+import type { ContainerExecutor } from "./shim.js";
 import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
 
@@ -13,7 +14,7 @@ export interface FileOperationOptions {
   cwd?: string;
   /** Linux user or user/group pair used to open the file. */
   user?: string;
-  /** Cancels the native container process without imposing an SDK timeout. */
+  /** Cancels the native container process without imposing a timeout. */
   signal?: AbortSignal;
 }
 
@@ -28,19 +29,16 @@ export type MkdirOptions = FileOperationOptions & {
   recursive?: boolean;
 };
 
-/** Native container capability required by {@link ContainerFiles}. */
-export type ContainerExecutor = Pick<Container, "exec">;
-
 /**
  * File operations backed by a native container.
  *
  * The container image must provide the matching shim at
  * `/usr/local/bin/sandbox-shim`.
  */
-export class ContainerFiles {
+export class Files {
   readonly #container: ContainerExecutor;
 
-  constructor(container: ContainerExecutor) {
+  constructor(container: Pick<Container, "exec">) {
     this.#container = container;
   }
 
@@ -159,7 +157,7 @@ export class ContainerFiles {
    * Renames a file, directory, or symlink using native Linux filesystem semantics.
    *
    * Existing destinations are replaced when Linux permits it. Cross-filesystem renames fail
-   * with `EXDEV`; the SDK does not fall back to copying and removing the source.
+   * with `EXDEV`; no copy-and-remove fallback is attempted.
    * Native container, transport, and abort failures propagate unchanged.
    *
    * @throws {TypeError} A path is empty, contains NUL, or is relative without an absolute `cwd`.

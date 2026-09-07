@@ -1,4 +1,5 @@
-import { Sandbox, SandboxFileError, SandboxProtocolError } from "@cloudflare/sandbox";
+import { Files, SandboxFileError, SandboxProtocolError } from "@cloudflare/sandbox";
+import { DurableObject } from "cloudflare:workers";
 
 const ACTIVE_SNAPSHOT_KEY = "active-container-snapshot";
 const WORKSPACE_FILE = "/workspace/message.txt";
@@ -19,7 +20,14 @@ interface Env {
   SANDBOX_IMAGE: string;
 }
 
-export class SnapshotRestoreSandbox extends Sandbox<Env> {
+export class SnapshotRestoreSandbox extends DurableObject<Env> {
+  readonly files: Files;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.files = new Files(this.requireContainer());
+  }
+
   /** Starts from this sandbox's active checkpoint, or from its configured image. */
   async start(sandboxName: string): Promise<void> {
     const container = this.requireContainer();

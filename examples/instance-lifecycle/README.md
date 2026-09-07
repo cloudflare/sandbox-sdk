@@ -4,7 +4,7 @@ This example leaves Container Instance lifecycle primitives visible at the
 application boundary: startup labels, inactivity, monitoring, graceful termination,
 and destructive cleanup.
 
-Build the local shim donor and deploy the example:
+Deploy the example:
 
 ```sh
 npm run example:instance-lifecycle:deploy

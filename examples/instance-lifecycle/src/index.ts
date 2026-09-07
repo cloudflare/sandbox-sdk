@@ -1,4 +1,4 @@
-import { Sandbox } from "@cloudflare/sandbox";
+import { DurableObject } from "cloudflare:workers";
 
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 60_000;
@@ -9,7 +9,7 @@ interface Env {
   SANDBOX_IMAGE: string;
 }
 
-export class InstanceLifecycleSandbox extends Sandbox<Env> {
+export class InstanceLifecycleSandbox extends DurableObject<Env> {
   /** Starts one physical execution for this logical sandbox and configures idle shutdown. */
   async start(sandboxName: string): Promise<void> {
     const container = this.requireContainer();
@@ -24,7 +24,7 @@ export class InstanceLifecycleSandbox extends Sandbox<Env> {
     }
   }
 
-  /** Changes the native inactivity timeout without introducing SDK policy. */
+  /** Changes the native inactivity timeout. */
   async setInactivityTimeout(durationMs: number): Promise<void> {
     await this.requireContainer().setInactivityTimeout(durationMs);
   }

@@ -6,7 +6,7 @@ import { Readable, Writable } from "node:stream";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 
 const SHIM_PATH = process.env.SANDBOX_SHIM_PATH;
 
@@ -49,14 +49,14 @@ function signalNumber(signal) {
 }
 
 describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () => {
-  it("streams binary file contents through the SDK", async () => {
+  it("streams binary file contents through Files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
       const path = join(directory, "content.bin");
       const content = new Uint8Array([0, 1, 2, 255]);
       await writeFile(path, content);
 
-      const response = await new ContainerFiles(nativeContainer()).readFile(path);
+      const response = await new Files(nativeContainer()).readFile(path);
 
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(content);
     } finally {
@@ -64,13 +64,13 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
     }
   });
 
-  it("streams SDK writes into the destination file", async () => {
+  it("streams Files writes into the destination", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
       const path = join(directory, "content.bin");
       const content = new Uint8Array([255, 2, 1, 0]);
 
-      await new ContainerFiles(nativeContainer()).writeFile(path, content);
+      await new Files(nativeContainer()).writeFile(path, content);
 
       expect(new Uint8Array(await readFile(path))).toEqual(content);
     } finally {
@@ -85,7 +85,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
       await writeFile(join(directory, "alpha.txt"), "alpha");
       await nativeMkdir(join(directory, "charlie"));
       await symlink("alpha.txt", join(directory, "current"));
-      const files = new ContainerFiles(nativeContainer());
+      const files = new Files(nativeContainer());
 
       const stat = await files.stat(join(directory, "alpha.txt"));
       expect(stat).toMatchObject({ type: "file", size: 5n });
@@ -118,7 +118,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
   it("creates single and recursive directories", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
-      const files = new ContainerFiles(nativeContainer());
+      const files = new Files(nativeContainer());
       const single = join(directory, "single");
       const nested = join(directory, "parent", "child");
 
@@ -137,7 +137,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
   it("renames files and symlinks with native replacement semantics", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
-      const files = new ContainerFiles(nativeContainer());
+      const files = new Files(nativeContainer());
       const source = join(directory, "source.txt");
       const destination = join(directory, "destination.txt");
       const link = join(directory, "source-link");
@@ -160,7 +160,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
   it("removes files, symlinks, and directory trees", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
-      const files = new ContainerFiles(nativeContainer());
+      const files = new Files(nativeContainer());
       const file = join(directory, "file.txt");
       const tree = join(directory, "tree");
       const external = join(directory, "external");
@@ -193,7 +193,7 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
   it("preserves native open and read errors", async () => {
     const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
     try {
-      const files = new ContainerFiles(nativeContainer());
+      const files = new Files(nativeContainer());
 
       await expect(files.readFile(join(directory, "missing"))).rejects.toMatchObject({
         code: "ENOENT",

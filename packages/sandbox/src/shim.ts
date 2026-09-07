@@ -1,5 +1,6 @@
-import type { ContainerExecutor } from "./container-files.js";
 import { protocolError } from "./errors.js";
+
+export type ContainerExecutor = Pick<Container, "exec">;
 
 export const SHIM_PATH = "/usr/local/bin/sandbox-shim";
 

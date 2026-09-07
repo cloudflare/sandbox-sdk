@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 import {
   containerWith,
+  containerRejecting,
   dataFrame,
   deferred,
   errorFrame,
@@ -12,21 +13,20 @@ import {
   successFrame,
 } from "./helpers.js";
 
-describe("ContainerFiles.readFile", () => {
+describe("Files.readFile", () => {
   it("returns raw bytes and forwards native options", async () => {
     const signal = new AbortController().signal;
     const data = new Uint8Array([1, 2, 3]);
     const process = readProcess(successFrame(), 0, readableChunks([data]));
     const container = containerWith(process);
 
-    const response = await new ContainerFiles(container).readFile("data.bin", {
+    const response = await new Files(container).readFile("data.bin", {
       cwd: "/workspace",
       user: "1000:1000",
       signal,
     });
 
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
-    expect(response.headers.get("Content-Type")).toBe("application/octet-stream");
     expect(container.exec).toHaveBeenCalledWith(
       ["/usr/local/bin/sandbox-shim", "read", "data.bin"],
       {
@@ -40,7 +40,7 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("maps opening filesystem errors to symbolic codes", async () => {
-    const promise = new ContainerFiles(
+    const promise = new Files(
       containerWith(readProcess(errorFrame(2, "No such file or directory"))),
     ).readFile("/missing");
 
@@ -54,9 +54,7 @@ describe("ContainerFiles.readFile", () => {
 
   it("maps unknown numeric errno values to UNKNOWN", async () => {
     await expect(
-      new ContainerFiles(containerWith(readProcess(errorFrame(1234, "Unknown error")))).readFile(
-        "/file",
-      ),
+      new Files(containerWith(readProcess(errorFrame(1234, "Unknown error")))).readFile("/file"),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
   });
 
@@ -66,7 +64,7 @@ describe("ContainerFiles.readFile", () => {
       0,
       readableChunks([new Uint8Array([1, 2, 3])]),
     );
-    const response = await new ContainerFiles(containerWith(process)).readFile("/device");
+    const response = await new Files(containerWith(process)).readFile("/device");
 
     await expect(response.arrayBuffer()).rejects.toMatchObject({
       code: "EIO",
@@ -75,23 +73,21 @@ describe("ContainerFiles.readFile", () => {
   });
 
   it("returns an empty response for an empty file", async () => {
-    const response = await new ContainerFiles(containerWith(readProcess(successFrame()))).readFile(
-      "/empty",
-    );
+    const response = await new Files(containerWith(readProcess(successFrame()))).readFile("/empty");
 
     expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
 
   it("propagates native exec errors unchanged", async () => {
     const nativeError = new Error("container is not running");
-    const container = { exec: vi.fn().mockRejectedValue(nativeError) };
+    const container = containerRejecting(nativeError);
 
-    await expect(new ContainerFiles(container).readFile("/file")).rejects.toBe(nativeError);
+    await expect(new Files(container).readFile("/file")).rejects.toBe(nativeError);
   });
 
   it("validates paths before launching exec", async () => {
     const container = containerWith(readProcess([]));
-    const files = new ContainerFiles(container);
+    const files = new Files(container);
     const stringLike = {
       length: 1,
       includes: () => false,
@@ -121,7 +117,7 @@ describe("ContainerFiles.readFile", () => {
     const malformed = new Uint8Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
 
     await expect(
-      new ContainerFiles(containerWith(readProcess([malformed]))).readFile("/file"),
+      new Files(containerWith(readProcess([malformed]))).readFile("/file"),
     ).rejects.toMatchObject({ name: "SandboxProtocolError" });
   });
 
@@ -133,10 +129,10 @@ describe("ContainerFiles.readFile", () => {
       readableChunks([]),
     );
 
-    await expect(
-      new ContainerFiles(containerWith(openingData)).readFile("/file"),
-    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
-    const response = await new ContainerFiles(containerWith(terminalData)).readFile("/file");
+    await expect(new Files(containerWith(openingData)).readFile("/file")).rejects.toMatchObject({
+      name: "SandboxProtocolError",
+    });
+    const response = await new Files(containerWith(terminalData)).readFile("/file");
     await expect(response.arrayBuffer()).rejects.toMatchObject({ name: "SandboxProtocolError" });
   });
 
@@ -149,7 +145,7 @@ describe("ContainerFiles.readFile", () => {
       stdout,
       readableChunks([SUCCESS_HEADER], false),
     );
-    const response = await new ContainerFiles(containerWith(process)).readFile("/file");
+    const response = await new Files(containerWith(process)).readFile("/file");
 
     await response.body?.cancel("not needed");
 
@@ -170,7 +166,7 @@ describe("ContainerFiles.readFile", () => {
       stdout,
       readableChunks([SUCCESS_HEADER], false),
     );
-    const response = await new ContainerFiles(containerWith(process)).readFile("/file");
+    const response = await new Files(containerWith(process)).readFile("/file");
 
     await expect(response.arrayBuffer()).rejects.toBe(transportError);
     expect(process.kill).toHaveBeenCalledWith(9);
@@ -192,7 +188,7 @@ describe("ContainerFiles.readFile", () => {
       stdout,
       readableChunks([SUCCESS_HEADER], false),
     );
-    const response = await new ContainerFiles(containerWith(process)).readFile("/file", {
+    const response = await new Files(containerWith(process)).readFile("/file", {
       signal: abort.signal,
     });
     const body = response.arrayBuffer();
@@ -208,11 +204,11 @@ describe("ContainerFiles.readFile", () => {
     const missingStdout = readProcess(successFrame(), 0, null);
     const missingStderr = readProcess([], 0, readableChunks([]), null);
 
-    await expect(
-      new ContainerFiles(containerWith(missingStdout)).readFile("/file"),
-    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
-    await expect(
-      new ContainerFiles(containerWith(missingStderr)).readFile("/file"),
-    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
+    await expect(new Files(containerWith(missingStdout)).readFile("/file")).rejects.toMatchObject({
+      name: "SandboxProtocolError",
+    });
+    await expect(new Files(containerWith(missingStderr)).readFile("/file")).rejects.toMatchObject({
+      name: "SandboxProtocolError",
+    });
   });
 });

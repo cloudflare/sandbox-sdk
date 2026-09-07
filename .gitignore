@@ -3,4 +3,5 @@ dist/
 target/
 .vite/
 .wrangler/
+examples/*/worker-configuration.d.ts
 *.tsbuildinfo

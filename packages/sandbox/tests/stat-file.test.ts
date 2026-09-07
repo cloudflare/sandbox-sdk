@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import { ContainerFiles } from "../src/container-files.js";
+import { Files } from "../src/files.js";
 import {
   commandProcess,
+  containerRejecting,
   containerWith,
   dataFrame,
   errorFrame,
@@ -36,13 +37,13 @@ function statPayload(stat: EncodedStat = {}): Uint8Array {
   return payload;
 }
 
-describe("ContainerFiles stat operations", () => {
+describe("Files stat operations", () => {
   it("returns complete metadata and follows the final symlink with stat", async () => {
     const signal = new AbortController().signal;
     const process = commandProcess(dataFrame(statPayload()));
     const container = containerWith(process);
 
-    const result = await new ContainerFiles(container).stat("data.txt", {
+    const result = await new Files(container).stat("data.txt", {
       cwd: "/workspace",
       user: "1000:1000",
       signal,
@@ -73,7 +74,7 @@ describe("ContainerFiles stat operations", () => {
   it("uses a distinct lstat command to describe the final symlink", async () => {
     const container = containerWith(commandProcess(dataFrame(statPayload({ type: 2 }))));
 
-    await expect(new ContainerFiles(container).lstat("/link")).resolves.toMatchObject({
+    await expect(new Files(container).lstat("/link")).resolves.toMatchObject({
       type: "symlink",
     });
     expect(container.exec).toHaveBeenCalledWith(
@@ -94,15 +95,13 @@ describe("ContainerFiles stat operations", () => {
     ];
 
     for (const [type, expected] of types.entries()) {
-      const files = new ContainerFiles(
-        containerWith(commandProcess(dataFrame(statPayload({ type })))),
-      );
+      const files = new Files(containerWith(commandProcess(dataFrame(statPayload({ type })))));
       await expect(files.stat("/entry")).resolves.toMatchObject({ type: expected });
     }
   });
 
   it("maps stat and lstat filesystem errors", async () => {
-    const statPromise = new ContainerFiles(
+    const statPromise = new Files(
       containerWith(commandProcess(errorFrame(2, "No such file or directory"))),
     ).stat("/missing");
     await expect(statPromise).rejects.toMatchObject({
@@ -111,7 +110,7 @@ describe("ContainerFiles stat operations", () => {
       path: "/missing",
     });
 
-    const lstat = new ContainerFiles(
+    const lstat = new Files(
       containerWith(commandProcess(errorFrame(2, "No such file or directory"))),
     );
     await expect(lstat.lstat("/missing")).rejects.toMatchObject({
@@ -125,10 +124,10 @@ describe("ContainerFiles stat operations", () => {
     const wrongLength = commandProcess(dataFrame(new Uint8Array(44)));
     const unknownType = commandProcess(dataFrame(statPayload({ type: 9 })));
 
-    await expect(
-      new ContainerFiles(containerWith(wrongLength)).stat("/file"),
-    ).rejects.toMatchObject({ name: "SandboxProtocolError" });
-    await expect(new ContainerFiles(containerWith(unknownType)).stat("/file")).rejects.toThrow(
+    await expect(new Files(containerWith(wrongLength)).stat("/file")).rejects.toMatchObject({
+      name: "SandboxProtocolError",
+    });
+    await expect(new Files(containerWith(unknownType)).stat("/file")).rejects.toThrow(
       "unknown file type",
     );
   });
@@ -137,7 +136,7 @@ describe("ContainerFiles stat operations", () => {
     const payload = statPayload({ accessedAt: BigInt(Number.MAX_SAFE_INTEGER) + 1n });
 
     await expect(
-      new ContainerFiles(containerWith(commandProcess(dataFrame(payload)))).stat("/file"),
+      new Files(containerWith(commandProcess(dataFrame(payload)))).stat("/file"),
     ).rejects.toThrow("out-of-range timestamp");
   });
 
@@ -145,10 +144,10 @@ describe("ContainerFiles stat operations", () => {
     const successFrame = commandProcess([SUCCESS_HEADER]);
     const failedExit = commandProcess(dataFrame(statPayload()), 9);
 
-    await expect(new ContainerFiles(containerWith(successFrame)).stat("/file")).rejects.toThrow(
+    await expect(new Files(containerWith(successFrame)).stat("/file")).rejects.toThrow(
       "did not return command data",
     );
-    await expect(new ContainerFiles(containerWith(failedExit)).stat("/file")).rejects.toThrow(
+    await expect(new Files(containerWith(failedExit)).stat("/file")).rejects.toThrow(
       "exited with code 9",
     );
   });
@@ -161,7 +160,7 @@ describe("ContainerFiles stat operations", () => {
       new Promise<number>(() => undefined),
       readableChunks([], false),
     );
-    const promise = new ContainerFiles(containerWith(process)).stat("/file", {
+    const promise = new Files(containerWith(process)).stat("/file", {
       signal: abort.signal,
     });
 
@@ -174,7 +173,7 @@ describe("ContainerFiles stat operations", () => {
   it("terminates a shim that omits stdout", async () => {
     const process = readProcess([], 0, null);
 
-    await expect(new ContainerFiles(containerWith(process)).stat("/file")).rejects.toMatchObject({
+    await expect(new Files(containerWith(process)).stat("/file")).rejects.toMatchObject({
       name: "SandboxProtocolError",
     });
     expect(process.kill).toHaveBeenCalledWith(9);
@@ -182,8 +181,8 @@ describe("ContainerFiles stat operations", () => {
 
   it("propagates native exec errors unchanged", async () => {
     const nativeError = new Error("container is not running");
-    const container = { exec: vi.fn().mockRejectedValue(nativeError) };
+    const container = containerRejecting(nativeError);
 
-    await expect(new ContainerFiles(container).stat("/file")).rejects.toBe(nativeError);
+    await expect(new Files(container).stat("/file")).rejects.toBe(nativeError);
   });
 });

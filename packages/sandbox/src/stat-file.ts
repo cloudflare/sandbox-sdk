@@ -1,7 +1,7 @@
-import type { ContainerExecutor } from "./container-files.js";
 import { protocolError } from "./errors.js";
 import { runFileCommand } from "./file-command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
+import type { ContainerExecutor } from "./shim.js";
 
 const STAT_PAYLOAD_LENGTH = 45;
 

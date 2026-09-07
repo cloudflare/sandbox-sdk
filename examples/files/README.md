@@ -1,6 +1,6 @@
 # Files
 
-This example keeps all `ContainerFiles` operations in one Worker. It transfers file
+This example keeps all `Files` operations in one Worker. It transfers file
 bytes, inspects metadata, lists directory entries, and mutates workspace paths.
 
 Build the local shim donor and deploy the example:
