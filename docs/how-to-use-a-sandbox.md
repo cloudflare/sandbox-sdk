@@ -104,4 +104,5 @@ If the file is missing, `readFile` throws `SandboxFileError` with `code`
 For method options, error fields, and accepted write content, see
 [Files reference](sandbox.md). For identity, deployments, and
 failures, see [About sandboxes](about-sandboxes.md). To run a command, see
-[How to run a command](how-to-run-a-command.md).
+[How to run a command](how-to-run-a-command.md). To forward HTTP, see
+[How to forward HTTP](how-to-forward-http.md).

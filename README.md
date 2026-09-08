@@ -7,6 +7,7 @@ need structured, streaming file operations with native Linux semantics.
 - [About sandboxes](docs/about-sandboxes.md)
 - [How to use a sandbox in a Worker](docs/how-to-use-a-sandbox.md)
 - [How to run a command](docs/how-to-run-a-command.md)
+- [How to forward HTTP](docs/how-to-forward-http.md)
 - [Files reference](docs/sandbox.md)
 
 ## Examples
@@ -15,6 +16,7 @@ need structured, streaming file operations with native Linux semantics.
 - [Snapshot and restore](examples/snapshot-restore)
 - [Container instance lifecycle](examples/instance-lifecycle)
 - [Command execution](examples/command-exec)
+- [Service forwarding](examples/service-forwarding)
 
 ## Development
 

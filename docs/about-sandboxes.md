@@ -34,6 +34,13 @@ work can continue after the creating request ends, but the handle, streams,
 and control paths exist only in the current object instance. There is no
 generation-scoped recovery API today.
 
+## HTTP forwarding
+
+Guest HTTP and WebSockets use native `getTcpPort(port).fetch()`. That hop
+uses an already-secure in-platform connection, so the container URL is
+expressed as `http:`. Native forwarding preserves headers and cookies,
+including credentials the guest should not receive.
+
 ## Deployments
 
 A new Worker version does not replace a running container. The image passed
@@ -44,5 +51,5 @@ already running, it keeps the image it started with.
 
 A dropped connection or cancelled stream can fail a filesystem call after it
 has partially or completely applied. Do not automatically retry writes,
-renames, recursive directory creation, removal, or spawn after an
-ambiguous failure.
+renames, recursive directory creation, removal, spawn, or non-idempotent
+forwarded requests after an ambiguous failure.
