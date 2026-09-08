@@ -26,6 +26,14 @@ previous one.
 Labels on `start()` are operational metadata. They are not identity and not
 authorization. The Durable Object name remains the identity.
 
+## Commands
+
+Request-scoped commands use native `container.exec()`. They are not an
+`@cloudflare/sandbox` API. `exec()` returns a live handle after spawn. Linux
+work can continue after the creating request ends, but the handle, streams,
+and control paths exist only in the current object instance. There is no
+generation-scoped recovery API today.
+
 ## Deployments
 
 A new Worker version does not replace a running container. The image passed
@@ -36,5 +44,5 @@ already running, it keeps the image it started with.
 
 A dropped connection or cancelled stream can fail a filesystem call after it
 has partially or completely applied. Do not automatically retry writes,
-renames, recursive directory creation, or removal after an ambiguous
-failure.
+renames, recursive directory creation, removal, or spawn after an
+ambiguous failure.
