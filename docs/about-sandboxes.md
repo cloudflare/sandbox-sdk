@@ -41,6 +41,13 @@ uses an already-secure in-platform connection, so the container URL is
 expressed as `http:`. Native forwarding preserves headers and cookies,
 including credentials the guest should not receive.
 
+## Live terminals
+
+A live terminal keeps one WebSocket together with one native `ExecProcess`.
+A standard accepted WebSocket holds the object instance awake. Disconnect
+can stop the direct child without reaping descendants. The package does not
+own terminal identity, reconnect, or retained output.
+
 ## Deployments
 
 A new Worker version does not replace a running container. The image passed

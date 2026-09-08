@@ -105,4 +105,5 @@ For method options, error fields, and accepted write content, see
 [Files reference](sandbox.md). For identity, deployments, and
 failures, see [About sandboxes](about-sandboxes.md). To run a command, see
 [How to run a command](how-to-run-a-command.md). To forward HTTP, see
-[How to forward HTTP](how-to-forward-http.md).
+[How to forward HTTP](how-to-forward-http.md). To open a terminal, see
+[How to open a live terminal](how-to-open-a-live-terminal.md).
