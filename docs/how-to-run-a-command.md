@@ -21,7 +21,8 @@ return new Response(output.stdout, {
 If the caller can disconnect, pass `request.signal` into `exec()`.
 
 Do not retry a cancelled or failed spawn automatically. The process may already
-exist. The live handle cannot be recovered in a later request.
+exist. The live handle cannot be recovered in a later request. A canceled
+Worker invocation is not proof that the Linux process exited.
 
 For identity and why the handle does not survive, see
 [About sandboxes](about-sandboxes.md). For a runnable Worker, see

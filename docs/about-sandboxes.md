@@ -32,7 +32,8 @@ Request-scoped commands use native `container.exec()`. They are not an
 `@cloudflare/sandbox` API. `exec()` returns a live handle after spawn. Linux
 work can continue after the creating request ends, but the handle, streams,
 and control paths exist only in the current object instance. There is no
-generation-scoped recovery API today.
+generation-scoped recovery API today. A Worker invocation marked canceled
+reports that request, not whether the Linux process exited.
 
 ## HTTP forwarding
 
@@ -56,7 +57,8 @@ already running, it keeps the image it started with.
 
 ## Failures
 
-A dropped connection or cancelled stream can fail a filesystem call after it
-has partially or completely applied. Do not automatically retry writes,
-renames, recursive directory creation, removal, spawn, or non-idempotent
-forwarded requests after an ambiguous failure.
+A dropped connection or cancelled stream can fail after it has partially or
+completely applied. Spawn is in that set: a cancelled `exec()` can still have
+created a process. Do not automatically retry writes, renames, recursive
+directory creation, removal, spawn, or non-idempotent forwarded requests after
+an ambiguous failure.
