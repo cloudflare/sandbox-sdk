@@ -21,6 +21,11 @@ Passing an external `https:` URL through unchanged is rejected. Strip bearer
 credentials at the Worker boundary before forwarding; native fetch preserves
 headers and cookies.
 
+If nothing is listening, `fetch` rejects; wait for the guest instead of
+treating start as readiness. If incremental delivery matters, test the
+deployed route, not only the native hop. If the guest sets more than one
+`Set-Cookie`, read them with `getSetCookie()`.
+
 If the client aborts, do not retry a non-idempotent request. Cancellation
 leaves partial effects.
 

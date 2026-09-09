@@ -40,7 +40,10 @@ reports that request, not whether the Linux process exited.
 Guest HTTP and WebSockets use native `getTcpPort(port).fetch()`. That hop
 uses an already-secure in-platform connection, so the container URL is
 expressed as `http:`. Native forwarding preserves headers and cookies,
-including credentials the guest should not receive.
+including credentials the guest should not receive. The native hop can
+stream request and response bodies; a complete Worker route may still
+coalesce small chunks. Cancellation is ordinary input to the guest. If PID 1
+leaves an aborted body unread, the container can exit.
 
 ## Live terminals
 

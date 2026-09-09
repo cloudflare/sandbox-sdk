@@ -15,7 +15,7 @@ Start an execution, then call the guest service:
 ```sh
 curl --request POST "$WORKER_URL/start?sandbox=demo"
 curl "$WORKER_URL/service/?sandbox=demo"
-curl "$WORKER_URL/service/headers?sandbox=demo"
+curl -D - "$WORKER_URL/service/headers?sandbox=demo"
 ```
 
 If the first forwarded request fails, retry it. Starting the container does

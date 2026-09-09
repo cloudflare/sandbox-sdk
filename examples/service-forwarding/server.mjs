@@ -19,7 +19,7 @@ const server = createServer((request, response) => {
     });
     response.writeHead(200, {
       "content-type": "application/json",
-      "set-cookie": "guest=1; Path=/",
+      "set-cookie": ["guest=1; Path=/", "session=1; Path=/; HttpOnly"],
     });
     response.end(body);
     return;
