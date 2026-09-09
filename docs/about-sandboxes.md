@@ -49,8 +49,10 @@ leaves an aborted body unread, the container can exit.
 
 A live terminal keeps one WebSocket together with one native `ExecProcess`.
 A standard accepted WebSocket holds the object instance awake. Disconnect
-can stop the direct child without reaping descendants. The package does not
-own terminal identity, reconnect, or retained output.
+can stop the direct child without reaping descendants. Unexpected actor
+reconstruction can leave that process with no owner. Reaping leftover
+children is image policy, not a terminal API. The package does not own
+terminal identity, reconnect, or retained output.
 
 ## Deployments
 

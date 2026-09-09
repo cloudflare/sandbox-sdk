@@ -175,6 +175,7 @@ function bridgePty(
     }
     input = input.then(async () => {
       const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
+      // Writes go through the locked writer so native stdin backpressure applies.
       await writer.write(new Uint8Array(buffer));
     });
     input.catch((cause) => {
@@ -193,6 +194,7 @@ function bridgePty(
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
+        // PTY bytes are forwarded unchanged; the client is the terminal emulator.
         server.send(chunk.value);
       }
       const exitCode = await process.exitCode;

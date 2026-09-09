@@ -23,7 +23,10 @@ the live handle. The handle cannot survive hibernation.
 
 Write binary WebSocket messages to stdin. Those frames may arrive as
 `ArrayBuffer` or `Blob`. Treat text messages as application controls such as
-resize. On socket close, abort the exec and kill the direct child.
+resize. Forward PTY output unchanged; the client is the terminal emulator.
+WebSocket `send()` does not wait, so bound or drop stdout in the client if
+the shell can outrun the socket. On socket close, abort the exec and kill the
+direct child.
 
 That cleanup is not a process-tree guarantee.
 
