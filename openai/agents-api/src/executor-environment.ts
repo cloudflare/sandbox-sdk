@@ -18,7 +18,7 @@ export class ExecutorEnvironment extends DurableObject<Env> {
         span.setAttribute('openai.session_id', sessionID);
         const session = await this.#updateSession({ sessionID, span });
         if (session?.status === 'idle') {
-          await this.#prepareIdle(sessionID);
+          await this.#prepareIdle(sessionID, span);
         }
       })
     );
@@ -225,6 +225,11 @@ export class ExecutorEnvironment extends DurableObject<Env> {
       const snapshot = snapshotsEnabled(this.env.EXECUTOR_SNAPSHOTS_ENABLED)
         ? await this.ctx.storage.get<ContainerSnapshot>('containerSnapshot')
         : undefined;
+      if (snapshot) {
+        span.setAttribute('container.snapshot.restored', true);
+        span.setAttribute('container.snapshot.id', snapshot.id);
+        span.setAttribute('container.snapshot.size', snapshot.size);
+      }
       container.start({
         enableInternet: true,
         env: executorEnv({
@@ -255,7 +260,7 @@ export class ExecutorEnvironment extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now() + timeout);
   }
 
-  async #prepareIdle(sessionID: string): Promise<void> {
+  async #prepareIdle(sessionID: string, span: Span): Promise<void> {
     const container = this.ctx.container;
     if (!container?.running) {
       await this.ctx.storage.deleteAlarm();
@@ -266,6 +271,9 @@ export class ExecutorEnvironment extends DurableObject<Env> {
       try {
         const snapshot = await container.snapshotContainer({});
         await this.ctx.storage.put('containerSnapshot', snapshot);
+        span.setAttribute('container.snapshot.created', true);
+        span.setAttribute('container.snapshot.id', snapshot.id);
+        span.setAttribute('container.snapshot.size', snapshot.size);
       } catch (error) {
         await this.#armDeadline(sessionID);
         throw error;
