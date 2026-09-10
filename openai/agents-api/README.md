@@ -2,7 +2,7 @@
 
 [OpenAI Agents API][#agents-api] gives your application access to the Codex harness through an OpenAI-managed API. OpenAI manages sessions, orchestration, context compaction, and recovery while your application provides tools and Cloudflare Containers can be used as the execution environment.
 
-[#agents-api]:
+[#agents-api]: https://developers.openai.com/api/docs/guides/agents-api/overview
 
 Run self-hosted OpenAI Agents API sessions in Cloudflare Containers. Each Durable Object is backed by a container running `codex exec-server`. Session orchestration is managed via signed OpenAI webhooks.
 
@@ -145,4 +145,4 @@ curl --fail-with-body \
 ## Further Reading
 
 - [Getting Started Guide](https://developers.cloudflare.com/sandbox/guides/openai-agents-api)
-- [OpenAI Agents API Documentation](https://developers.openai.com/agents-api/)
+- [OpenAI Agents API Documentation](https://developers.openai.com/api/docs/guides/agents-api/overview)
