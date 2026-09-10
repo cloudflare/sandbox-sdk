@@ -1,17 +1,19 @@
 {
-  "name": "sandbox-command-exec-example",
+  "name": "sandbox-code-workspace-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
+  // Files resolves native Linux errno names through node:os.
+  "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
       {
         "name": "SANDBOX",
-        "class_name": "CommandExecSandbox",
+        "class_name": "WorkspaceSandbox",
       },
     ],
   },
   "exports": {
-    "CommandExecSandbox": {
+    "WorkspaceSandbox": {
       "type": "durable-object",
       "storage": "sqlite",
       "container": {
@@ -26,5 +28,8 @@
   },
   "observability": {
     "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
   },
 }

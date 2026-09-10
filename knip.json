@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["examples/*/src/index.ts", "examples/service-forwarding/server.mjs"],
+      "entry": ["examples/*/src/index.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["cloudflare"]
     }

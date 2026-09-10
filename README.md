@@ -1,24 +1,28 @@
-# Cloudflare Sandbox SDK
+# Build sandboxes on Cloudflare
 
-Build a sandbox as a container-enabled Durable Object. Use native Container
-APIs for lifecycle and process execution. Add `@cloudflare/sandbox` when you
-need structured, streaming file operations with native Linux semantics.
+Give each user or job a Linux workspace. Your Worker receives the request. A Durable Object starts a Container and sends it work.
 
+This repository is that pattern. `@cloudflare/sandbox` adds streaming file operations. The Durable Object calls `this.ctx.container` to start the instance, run commands, and take snapshots.
+
+Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/). This repository is Containers.
+
+## Start here
+
+- [Run a Linux task](docs/get-started.md)
 - [About sandboxes](docs/about-sandboxes.md)
-- [How to use a sandbox in a Worker](docs/how-to-use-a-sandbox.md)
-- [How to run a command](docs/how-to-run-a-command.md)
-- [How to forward HTTP](docs/how-to-forward-http.md)
-- [How to open a live terminal](docs/how-to-open-a-live-terminal.md)
-- [Files reference](docs/sandbox.md)
+- [Files API](docs/files.md)
+- [Checkpoint a workspace](docs/checkpoint-a-workspace.md)
 
 ## Examples
 
-- [Files](examples/files)
-- [Snapshot and restore](examples/snapshot-restore)
-- [Container instance lifecycle](examples/instance-lifecycle)
-- [Command execution](examples/command-exec)
-- [Service forwarding](examples/service-forwarding)
-- [Live terminal](examples/live-terminal)
+- [Code workspace](examples/workspace): write a script and run it
+- [Checkpoint a workspace](examples/checkpoint-workspace): save the disk and start from that snapshot
+
+## In this repository
+
+- [`packages/sandbox`](packages/sandbox): `Files` and error recognizers
+- [`crates/sandbox-tools`](crates/sandbox-tools): Linux helper used by `Files`
+- [`images/sandbox-tools`](images/sandbox-tools): donor image that ships that helper
 
 ## Development
 

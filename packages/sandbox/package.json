@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/sandbox",
   "version": "1.0.0-next.0",
-  "description": "Structured file operations for Cloudflare Containers",
+  "description": "Structured workspace file operations for Cloudflare sandboxes",
   "license": "Apache-2.0",
   "files": [
     "dist"

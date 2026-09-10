@@ -1,5 +1,5 @@
 {
-  "name": "sandbox-files-example",
+  "name": "sandbox-checkpoint-workspace-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
   // Files resolves native Linux errno names through node:os.
@@ -8,12 +8,12 @@
     "bindings": [
       {
         "name": "SANDBOX",
-        "class_name": "FilesSandbox",
+        "class_name": "CheckpointSandbox",
       },
     ],
   },
   "exports": {
-    "FilesSandbox": {
+    "CheckpointSandbox": {
       "type": "durable-object",
       "storage": "sqlite",
       "container": {
@@ -28,5 +28,8 @@
   },
   "observability": {
     "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
   },
 }

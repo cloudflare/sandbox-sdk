@@ -30,9 +30,9 @@ export type MkdirOptions = FileOperationOptions & {
 };
 
 /**
- * File operations backed by a native container.
+ * Structured file operations for a sandbox workspace.
  *
- * The container image must provide the matching shim at
+ * Operations run against the current native container execution. Its image must provide the matching shim at
  * `/usr/local/bin/sandbox-shim`.
  */
 export class Files {
@@ -54,7 +54,7 @@ export class Files {
    * @throws {TypeError} The path is empty, contains NUL, or is relative without `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure before returning the
    *   response. A late file-streaming failure errors the response body with the same error type.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async readFile(path: string, options: FileOperationOptions = {}): Promise<Response> {
     validatePath(path, options.cwd);
@@ -70,7 +70,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async writeFile(
     path: string,
@@ -88,7 +88,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async stat(path: string, options: FileOperationOptions = {}): Promise<SandboxFileStat> {
     validatePath(path, options.cwd);
@@ -102,7 +102,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async lstat(path: string, options: FileOperationOptions = {}): Promise<SandboxFileStat> {
     validatePath(path, options.cwd);
@@ -119,7 +119,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async readDirectory(
     path: string,
@@ -139,7 +139,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
     validatePath(path, options.cwd);
@@ -162,7 +162,7 @@ export class Files {
    *
    * @throws {TypeError} A path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async rename(
     source: string,
@@ -188,7 +188,7 @@ export class Files {
    *
    * @throws {TypeError} The path is empty, contains NUL, or is relative without an absolute `cwd`.
    * @throws {SandboxFileError} The container reports a filesystem failure.
-   * @throws {SandboxProtocolError} The SDK and sandbox shim cannot complete their protocol.
+   * @throws {SandboxProtocolError} The package and `sandbox-shim` cannot complete their protocol.
    */
   async remove(path: string, options: RemoveOptions = {}): Promise<void> {
     validatePath(path, options.cwd);

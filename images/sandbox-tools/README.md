@@ -1,15 +1,14 @@
-# Sandbox tools image
+# Sandbox workspace tools
 
-This Dockerfile is the canonical build for the static `sandbox-shim` binary. Its
-`image` target is a `scratch` donor image rather than a runnable sandbox.
+This Dockerfile builds `sandbox-shim`. The `image` target is a donor, not a sandbox.
 
-Build the local donor used by this repository's examples:
+Done when `sandbox-tools:local` exists.
 
 ```sh
 npm run shim:build
 ```
 
-An example copies the shim into its own runtime image:
+Copy the binary into your image:
 
 ```dockerfile
 ARG SANDBOX_TOOLS_IMAGE=sandbox-tools:local
@@ -19,6 +18,4 @@ FROM alpine:3.23
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
 ```
 
-The local tag is a development address. A published release should use a versioned,
-digest-pinned donor image so applications can retain their own base image without
-installing the Rust toolchain.
+Pin a versioned donor in production. Keep your own base image.

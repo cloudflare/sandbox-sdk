@@ -1,69 +1,43 @@
 # About sandboxes
 
-A sandbox is a named Durable Object with an attached Container Instance. The
-object is the logical identity. The container is the current physical
-execution.
+A sandbox is an isolated place to run work. Your Worker receives the request, decides what may run, and returns the result.
 
-`idFromName("workspace-1")` always selects the same sandbox. That identity
-survives container restarts, snapshot restore, and explicit destroy.
+Cloudflare has two sandbox environments: [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/) and [Containers](https://developers.cloudflare.com/containers/). This repository uses Containers.
 
-## Filesystem and lifecycle
+A Container runs in its own VM. It does not share a process or kernel with your Worker. HTTP from the Internet reaches it only through your Worker.
 
-`Files` provides Linux file operations for an attached container. The container
-image must provide `/usr/local/bin/sandbox-shim`. Linux filesystem failures
-become `SandboxFileError`. Malformed shim output becomes
-`SandboxProtocolError`.
+## Same name, same Durable Object
 
-The application starts, snapshots, signals, and destroys the container
-through `this.ctx.container`. File operations require a running container.
+Call `env.SANDBOX.getByName(name)`. The same name reaches the same Durable Object. A different name is a different Durable Object.
 
-Reusing a named sandbox preserves filesystem state for as long as the
-current execution, or a restored snapshot of it, remains. Destroying the
-execution without a snapshot discards that state. Starting from an image
-creates a new filesystem. Starting from `containerSnapshot` restores a
-previous one.
+That Durable Object can have one running Container. The Container is not the Durable Object. If the Container stops, the Durable Object remains.
 
-Labels on `start()` are operational metadata. They are not identity and not
-authorization. The Durable Object name remains the identity.
+## Disk lasts while the Container runs
+
+Files you write stay on that Container's disk while the instance is running. Destroying it, or letting it time out, drops unsaved files.
+
+To keep files across a restart, call `snapshotContainer()`. Store the snapshot ID in Durable Object storage. Start the next Container with `containerSnapshot`. See [Checkpoint a workspace](checkpoint-a-workspace.md).
+
+To clone a workspace, start a different Durable Object from the same snapshot.
+
+Snapshots capture disk. They do not capture running processes or memory.
+
+## Your Worker is the boundary
+
+Authenticate the request in the Worker. Choose the Durable Object name. Choose which paths and commands are allowed. Labels on `start()` are operational metadata, not authorization.
+
+`Files` follows Linux path rules. It does not enforce access policy.
 
 ## Commands
 
-Request-scoped commands use native `container.exec()`. They are not an
-`@cloudflare/sandbox` API. `exec()` returns a live handle after spawn. Linux
-work can continue after the creating request ends, but the handle, streams,
-and control paths exist only in the current object instance. There is no
-generation-scoped recovery API today. A Worker invocation marked canceled
-reports that request, not whether the Linux process exited.
+`container.exec()` starts a process in a running Container. It does not start a stopped Container.
 
-## HTTP forwarding
+`running` is true while the instance is up. It does not mean the process is ready to accept work. `start()` does not wait until the Container is ready.
 
-Guest HTTP and WebSockets use native `getTcpPort(port).fetch()`. That hop
-uses an already-secure in-platform connection, so the container URL is
-expressed as `http:`. Native forwarding preserves headers and cookies,
-including credentials the guest should not receive. The native hop can
-stream request and response bodies; a complete Worker route may still
-coalesce small chunks. Cancellation is ordinary input to the guest. If PID 1
-leaves an aborted body unread, the container can exit.
+The `ExecProcess` handle lives in this Durable Object isolate. If the request is canceled after `exec()` returns, the process may still be running.
 
-## Live terminals
+## Deploys and images
 
-A live terminal keeps one WebSocket together with one native `ExecProcess`.
-A standard accepted WebSocket holds the object instance awake. Disconnect
-can stop the direct child without reaping descendants. Unexpected actor
-reconstruction can leave that process with no owner. Reaping leftover
-children is image policy, not a terminal API. The package does not own
-terminal identity, reconnect, or retained output.
+A new Worker version does not replace a running Container. The image and instance you pass to `start()` apply when that Container starts. A running instance keeps the image it started with.
 
-## Deployments
-
-A new Worker version does not replace a running container. The image passed
-to `container.start()` is used when an execution starts. If an execution is
-already running, it keeps the image it started with.
-
-## Failures
-
-A dropped connection or cancelled stream can fail after it has partially or
-completely applied. Spawn is in that set: a cancelled `exec()` can still have
-created a process. Do not automatically retry writes, renames, recursive
-directory creation, removal, spawn, or non-idempotent forwarded requests after
-an ambiguous failure.
+`@cloudflare/sandbox` is `Files`. Start and destroy Containers yourself. Refer to the [Files API](files.md).
