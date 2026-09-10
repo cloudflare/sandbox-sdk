@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+: "${CODEX_API_KEY:?CODEX_API_KEY is required}"
+: "${OPENAI_ENVIRONMENT_ID:?OPENAI_ENVIRONMENT_ID is required}"
+: "${OPENAI_REMOTE_URL:?OPENAI_REMOTE_URL is required}"
+
+exec codex exec-server \
+  --remote "$OPENAI_REMOTE_URL" \
+  --environment-id "$OPENAI_ENVIRONMENT_ID"

@@ -1,0 +1,8 @@
+.dev.vars
+.wrangler
+.turbo
+Dockerfile.local
+dist
+local-ca.pem
+node_modules
+wrangler.local.jsonc

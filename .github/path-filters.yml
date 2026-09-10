@@ -27,8 +27,10 @@ deps:
   - 'package.json'
   - 'package-lock.json'
   - 'packages/*/package.json'
+  - 'openai/*/package.json'
 changesets:
   - '.changeset/**'
 any-source:
   - 'packages/**'
   - 'tests/**'
+  - 'openai/**'
