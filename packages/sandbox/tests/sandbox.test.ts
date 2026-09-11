@@ -1413,6 +1413,40 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(await response.text()).toBe('WebSocket response');
     });
 
+    it('rejects unregistered local mount watch requests', async () => {
+      const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const response = await sandbox.fetch(
+        new Request('https://example.com/api/watch/mount', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: '/etc', recursive: true })
+        })
+      );
+
+      expect(response.status).toBe(403);
+      expect(containerFetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('forwards a watch for an exact registered local mount root', async () => {
+      const activeMounts = (
+        sandbox as unknown as {
+          activeMounts: Map<string, { mountType: string }>;
+        }
+      ).activeMounts;
+      activeMounts.set('/data', { mountType: 'local-sync' });
+      const containerFetchSpy = vi.spyOn(sandbox, 'containerFetch');
+      const response = await sandbox.fetch(
+        new Request('https://example.com/api/watch/mount', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: '/data', recursive: true })
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(containerFetchSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('should route non-WebSocket requests through containerFetch', async () => {
       // GET request
       const getRequest = new Request('https://example.com/api/data');

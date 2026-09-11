@@ -1073,14 +1073,30 @@ class WatchRPCAPI extends RpcTarget {
   }
 
   async watch(request: WatchRequest): Promise<ReadableStream<Uint8Array>> {
-    const result = await this.#svc.watchDirectory(request.path, {
+    const result = await this.#svc.watchDirectory(
+      request.path,
+      this.buildWatchRequest(request)
+    );
+    return extractData<ReadableStream<Uint8Array>>(result);
+  }
+
+  /** @internal Watches an absolute local bucket mount root. */
+  async watchMount(request: WatchRequest): Promise<ReadableStream<Uint8Array>> {
+    const result = await this.#svc.watchMountDirectory(
+      request.path,
+      this.buildWatchRequest(request)
+    );
+    return extractData<ReadableStream<Uint8Array>>(result);
+  }
+
+  private buildWatchRequest(request: WatchRequest): WatchRequest {
+    return {
       path: request.path,
       sessionId: request.sessionId ?? 'default',
       recursive: request.recursive,
       include: request.include,
       exclude: request.exclude
-    });
-    return extractData<ReadableStream<Uint8Array>>(result);
+    };
   }
 
   async checkChanges(

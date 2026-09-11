@@ -1,4 +1,5 @@
-import type { SandboxAPI } from '@repo/shared';
+import type { SandboxAPI, WatchRequest } from '@repo/shared';
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import { BackupClient } from './backup-client';
 import { CommandClient } from './command-client';
 import { FileClient } from './file-client';
@@ -13,7 +14,7 @@ import {
 } from './transport';
 import type { HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
-import { WatchClient } from './watch-client';
+import { WatchClient, watchLocalMountRoute } from './watch-client';
 
 /**
  * Route-based compatibility sandbox client that composes all domain-specific
@@ -77,6 +78,12 @@ export class SandboxClient {
     this.interpreter = new InterpreterClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
     this.watch = new WatchClient(clientOptions);
+  }
+
+  async [WATCH_LOCAL_MOUNT](
+    request: WatchRequest
+  ): Promise<ReadableStream<Uint8Array>> {
+    return watchLocalMountRoute(this.watch, request);
   }
 
   /**

@@ -1,9 +1,20 @@
 import path from 'node:path/posix';
-import type { FileWatchSSEEvent, Logger } from '@repo/shared';
+import {
+  type FileWatchSSEEvent,
+  type Logger,
+  logCanonicalEvent
+} from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
+import {
+  type LocalMountWatchClient,
+  WATCH_LOCAL_MOUNT,
+  WORKSPACE_ROOT
+} from '@repo/shared/internal';
 import type { SandboxClient } from './clients';
 import type { ContainerControlClient } from './container-control';
 import { parseSSEStream } from './sse-parser';
 import { validatePrefix } from './storage-mount';
+import { UnsupportedMountWatchError } from './watch-capability';
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_ECHO_SUPPRESS_TTL_MS = 2000;
@@ -20,11 +31,12 @@ interface LocalMountSyncOptions {
   mountPath: string;
   prefix: string | undefined;
   readOnly: boolean;
-  client: SandboxClient | ContainerControlClient;
+  client: (SandboxClient | ContainerControlClient) & LocalMountWatchClient;
   sessionId: string;
   logger: Logger;
   pollIntervalMs?: number;
   echoSuppressTtlMs?: number;
+  onReverseSyncDegraded?: (error: Error) => void;
 }
 
 /**
@@ -38,10 +50,12 @@ export class LocalMountSyncManager {
   private readonly mountPath: string;
   private readonly prefix: string | undefined;
   private readonly readOnly: boolean;
-  private readonly client: SandboxClient | ContainerControlClient;
+  private readonly client: (SandboxClient | ContainerControlClient) &
+    LocalMountWatchClient;
   private readonly sessionId: string;
   private readonly logger: Logger;
   private readonly pollIntervalMs: number;
+  private readonly onReverseSyncDegraded?: (error: Error) => void;
 
   private readonly echoSuppressTtlMs: number;
 
@@ -53,6 +67,8 @@ export class LocalMountSyncManager {
   private running = false;
   private consecutivePollFailures = 0;
   private consecutiveWatchFailures = 0;
+  private usePublicWatch = false;
+  private reverseSyncError: Error | null = null;
 
   constructor(options: LocalMountSyncOptions) {
     this.bucket = options.bucket;
@@ -68,6 +84,7 @@ export class LocalMountSyncManager {
     this.sessionId = options.sessionId;
     this.logger = options.logger.child({ operation: 'local-mount-sync' });
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.onReverseSyncDegraded = options.onReverseSyncDegraded;
     this.echoSuppressTtlMs =
       options.echoSuppressTtlMs ?? DEFAULT_ECHO_SUPPRESS_TTL_MS;
   }
@@ -84,11 +101,12 @@ export class LocalMountSyncManager {
     });
 
     await this.fullSyncR2ToContainer();
-    this.schedulePoll();
 
     if (!this.readOnly) {
-      this.startContainerWatch();
+      await this.startContainerWatch();
     }
+
+    this.schedulePoll();
 
     this.logger.info('Local mount sync started', {
       mountPath: this.mountPath,
@@ -98,9 +116,12 @@ export class LocalMountSyncManager {
     });
   }
 
-  /**
-   * Stop all sync activity and clean up resources.
-   */
+  /** Returns the permanent reverse-sync failure, if one occurred. */
+  getReverseSyncError(): Error | null {
+    return this.reverseSyncError;
+  }
+
+  /** Stop all sync activity and clean up resources. */
   async stop(): Promise<void> {
     this.running = false;
 
@@ -286,15 +307,27 @@ export class LocalMountSyncManager {
     }
   }
 
-  private startContainerWatch(): void {
+  private async startContainerWatch(): Promise<void> {
     this.watchAbortController = new AbortController();
-    this.runWatchWithRetry();
+
+    try {
+      const stream = await this.openContainerWatch();
+      this.runWatchWithRetry(stream);
+    } catch (error) {
+      if (isPermanentWatchError(error)) {
+        throw error;
+      }
+
+      this.consecutiveWatchFailures++;
+      this.logWatchFailure(error);
+      this.scheduleWatchReconnect();
+    }
   }
 
-  private runWatchWithRetry(): void {
+  private runWatchWithRetry(stream?: ReadableStream<Uint8Array>): void {
     if (!this.running) return;
 
-    this.runContainerWatchLoop()
+    this.runContainerWatchLoop(stream)
       .then(() => {
         // Stream ended cleanly (e.g. server closed it). Reconnect unless stopped.
         this.consecutiveWatchFailures = 0;
@@ -303,11 +336,12 @@ export class LocalMountSyncManager {
       .catch((error) => {
         if (!this.running) return;
         this.consecutiveWatchFailures++;
-        this.logger.error(
-          'Container watch loop failed',
-          error instanceof Error ? error : new Error(String(error))
-        );
-        this.scheduleWatchReconnect();
+        this.logWatchFailure(error);
+        if (isPermanentWatchError(error)) {
+          this.recordReverseSyncDegraded(error);
+        } else {
+          this.scheduleWatchReconnect();
+        }
       });
   }
 
@@ -335,12 +369,65 @@ export class LocalMountSyncManager {
     }, backoffMs);
   }
 
-  private async runContainerWatchLoop(): Promise<void> {
-    const stream = await this.client.watch.watch({
+  private async openContainerWatch(): Promise<ReadableStream<Uint8Array>> {
+    const request = {
       path: this.mountPath,
       recursive: true,
       sessionId: this.sessionId
+    };
+
+    if (this.usePublicWatch) {
+      return this.client.watch.watch(request);
+    }
+
+    try {
+      return await this.client[WATCH_LOCAL_MOUNT](request);
+    } catch (error) {
+      if (getWatchErrorCode(error) !== ErrorCode.UNSUPPORTED_CAPABILITY) {
+        throw error;
+      }
+
+      if (isWithinWorkspace(this.mountPath)) {
+        this.usePublicWatch = true;
+        this.logger.warn(
+          'Container image does not support local mount watches; using the public workspace watch endpoint',
+          { mountPath: this.mountPath }
+        );
+        return this.client.watch.watch(request);
+      }
+
+      throw new UnsupportedMountWatchError(this.mountPath, { cause: error });
+    }
+  }
+
+  private recordReverseSyncDegraded(error: unknown): void {
+    const normalizedError =
+      error instanceof Error ? error : new Error(String(error));
+    this.reverseSyncError = normalizedError;
+    this.onReverseSyncDegraded?.(normalizedError);
+    logCanonicalEvent(this.logger, {
+      event: 'bucket.local_sync_watch',
+      origin: 'internal',
+      outcome: 'error',
+      durationMs: 0,
+      mountPath: this.mountPath,
+      errorMessage: normalizedError.message,
+      error: normalizedError,
+      degraded: true
     });
+  }
+
+  private logWatchFailure(error: unknown): void {
+    this.logger.error(
+      'Container watch loop failed',
+      error instanceof Error ? error : new Error(String(error))
+    );
+  }
+
+  private async runContainerWatchLoop(
+    initialStream?: ReadableStream<Uint8Array>
+  ): Promise<void> {
+    const stream = initialStream ?? (await this.openContainerWatch());
 
     for await (const event of parseSSEStream<FileWatchSSEEvent>(
       stream,
@@ -446,6 +533,30 @@ export class LocalMountSyncManager {
 
     return this.prefix ? path.join(this.prefix, relativePath) : relativePath;
   }
+}
+
+function isWithinWorkspace(input: string): boolean {
+  const resolved = path.resolve(input);
+  return (
+    resolved === WORKSPACE_ROOT || resolved.startsWith(`${WORKSPACE_ROOT}/`)
+  );
+}
+
+function isPermanentWatchError(error: unknown): boolean {
+  const code = getWatchErrorCode(error);
+  return (
+    code === ErrorCode.UNSUPPORTED_CAPABILITY ||
+    code === ErrorCode.VALIDATION_FAILED ||
+    code === ErrorCode.PERMISSION_DENIED ||
+    code === ErrorCode.INVALID_MOUNT_CONFIG
+  );
+}
+
+function getWatchErrorCode(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  return Reflect.get(error, 'code');
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {

@@ -20,6 +20,8 @@ let commandExecuteImpl: (...args: unknown[]) => unknown = () => ({
   stdout: '',
   stderr: ''
 });
+let watchMountImpl: (...args: unknown[]) => unknown = () =>
+  new ReadableStream<Uint8Array>();
 /**
  * onClose callbacks installed by `ContainerControlClient` on the active
  * mock connection. The client's `getConnection()` wires this so the WS
@@ -88,6 +90,9 @@ vi.mock('../src/container-control/connection', () => ({
         {
           commands: {
             execute: (...args: unknown[]) => commandExecuteImpl(...args)
+          },
+          watch: {
+            watchMount: (...args: unknown[]) => watchMountImpl(...args)
           }
         },
         { get: (target, prop) => Reflect.get(target, prop) ?? {} }
@@ -97,6 +102,7 @@ vi.mock('../src/container-control/connection', () => ({
   }
 }));
 
+import { WATCH_LOCAL_MOUNT } from '@repo/shared/internal';
 import {
   ContainerControlClient,
   translateRPCError
@@ -114,10 +120,21 @@ describe('ContainerControlClient busy/idle tracking', () => {
     onConnectionErrorHandlers.length = 0;
     onConnectedHandlers.length = 0;
     commandExecuteImpl = () => ({ exitCode: 0, stdout: '', stderr: '' });
+    watchMountImpl = () => new ReadableStream<Uint8Array>();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('types a missing mount watch method through the wrapped RPC operation', async () => {
+    watchMountImpl = () =>
+      Promise.reject(new TypeError("'watch.watchMount' is not a function"));
+    const client = new ContainerControlClient({ stub: { fetch: vi.fn() } });
+
+    await expect(
+      client[WATCH_LOCAL_MOUNT]({ path: '/data' })
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
   });
 
   it('keeps the session marked busy while a stream export is held', () => {
@@ -556,6 +573,23 @@ describe('translateRPCError', () => {
   async function loadErr() {
     return await import('../src/errors');
   }
+
+  it('translates a missing mount watch RPC method into a capability error', async () => {
+    const translateRPCError = await loadFn();
+    const error = new TypeError("'watch.watchMount' is not a function");
+    let thrown: unknown;
+
+    try {
+      translateRPCError(error, { operation: 'watch.watchMount' });
+    } catch (caught) {
+      thrown = caught;
+    }
+
+    expect(thrown).toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      context: { capability: 'watchMount' }
+    });
+  });
 
   // -------------------------------------------------------------------------
   // Structured (container-side) errors

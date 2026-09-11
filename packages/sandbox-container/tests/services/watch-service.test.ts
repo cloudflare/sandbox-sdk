@@ -42,9 +42,9 @@ describe('WatchService', () => {
   });
 
   describe('watchDirectory', () => {
-    it('should return error for non-existent path', async () => {
+    it('should return error for non-existent path in /workspace', async () => {
       const result = await watchService.watchDirectory(
-        '/non/existent/path/12345'
+        '/workspace/non/existent/path/12345'
       );
 
       expect(result.success).toBe(false);
@@ -52,17 +52,61 @@ describe('WatchService', () => {
         expect(result.error.code).toBe(ErrorCode.FILE_NOT_FOUND);
       }
     });
+
+    it('should reject public watches outside /workspace', async () => {
+      const result = await watchService.watchDirectory('/data');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.PERMISSION_DENIED);
+      }
+    });
+  });
+
+  describe('watchMountDirectory', () => {
+    it('should reject mount roots containing null bytes', async () => {
+      const result = await watchService.watchMountDirectory('/data\0/etc');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.VALIDATION_FAILED);
+      }
+    });
+
+    it('should authorize /data as an internal mount root', async () => {
+      const pathCheck = vi.spyOn(Bun, 'spawnSync').mockReturnValue({
+        exitCode: 1
+      } as ReturnType<typeof Bun.spawnSync>);
+
+      const result = await watchService.watchMountDirectory('/data');
+
+      expect(pathCheck).toHaveBeenCalledWith(['test', '-e', '/data']);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.FILE_NOT_FOUND);
+      }
+      pathCheck.mockRestore();
+    });
   });
 
   describe('checkChanges', () => {
-    it('should return error for non-existent path', async () => {
+    it('should return error for non-existent path in /workspace', async () => {
       const result = await watchService.checkChanges(
-        '/non/existent/path/12345'
+        '/workspace/non/existent/path/12345'
       );
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe(ErrorCode.FILE_NOT_FOUND);
+      }
+    });
+
+    it('should reject retained watches outside /workspace', async () => {
+      const result = await watchService.checkChanges('/data');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.PERMISSION_DENIED);
       }
     });
   });

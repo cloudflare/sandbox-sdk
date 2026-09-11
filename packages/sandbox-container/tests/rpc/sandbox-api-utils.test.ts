@@ -6,6 +6,7 @@ import {
   SandboxControlAPI
 } from '@sandbox-container/control-plane';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
+import type { WatchService } from '@sandbox-container/services/watch-service';
 import type { Session } from '@sandbox-container/session';
 
 const mockLogger = {
@@ -25,6 +26,37 @@ function buildApi(sessionManager: SessionManager): SandboxControlAPI {
     logger: mockLogger
   } as unknown as SandboxAPIDeps);
 }
+
+describe('SandboxControlAPI watch.watchMount', () => {
+  it('routes internal mount watches to watchMountDirectory', async () => {
+    const stream = new ReadableStream<Uint8Array>();
+    const watchService = {
+      watchMountDirectory: vi.fn(async () => ({
+        success: true as const,
+        data: stream
+      }))
+    } as unknown as WatchService;
+    const api = new SandboxControlAPI({
+      watchService,
+      logger: mockLogger
+    } as unknown as SandboxAPIDeps);
+
+    const result = await api.watch.watchMount({
+      path: '/data',
+      recursive: true,
+      sessionId: 'test-session'
+    });
+
+    expect(result).toBe(stream);
+    expect(watchService.watchMountDirectory).toHaveBeenCalledWith('/data', {
+      path: '/data',
+      recursive: true,
+      sessionId: 'test-session',
+      include: undefined,
+      exclude: undefined
+    });
+  });
+});
 
 describe('SandboxControlAPI utils.createSession', () => {
   let mockSessionManager: SessionManager;
