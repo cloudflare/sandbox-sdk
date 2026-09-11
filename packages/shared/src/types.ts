@@ -1166,13 +1166,33 @@ export interface BackupOptions {
    * Default: false.
    * If the directory is not inside a git repository, no git-based exclusions are applied.
    * If git is not installed in the container, a warning is logged and gitignore rules are skipped.
+   * Gitignored paths that cannot be represented safely in a mksquashfs exclude file are included with a warning.
    */
   gitignore?: boolean;
   /**
-   * Glob patterns to exclude from the backup.
-   * These are passed directly to mksquashfs as wildcard exclude patterns.
+   * Glob patterns to exclude from the backup. Single-component patterns match
+   * recursively, while separators between path components make a pattern
+   * multi-component and relative to the backup directory root. One trailing
+   * `/` is a directory marker removed before classification, so `dist` and
+   * `dist/` are recursive, while `alpha/beta/` remains root-relative. Repeated
+   * trailing separators and empty separators between components are rejected
+   * to keep classification canonical. A trailing `/**` preserves root anchoring,
+   * so use `dist` or the recursive-prefix form rather than `dist/**` to exclude
+   * `dist` directories at any depth. An explicit leading recursive globstar
+   * prefix requests recursion when the normalized target is one component,
+   * including when combined with a trailing `/**`.
    *
-   * @example ['node_modules', '*.log', '.cache']
+   * Absolute or traversing paths, surrounding whitespace, control characters,
+   * explicit `... ` syntax, empty, whole-backup patterns such as `*`, `***`,
+   * `*?`, and `?*`, globstar-only patterns, and recursive multi-component
+   * globstars are rejected with `INVALID_BACKUP_CONFIG`. These constraints
+   * keep mksquashfs 4.5 from
+   * turning a nested exclusion into an unsafe top-level exclusion.
+   *
+   * Use matching SDK and container image versions because classification
+   * depends on preserving the original pattern spelling across that boundary.
+   *
+   * @example ['node_modules', '*.log', '.cache', 'build/output']
    */
   excludes?: string[];
   /**

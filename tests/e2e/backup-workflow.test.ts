@@ -193,6 +193,95 @@ describe('Backup Workflow E2E', () => {
   });
 
   describe('Backup excludes', () => {
+    test.each(['***', '*?', '?*'])(
+      'should reject match-all exclude %j before creating a restorable archive',
+      async (pattern) => {
+        if (!backupBucketAvailable) return;
+
+        const response = await fetch(`${workerUrl}/api/backup/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            dir: '/workspace/match-all-exclude-test',
+            excludes: [pattern]
+          })
+        });
+        const error = (await response.json()) as ErrorResponse;
+
+        expect(response.status).toBe(400);
+        expect(error.code).toBe('INVALID_BACKUP_CONFIG');
+        expect(error.error).toContain(
+          'patterns must not match the entire backup'
+        );
+      },
+      60000
+    );
+
+    test('should preserve siblings of a nested excluded directory', async () => {
+      if (!backupBucketAvailable) return;
+
+      const TEST_DIR = `/workspace/nested-exclude-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `mkdir -p ${TEST_DIR}/.cache/foo/pkg/node_modules ${TEST_DIR}/.cache/foo/pkg/src`,
+            `echo "keep" > ${TEST_DIR}/.cache/keep.txt`,
+            `echo "source" > ${TEST_DIR}/.cache/foo/pkg/src/keep.txt`,
+            `echo "exclude-me" > ${TEST_DIR}/.cache/foo/pkg/node_modules/drop.txt`
+          ].join(' && ')
+        })
+      });
+      expect(setupResponse.ok).toBe(true);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          dir: TEST_DIR,
+          excludes: ['.cache/foo/*/node_modules']
+        })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+        })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `test -f ${TEST_DIR}/.cache/keep.txt && echo sibling:yes || echo sibling:no`,
+            `test -f ${TEST_DIR}/.cache/foo/pkg/src/keep.txt && echo source:yes || echo source:no`,
+            `test -e ${TEST_DIR}/.cache/foo/pkg/node_modules && echo excluded:no || echo excluded:yes`
+          ].join('; ')
+        })
+      });
+      const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
+      expect(verifyResult.exitCode).toBe(0);
+      expect(verifyResult.stdout).toContain('sibling:yes');
+      expect(verifyResult.stdout).toContain('source:yes');
+      expect(verifyResult.stdout).toContain('excluded:yes');
+
+      await cleanupDir(workerUrl, headers, TEST_DIR);
+    }, 60000);
+
     test('should include gitignored files by default', async () => {
       if (!backupBucketAvailable) return;
 
@@ -393,12 +482,15 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           command: [
             `git init ${REPO_DIR}`,
-            `mkdir -p ${TEST_DIR}/dist`,
+            `mkdir -p ${TEST_DIR}/dist ${TEST_DIR}/surviving ${TEST_DIR}/nested/surviving`,
             `printf '*.log\n' > ${REPO_DIR}/.gitignore`,
-            `printf 'dist/\n' > ${TEST_DIR}/.gitignore`,
+            `printf 'dist/\n/surviving/ignored.txt\n' > ${TEST_DIR}/.gitignore`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`,
-            `echo "ignored" > ${TEST_DIR}/server.log`
+            `echo "ignored" > ${TEST_DIR}/server.log`,
+            `echo "ignored-root" > ${TEST_DIR}/surviving/ignored.txt`,
+            `echo "keep-sibling" > ${TEST_DIR}/surviving/keep.txt`,
+            `echo "keep-nested" > ${TEST_DIR}/nested/surviving/ignored.txt`
           ].join(' && ')
         })
       });
@@ -434,7 +526,10 @@ describe('Backup Workflow E2E', () => {
           command: [
             `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
             `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`,
-            `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`
+            `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`,
+            `test -e ${TEST_DIR}/surviving/ignored.txt && echo anchored:no || echo anchored:yes`,
+            `test -f ${TEST_DIR}/surviving/keep.txt && echo sibling:yes || echo sibling:no`,
+            `test -f ${TEST_DIR}/nested/surviving/ignored.txt && echo nested:yes || echo nested:no`
           ].join('; ')
         })
       });
@@ -443,6 +538,9 @@ describe('Backup Workflow E2E', () => {
       expect(verifyResult.stdout).toContain('keep:yes');
       expect(verifyResult.stdout).toContain('dist:yes');
       expect(verifyResult.stdout).toContain('log:yes');
+      expect(verifyResult.stdout).toContain('anchored:yes');
+      expect(verifyResult.stdout).toContain('sibling:yes');
+      expect(verifyResult.stdout).toContain('nested:yes');
 
       await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);

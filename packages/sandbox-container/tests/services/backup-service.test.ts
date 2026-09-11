@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import { BackupService } from '@sandbox-container/services/backup-service';
 import type { ExecutionService } from '@sandbox-container/services/execution-service';
@@ -58,6 +59,10 @@ function execResult(
 
 function execSuccess(stdout = '', stderr = ''): ServiceResult<RawExecResult> {
   return execResult(0, stdout, stderr);
+}
+
+function encodeGitPaths(paths: string): string {
+  return Buffer.from(paths).toString('base64');
 }
 
 describe('BackupService', () => {
@@ -333,7 +338,7 @@ describe('BackupService', () => {
     });
   });
 
-  it('uses wildcard exclude mode for gitignore-derived excludes', async () => {
+  it('merges Git paths and user patterns without losing recursive expansion', async () => {
     const dir = '/workspace/repo/app';
     const archivePath = '/var/backups/test.sqsh';
 
@@ -347,12 +352,12 @@ describe('BackupService', () => {
         if (command.includes('rev-parse --is-inside-work-tree'))
           return execSuccess('true\n');
         if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
+          command.includes('ls-files -z --others -i --exclude-standard -- .')
         ) {
           return execSuccess(
-            'node_modules/a.txt\nbuild output/日本語 file.txt\n'
+            encodeGitPaths(
+              'node_modules/a.txt\0build output/日本語 file.txt\0.cache\0...foo\0'
+            )
           );
         }
         if (command.startsWith("printf '%s\\n' ")) return execSuccess();
@@ -376,13 +381,16 @@ describe('BackupService', () => {
       archivePath,
       'default',
       true,
-      []
+      ['...foo']
     );
 
     expect(result.success).toBe(true);
 
     const callArgs = mockSessionManager.executeInSession.mock.calls.map(
       ([, command]) => command
+    );
+    expect(callArgs.some((command) => command.includes('| base64 -w0'))).toBe(
+      true
     );
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
@@ -396,8 +404,14 @@ describe('BackupService', () => {
     expect(squashCommand).toContain("-ef '/var/backups/test.sqsh.exclude'");
     expect(writeExcludeCommand).toContain("'node_modules/a.txt'");
     expect(writeExcludeCommand).toContain("'build output/日本語 file.txt'");
-    expect(writeExcludeCommand).toContain("'... node_modules/a.txt'");
-    expect(writeExcludeCommand).toContain("'... build output/日本語 file.txt'");
+    expect(writeExcludeCommand).not.toContain("'... node_modules/a.txt'");
+    expect(writeExcludeCommand).not.toContain(
+      "'... build output/日本語 file.txt'"
+    );
+    expect(writeExcludeCommand).toContain("'.cache'");
+    expect(writeExcludeCommand).not.toContain("'... .cache'");
+    expect(writeExcludeCommand?.match(/'\.\.\.foo'/g)).toHaveLength(1);
+    expect(writeExcludeCommand).toContain("'... ...foo'");
   });
 
   it('defaults to including gitignored files when gitignore is omitted', async () => {
@@ -506,12 +520,12 @@ describe('BackupService', () => {
         if (command.includes('rev-parse --is-inside-work-tree'))
           return execSuccess('true\n');
         if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
+          command.includes('ls-files -z --others -i --exclude-standard -- .')
         ) {
           return execSuccess(
-            'config[1].json\nbackup-2024*.log\nq?.txt\nfolder\\name.txt\n'
+            encodeGitPaths(
+              'config[1].json\0backup-2024*.log\0q?.txt\0folder\\name.txt\0'
+            )
           );
         }
         if (command.startsWith("printf '%s\\n' ")) return execSuccess();
@@ -551,7 +565,79 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toContain("'backup-2024\\*.log'");
     expect(writeExcludeCommand).toContain("'q\\?.txt'");
     expect(writeExcludeCommand).toContain("'folder\\\\name.txt'");
-    expect(writeExcludeCommand).toContain("'... config\\[1\\].json'");
+    expect(writeExcludeCommand).not.toContain("'... config\\[1\\].json'");
+  });
+
+  it('warns and skips gitignored paths that cannot be represented safely', async () => {
+    const dir = '/workspace/repo/app';
+    const archivePath = '/var/backups/unsafe-git-path.sqsh';
+
+    mockSessionManager.executeInSession.mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+        if (command.includes('rev-parse --is-inside-work-tree'))
+          return execSuccess('true\n');
+        if (command.includes('ls-files -z --others')) {
+          return execSuccess(
+            encodeGitPaths(
+              `safe/path\0...foo\0${'x'.repeat(210)}\nforged\0... foo\0 keep \0\u007fname\0bad\rname\0bad\tname\0trailing \0`
+            )
+          );
+        }
+        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+        if (command.startsWith('/usr/bin/mksquashfs ')) return execSuccess();
+        if (command.startsWith('rm -f ')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      true
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Some gitignored paths cannot be represented safely; including them in the backup',
+      { count: 7 }
+    );
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Sample of unrepresentable gitignored backup paths',
+      {
+        sample: [
+          JSON.stringify('x'.repeat(200)),
+          '"... foo"',
+          '" keep "',
+          '"\\u007fname"',
+          '"bad\\rname"'
+        ],
+        omittedCount: 2
+      }
+    );
+    const writeExcludeCommand = mockSessionManager.executeInSession.mock.calls
+      .map(([, command]) => command)
+      .find((command) => command.startsWith("printf '%s\\n' "));
+    expect(writeExcludeCommand).toContain("'safe/path'");
+    expect(writeExcludeCommand).toContain("'...foo'");
+    expect(writeExcludeCommand).not.toContain("'... ...foo'");
+    expect(writeExcludeCommand).not.toContain('forged');
+    expect(writeExcludeCommand).not.toContain('... foo');
+    expect(writeExcludeCommand).not.toContain(' keep ');
   });
 
   it('applies user-provided excludes patterns', async () => {
@@ -585,7 +671,7 @@ describe('BackupService', () => {
       archivePath,
       'default',
       false,
-      ['node_modules', '*.log']
+      ['node_modules', '*.log', 'logs/**.log', 'foo**/bar']
     );
     expect(result.success).toBe(true);
 
@@ -608,10 +694,224 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toContain("'... node_modules'");
     expect(writeExcludeCommand).toContain("'*.log'");
     expect(writeExcludeCommand).toContain("'... *.log'");
+    expect(writeExcludeCommand).toContain("'logs/**.log'");
+    expect(writeExcludeCommand).not.toContain("'... logs/**.log'");
+    expect(writeExcludeCommand).toContain("'foo**/bar'");
 
     // git should not be invoked when gitignore is false
     expect(
       callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
+    ).toBe(false);
+  });
+
+  it.each([
+    { input: 'node_modules', normalized: 'node_modules', sticky: true },
+    { input: 'node_modules/', normalized: 'node_modules', sticky: true },
+    { input: 'nested/path', normalized: 'nested/path', sticky: false },
+    { input: 'nested/path/', normalized: 'nested/path', sticky: false },
+    {
+      input: 'packages/foo/node_modules/',
+      normalized: 'packages/foo/node_modules',
+      sticky: false
+    },
+    { input: 'alpha/beta', normalized: 'alpha/beta', sticky: false },
+    { input: 'alpha/beta/', normalized: 'alpha/beta', sticky: false },
+    { input: 'dist', normalized: 'dist', sticky: true },
+    { input: 'dist/', normalized: 'dist', sticky: true },
+    { input: 'dist/**', normalized: 'dist', sticky: false },
+    { input: 'packages/app/**', normalized: 'packages/app', sticky: false },
+    { input: '**/tree/**', normalized: 'tree', sticky: true },
+    { input: '**/dist', normalized: 'dist', sticky: true },
+    { input: '**/dist/', normalized: 'dist', sticky: true },
+    { input: '**/dist/**', normalized: 'dist', sticky: true },
+    { input: '**/**/cache', normalized: 'cache', sticky: true },
+    { input: 'a/b', normalized: 'a/b', sticky: false },
+    {
+      input: '.cache/foo/*/node_modules',
+      normalized: '.cache/foo/*/node_modules',
+      sticky: false
+    },
+    { input: '*/*', normalized: '*/*', sticky: false },
+    { input: 'a/*', normalized: 'a/*', sticky: false },
+    { input: '?', normalized: '?', sticky: true },
+    { input: '?*?', normalized: '?*?', sticky: true },
+    { input: '*.log', normalized: '*.log', sticky: true },
+    { input: 'logs/**.log', normalized: 'logs/**.log', sticky: false },
+    { input: 'foo**/bar', normalized: 'foo**/bar', sticky: false },
+    { input: '...foo', normalized: '...foo', sticky: true }
+  ])(
+    'expands $input with sticky=$sticky',
+    async ({ input, normalized, sticky }) => {
+      const dir = '/workspace/app';
+      const archivePath = '/var/backups/pattern-matrix.sqsh';
+
+      mockSessionManager.executeInSession.mockImplementation(
+        async (_sessionId: string, command: string) => {
+          if (command.startsWith('mkdir -p ')) return execSuccess();
+          if (command.startsWith('test -d ')) return execSuccess();
+          if (command.includes('test -x /usr/bin/mksquashfs'))
+            return execSuccess('exists\n');
+          if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+          if (command.startsWith('/usr/bin/mksquashfs ')) return execSuccess();
+          if (command.startsWith('rm -f ')) return execSuccess();
+          if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+
+          return {
+            success: false,
+            error: {
+              message: `Unexpected command in test: ${command}`,
+              code: 'TEST_ERROR',
+              details: {}
+            }
+          };
+        }
+      );
+
+      const result = await service.createArchive(
+        dir,
+        archivePath,
+        'default',
+        false,
+        [input]
+      );
+
+      expect(result.success).toBe(true);
+      const writeExcludeCommand = mockSessionManager.executeInSession.mock.calls
+        .map(([, command]) => command)
+        .find((command) => command.startsWith("printf '%s\\n' "));
+      expect(writeExcludeCommand).toContain(`'${normalized}'`);
+      if (sticky) {
+        expect(writeExcludeCommand).toContain(`'... ${normalized}'`);
+      } else {
+        expect(writeExcludeCommand).not.toContain(`'... ${normalized}'`);
+      }
+    }
+  );
+
+  it('does not make multi-component exclude patterns sticky', async () => {
+    const dir = '/workspace/app';
+    const archivePath = '/var/backups/nested-excludes.sqsh';
+
+    mockSessionManager.executeInSession.mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+        if (command.startsWith('rm -f ')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('500\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      false,
+      ['.cache/foo/*/node_modules', 'node_modules']
+    );
+    expect(result.success).toBe(true);
+
+    const writeExcludeCommand = mockSessionManager.executeInSession.mock.calls
+      .map(([, command]) => command)
+      .find((command) => command.startsWith("printf '%s\\n' "));
+    expect(writeExcludeCommand).toBeDefined();
+    expect(writeExcludeCommand).toContain("'.cache/foo/*/node_modules'");
+    expect(writeExcludeCommand).not.toContain(
+      "'... .cache/foo/*/node_modules'"
+    );
+    expect(writeExcludeCommand).toContain("'... node_modules'");
+  });
+
+  it('rejects unsafe exclude patterns', async () => {
+    const dir = '/workspace/app';
+    const archivePath = '/var/backups/recursive-nested-excludes.sqsh';
+
+    mockSessionManager.executeInSession.mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    for (const pattern of [
+      '',
+      '*',
+      '**',
+      '**/',
+      '***',
+      '***/',
+      '*?',
+      '?*',
+      '*?*',
+      '**?**',
+      '**/***',
+      '***/**',
+      '**/*?/**',
+      '**/*',
+      '*/',
+      '**/*/',
+      '*/**',
+      '**/*/**',
+      '**/node_modules/.cache',
+      '**/a/b/',
+      '**/packages/app/**',
+      'src/**/cache',
+      'foo/**/**',
+      '/',
+      '/rooted',
+      'line\nbreak',
+      '... alpha/beta',
+      ' ... alpha/beta',
+      'bounded ',
+      'a//b',
+      'dist//',
+      '**/dist//',
+      'a/./b',
+      'a/../b'
+    ]) {
+      const result = await service.createArchive(
+        dir,
+        archivePath,
+        'default',
+        false,
+        [pattern]
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.INVALID_BACKUP_CONFIG);
+        expect(result.error.message).toContain(
+          'Invalid backup exclude pattern'
+        );
+      }
+    }
+    expect(
+      mockSessionManager.executeInSession.mock.calls.some(([, command]) =>
+        command.startsWith('/usr/bin/mksquashfs ')
+      )
     ).toBe(false);
   });
 
@@ -629,11 +929,9 @@ describe('BackupService', () => {
         if (command.includes('rev-parse --is-inside-work-tree'))
           return execSuccess('true\n');
         if (
-          command.includes(
-            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
-          )
+          command.includes('ls-files -z --others -i --exclude-standard -- .')
         ) {
-          return execSuccess('node_modules/a.txt\n');
+          return execSuccess(encodeGitPaths('node_modules/a.txt\0'));
         }
         if (command.startsWith("printf '%s\\n' ")) return execSuccess();
         if (command.startsWith('/usr/bin/mksquashfs ')) {
@@ -672,7 +970,7 @@ describe('BackupService', () => {
     ).toBe(true);
   });
 
-  it('normalizes globstar excludes before passing to mksquashfs', async () => {
+  it('expands globstar excludes before passing to mksquashfs', async () => {
     const dir = '/workspace/app';
     const archivePath = '/var/backups/globstar-excludes.sqsh';
 
@@ -703,7 +1001,13 @@ describe('BackupService', () => {
       archivePath,
       'default',
       false,
-      ['**/node_modules/.cache', '**/.next/cache', '**/.turbo', '**/dist']
+      [
+        '**/node_modules',
+        'node_modules/',
+        '**/.turbo',
+        'dist/**',
+        'packages/app/**'
+      ]
     );
     expect(result.success).toBe(true);
 
@@ -717,26 +1021,20 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toBeDefined();
 
     // Patterns should be normalized: no ** prefixes
-    expect(writeExcludeCommand).toContain("'node_modules/.cache'");
-    expect(writeExcludeCommand).toContain("'... node_modules/.cache'");
-    expect(writeExcludeCommand).toContain("'.next/cache'");
+    expect(writeExcludeCommand).toContain("'node_modules'");
+    expect(writeExcludeCommand).toContain("'... node_modules'");
     expect(writeExcludeCommand).toContain("'.turbo'");
+    expect(writeExcludeCommand).toContain("'... .turbo'");
     expect(writeExcludeCommand).toContain("'dist'");
+    expect(writeExcludeCommand).not.toContain("'... dist'");
+    expect(writeExcludeCommand).toContain("'packages/app'");
+    expect(writeExcludeCommand).not.toContain("'... packages/app'");
 
     // Original ** patterns must NOT appear
     expect(writeExcludeCommand).not.toContain('**/node_modules');
-    expect(writeExcludeCommand).not.toContain('**/.next');
     expect(writeExcludeCommand).not.toContain('**/.turbo');
-    expect(writeExcludeCommand).not.toContain('**/dist');
-
-    // Should have logged warnings about normalization
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      'Exclude pattern contained ** (globstar) which mksquashfs does not support; normalized automatically',
-      expect.objectContaining({
-        original: '**/node_modules/.cache',
-        normalized: 'node_modules/.cache'
-      })
-    );
+    expect(writeExcludeCommand).not.toContain('dist/**');
+    expect(writeExcludeCommand).not.toContain('packages/app/**');
   });
 
   it('does not add exclude flags when gitignore is false in non-git directories', async () => {
@@ -784,58 +1082,5 @@ describe('BackupService', () => {
     expect(
       callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
     ).toBe(false);
-  });
-
-  describe('normalizeMksquashfsPattern', () => {
-    it('strips leading **/', () => {
-      expect(BackupService.normalizeMksquashfsPattern('**/node_modules')).toBe(
-        'node_modules'
-      );
-      expect(
-        BackupService.normalizeMksquashfsPattern('**/node_modules/.cache')
-      ).toBe('node_modules/.cache');
-      expect(BackupService.normalizeMksquashfsPattern('**/.next/cache')).toBe(
-        '.next/cache'
-      );
-    });
-
-    it('strips repeated leading **/', () => {
-      expect(
-        BackupService.normalizeMksquashfsPattern('**/**/node_modules')
-      ).toBe('node_modules');
-    });
-
-    it('replaces mid-pattern /**/ with /', () => {
-      expect(BackupService.normalizeMksquashfsPattern('src/**/test')).toBe(
-        'src/test'
-      );
-      expect(BackupService.normalizeMksquashfsPattern('a/**/**/b')).toBe('a/b');
-      expect(BackupService.normalizeMksquashfsPattern('a/**/b/**/c')).toBe(
-        'a/b/c'
-      );
-    });
-
-    it('strips trailing /**', () => {
-      expect(BackupService.normalizeMksquashfsPattern('dist/**')).toBe('dist');
-    });
-
-    it('handles combined leading and trailing **', () => {
-      expect(BackupService.normalizeMksquashfsPattern('**/dist/**')).toBe(
-        'dist'
-      );
-    });
-
-    it('returns null for pure ** patterns', () => {
-      expect(BackupService.normalizeMksquashfsPattern('**')).toBeNull();
-      expect(BackupService.normalizeMksquashfsPattern('**/**')).toBeNull();
-    });
-
-    it('passes through patterns without **', () => {
-      expect(BackupService.normalizeMksquashfsPattern('node_modules')).toBe(
-        'node_modules'
-      );
-      expect(BackupService.normalizeMksquashfsPattern('*.log')).toBe('*.log');
-      expect(BackupService.normalizeMksquashfsPattern('.cache')).toBe('.cache');
-    });
   });
 });
