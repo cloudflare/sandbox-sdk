@@ -43,24 +43,29 @@ Done when the Worker has a `SANDBOX` binding and `nodejs_compat`.
       },
     ],
   },
+  "containers": [
+    {
+      "class_name": "WorkspaceSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
   "exports": {
     "WorkspaceSandbox": {
       "type": "durable-object",
       "storage": "sqlite",
-      "container": {
-        "images": [
-          {
-            "binding": "SANDBOX_IMAGE",
-            "image": "./Dockerfile",
-          },
-        ],
-      },
     },
   },
 }
 ```
 
-Pass `this.env.SANDBOX_IMAGE` to `start()`. `nodejs_compat` lets `Files` read Linux error names through `node:os`.
+Wrangler prepares the named image and exposes its digest through `this.ctx.container.images.sandbox`.
+Pass that value to `start()`. `nodejs_compat` lets `Files` read Linux error names through
+`node:os`.
 
 ## 3. Start the Container, write the script, run it
 
@@ -119,7 +124,7 @@ private async ensureRunning(name: string): Promise<Container> {
   const container = this.requireContainer();
   if (!container.running) {
     container.start({
-      image: this.env.SANDBOX_IMAGE,
+      image: container.images.sandbox,
       instance: "lite",
       enableInternet: false,
       labels: { sandbox: name },
@@ -184,4 +189,5 @@ A canceled request can still have started the process. Look at the Container bef
 
 - [About sandboxes](about-sandboxes.md)
 - [Files API](files.md)
+- [Mount S3-compatible storage](s3-mounts.md)
 - [Checkpoint a workspace](checkpoint-a-workspace.md)

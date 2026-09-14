@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir as nativeMkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,11 +8,16 @@ import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import { Files } from "../src/files/files.js";
+import { S3Mounts } from "../src/s3-mounts/s3-mounts.js";
 
 const SHIM_PATH = process.env.SANDBOX_SHIM_PATH;
 
 function nativeContainer() {
   return {
+    running: true,
+    interceptOutboundHttp() {
+      return Promise.resolve();
+    },
     exec(command, options) {
       const child = spawn(SHIM_PATH, command.slice(1), {
         cwd: options.cwd,
@@ -201,6 +207,63 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
       const response = await files.readFile(directory);
       await expect(response.arrayBuffer()).rejects.toMatchObject({ code: "EISDIR" });
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports and unmounts an absent S3 mount idempotently", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    try {
+      const container = nativeContainer();
+      const gateway = () => ({ fetch() {} });
+      const mounts = new S3Mounts(container, gateway);
+
+      await expect(mounts.inspect(directory)).resolves.toEqual({
+        mountPath: directory,
+        attachment: { status: "absent" },
+      });
+      await mounts.unmount(directory);
+      await mounts.unmount(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("decodes stale mount and gateway evidence from the compiled shim", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "sandbox-shim-contract-"));
+    const markerName = `${createHash("sha256").update(directory).digest("hex")}.json`;
+    const markerPath = join("/run/sandbox/s3-mounts/markers", markerName);
+    const mounts = new S3Mounts(nativeContainer(), () => ({ fetch() {} }));
+    try {
+      await nativeMkdir("/run/sandbox/s3-mounts/markers", { recursive: true });
+      await writeFile(
+        markerPath,
+        JSON.stringify({
+          protocolVersion: 1,
+          routeId: "contract-route",
+          mountPath: directory,
+          configuration: {
+            source: {
+              type: "s3",
+              endpoint: "http://minio:9000/",
+              region: "us-east-1",
+              bucket: "models",
+            },
+            keyPrefix: "current/",
+            access: "read-only",
+            s3fsOptions: [],
+          },
+        }),
+      );
+
+      await expect(mounts.inspect(directory)).resolves.toMatchObject({
+        mountPath: directory,
+        attachment: { status: "stale" },
+        gateway: { status: "unreachable" },
+      });
+      await mounts.unmount(directory);
+    } finally {
+      await rm(markerPath, { force: true });
       await rm(directory, { recursive: true, force: true });
     }
   });

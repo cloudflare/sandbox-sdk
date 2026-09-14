@@ -121,8 +121,69 @@ export const SandboxProtocolError = {
   },
 };
 
+export type SandboxS3MountErrorCode =
+  | "S3_MOUNT_CONFLICT"
+  | "S3_MOUNT_BUSY"
+  | "S3_MOUNT_FAILED"
+  | "S3_MOUNT_INCOMPATIBLE";
+
+export type S3MountOperation = "mount" | "inspect" | "unmount";
+
+/** A classifiable failure while reconciling an S3-compatible filesystem mount. */
+export interface SandboxS3MountError extends Error {
+  readonly name: "SandboxS3MountError";
+  readonly code: SandboxS3MountErrorCode;
+  readonly operation: S3MountOperation;
+  readonly path: string;
+  readonly detail: string;
+}
+
+class S3MountError extends Error implements SandboxS3MountError {
+  override readonly name = "SandboxS3MountError";
+  readonly code: SandboxS3MountErrorCode;
+  readonly operation: S3MountOperation;
+  readonly path: string;
+  readonly detail: string;
+
+  constructor(
+    code: SandboxS3MountErrorCode,
+    operation: S3MountOperation,
+    path: string,
+    detail: string,
+  ) {
+    super(`${operation} '${path}': ${detail}`);
+    this.code = code;
+    this.operation = operation;
+    this.path = path;
+    this.detail = detail;
+  }
+}
+
+export const SandboxS3MountError = {
+  /** Recognizes local and JSRPC-crossed SandboxS3MountError values. */
+  is(cause: unknown): cause is SandboxS3MountError {
+    return (
+      cause instanceof Error &&
+      cause.name === "SandboxS3MountError" &&
+      hasOwn(cause, "code", isS3MountErrorCode) &&
+      hasOwn(cause, "operation", isS3MountOperation) &&
+      hasOwn(cause, "path", isString) &&
+      hasOwn(cause, "detail", isString)
+    );
+  },
+};
+
 export function protocolError(detail: string, cause?: unknown): SandboxProtocolError {
   return new ProtocolError(detail, cause);
+}
+
+export function s3MountError(
+  code: SandboxS3MountErrorCode,
+  operation: S3MountOperation,
+  path: string,
+  detail: string,
+): SandboxS3MountError {
+  return new S3MountError(code, operation, path, detail);
 }
 
 export function fileErrorFromErrno(
@@ -163,6 +224,19 @@ function isFileErrorCode(value: unknown): value is SandboxFileErrorCode {
 
 function isFileOperation(value: unknown): value is SandboxFileOperation {
   return FILE_OPERATIONS.some((operation) => operation === value);
+}
+
+function isS3MountErrorCode(value: unknown): value is SandboxS3MountErrorCode {
+  return (
+    value === "S3_MOUNT_CONFLICT" ||
+    value === "S3_MOUNT_BUSY" ||
+    value === "S3_MOUNT_FAILED" ||
+    value === "S3_MOUNT_INCOMPATIBLE"
+  );
+}
+
+function isS3MountOperation(value: unknown): value is S3MountOperation {
+  return value === "mount" || value === "inspect" || value === "unmount";
 }
 
 /* oxlint-enable anti-slop/no-unknown-parameters */

@@ -225,6 +225,89 @@ fn write_command_emits_native_destination_error() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn s3_mount_command_selects_a_route_before_waiting_for_acknowledgement() {
+    let temp = TempDir::new();
+    let request = serde_json::json!({
+        "protocolVersion": 1,
+        "candidateRouteId": "candidate-route",
+        "mountPath": temp.0.to_str().unwrap(),
+        "configuration": {
+            "source": {
+                "type": "s3",
+                "endpoint": "http://minio:9000/",
+                "region": "us-east-1",
+                "bucket": "models"
+            },
+            "access": "read-only",
+            "s3fsOptions": []
+        }
+    });
+    let mut child = Command::new(SHIM)
+        .args(["s3-mount", "mount", &request.to_string()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    let opening = read_data_frame(&mut stdout);
+    let opening: serde_json::Value = serde_json::from_slice(&opening).unwrap();
+    assert_eq!(opening["value"]["kind"], "route");
+    assert_eq!(opening["value"]["routeId"], "candidate-route");
+    assert!(child.try_wait().unwrap().is_none());
+
+    let inspection = Command::new(SHIM)
+        .args(["s3-mount", "inspect", temp.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let inspection = read_data_frame(&mut inspection.stdout.as_slice());
+    let inspection: serde_json::Value = serde_json::from_slice(&inspection).unwrap();
+    assert_eq!(inspection["value"]["state"]["kind"], "stale");
+    assert_eq!(
+        inspection["value"]["state"]["marker"]["routeId"],
+        "candidate-route"
+    );
+
+    child.stdin.take().unwrap().write_all(&[1]).unwrap();
+    let terminal = read_data_frame(&mut stdout);
+    let terminal: serde_json::Value = serde_json::from_slice(&terminal).unwrap();
+    assert_eq!(terminal["ok"], false);
+    assert_eq!(terminal["error"]["kind"], "failed");
+    assert!(child.wait().unwrap().success());
+
+    let mut cleanup = Command::new(SHIM)
+        .args(["s3-mount", "unmount", temp.0.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut cleanup_stdout = cleanup.stdout.take().unwrap();
+    let selection = read_data_frame(&mut cleanup_stdout);
+    let selection: serde_json::Value = serde_json::from_slice(&selection).unwrap();
+    assert_eq!(selection["value"]["routeId"], "candidate-route");
+    assert!(cleanup.try_wait().unwrap().is_none());
+
+    cleanup.stdin.take().unwrap().write_all(&[1]).unwrap();
+    let terminal = read_data_frame(&mut cleanup_stdout);
+    let terminal: serde_json::Value = serde_json::from_slice(&terminal).unwrap();
+    assert_eq!(terminal["ok"], true);
+    assert_eq!(terminal["value"], serde_json::Value::Null);
+    assert!(cleanup.wait().unwrap().success());
+}
+
+#[cfg(target_os = "linux")]
+fn read_data_frame(input: &mut impl Read) -> Vec<u8> {
+    let mut header = [0; 10];
+    input.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..6], b"SBXF\x01\x02");
+    let length = u32::from_le_bytes(header[6..10].try_into().unwrap()) as usize;
+    let mut payload = vec![0; length];
+    input.read_exact(&mut payload).unwrap();
+    payload
+}
+
+#[test]
 fn usage_errors_emit_no_protocol_bytes() {
     let output = Command::new(SHIM).arg("unknown").output().unwrap();
 

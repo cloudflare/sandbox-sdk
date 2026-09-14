@@ -85,6 +85,19 @@ export function commandProcess(chunks: Uint8Array[], exitCode: number | Promise<
   });
 }
 
+export function interactiveCommandProcess(
+  chunks: Uint8Array[],
+  write: (chunk: Uint8Array) => void = () => undefined,
+  exitCode: number | Promise<number> = 0,
+) {
+  return processDouble({
+    stdin: new WritableStream<Uint8Array>({ write }),
+    stdout: readableChunks(chunks),
+    stderr: null,
+    exitCode,
+  });
+}
+
 interface WriteProcessOptions {
   control?: ReadableStream<Uint8Array> | null;
   stdin?: WritableStream<Uint8Array> | null;

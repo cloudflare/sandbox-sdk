@@ -17,7 +17,6 @@ interface CheckpointResult {
 
 interface Env {
   SANDBOX: DurableObjectNamespace<CheckpointSandbox>;
-  SANDBOX_IMAGE: string;
 }
 
 export class CheckpointSandbox extends DurableObject<Env> {
@@ -71,7 +70,7 @@ export class CheckpointSandbox extends DurableObject<Env> {
       labels: { example: "checkpoint-workspace", sandbox: sandboxName },
     };
     if (checkpoint === undefined) {
-      container.start({ image: this.env.SANDBOX_IMAGE, ...commonOptions });
+      container.start({ image: container.images.sandbox, ...commonOptions });
     } else {
       container.start({ containerSnapshot: { id: checkpoint.id }, ...commonOptions });
     }

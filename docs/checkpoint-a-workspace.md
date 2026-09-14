@@ -41,7 +41,7 @@ const checkpoint = await this.ctx.storage.get<ActiveCheckpoint>(ACTIVE_CHECKPOIN
 
 if (checkpoint === undefined) {
   container.start({
-    image: this.env.SANDBOX_IMAGE,
+    image: container.images.sandbox,
     instance: "lite",
     enableInternet: false,
   });

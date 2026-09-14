@@ -8,7 +8,6 @@ const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
 
 interface Env {
   SANDBOX: DurableObjectNamespace<WorkspaceSandbox>;
-  SANDBOX_IMAGE: string;
 }
 
 interface TaskResult {
@@ -58,7 +57,7 @@ export class WorkspaceSandbox extends DurableObject<Env> {
     const container = this.requireContainer();
     if (!container.running) {
       container.start({
-        image: this.env.SANDBOX_IMAGE,
+        image: container.images.sandbox,
         instance: "lite",
         enableInternet: false,
         labels: { example: "code-workspace", sandbox: sandboxName },

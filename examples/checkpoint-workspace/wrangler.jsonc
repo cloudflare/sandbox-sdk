@@ -12,18 +12,21 @@
       },
     ],
   },
+  "containers": [
+    {
+      "class_name": "CheckpointSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
   "exports": {
     "CheckpointSandbox": {
       "type": "durable-object",
       "storage": "sqlite",
-      "container": {
-        "images": [
-          {
-            "binding": "SANDBOX_IMAGE",
-            "image": "./Dockerfile",
-          },
-        ],
-      },
     },
   },
   "observability": {

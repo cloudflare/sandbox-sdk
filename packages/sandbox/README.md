@@ -21,6 +21,8 @@ The image must include `/usr/local/bin/sandbox-shim`. The Worker needs `nodejs_c
 
 This package does not start Containers. Extend `DurableObject` and call `this.ctx.container`.
 
-Runtime exports: `Files`, `SandboxFileError`, and `SandboxProtocolError`.
+Runtime exports: `Files`, `S3Mounts`, `S3Gateway`, `SandboxFileError`, `SandboxS3MountError`, and
+`SandboxProtocolError`.
 
-For the walkthrough, refer to [Run a Linux task](../../docs/get-started.md). For the API, refer to [Files API](../../docs/files.md).
+For the walkthrough, refer to [Run a Linux task](../../docs/get-started.md). For API guides, refer to
+[Files API](../../docs/files.md) and [Mount S3-compatible storage](../../docs/s3-mounts.md).

@@ -5,6 +5,12 @@ edition = "2024"
 license = "Apache-2.0"
 publish = false
 
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
 [[bin]]
 name = "sandbox-shim"
 path = "src/main.rs"

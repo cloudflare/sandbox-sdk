@@ -1,4 +1,5 @@
 import { defineConfig } from "vite-plus";
+import { fileURLToPath } from "node:url";
 
 const agentToolingIgnorePatterns = [
   ".agent/**",
@@ -61,5 +62,12 @@ export default defineConfig({
   },
   run: {
     cache: true,
+  },
+  test: {
+    alias: {
+      "cloudflare:workers": fileURLToPath(
+        new URL("./packages/sandbox/tests/cloudflare-workers.ts", import.meta.url),
+      ),
+    },
   },
 });

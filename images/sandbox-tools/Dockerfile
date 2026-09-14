@@ -15,8 +15,7 @@ RUN cargo test --locked --package sandbox-tools
 RUN touch /checks-passed
 
 FROM toolchain AS build
-ENV RUSTFLAGS="-C target-feature=+crt-static"
-RUN cargo build --release --locked --package sandbox-tools
+RUN cargo rustc --release --locked --package sandbox-tools --bin sandbox-shim -- -C target-feature=+crt-static
 
 FROM alpine:3.23 AS contract
 RUN apk add --no-cache nodejs npm

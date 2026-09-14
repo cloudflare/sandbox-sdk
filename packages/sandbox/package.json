@@ -16,5 +16,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "aws4fetch": "1.0.20",
+    "zod": "4.5.4"
   }
 }
