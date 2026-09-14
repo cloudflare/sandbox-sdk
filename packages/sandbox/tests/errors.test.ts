@@ -5,7 +5,7 @@ import {
   protocolError,
   SandboxFileError,
   SandboxProtocolError,
-} from "../src/errors.js";
+} from "../src/shared/errors.js";
 
 describe("Sandbox errors", () => {
   it("exposes recognizers without public constructors", () => {

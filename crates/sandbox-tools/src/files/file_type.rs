@@ -1,7 +1,7 @@
 use std::fs::FileType;
 use std::os::unix::fs::FileTypeExt;
 
-pub(crate) fn encode(file_type: &FileType) -> u8 {
+pub(super) fn encode(file_type: &FileType) -> u8 {
     if file_type.is_file() {
         0
     } else if file_type.is_dir() {

@@ -6,7 +6,7 @@ import { Readable, Writable } from "node:stream";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { Files } from "../src/files.js";
+import { Files } from "../src/files/files.js";
 
 const SHIM_PATH = process.env.SANDBOX_SHIM_PATH;
 

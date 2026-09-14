@@ -1,4 +1,4 @@
-use crate::file_type;
+use super::file_type;
 use crate::protocol::{write_data, write_file_error};
 
 use std::ffi::OsString;

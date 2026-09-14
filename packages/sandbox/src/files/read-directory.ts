@@ -1,7 +1,7 @@
-import { protocolError } from "./errors.js";
-import { runFileCommand } from "./file-command.js";
+import { protocolError } from "../shared/errors.js";
+import { runFileCommand } from "./command.js";
 import { decodeFileType, type SandboxFileType } from "./file-type.js";
-import type { ContainerExecutor } from "./shim.js";
+import type { ContainerExecutor } from "../shared/shim.js";
 
 export interface SandboxDirectoryEntry {
   name: string;

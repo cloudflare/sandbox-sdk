@@ -1,6 +1,6 @@
 import type { FileOperationOptions } from "./files.js";
-import { fileErrorFromErrno, protocolError } from "./errors.js";
-import { type ContainerExecutor, SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
+import { fileErrorFromErrno, protocolError } from "../shared/errors.js";
+import { type ContainerExecutor, SHIM_PATH, ShimControl, ShimSession } from "../shared/shim.js";
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 

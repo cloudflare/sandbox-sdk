@@ -1,5 +1,5 @@
-import { fileErrorFromErrno, type FileErrorContext, protocolError } from "./errors.js";
-import { type ContainerExecutor, SHIM_PATH, ShimControl, ShimSession } from "./shim.js";
+import { fileErrorFromErrno, type FileErrorContext, protocolError } from "../shared/errors.js";
+import { type ContainerExecutor, SHIM_PATH, ShimControl, ShimSession } from "../shared/shim.js";
 
 interface FileCommandRequest {
   command: readonly string[];

@@ -1,7 +1,7 @@
-export type { FileOperationOptions, MkdirOptions, RemoveOptions } from "./files.js";
-export type { FileContent } from "./file-content.js";
-export type { SandboxDirectoryEntry } from "./read-directory.js";
-export type { SandboxFileType } from "./file-type.js";
-export type { SandboxFileStat } from "./stat-file.js";
-export { SandboxFileError, SandboxProtocolError } from "./errors.js";
-export { Files } from "./files.js";
+export type { FileContent } from "./files/content.js";
+export type { SandboxFileType } from "./files/file-type.js";
+export type { FileOperationOptions, MkdirOptions, RemoveOptions } from "./files/files.js";
+export { Files } from "./files/files.js";
+export type { SandboxDirectoryEntry } from "./files/read-directory.js";
+export type { SandboxFileStat } from "./files/stat-file.js";
+export { SandboxFileError, SandboxProtocolError } from "./shared/errors.js";

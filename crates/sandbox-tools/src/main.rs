@@ -1,14 +1,7 @@
-mod file_type;
-mod mkdir;
+mod files;
 mod protocol;
-mod read_directory;
-mod read_file;
-mod remove;
-mod rename;
-mod stat_file;
 #[cfg(test)]
 mod test_support;
-mod write_file;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -36,15 +29,8 @@ fn run(
     };
 
     match command.to_str() {
-        Some("mkdir") => mkdir::run(args, &mut stdout),
-        Some("read-directory") => read_directory::run(args, &mut stdout),
-        Some("read") => read_file::run(args, &mut stdout, &mut stderr),
-        Some("remove") => remove::run(args, &mut stdout),
-        Some("rename") => rename::run(args, &mut stdout),
-        Some("lstat") => stat_file::run(args, false, &mut stdout),
-        Some("stat") => stat_file::run(args, true, &mut stdout),
-        Some("write") => write_file::run(args, input, &mut stdout),
-        _ => Err("unknown command".into()),
+        Some(command) => files::run(command, args, input, &mut stdout, &mut stderr),
+        None => Err("unknown command".into()),
     }
 }
 

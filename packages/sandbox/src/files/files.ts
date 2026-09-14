@@ -1,11 +1,11 @@
-import { runFileCommand } from "./file-command.js";
-import { type FileContent, fileContentStream } from "./file-content.js";
+import { runFileCommand } from "./command.js";
+import { type FileContent, fileContentStream } from "./content.js";
 import {
   readDirectory as readContainerDirectory,
   type SandboxDirectoryEntry,
 } from "./read-directory.js";
 import { readFile as readContainerFile } from "./read-file.js";
-import type { ContainerExecutor } from "./shim.js";
+import type { ContainerExecutor } from "../shared/shim.js";
 import { type SandboxFileStat, statFile } from "./stat-file.js";
 import { writeFile as writeContainerFile } from "./write-file.js";
 

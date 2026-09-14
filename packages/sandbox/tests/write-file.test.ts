@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { Files } from "../src/files.js";
+import { Files } from "../src/files/files.js";
 import {
   containerWith,
   contiguousErrorFrame as errorFrame,

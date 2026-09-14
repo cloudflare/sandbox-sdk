@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { Files } from "../src/files.js";
+import { Files } from "../src/files/files.js";
 import {
   commandProcess,
   containerRejecting,

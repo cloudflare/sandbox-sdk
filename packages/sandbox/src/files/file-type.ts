@@ -1,4 +1,4 @@
-import { protocolError } from "./errors.js";
+import { protocolError } from "../shared/errors.js";
 
 export type SandboxFileType =
   | "file"
