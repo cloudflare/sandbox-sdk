@@ -3051,7 +3051,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(bucket.put).toHaveBeenCalled();
     });
 
-    it('should normalize globstar excludes before calling createArchive', async () => {
+    it('should pass validated excludes to createArchive unchanged', async () => {
       const { backupSandbox } = await createBackupSandbox();
 
       vi.spyOn(backupSandbox.client.utils, 'createSession').mockResolvedValue({
@@ -3082,7 +3082,34 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await backupSandbox.createBackup({
         dir: '/app/project',
-        excludes: ['**/node_modules/.cache', '**/.next/cache', 'dist/**', '**']
+        excludes: [
+          'node_modules',
+          'node_modules/',
+          'dist',
+          'dist/',
+          'dist/**',
+          '**/dist',
+          '**/dist/',
+          '**/dist/**',
+          '**/**/cache',
+          '**/tree/**',
+          'alpha/beta',
+          'alpha/beta/',
+          'packages/app/**',
+          'packages/foo/node_modules/',
+          'nested/path',
+          'nested/path/',
+          'a/b',
+          '.cache/foo/*/node_modules',
+          '*/*',
+          'a/*',
+          '?',
+          '?*?',
+          '*.log',
+          'logs/**.log',
+          'foo**/bar',
+          '...foo'
+        ]
       });
 
       expect(createArchiveSpy).toHaveBeenCalledWith(
@@ -3091,13 +3118,93 @@ describe('Sandbox - Automatic Session Management', () => {
         expect.stringMatching(/^__sandbox_backup_/),
         {
           gitignore: false,
-          excludes: ['node_modules/.cache', '.next/cache', 'dist'],
+          excludes: [
+            'node_modules',
+            'node_modules/',
+            'dist',
+            'dist/',
+            'dist/**',
+            '**/dist',
+            '**/dist/',
+            '**/dist/**',
+            '**/**/cache',
+            '**/tree/**',
+            'alpha/beta',
+            'alpha/beta/',
+            'packages/app/**',
+            'packages/foo/node_modules/',
+            'nested/path',
+            'nested/path/',
+            'a/b',
+            '.cache/foo/*/node_modules',
+            '*/*',
+            'a/*',
+            '?',
+            '?*?',
+            '*.log',
+            'logs/**.log',
+            'foo**/bar',
+            '...foo'
+          ],
           compression: {
             format: 'lz4',
             threads: 8
           }
         }
       );
+    });
+
+    it('should reject unsafe excludes before calling the container', async () => {
+      const { backupSandbox } = await createBackupSandbox();
+      const createArchiveSpy = vi.spyOn(
+        backupSandbox.client.backup,
+        'createArchive'
+      );
+
+      for (const pattern of [
+        '',
+        '*',
+        '**',
+        '**/',
+        '***',
+        '***/',
+        '*?',
+        '?*',
+        '*?*',
+        '**?**',
+        '**/***',
+        '***/**',
+        '**/*?/**',
+        '**/*',
+        '*/',
+        '**/*/',
+        '*/**',
+        '**/*/**',
+        '**/node_modules/.cache',
+        '**/a/b/',
+        '**/packages/app/**',
+        'src/**/cache',
+        'foo/**/**',
+        '/rooted',
+        'line\nbreak',
+        '... alpha/beta',
+        ' ... alpha/beta',
+        'bounded ',
+        'a//b',
+        'dist//',
+        '**/dist//',
+        'a/./b',
+        'a/../b'
+      ]) {
+        await expect(
+          backupSandbox.createBackup({
+            dir: '/app/project',
+            excludes: [pattern]
+          })
+        ).rejects.toThrow(/contains an invalid pattern/);
+      }
+
+      expect(createArchiveSpy).not.toHaveBeenCalled();
     });
 
     it('should reject unsupported backup compression before calling the container', async () => {
