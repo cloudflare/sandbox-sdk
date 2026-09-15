@@ -257,6 +257,23 @@ describe("S3Mounts", () => {
     ]);
   });
 
+  it("lets the caller bound an inspection with an AbortSignal", async () => {
+    const process = commandProcess([]);
+    process.stdout = new ReadableStream<Uint8Array>();
+    const container = containerWithResponses(process);
+    const controller = new AbortController();
+    const reason = new Error("inspection deadline reached");
+
+    const inspection = new S3Mounts(container, gatewayBinding().factory).inspect("/mnt/models", {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(container.exec).toHaveBeenCalledOnce());
+    controller.abort(reason);
+
+    await expect(inspection).rejects.toBe(reason);
+    expect(process.kill).toHaveBeenCalledWith(9);
+  });
+
   it("omits evidence that does not apply to absent, unmanaged, and incompatible paths", async () => {
     const cases = [
       {

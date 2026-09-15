@@ -1,8 +1,9 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SHIM: &str = env!("CARGO_BIN_EXE_sandbox-shim");
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -257,17 +258,12 @@ fn s3_mount_command_selects_a_route_before_waiting_for_acknowledgement() {
     assert_eq!(opening["value"]["routeId"], "candidate-route");
     assert!(child.try_wait().unwrap().is_none());
 
-    let inspection = Command::new(SHIM)
+    let mut inspection = Command::new(SHIM)
         .args(["s3-mount", "inspect", temp.0.to_str().unwrap()])
-        .output()
+        .stdout(Stdio::piped())
+        .spawn()
         .unwrap();
-    let inspection = read_data_frame(&mut inspection.stdout.as_slice());
-    let inspection: serde_json::Value = serde_json::from_slice(&inspection).unwrap();
-    assert_eq!(inspection["value"]["state"]["kind"], "stale");
-    assert_eq!(
-        inspection["value"]["state"]["marker"]["routeId"],
-        "candidate-route"
-    );
+    wait_for_flock_waiter(&mut inspection);
 
     child.stdin.take().unwrap().write_all(&[1]).unwrap();
     let terminal = read_data_frame(&mut stdout);
@@ -275,6 +271,15 @@ fn s3_mount_command_selects_a_route_before_waiting_for_acknowledgement() {
     assert_eq!(terminal["ok"], false);
     assert_eq!(terminal["error"]["kind"], "failed");
     assert!(child.wait().unwrap().success());
+
+    let inspection = wait_with_output(inspection);
+    let inspection = read_data_frame(&mut inspection.stdout.as_slice());
+    let inspection: serde_json::Value = serde_json::from_slice(&inspection).unwrap();
+    assert_eq!(inspection["value"]["state"]["kind"], "stale");
+    assert_eq!(
+        inspection["value"]["state"]["marker"]["routeId"],
+        "candidate-route"
+    );
 
     let mut cleanup = Command::new(SHIM)
         .args(["s3-mount", "unmount", temp.0.to_str().unwrap()])
@@ -305,6 +310,46 @@ fn read_data_frame(input: &mut impl Read) -> Vec<u8> {
     let mut payload = vec![0; length];
     input.read_exact(&mut payload).unwrap();
     payload
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_flock_waiter(child: &mut Child) {
+    let pid = child.id().to_string();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "inspection exited before waiting for the lifecycle lock"
+        );
+        let locks = fs::read_to_string("/proc/locks").unwrap();
+        if locks
+            .lines()
+            .any(|line| line.contains("->") && line.split_whitespace().any(|field| field == pid))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "inspection did not wait for the lifecycle lock"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_with_output(mut child: Child) -> Output {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("inspection did not finish within the test deadline");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

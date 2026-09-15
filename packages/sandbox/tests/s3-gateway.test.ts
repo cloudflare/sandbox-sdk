@@ -427,7 +427,7 @@ describe("S3 gateway", () => {
         accessKeyId: "renewed-access-key",
         secretAccessKey: "renewed-secret-key",
         sessionToken: "renewed-session-token",
-        expiresAt: Date.now() + 60_000,
+        expiresAt: Date.UTC(2100, 0, 1),
       }),
     );
     const props: S3GatewayProps = {
@@ -465,7 +465,7 @@ describe("S3 gateway", () => {
       Response.json({
         accessKeyId: "access",
         secretAccessKey: "secret",
-        expiresAt: Date.now() - 1,
+        expiresAt: 0,
       }),
       new Response("not JSON"),
       new Response(null, { status: 503 }),

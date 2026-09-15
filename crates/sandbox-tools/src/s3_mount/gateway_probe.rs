@@ -1,6 +1,5 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
 
 use super::model::{
     ControlError, GatewayErrorReason, Marker, RejectionReason, RouteState, effective_bucket,
@@ -8,7 +7,6 @@ use super::model::{
 };
 
 const MAX_PROBE_HEADERS_BYTES: usize = 64 * 1024;
-const PROBE_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) fn probe(marker: &Marker) -> Result<RouteState, ControlError> {
     let host = route_host(&marker.route_id);
@@ -31,20 +29,10 @@ pub(super) fn probe(marker: &Marker) -> Result<RouteState, ControlError> {
             )));
         }
     };
-    let mut stream = match TcpStream::connect_timeout(&address, PROBE_IO_TIMEOUT) {
+    let mut stream = match TcpStream::connect(address) {
         Ok(stream) => stream,
         Err(error) => return Ok(unreachable(&format!("gateway connection failed: {error}"))),
     };
-    if let Err(error) = stream.set_read_timeout(Some(PROBE_IO_TIMEOUT)) {
-        return Ok(unreachable(&format!(
-            "cannot configure gateway response timeout: {error}"
-        )));
-    }
-    if let Err(error) = stream.set_write_timeout(Some(PROBE_IO_TIMEOUT)) {
-        return Ok(unreachable(&format!(
-            "cannot configure gateway request timeout: {error}"
-        )));
-    }
     let request = format!(
         "GET {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: sandbox-shim/1\r\n\r\n"
     );

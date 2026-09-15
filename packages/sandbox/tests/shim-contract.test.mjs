@@ -256,7 +256,9 @@ describe.skipIf(SHIM_PATH === undefined)("compiled sandbox-shim contract", () =>
         }),
       );
 
-      await expect(mounts.inspect(directory)).resolves.toMatchObject({
+      await expect(
+        mounts.inspect(directory, { signal: AbortSignal.timeout(5_000) }),
+      ).resolves.toMatchObject({
         mountPath: directory,
         attachment: { status: "stale" },
         gateway: { status: "unreachable" },

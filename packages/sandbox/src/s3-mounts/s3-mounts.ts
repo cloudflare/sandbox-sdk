@@ -90,7 +90,11 @@ export class S3Mounts {
     }
   }
 
-  /** Returns point-in-time attachment, FUSE, gateway, and upstream evidence without repairing. */
+  /**
+   * Waits for an in-flight lifecycle operation on this path, captures serialized guest
+   * attachment evidence, then probes its route without repairing it. Gateway and upstream
+   * evidence may be newer than the guest snapshot. Use an AbortSignal to bound either wait.
+   */
   async inspect(
     mountPath: string,
     options: S3MountOperationOptions = {},

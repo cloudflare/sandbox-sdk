@@ -181,7 +181,11 @@ fn inspect(
     control_root: &Path,
     mountinfo_path: &Path,
 ) -> Result<Value, ControlError> {
+    // Serialize the local snapshot with mount and unmount, then release the
+    // path lock before probing the gateway and its upstream.
+    let lock = PathLock::acquire(mount_path, control_root)?;
     let state = observation::inspect(mount_path, control_root, mountinfo_path)?;
+    drop(lock);
     let gateway = match &state {
         GuestMountState::Stale { marker } | GuestMountState::Managed { marker, .. } => {
             Some(gateway_probe::probe(marker)?)

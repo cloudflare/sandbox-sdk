@@ -201,7 +201,7 @@ describeLifecycle("public S3 mount lifecycle", () => {
       workspace,
       "sh",
       "-c",
-      "cd /mnt/models && echo $$ > /tmp/mount-holder.pid && exec sleep 60",
+      "cd /mnt/models && echo $$ > /tmp/mount-holder.pid && exec tail --follow /dev/null",
     ]);
     await waitForFile(container, "/tmp/mount-holder.pid");
     await expect(mounts.unmount(request.mountPath)).rejects.toMatchObject({
