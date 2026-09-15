@@ -7,6 +7,9 @@ boundary.
 Use this API for tools that require a filesystem path but can tolerate object-store semantics. Do
 not use it to turn S3 into a POSIX filesystem.
 
+The [artifact workspace example](../examples/artifact-workspace) mounts one prefix per named job,
+processes an input file inside the Container, and writes the result back through the mount.
+
 ## Prepare the image
 
 The image needs FUSE, `s3fs`, and `/usr/local/bin/sandbox-shim`. Build the shim donor first:

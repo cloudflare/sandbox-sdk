@@ -13,6 +13,8 @@
     "example:types": "npm run example:workspace:types",
     "example:workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/workspace/wrangler.jsonc",
     "example:workspace:types": "npx --yes wrangler@4.131.2 types examples/workspace/worker-configuration.d.ts --config examples/workspace/wrangler.jsonc --include-runtime=false",
+    "example:artifact-workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/artifact-workspace/wrangler.jsonc",
+    "example:artifact-workspace:types": "npx --yes wrangler@4.131.2 types examples/artifact-workspace/worker-configuration.d.ts --config examples/artifact-workspace/wrangler.jsonc --include-runtime=false",
     "example:checkpoint-workspace:deploy": "npm run shim:build && npx --yes wrangler@4.131.2 deploy --config examples/checkpoint-workspace/wrangler.jsonc",
     "example:checkpoint-workspace:types": "npx --yes wrangler@4.131.2 types examples/checkpoint-workspace/worker-configuration.d.ts --config examples/checkpoint-workspace/wrangler.jsonc --include-runtime=false",
     "knip": "knip",
