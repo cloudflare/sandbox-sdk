@@ -27,8 +27,27 @@ RUN apt-get update \
         ca-certificates fuse3 s3fs \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
+EXPOSE 8080
 CMD ["sleep", "infinity"]
 ```
+
+Local Container preparation requires the image to declare at least one port. `S3Mounts` does not
+use that inbound port; the example exposes `8080` only to satisfy the Container image contract.
+
+Use the same Container image locally and in production so that the `s3fs` version and its retry,
+timeout, and cache behavior do not drift between environments.
+
+`wrangler dev`, the Cloudflare Vite plugin, and direct Miniflare grant local Containers the
+privileges needed by FUSE when Docker runs in a virtual machine, including Docker on macOS and
+Windows Subsystem for Linux. Rootless Docker on Linux is supported when `/dev/fuse` is available.
+Rootful Docker on Linux does not support local FUSE mounts by default. See
+[FUSE support during local development](https://developers.cloudflare.com/containers/guides/local-dev/#fuse-support)
+for current requirements and troubleshooting.
+
+Before depending on local development, verify that the exact Wrangler version used by the
+application exposes the Durable Object's attached Container through `this.ctx.container`. A
+successful image build alone does not prove that the local Container, outbound interceptor, and
+FUSE mount are available.
 
 Keep `nodejs_compat` enabled in the Worker, as shown in [Run a Linux task](get-started.md).
 

@@ -21,8 +21,12 @@ FROM ${SANDBOX_TOOLS_IMAGE} AS sandbox-tools
 FROM alpine:3.23
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
 RUN mkdir -p /workspace
+EXPOSE 8080
 CMD ["sleep", "infinity"]
 ```
+
+Local Container preparation requires the image to declare at least one port. This example uses only
+`Container.exec()` and does not listen on `8080`.
 
 Keep your own base image. The donor is not the sandbox. Images must be `linux/amd64`.
 
