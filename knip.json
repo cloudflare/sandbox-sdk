@@ -5,6 +5,9 @@
       "entry": ["examples/*/src/index.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["cloudflare"]
+    },
+    "packages/sandbox": {
+      "entry": ["src/index.ts", "tests/fixtures/s3-native-local/worker.ts"]
     }
   }
 }

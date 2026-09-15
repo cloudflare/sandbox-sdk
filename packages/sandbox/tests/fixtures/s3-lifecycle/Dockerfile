@@ -18,3 +18,4 @@ RUN apt-get update \
 COPY --from=tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
 
 EXPOSE 8080
+CMD ["sleep", "infinity"]

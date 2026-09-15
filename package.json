@@ -22,7 +22,8 @@
     "test:package": "vp pack && vp test --run packages/sandbox/tests/packed-api.test.ts && npm pack --workspace packages/sandbox --dry-run",
     "test:release": "npm test && npm run test:package && npm run test:s3-e2e && npm run test:s3-lifecycle",
     "test:s3-e2e": "SANDBOX_S3_E2E=1 vp test --run packages/sandbox/tests/s3-gateway.integration.test.ts",
-    "test:s3-lifecycle": "SANDBOX_S3_LIFECYCLE=1 vp test --run packages/sandbox/tests/s3-mounts.integration.test.ts"
+    "test:s3-lifecycle": "SANDBOX_S3_LIFECYCLE=1 vp test --run packages/sandbox/tests/s3-mounts.integration.test.ts",
+    "test:s3-native-local": "vp pack && SANDBOX_S3_NATIVE_LOCAL=1 vp test --run packages/sandbox/tests/s3-native-local.integration.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260914.1",
