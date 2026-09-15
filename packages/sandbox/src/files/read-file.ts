@@ -1,6 +1,12 @@
 import type { FileOperationOptions } from "./files.js";
 import { fileErrorFromErrno, protocolError } from "../shared/errors.js";
-import { type ContainerExecutor, SHIM_PATH, ShimControl, ShimSession } from "../shared/shim.js";
+import {
+  type ContainerExecutor,
+  SHIM_PATH,
+  ShimControl,
+  type ShimControlFrame,
+  ShimSession,
+} from "../shared/shim.js";
 
 type CancellationReason = Parameters<ReadableStreamDefaultReader<Uint8Array>["cancel"]>[0];
 
@@ -29,7 +35,12 @@ export async function readFile(
       throw protocolError("sandbox-shim returned data before file bytes");
     }
 
-    return new Response(responseBody(session, control, output, path));
+    // Container transports may multiplex stdout and stderr over one backpressured stream. Keep
+    // draining terminal control concurrently so neither stream can block the other's EOF.
+    const terminal = readTerminalControl(control);
+    // Preserve error ordering: terminal failures surface after any preceding file bytes.
+    void terminal.catch(() => undefined);
+    return new Response(responseBody(session, control, output, terminal, path));
   } catch (error) {
     terminateRead(session, control, output, error);
     throw error;
@@ -40,6 +51,7 @@ function responseBody(
   session: ShimSession,
   control: ShimControl,
   output: ReadableStreamDefaultReader<Uint8Array>,
+  terminalFrame: Promise<ShimControlFrame>,
   path: string,
 ) {
   return new ReadableStream<Uint8Array>({
@@ -51,8 +63,7 @@ function responseBody(
           return;
         }
 
-        const terminal = await control.readFrame();
-        await control.expectEnd();
+        const terminal = await session.waitFor(terminalFrame);
         if (terminal.kind === "fileError") {
           throw fileErrorFromErrno(
             { operation: "readFile", path },
@@ -75,6 +86,12 @@ function responseBody(
     },
     cancel: (reason: CancellationReason) => terminateRead(session, control, output, reason),
   });
+}
+
+async function readTerminalControl(control: ShimControl): Promise<ShimControlFrame> {
+  const frame = await control.readFrame();
+  await control.expectEnd();
+  return frame;
 }
 
 function terminateRead(

@@ -78,6 +78,44 @@ describe("Files.readFile", () => {
     expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
 
+  it("reads terminal control concurrently with stdout", async () => {
+    const data = new Uint8Array([1, 2, 3]);
+    let controlPull = 0;
+    let terminalRequested = false;
+    const stderr = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          controlPull += 1;
+          if (controlPull === 1) {
+            controller.enqueue(SUCCESS_HEADER);
+            return;
+          }
+          terminalRequested = true;
+          controller.enqueue(SUCCESS_HEADER);
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    let terminalRequestedBeforeOutput = false;
+    const stdout = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          terminalRequestedBeforeOutput = terminalRequested;
+          controller.enqueue(data);
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const process = readProcess([], 0, stdout, stderr);
+    const response = await new Files(containerWith(process)).readFile("/file");
+
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
+    expect(terminalRequestedBeforeOutput).toBe(true);
+    expect(process.kill).not.toHaveBeenCalled();
+  });
+
   it("propagates native exec errors unchanged", async () => {
     const nativeError = new Error("container is not running");
     const container = containerRejecting(nativeError);
