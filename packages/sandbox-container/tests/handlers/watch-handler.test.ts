@@ -6,12 +6,16 @@ import type { WatchService } from '../../src/services/watch-service';
 function createMockWatchService(): WatchService {
   return {
     watchDirectory: vi.fn(),
+    watchMountDirectory: vi.fn(),
     checkChanges: vi.fn()
   } as unknown as WatchService;
 }
 
-function makeRequest(body: Record<string, unknown>): Request {
-  return new Request('http://localhost:3000/api/watch', {
+function makeRequest(
+  body: Record<string, unknown>,
+  pathname = '/api/watch'
+): Request {
+  return new Request(`http://localhost:3000${pathname}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -26,6 +30,63 @@ const defaultContext = {
 };
 
 describe('WatchHandler', () => {
+  describe('path authorization', () => {
+    it('should reject a public watch outside /workspace', async () => {
+      const handler = new WatchHandler(
+        createMockWatchService(),
+        createNoOpLogger()
+      );
+
+      const response = await handler.handle(
+        makeRequest({ path: '/data' }),
+        defaultContext
+      );
+
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as { message: string };
+      expect(body.message).toBe('path must be inside /workspace');
+    });
+
+    it('should reject a relative internal mount watch path', async () => {
+      const handler = new WatchHandler(
+        createMockWatchService(),
+        createNoOpLogger()
+      );
+
+      const response = await handler.handle(
+        makeRequest({ path: 'data' }, '/api/watch/mount'),
+        defaultContext
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { message: string };
+      expect(body.message).toBe('mount watch path must be absolute');
+    });
+
+    it('should allow an internal mount watch at its absolute mount root', async () => {
+      const watchService = createMockWatchService();
+      const mockStream = new ReadableStream();
+      (
+        watchService.watchMountDirectory as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({
+        success: true,
+        data: mockStream
+      });
+      const handler = new WatchHandler(watchService, createNoOpLogger());
+
+      const response = await handler.handle(
+        makeRequest({ path: '/data' }, '/api/watch/mount'),
+        defaultContext
+      );
+
+      expect(response.status).toBe(200);
+      expect(watchService.watchDirectory).not.toHaveBeenCalled();
+      expect(watchService.watchMountDirectory).toHaveBeenCalledWith('/data', {
+        path: '/data'
+      });
+    });
+  });
+
   describe('include/exclude validation', () => {
     it('should reject requests with both include and exclude', async () => {
       const handler = new WatchHandler(

@@ -1,4 +1,5 @@
 import type { Logger, WSError, WSRequest, WSResponse } from '@repo/shared';
+import type { ServerWebSocket } from 'bun';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Router } from '../../src/core/router';
 import {
@@ -92,6 +93,29 @@ describe('WebSocketAdapter', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ status: 'ok' });
       expect(response.done).toBe(true);
+    });
+
+    it('should reject mount watch requests before routing', async () => {
+      const request: WSRequest = {
+        type: 'request',
+        id: 'req-mount-watch',
+        method: 'POST',
+        path: '/api/watch/mount?source=test',
+        body: { path: '/etc' }
+      };
+
+      await adapter.onMessage(
+        mockWs as unknown as ServerWebSocket<WSData>,
+        JSON.stringify(request)
+      );
+
+      expect(mockRouter.route).not.toHaveBeenCalled();
+      expect(mockWs.getLastMessage<WSError>()).toMatchObject({
+        type: 'error',
+        id: 'req-mount-watch',
+        code: 'PERMISSION_DENIED',
+        status: 403
+      });
     });
 
     it('should handle POST request with body', async () => {

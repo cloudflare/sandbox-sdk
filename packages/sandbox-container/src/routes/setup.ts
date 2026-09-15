@@ -259,6 +259,13 @@ export function setupRoutes(router: Router, container: Container): void {
 
   router.register({
     method: 'POST',
+    path: '/api/watch/mount',
+    handler: async (req, ctx) => container.get('watchHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
     path: '/api/watch/check',
     handler: async (req, ctx) => container.get('watchHandler').handle(req, ctx),
     middleware: [container.get('loggingMiddleware')]
