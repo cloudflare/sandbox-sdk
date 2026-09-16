@@ -17,19 +17,16 @@ import { routeHost } from "./route.js";
 type S3MountContainer = Pick<Container, "exec" | "interceptOutboundHttp">;
 
 /**
- * Reconciles S3-compatible FUSE mounts in a caller-owned Container.
+ * Attaches an S3-compatible bucket or prefix to a running Container.
  *
- * Use this for stable or infrequently replaced mounts that belong to one job or
- * session sandbox. Adoption refreshes the current generation without consuming
- * another outbound route. Unmount revokes access and detaches FUSE, but does
- * not reclaim the native route registration. Fresh generations consume shared
- * Container interception capacity that this class neither tracks nor reserves.
- * For a new trust context or a high-churn workflow, use a new sandbox identity.
+ * Use this for a few long-lived mounts in one job or session. Calling `mount()`
+ * again with the same settings reuses the existing mount. `unmount()` stops
+ * access and unmounts the path. It does not fully clean up the Container's
+ * intercept. For a new job or tenant, use a new sandbox name.
  *
- * The caller must start (or synchronously request the start of) the Container
- * before calling `mount()`. This class never starts, monitors, or replaces it.
- * Mounted data retains object-store and s3fs semantics; it is not a POSIX
- * filesystem and must not be used as one for locking or atomic rename designs.
+ * Start the Container before calling `mount()`. This class never starts,
+ * monitors, or replaces it. The mounted path is not a POSIX filesystem. Do not
+ * use it for locking or atomic rename.
  */
 export class S3Mounts {
   readonly #container: S3MountContainer;
@@ -41,11 +38,10 @@ export class S3Mounts {
   }
 
   /**
-   * Creates, adopts, or safely repairs the requested mount.
+   * Creates the mount, reuses a matching mount, or repairs leftover state.
    *
-   * A compatible adoption refreshes gateway routing and verifies FUSE without
-   * consuming another outbound route. It does not add a fresh upstream metadata
-   * request. Use `inspect()` for that.
+   * Reuse does not consume another Container intercept. Use `inspect()` to read
+   * current state without changing it.
    */
   async mount(request: S3MountRequest, options: S3MountOperationOptions = {}): Promise<void> {
     const canonical = canonicalizeS3MountRequest(request);
@@ -99,9 +95,11 @@ export class S3Mounts {
   }
 
   /**
-   * Waits for an in-flight lifecycle operation on this path, captures serialized guest
-   * attachment evidence, then probes its route without repairing it. Gateway and upstream
-   * evidence may be newer than the guest snapshot. Use an AbortSignal to bound either wait.
+   * Reports the current path without changing it.
+   *
+   * Waits for an in-flight `mount()` or `unmount()` on the same path first.
+   * Gateway evidence can be newer than the guest snapshot. Pass `signal` when
+   * the application needs a deadline.
    */
   async inspect(
     mountPath: string,
@@ -113,13 +111,11 @@ export class S3Mounts {
   }
 
   /**
-   * Revokes a managed route before requesting a normal unmount.
+   * Stops new access, then unmounts the path.
    *
-   * This denies new requests and detaches the guest filesystem. It does not
-   * reclaim the native outbound route. If route revocation fails, the guest
-   * mount is left untouched. If the normal unmount fails, the route remains
-   * denied and a later call can safely retry. This never falls back to force or
-   * lazy unmounting.
+   * This does not remove the Container intercept. If denying access fails, the
+   * filesystem stays mounted. If the filesystem is busy, access stays denied
+   * and you can retry. This never force-unmounts.
    */
   async unmount(mountPath: string, options: S3MountOperationOptions = {}): Promise<void> {
     const canonicalPath = canonicalizeMountPath(mountPath);

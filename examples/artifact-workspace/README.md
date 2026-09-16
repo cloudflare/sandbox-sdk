@@ -1,15 +1,12 @@
 # Artifact workspace
 
-Deploy this Worker to process objects in a job-scoped S3 prefix from an isolated Container. Each
-sandbox name maps to one Durable Object and the prefix `sandboxes/<name>/`.
+Deploy this Worker to process objects in a job-scoped S3 prefix from an isolated Container. Each sandbox name maps to one Durable Object and the prefix `sandboxes/<name>/`.
 
-The example writes `input.txt`, computes its SHA-256 digest inside the Container, and writes
-`output.sha256` through the same mount. Done when the digest response matches the input.
+The example writes `input.txt`, computes its SHA-256 digest inside the Container, and writes `output.sha256` through the same mount. Done when the digest response matches the input.
 
 ## Configure the bucket
 
-Edit `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` in `wrangler.jsonc`. The endpoint must be an
-origin-only URL for an S3-compatible API.
+Edit `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` in `wrangler.jsonc`. The endpoint must be an HTTP or HTTPS origin for an S3-compatible API.
 
 Add credentials as Worker secrets:
 
@@ -20,8 +17,7 @@ npx --yes wrangler@4.131.2 secret put S3_SECRET_ACCESS_KEY \
   --config examples/artifact-workspace/wrangler.jsonc
 ```
 
-Grant only bucket-list access for `sandboxes/*` and object access under that prefix. The real
-credentials remain in the Worker. The Container receives only route-local dummy credentials.
+Grant only list access for `sandboxes/*` and object access under that prefix. Keep the real credentials in the Worker.
 
 ## Deploy and process an artifact
 
@@ -50,24 +46,19 @@ curl "$WORKER_URL/sandboxes/job-1/digest"
 curl "$WORKER_URL/sandboxes/job-1/mount"
 ```
 
-Unmount while keeping the Container, or unmount and destroy the execution:
+Unmount, or unmount and destroy the Container:
 
 ```sh
 curl --request DELETE "$WORKER_URL/sandboxes/job-1/mount"
 curl --request DELETE "$WORKER_URL/sandboxes/job-1/execution"
 ```
 
-The next input or digest request remounts the same prefix. Unmounting revokes access and detaches
-FUSE, but it does not reclaim the native outbound route. Keep one sandbox identity for one job
-lifecycle. For a new job, tenant, or high-churn workflow, use a new sandbox name rather than cycling
-mounts in the same Container. S3 remains object storage: do not depend on POSIX locking, atomic
-rename, or immediate cache coherence. See
-[Mount S3-compatible storage](../../docs/s3-mounts.md) for lifecycle, retry, cache, revocation, and
-trust-boundary details.
+The next input or digest request mounts the same prefix again.
 
-Authenticate these routes in production and derive the sandbox name from the authenticated job or
-tenant. Prefer read-only mounts for workflows that do not produce artifacts.
+Keep one sandbox name for one job. For a new job or tenant, use a new sandbox name. Do not mount and unmount repeatedly in the same Container.
 
-The pinned public Wrangler deploys this example, but local development currently requires a
-workers-sdk/workerd pair with named Durable Object images and FUSE support. Repository maintainers
-can validate that path with `npm run test:s3-native-local`.
+S3 is object storage. Do not depend on POSIX locking, atomic rename, or immediate cache coherence. See [Mount S3-compatible storage](../../docs/s3-mounts.md).
+
+Authenticate these routes in production and derive the sandbox name from the authenticated job or tenant. Prefer read-only mounts when the guest does not need to write.
+
+The pinned public Wrangler deploys this example. Local development currently needs a workers-sdk and workerd pair with named Durable Object images and FUSE support. Repository maintainers can validate that path with `npm run test:s3-native-local`.

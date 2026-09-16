@@ -25,7 +25,7 @@ type S3fsOptionValue = string | number | boolean;
 export interface S3MountRequest {
   readonly mountPath: string;
   readonly source: S3MountSource;
-  /** Directory-scoped key namespace. A non-empty value is canonicalized to end in `/`. */
+  /** Optional object-key prefix. A non-empty value ends in `/`. */
   readonly keyPrefix?: string;
   readonly access: S3MountAccess;
   readonly s3fsOptions?: Readonly<Record<string, S3fsOptionValue>>;

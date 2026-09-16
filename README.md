@@ -2,9 +2,7 @@
 
 Give each user or job a Linux workspace. Your Worker receives the request. A Durable Object starts a Container and sends it work.
 
-This repository is that pattern. `@cloudflare/sandbox` adds streaming file operations and scoped
-S3-compatible mounts. The Durable Object calls `this.ctx.container` to start the instance, run
-commands, and take snapshots.
+This repository is that pattern. `@cloudflare/sandbox` adds file operations and S3 mounts. The Durable Object calls `this.ctx.container` to start the instance, run commands, and take snapshots.
 
 Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/). This repository is Containers.
 
@@ -14,6 +12,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [About sandboxes](docs/about-sandboxes.md)
 - [Files API](docs/files.md)
 - [Mount S3-compatible storage](docs/s3-mounts.md)
+- [S3Mounts API](docs/s3-mounts-api.md)
 - [Checkpoint a workspace](docs/checkpoint-a-workspace.md)
 
 ## Examples

@@ -25,8 +25,7 @@ EXPOSE 8080
 CMD ["sleep", "infinity"]
 ```
 
-Local Container preparation requires the image to declare at least one port. This example uses only
-`Container.exec()` and does not listen on `8080`.
+Local Container images must declare a port. This example uses `Container.exec()` and does not listen on `8080`.
 
 Keep your own base image. The donor is not the sandbox. Images must be `linux/amd64`.
 
@@ -67,9 +66,7 @@ Done when the Worker has a `SANDBOX` binding and `nodejs_compat`.
 }
 ```
 
-Wrangler prepares the named image and exposes its digest through `this.ctx.container.images.sandbox`.
-Pass that value to `start()`. `nodejs_compat` lets `Files` read Linux error names through
-`node:os`.
+Wrangler prepares the named image and exposes its digest through `this.ctx.container.images.sandbox`. Pass that value to `start()`. `nodejs_compat` lets `Files` read Linux error names through `node:os`.
 
 ## 3. Start the Container, write the script, run it
 

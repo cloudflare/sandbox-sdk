@@ -1,6 +1,6 @@
 # Code workspace
 
-Deploy this Worker to write a script into a named Container and run it. For the walkthrough, refer to [Run a Linux task](../../docs/get-started.md).
+Deploy this Worker to write a script into a named Container and run it. For the walkthrough, see [Run a Linux task](../../docs/get-started.md).
 
 Done when `POST .../run` returns `hello from the sandbox` in `stdout`.
 

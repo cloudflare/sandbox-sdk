@@ -12,6 +12,8 @@ Call `env.SANDBOX.getByName(name)`. The same name reaches the same Durable Objec
 
 That Durable Object can have one running Container. The Container is not the Durable Object. If the Container stops, the Durable Object remains.
 
+Use one name for one job, session, or tenant. Do not reuse a name across unrelated work.
+
 ## Disk lasts while the Container runs
 
 Files you write stay on that Container's disk while the instance is running. Destroying it, or letting it time out, drops unsaved files.
@@ -28,6 +30,8 @@ Authenticate the request in the Worker. Choose the Durable Object name. Choose w
 
 `Files` follows Linux path rules. It does not enforce access policy.
 
+An S3 mount is part of that sandbox, not a shared volume across jobs. See [Mount S3-compatible storage](s3-mounts.md).
+
 ## Commands
 
 `container.exec()` starts a process in a running Container. It does not start a stopped Container.
@@ -40,5 +44,4 @@ The `ExecProcess` handle lives in this Durable Object isolate. If the request is
 
 A new Worker version does not replace a running Container. The image and instance you pass to `start()` apply when that Container starts. A running instance keeps the image it started with.
 
-`@cloudflare/sandbox` is `Files` and `S3Mounts`. Start and destroy Containers yourself. Refer to
-the [Files API](files.md) and [Mount S3-compatible storage](s3-mounts.md).
+`@cloudflare/sandbox` is `Files` and `S3Mounts`. Start and destroy Containers yourself. See the [Files API](files.md) and [S3Mounts API](s3-mounts-api.md).

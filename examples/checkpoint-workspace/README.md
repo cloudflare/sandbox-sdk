@@ -1,6 +1,6 @@
 # Checkpoint a workspace
 
-Deploy this Worker to save Container disk and start from that snapshot. For the walkthrough, refer to [Checkpoint a workspace](../../docs/checkpoint-a-workspace.md).
+Deploy this Worker to save Container disk and start from that snapshot. For the walkthrough, see [Checkpoint a workspace](../../docs/checkpoint-a-workspace.md).
 
 Done when a read after checkpoint returns the same bytes you wrote.
 

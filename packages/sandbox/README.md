@@ -1,6 +1,6 @@
 # `@cloudflare/sandbox`
 
-Read and write files in a running Container.
+Read and write files in a running Container. Mount S3-compatible storage when a tool needs a filesystem path.
 
 Start the Container, then:
 
@@ -21,8 +21,6 @@ The image must include `/usr/local/bin/sandbox-shim`. The Worker needs `nodejs_c
 
 This package does not start Containers. Extend `DurableObject` and call `this.ctx.container`.
 
-Runtime exports: `Files`, `S3Mounts`, `S3Gateway`, `SandboxFileError`, `SandboxS3MountError`, and
-`SandboxProtocolError`.
+Runtime exports: `Files`, `S3Mounts`, `S3Gateway`, `SandboxFileError`, `SandboxS3MountError`, and `SandboxProtocolError`.
 
-For the walkthrough, refer to [Run a Linux task](../../docs/get-started.md). For API guides, refer to
-[Files API](../../docs/files.md) and [Mount S3-compatible storage](../../docs/s3-mounts.md).
+For the walkthrough, see [Run a Linux task](../../docs/get-started.md). For APIs, see [Files API](../../docs/files.md) and [S3Mounts API](../../docs/s3-mounts-api.md).
