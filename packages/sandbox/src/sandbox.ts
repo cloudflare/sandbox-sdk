@@ -876,10 +876,16 @@ export function getSandbox<T extends Sandbox<any>>(
 
       return stub.readFile(path, options);
     },
-    readFileStream: (path: string, fileOptions: { sessionId?: string } = {}) =>
+    readFileStream: (
+      path: string,
+      fileOptions: { encoding?: 'base64'; sessionId?: string } = {}
+    ) =>
       useDefaultSession || fileOptions.sessionId !== undefined
         ? stub.readFileStream(path, fileOptions)
-        : stub.readFileStream(path, { sessionId: DISABLE_SESSION_TOKEN }),
+        : stub.readFileStream(path, {
+            ...fileOptions,
+            sessionId: DISABLE_SESSION_TOKEN
+          }),
     mkdir: (
       path: string,
       mkdirOptions: { recursive?: boolean; sessionId?: string } = {}
@@ -1036,6 +1042,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private readonly controlCallback: SandboxControlCallbackImpl;
   private normalizeId: boolean = false;
   private defaultSession: string | null = null;
+  // Container generation the cached defaultSession was created against.
+  // `defaultSession` is rehydrated from durable storage on cold start while
+  // containerGeneration is memory-only and restarts at 0, so the initial -1
+  // forces one re-initialization per DO instance: a session id restored from
+  // storage is a claim about a container that may since have been replaced.
+  private defaultSessionGeneration = -1;
   // Incremented whenever the container stops. Used to invalidate
   // in-flight default-session initialization that started against a
   // now-dead container.
@@ -1045,6 +1057,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     generation: number;
     promise: Promise<string>;
   } | null = null;
+  private defaultSessionPersistenceQueue: Promise<void> = Promise.resolve();
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
@@ -1557,12 +1570,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.envVars = { ...this.envVars, ...toSet };
 
     if (this.defaultSession) {
+      const defaultSession = await this.ensureDefaultSession();
       for (const key of toUnset) {
         const unsetCommand = `unset ${key}`;
 
         const result = await this.client.commands.execute(
           unsetCommand,
-          this.defaultSession,
+          defaultSession,
           { origin: 'internal' }
         );
 
@@ -1578,7 +1592,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           exportCommand,
-          this.defaultSession,
+          defaultSession,
           { origin: 'internal' }
         );
 
@@ -1877,10 +1891,45 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      if (this.activeMounts.has(mountPath)) {
-        throw new InvalidMountConfigError(
-          `Mount path already in use: ${mountPath}`
-        );
+      const readOnly = options.readOnly ?? false;
+      const existingMount = this.activeMounts.get(mountPath);
+      if (existingMount) {
+        if (
+          existingMount.mountType !== 'local-sync' ||
+          !existingMount.mounted ||
+          existingMount.bucket !== bucket ||
+          existingMount.prefix !== options.prefix ||
+          existingMount.readOnly !== readOnly
+        ) {
+          throw new InvalidMountConfigError(
+            `Mount path already in use: ${mountPath}`
+          );
+        }
+
+        if (existingMount.containerGeneration === this.containerGeneration) {
+          // A local-sync mount is a plain directory, so callers cannot probe
+          // the container (`mountpoint -q`) to find out whether it is already
+          // mounted. Treat a repeat mount of the same bucket, prefix and mode
+          // as the no-op it is instead of failing the caller.
+          this.logger.debug('Local mount already active, skipping mount', {
+            mountPath,
+            bucket
+          });
+          mountOutcome = 'success';
+          return;
+        }
+
+        // The container this mount syncs through has been replaced, so its
+        // sync manager is writing through a session the current container
+        // never had. Retire it and mount again against the live container.
+        this.logger.debug('Replacing local mount from a stale container', {
+          mountPath,
+          bucket,
+          mountGeneration: existingMount.containerGeneration,
+          containerGeneration: this.containerGeneration
+        });
+        await existingMount.syncManager.stop().catch(() => {});
+        this.activeMounts.delete(mountPath);
       }
 
       const sessionId = await this.ensureDefaultSession();
@@ -1889,7 +1938,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         bucket: r2Binding,
         mountPath,
         prefix: options.prefix,
-        readOnly: options.readOnly ?? false,
+        readOnly,
         client: this.client,
         sessionId,
         logger: this.logger
@@ -1901,7 +1950,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         bucket,
         mountPath,
         syncManager,
-        mounted: false
+        mounted: false,
+        prefix: options.prefix,
+        readOnly,
+        containerGeneration: this.containerGeneration
       };
       this.activeMounts.set(mountPath, mountInfo);
 
@@ -3101,6 +3153,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       reason: params?.reason
     });
 
+    const stoppedMounts = [...this.activeMounts.entries()];
+
     // Invalidate default-session state before the first await. Bumping
     // containerGeneration signals any in-flight initializeDefaultSession
     // that a new container generation begins next; it observes the
@@ -3111,7 +3165,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
     this.defaultSessionInit = null;
 
+    // Queue cleanup behind old-generation persistence while allowing a
+    // replacement container's later writes to survive this stop callback.
+    await this.runDefaultSessionPersistence(async () => {
+      await this.ctx.storage.delete('defaultSession');
+      await this.ctx.storage.delete('containerPlacementId');
+    });
     await this.currentRuntime.clear();
+    // Port tokens are durable authorization and survive container restarts;
+    // only runtime-scoped preview activation is cleared.
     await this.clearActivePreviewPorts();
 
     try {
@@ -3136,10 +3198,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       )
     );
 
-    // Stop local sync managers before clearing the map.
+    // Stop mount resources associated with the stopped container.
     let hadR2EgressMount = false;
     let hadCredentialProxyMount = false;
-    for (const [, m] of this.activeMounts) {
+    for (const [, m] of stoppedMounts) {
       if (m.mountType === 'local-sync') {
         await m.syncManager.stop().catch(() => {});
       } else if (m.mountType === 'r2-egress') {
@@ -3159,12 +3221,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    this.activeMounts.clear();
-
-    // Persist cleanup to storage so state is clean on next container start.
-    // Port tokens are durable authorization and survive container restarts;
-    // runtime-scoped preview activation is cleared separately above.
-    await this.ctx.storage.delete('defaultSession');
+    for (const [mountPath, mount] of stoppedMounts) {
+      if (this.activeMounts.get(mountPath) === mount) {
+        this.activeMounts.delete(mountPath);
+      }
+    }
   }
 
   override onError(error: unknown) {
@@ -3878,8 +3939,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async ensureDefaultSession(): Promise<string> {
     const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-    // Fast path: session already initialized in this instance
-    if (this.defaultSession === sessionId) {
+    // Fast path: session already initialized against the current container.
+    // A session id cached for an earlier generation — including one restored
+    // from storage after this DO was evicted — names a session the current
+    // container runtime may never have created, so re-initialize instead.
+    if (
+      this.defaultSession === sessionId &&
+      this.defaultSessionGeneration === this.containerGeneration
+    ) {
       return this.defaultSession;
     }
 
@@ -3906,8 +3973,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // targets the new container.
       if (isSessionInitInvalidated(err)) {
         // Fast path: a concurrent caller may have already initialized the
-        // session by the time we get here.
-        if (this.defaultSession === sessionId) return this.defaultSession;
+        // session against the current generation by the time we get here.
+        if (
+          this.defaultSession === sessionId &&
+          this.defaultSessionGeneration === this.containerGeneration
+        ) {
+          return this.defaultSession;
+        }
         // Join an in-flight init for the current generation that was started
         // by a concurrent caller rather than starting a parallel one. The guard
         // `freshPending !== init` prevents joining the same slot that just
@@ -3974,9 +4046,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Durable storage is the cross-eviction source of truth for the default
     // session identity. Update the in-memory cache only after persistence.
-    await this.ctx.storage.put('defaultSession', sessionId);
-    await this.capturePlacementId(placementId);
+    await this.runDefaultSessionPersistence(async () => {
+      this.assertContainerGeneration(generation);
+      await this.ctx.storage.put('defaultSession', sessionId);
+      this.assertContainerGeneration(generation);
+      await this.capturePlacementId(placementId);
+      this.assertContainerGeneration(generation);
+    });
+    this.assertContainerGeneration(generation);
     this.defaultSession = sessionId;
+    this.defaultSessionGeneration = generation;
     this.logger.debug('Default session initialized', { sessionId });
     return sessionId;
   }
@@ -3995,6 +4074,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * stored as-is so callers can distinguish "observed and absent" from "not
    * yet observed."
    */
+  private assertContainerGeneration(generation: number): void {
+    if (generation !== this.containerGeneration) {
+      throw new SessionInitInvalidatedError();
+    }
+  }
+
+  private async runDefaultSessionPersistence<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.defaultSessionPersistenceQueue;
+    let release!: () => void;
+    this.defaultSessionPersistenceQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
   private async capturePlacementId(
     containerPlacementId: string | null | undefined
   ): Promise<void> {
@@ -5157,14 +5258,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Stream a file from the sandbox using Server-Sent Events
    * Returns a ReadableStream that can be consumed with streamFile() or collectFile() utilities
    * @param path - Path to the file to stream
-   * @param options - Optional session ID
+   * @param options - Optional session ID and stream encoding
    */
   async readFileStream(
     path: string,
-    options: { sessionId?: string } = {}
+    options: { encoding?: 'base64'; sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
     const execution = await this.resolveExecution(options.sessionId);
     const session = this.serializeExecutionContext(execution);
+    if (options.encoding) {
+      return this.client.files.readFileStream(path, session, {
+        encoding: options.encoding
+      });
+    }
     return this.client.files.readFileStream(path, session);
   }
 
@@ -5971,7 +6077,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
         return this.readFile(path, { encoding, sessionId });
       }) as ExecutionSession['readFile'],
-      readFileStream: (path) => this.readFileStream(path, { sessionId }),
+      readFileStream: (path, options) =>
+        this.readFileStream(path, { ...options, sessionId }),
       watch: (path, options) => this.watch(path, { ...options, sessionId }),
       checkChanges: (path, options) =>
         this.checkChanges(path, { ...options, sessionId }),

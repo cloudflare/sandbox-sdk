@@ -108,7 +108,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       // Create SSE stream (handles metadata fetching and errors internally)
       const stream = await this.fileService.readFileStreamOperation(
         body.path,
-        body.sessionId
+        body.sessionId,
+        body.encoding
       );
 
       return new Response(stream, {

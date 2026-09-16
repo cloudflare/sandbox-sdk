@@ -130,6 +130,228 @@ export async function* streamFile(
   throw new Error('Stream ended unexpectedly');
 }
 
+export function abortableByteStream(
+  source: ReadableStream<Uint8Array>,
+  signal: AbortSignal
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let finished = false;
+  let released = false;
+  let cancellation: Promise<void> | null = null;
+  const release = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+  const cancelSource = async (reason: unknown) => {
+    try {
+      await reader.cancel(reason);
+    } catch {
+    } finally {
+      release();
+    }
+  };
+  const beginCancellation = (reason: unknown) => {
+    cancellation ??= cancelSource(reason);
+    return cancellation;
+  };
+  const abort = () => {
+    if (finished) return;
+    finished = true;
+    void beginCancellation(signal.reason).finally(() => {
+      try {
+        controller.error(signal.reason);
+      } catch {}
+    });
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(value) {
+      controller = value;
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    },
+    async pull(value) {
+      try {
+        const result = await reader.read();
+        if (finished) return;
+        if (signal.aborted) {
+          abort();
+        } else if (result.done) {
+          finished = true;
+          signal.removeEventListener('abort', abort);
+          release();
+          value.close();
+        } else {
+          value.enqueue(result.value);
+        }
+      } catch (error) {
+        if (finished) return;
+        finished = true;
+        signal.removeEventListener('abort', abort);
+        release();
+        value.error(error);
+      }
+    },
+    async cancel(reason) {
+      if (finished) {
+        if (cancellation) await cancellation;
+        return;
+      }
+      finished = true;
+      signal.removeEventListener('abort', abort);
+      await beginCancellation(reason);
+    }
+  });
+}
+
+export async function* byteChunks(
+  chunks: AsyncIterable<string | Uint8Array>
+): AsyncGenerator<Uint8Array> {
+  const encoder = new TextEncoder();
+  for await (const chunk of chunks) {
+    const bytes = typeof chunk === 'string' ? encoder.encode(chunk) : chunk;
+    if (bytes.byteLength > 0) yield bytes;
+  }
+}
+
+export async function areByteStreamsEqual(
+  left: AsyncIterable<Uint8Array>,
+  right: AsyncIterable<Uint8Array>,
+  shouldContinue: () => boolean = () => true
+): Promise<boolean> {
+  const leftIterator = left[Symbol.asyncIterator]();
+  const rightIterator = right[Symbol.asyncIterator]();
+  let leftChunk: Uint8Array = new Uint8Array(0);
+  let rightChunk: Uint8Array = new Uint8Array(0);
+  let leftOffset = 0;
+  let rightOffset = 0;
+
+  try {
+    while (true) {
+      if (leftOffset === leftChunk.byteLength) {
+        const next = await leftIterator.next();
+        if (next.done) {
+          if (rightOffset < rightChunk.byteLength) return false;
+          while (true) {
+            const other = await rightIterator.next();
+            if (other.done) return true;
+            if (other.value.byteLength > 0) return false;
+          }
+        }
+        leftChunk = next.value;
+        leftOffset = 0;
+        if (leftChunk.byteLength === 0) continue;
+      }
+      if (rightOffset === rightChunk.byteLength) {
+        const next = await rightIterator.next();
+        if (next.done) return false;
+        rightChunk = next.value;
+        rightOffset = 0;
+        if (rightChunk.byteLength === 0) continue;
+      }
+
+      if (!shouldContinue()) return false;
+      const count = Math.min(
+        leftChunk.byteLength - leftOffset,
+        rightChunk.byteLength - rightOffset
+      );
+      for (let index = 0; index < count; index++) {
+        if (leftChunk[leftOffset + index] !== rightChunk[rightOffset + index]) {
+          return false;
+        }
+      }
+      leftOffset += count;
+      rightOffset += count;
+    }
+  } finally {
+    await leftIterator.return?.();
+    await rightIterator.return?.();
+  }
+}
+
+interface UploadByteStreamOptions {
+  bucket: R2Bucket;
+  key: string;
+  chunks: AsyncIterable<string | Uint8Array>;
+  partBytes: number;
+  expectedETag?: string | null;
+  assertCurrent(): void;
+}
+
+export async function uploadByteStream({
+  bucket,
+  key,
+  chunks,
+  partBytes,
+  expectedETag,
+  assertCurrent
+}: UploadByteStreamOptions): Promise<R2Object | null> {
+  const pending: Uint8Array[] = [];
+  const parts: R2UploadedPart[] = [];
+  let pendingBytes = 0;
+  let upload: R2MultipartUpload | null = null;
+  const take = (size: number) => {
+    const part = new Uint8Array(size);
+    let offset = 0;
+    while (offset < size) {
+      const chunk = pending[0];
+      const count = Math.min(chunk.byteLength, size - offset);
+      part.set(chunk.subarray(0, count), offset);
+      offset += count;
+      if (count === chunk.byteLength) pending.shift();
+      else pending[0] = chunk.subarray(count);
+    }
+    pendingBytes -= size;
+    return part;
+  };
+
+  try {
+    for await (const bytes of byteChunks(chunks)) {
+      assertCurrent();
+      pending.push(bytes);
+      pendingBytes += bytes.byteLength;
+      while (pendingBytes >= partBytes) {
+        if (!upload) {
+          upload = await bucket.createMultipartUpload(key);
+          assertCurrent();
+        }
+        const part = take(partBytes);
+        parts.push(await upload.uploadPart(parts.length + 1, part));
+        assertCurrent();
+      }
+    }
+
+    assertCurrent();
+    if (upload) {
+      if (pendingBytes > 0) {
+        parts.push(
+          await upload.uploadPart(parts.length + 1, take(pendingBytes))
+        );
+        assertCurrent();
+      }
+      assertCurrent();
+      return await upload.complete(parts);
+    }
+
+    const bytes = take(pendingBytes);
+    if (expectedETag === undefined) {
+      return await bucket.put(key, bytes);
+    }
+    const result = await bucket.put(key, bytes, {
+      onlyIf:
+        expectedETag === null
+          ? { etagDoesNotMatch: '*' }
+          : { etagMatches: expectedETag }
+    });
+    return result;
+  } catch (error) {
+    if (upload) await upload.abort().catch(() => {});
+    throw error;
+  }
+}
+
 /**
  * Collect an entire file into memory from a stream
  *
