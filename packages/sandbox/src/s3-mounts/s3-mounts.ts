@@ -19,6 +19,13 @@ type S3MountContainer = Pick<Container, "exec" | "interceptOutboundHttp">;
 /**
  * Reconciles S3-compatible FUSE mounts in a caller-owned Container.
  *
+ * Use this for stable or infrequently replaced mounts that belong to one job or
+ * session sandbox. Adoption refreshes the current generation without consuming
+ * another outbound route. Unmount revokes access and detaches FUSE, but does
+ * not reclaim the native route registration. Fresh generations consume shared
+ * Container interception capacity that this class neither tracks nor reserves.
+ * For a new trust context or a high-churn workflow, use a new sandbox identity.
+ *
  * The caller must start (or synchronously request the start of) the Container
  * before calling `mount()`. This class never starts, monitors, or replaces it.
  * Mounted data retains object-store and s3fs semantics; it is not a POSIX
@@ -36,8 +43,9 @@ export class S3Mounts {
   /**
    * Creates, adopts, or safely repairs the requested mount.
    *
-   * A compatible adoption refreshes gateway routing and verifies FUSE, but
-   * does not add a fresh upstream metadata request. Use `inspect()` for that.
+   * A compatible adoption refreshes gateway routing and verifies FUSE without
+   * consuming another outbound route. It does not add a fresh upstream metadata
+   * request. Use `inspect()` for that.
    */
   async mount(request: S3MountRequest, options: S3MountOperationOptions = {}): Promise<void> {
     const canonical = canonicalizeS3MountRequest(request);
@@ -107,9 +115,11 @@ export class S3Mounts {
   /**
    * Revokes a managed route before requesting a normal unmount.
    *
-   * If route revocation fails, the guest mount is left untouched. If the normal
-   * unmount fails, the route remains denied and a later call can safely retry.
-   * This never falls back to force or lazy unmounting.
+   * This denies new requests and detaches the guest filesystem. It does not
+   * reclaim the native outbound route. If route revocation fails, the guest
+   * mount is left untouched. If the normal unmount fails, the route remains
+   * denied and a later call can safely retry. This never falls back to force or
+   * lazy unmounting.
    */
   async unmount(mountPath: string, options: S3MountOperationOptions = {}): Promise<void> {
     const canonicalPath = canonicalizeMountPath(mountPath);

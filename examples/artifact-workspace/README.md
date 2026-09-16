@@ -57,10 +57,11 @@ curl --request DELETE "$WORKER_URL/sandboxes/job-1/mount"
 curl --request DELETE "$WORKER_URL/sandboxes/job-1/execution"
 ```
 
-The next input or digest request remounts the same prefix. Each completed unmount leaves its route
-installed in deny mode, so prefer execution reset over repeated in-place mount/unmount cycles for
-high-churn jobs. S3 remains object storage: do not depend on POSIX locking, atomic rename, or
-immediate cache coherence. See
+The next input or digest request remounts the same prefix. Unmounting revokes access and detaches
+FUSE, but it does not reclaim the native outbound route. Keep one sandbox identity for one job
+lifecycle. For a new job, tenant, or high-churn workflow, use a new sandbox name rather than cycling
+mounts in the same Container. S3 remains object storage: do not depend on POSIX locking, atomic
+rename, or immediate cache coherence. See
 [Mount S3-compatible storage](../../docs/s3-mounts.md) for lifecycle, retry, cache, revocation, and
 trust-boundary details.
 

@@ -7,6 +7,13 @@ boundary.
 Use this API for tools that require a filesystem path but can tolerate object-store semantics. Do
 not use it to turn S3 into a POSIX filesystem.
 
+Treat a mount as part of constructing a job or session sandbox, not as a general-purpose dynamic
+volume manager. Keep one or a few stable mounts for that sandbox. Adopting an existing mount or
+refreshing credentials reuses the current generation. Unmounting revokes access and detaches FUSE;
+it does not reclaim the native outbound route. Fresh generations consume shared Container
+interception capacity that this package neither tracks nor reserves. For a new trust context or a
+high-churn workflow, use a new sandbox identity.
+
 The [artifact workspace example](../examples/artifact-workspace) mounts one prefix per named job,
 processes an input file inside the Container, and writes the result back through the mount.
 
@@ -238,9 +245,12 @@ coherence matters, stop processes that hold the mount and complete the normal un
 relying on an in-place route restore.
 
 The platform cannot currently remove an installed outbound route. A completed unmount replaces its
-route with a permanent deny handler, and a later fresh mount creates a new route generation. Avoid
-using one Container for an unbounded sequence of short-lived mount paths; replace the Container to
-discard accumulated denied routes when implementing a high-churn workflow.
+route with a permanent deny handler, and a later fresh mount creates a new route generation. That
+new generation consumes shared Container interception capacity used by every outbound interceptor
+on the same Container. Do not use one sandbox for an unbounded sequence of short-lived mounts. For
+a high-churn or new-trust-context workflow, start a new sandbox identity rather than cycling mounts
+in place. Native route-registration failures propagate unchanged; this package does not interpret
+or reserve the shared capacity.
 
 Pass an `AbortSignal` as the second argument to `mount()`, `inspect()`, or `unmount()`. Abort reasons,
 native Container `exec()` failures, and transport failures are not wrapped.

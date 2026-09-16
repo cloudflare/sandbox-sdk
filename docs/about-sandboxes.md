@@ -40,4 +40,5 @@ The `ExecProcess` handle lives in this Durable Object isolate. If the request is
 
 A new Worker version does not replace a running Container. The image and instance you pass to `start()` apply when that Container starts. A running instance keeps the image it started with.
 
-`@cloudflare/sandbox` is `Files`. Start and destroy Containers yourself. Refer to the [Files API](files.md).
+`@cloudflare/sandbox` is `Files` and `S3Mounts`. Start and destroy Containers yourself. Refer to
+the [Files API](files.md) and [Mount S3-compatible storage](s3-mounts.md).
