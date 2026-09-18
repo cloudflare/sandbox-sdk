@@ -23,7 +23,7 @@ export function createMockSession(id = 'mock-session') {
       }
       return result;
     }),
-    readFileStream: vi.fn(async () => new ReadableStream()),
+    readFileStream: vi.fn(async () => createSSEFileStream('')),
     writeFile: vi.fn(async () => {}),
     terminal: vi.fn(async () => new Response(null, { status: 200 }))
   };
@@ -54,7 +54,7 @@ export function createMockSandbox() {
       return result;
     }),
     readFile: vi.fn(async () => ({ content: 'file content' })),
-    readFileStream: vi.fn(async () => new ReadableStream()),
+    readFileStream: vi.fn(async () => createSSEFileStream('')),
     writeFile: vi.fn(async () => {}),
     terminal: vi.fn(async (_request: Request, _opts?: Record<string, unknown>) => {
       // In real usage this returns a 101 WebSocket upgrade response, but Node

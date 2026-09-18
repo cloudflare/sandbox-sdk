@@ -615,21 +615,25 @@ export function createBridgeApp(config: RouteConfig): Hono<BridgeHonoEnv> {
       }
 
       try {
-        const stream = await executor.readFileStream(resolvedPath);
-        return new Response(sseToByteStream(stream), {
+        const fileStream = await executor.readFileStream(resolvedPath);
+        const byteStream = await sseToByteStream(fileStream);
+        return new Response(byteStream, {
           status: 200,
           headers: { 'Content-Type': 'application/octet-stream' }
         });
       } catch (err) {
         const code = (err as { code?: string }).code;
-        if (code === 'FILE_NOT_FOUND') {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          code === 'FILE_NOT_FOUND' ||
+          msg.toLowerCase().includes('file not found')
+        ) {
           return errorJson(
             `File not found: ${resolvedPath}`,
             'workspace_read_not_found',
             404
           );
         }
-        const msg = err instanceof Error ? err.message : String(err);
         return errorJson(`read failed: ${msg}`, 'exec_transport_error', 502);
       }
     })
@@ -925,7 +929,7 @@ export function createBridgeApp(config: RouteConfig): Hono<BridgeHonoEnv> {
         // Best-effort cleanup; don't await so we don't delay the response.
         sandbox.exec(`rm -f ${shellQuote(tmpPath)}`).catch(() => {});
 
-        return new Response(sseToByteStream(stream), {
+        return new Response(await sseToByteStream(stream), {
           status: 200,
           headers: { 'Content-Type': 'application/octet-stream' }
         });
