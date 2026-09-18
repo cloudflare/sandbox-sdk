@@ -139,18 +139,32 @@ export function validateSessionId(id: string): string | null {
 /**
  * Convert an SSE stream from readFileStream() into a raw byte stream.
  * Decodes base64 chunks for binary files and UTF-8-encodes text chunks.
+ * The first SSE event is consumed before the stream is returned, so the caller
+ * can map early stream errors onto the HTTP response.
  */
-export function sseToByteStream(
+export async function sseToByteStream(
   sse: ReadableStream<Uint8Array>
-): ReadableStream<Uint8Array> {
+): Promise<ReadableStream<Uint8Array>> {
   const encoder = new TextEncoder();
+  const enqueue = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    chunk: string | Uint8Array
+  ) => {
+    controller.enqueue(
+      chunk instanceof Uint8Array ? chunk : encoder.encode(chunk)
+    );
+  };
+  const chunks = streamFile(sse);
+  const first = await chunks.next();
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const chunk of streamFile(sse)) {
-          controller.enqueue(
-            chunk instanceof Uint8Array ? chunk : encoder.encode(chunk)
-          );
+        if (!first.done) {
+          enqueue(controller, first.value);
+          for await (const chunk of chunks) {
+            enqueue(controller, chunk);
+          }
         }
         controller.close();
       } catch (err) {
