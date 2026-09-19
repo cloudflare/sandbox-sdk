@@ -2008,6 +2008,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let mountError: Error | undefined;
     let passwordFilePath: string | undefined;
     let additionalHeaderFilePath: string | undefined;
+    // See mountBucketFuse(): never clean up a mount this call did not reserve.
+    let reservedMountPath = false;
 
     try {
       validateBucketBindingName(bucket, mountPath);
@@ -2059,6 +2061,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         readOnly: options.readOnly ?? false
       };
       this.activeMounts.set(mountPath, mountInfo);
+      reservedMountPath = true;
 
       await this.configureR2EgressOutbound(this.getR2EgressParams());
 
@@ -2108,8 +2111,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountOutcome = 'success';
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
-      const failedMount = this.activeMounts.get(mountPath);
-      this.activeMounts.delete(mountPath);
+      const failedMount = reservedMountPath
+        ? this.activeMounts.get(mountPath)
+        : undefined;
+      if (reservedMountPath) {
+        this.activeMounts.delete(mountPath);
+      }
       if (failedMount?.mountType === 'r2-egress') {
         await this.deletePasswordFile(failedMount.passwordFilePath).catch(
           () => {}
@@ -2164,6 +2171,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let additionalHeaderFilePath: string | undefined;
     let provider: BucketProvider | null = null;
     let dirExisted = true;
+    // Only this call's own reservation may be cleaned up on failure. A
+    // validation error (e.g. the path is already in use) must not unmount or
+    // unregister a mount established by an earlier call.
+    let reservedMountPath = false;
     try {
       this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
@@ -2233,6 +2244,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           : {})
       };
       this.activeMounts.set(mountPath, mountInfo);
+      reservedMountPath = true;
 
       // Write dummy credentials for credential proxy, real credentials otherwise
       await this.createPasswordFile(
@@ -2285,6 +2297,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountOutcome = 'success';
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
+      if (!reservedMountPath) {
+        throw error;
+      }
       // Tear down any mount that may have established between the script's
       // last `mountpoint -q` check and `executeS3FSMount()` throwing. s3fs
       // runs as a daemon, so the FUSE mount can flip live in that window;

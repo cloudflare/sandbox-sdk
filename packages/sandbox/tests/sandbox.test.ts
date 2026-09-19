@@ -3896,6 +3896,40 @@ describe('Sandbox - Automatic Session Management', () => {
         )
       ).toBe(true);
     });
+
+    it('keeps an existing mount when mounting the same path again fails validation', async () => {
+      mockMountScript({ exitCode: 0 });
+      await sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions);
+      const existingMount = (sandbox as any).activeMounts.get('/mnt/data');
+      expect(existingMount.mounted).toBe(true);
+
+      const issuedCommands: string[] = [];
+      vi.mocked(sandbox.client.commands.execute).mockImplementation(
+        async (command: string) => {
+          issuedCommands.push(command);
+          return {
+            success: true,
+            command,
+            timestamp: new Date().toISOString(),
+            exitCode: 0,
+            stdout: '',
+            stderr: ''
+          } as any;
+        }
+      );
+
+      await expect(
+        sandbox.mountBucket('my-bucket', '/mnt/data', mountOptions)
+      ).rejects.toThrow(/already in use/);
+
+      // The failed call must not tear down or forget the healthy mount.
+      expect(issuedCommands.some((c) => c.includes('fusermount -u'))).toBe(
+        false
+      );
+      expect((sandbox as any).activeMounts.get('/mnt/data')).toBe(
+        existingMount
+      );
+    });
   });
 });
 
