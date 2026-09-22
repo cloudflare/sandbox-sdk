@@ -10,7 +10,7 @@ mock.module('node:fs', () => ({
   appendFileSync: mockAppendFileSync
 }));
 
-import { trustRuntimeCert } from '../src/cert';
+import { getRuntimeCertPEM, trustRuntimeCert } from '../src/cert';
 
 const DEFAULT_CERT_PATH = '/etc/cloudflare/certs/cloudflare-containers-ca.crt';
 const PRIMARY_SYSTEM_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt';
@@ -93,6 +93,7 @@ describe('trustRuntimeCert', () => {
     await trustRuntimeCert();
 
     expect(mockReadFileSync).toHaveBeenCalledWith(DEFAULT_CERT_PATH, 'utf8');
+    expect(getRuntimeCertPEM()).toBe(certContent);
     expect(mockAppendFileSync).toHaveBeenCalledWith(
       PRIMARY_SYSTEM_CA_BUNDLE,
       `\n${certContent}`

@@ -92,7 +92,11 @@ describe('BackupService', () => {
         return result.data;
       }
     );
-    service = new BackupService(mockLogger, mockCommandContextService);
+    service = new BackupService(
+      mockLogger,
+      mockCommandContextService,
+      () => undefined
+    );
   });
 
   afterEach(() => {
@@ -232,6 +236,42 @@ describe('BackupService', () => {
           ]
         }
       });
+      expect(mockFetch.mock.calls[0]?.[1]).not.toHaveProperty('tls');
+    });
+
+    it('passes the runtime interception CA to multipart fetch', async () => {
+      const runtimeCertPEM =
+        '-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----';
+      service = new BackupService(
+        mockLogger,
+        mockCommandContextService,
+        () => runtimeCertPEM
+      );
+      vi.spyOn(Bun, 'file').mockReturnValue({
+        exists: async () => true,
+        slice: vi.fn().mockReturnValue(new Blob(['part-a']))
+      } as unknown as ReturnType<typeof Bun.file>);
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 200,
+          headers: { etag: '"etag-1"' }
+        })
+      );
+
+      const result = await service.uploadParts('/var/backups/test.sqsh', [
+        {
+          partNumber: 1,
+          url: 'https://example.com/part-1',
+          offset: 0,
+          size: 10
+        }
+      ]);
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://example.com/part-1',
+        expect.objectContaining({ tls: { ca: runtimeCertPEM } })
+      );
     });
 
     it('fails when the archive does not exist', async () => {

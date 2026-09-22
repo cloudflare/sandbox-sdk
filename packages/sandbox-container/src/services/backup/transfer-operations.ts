@@ -1,6 +1,7 @@
 import type { Logger } from '@repo/shared';
 import { shellEscape } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
+import { getRuntimeCertPEM } from '../../cert';
 import {
   type ServiceError,
   type ServiceResult,
@@ -85,7 +86,10 @@ function validateDownloadCoverage(
 export class TransferOperations {
   constructor(
     private logger: Logger,
-    private commandContextService: CommandContextService
+    private commandContextService: CommandContextService,
+    private readonly runtimeCertPEM: () =>
+      | string
+      | undefined = getRuntimeCertPEM
   ) {}
 
   private async executeInternal(
@@ -125,6 +129,7 @@ export class TransferOperations {
     for (let attempt = 1; attempt <= BACKUP_UPLOAD_MAX_ATTEMPTS; attempt++) {
       try {
         const body = archiveFile.slice(part.offset, part.offset + part.size);
+        const runtimeCertPEM = this.runtimeCertPEM();
         const response = await fetch(part.url, {
           method: 'PUT',
           headers: {
@@ -132,7 +137,8 @@ export class TransferOperations {
             'Content-Type': 'application/octet-stream'
           },
           body,
-          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS)
+          signal: AbortSignal.timeout(BACKUP_UPLOAD_TIMEOUT_MS),
+          ...(runtimeCertPEM && { tls: { ca: runtimeCertPEM } })
         });
 
         if (!response.ok) {
