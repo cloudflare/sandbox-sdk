@@ -1,0 +1,4 @@
+OPENAI_API_KEY=sk-replace-application-key
+OPENAI_AGENT_ID=agent_replace-me
+EXECUTOR_URL=https://openai-agents-api-executor.example.workers.dev
+EXECUTOR_CLIENT_SECRET=replace-with-cleanup-secret
