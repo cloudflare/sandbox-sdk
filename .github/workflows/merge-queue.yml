@@ -1,0 +1,197 @@
+name: Merge Queue
+
+on:
+  merge_group:
+    types: [checks_requested]
+
+permissions: {}
+
+concurrency:
+  group: merge-queue-${{ github.event.merge_group.base_ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 2
+    outputs:
+      artifact-key: ${{ steps.context.outputs.artifact-key }}
+      docker-hash: ${{ steps.hashes.outputs.docker }}
+      deploy-hash: ${{ steps.hashes.outputs.deploy }}
+      image-tag: ${{ steps.context.outputs.image-tag }}
+      worker-name: ${{ steps.context.outputs.worker-name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.merge_group.head_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Derive merge queue context
+        id: context
+        env:
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+
+          BASE_NAME=${BASE_REF#refs/heads/}
+          SAFE_BASE=$(printf '%s' "$BASE_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9-]+/-/g; s/^-+|-+$//g' \
+            | cut -c1-20)
+
+          if [[ -z "$SAFE_BASE" ]]; then
+            echo "::error::Could not derive a safe name from base ref: $BASE_REF"
+            exit 1
+          fi
+
+          {
+            echo "artifact-key=$HEAD_SHA"
+            echo "image-tag=mq-$SAFE_BASE"
+            echo "worker-name=sandbox-e2e-test-worker-mq-$SAFE_BASE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute content hashes
+        id: hashes
+        run: |
+          {
+            echo "docker=${{ hashFiles(
+              'packages/sandbox/Dockerfile',
+              'docker-bake.hcl',
+              'docker-images.txt',
+              '.dockerignore',
+              'package-lock.json',
+              'package.json',
+              'turbo.json',
+              'packages/*/package.json',
+              'packages/shared/**',
+              'packages/sandbox-container/**',
+              'tooling/typescript-config/**',
+              'biome.json',
+              '.bun-version',
+              'tests/e2e/test-worker/Dockerfile.*'
+            ) }}"
+            echo "deploy=${{ hashFiles(
+              'packages/sandbox/Dockerfile',
+              'docker-bake.hcl',
+              'docker-images.txt',
+              '.dockerignore',
+              'package-lock.json',
+              'package.json',
+              'turbo.json',
+              'packages/*/package.json',
+              'packages/shared/**',
+              'packages/sandbox-container/**',
+              'tooling/typescript-config/**',
+              'biome.json',
+              '.bun-version',
+              'tests/e2e/test-worker/Dockerfile.*',
+              'packages/sandbox/src/**',
+              'tests/e2e/test-worker/**',
+              'vitest.e2e.config.ts'
+            ) }}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    permissions:
+      actions: write
+      contents: read
+      packages: write
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image-tag }}
+      docker_hash: ${{ needs.prepare.outputs.docker-hash }}
+      checkout_ref: ${{ github.event.merge_group.head_sha }}
+      checkout_repo: ${{ github.repository }}
+      artifact_key: ${{ needs.prepare.outputs.artifact-key }}
+      cache_readonly: true
+    secrets: inherit
+
+  quality:
+    needs: [prepare, build]
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      checkout_ref: ${{ github.event.merge_group.head_sha }}
+      artifact_key: ${{ needs.prepare.outputs.artifact-key }}
+      run_sdk_tests: true
+      run_container_tests: true
+      run_changeset_validation: false
+    secrets: inherit
+
+  e2e:
+    needs: [prepare, build]
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: ${{ needs.prepare.outputs.worker-name }}
+      image_tag: ci-${{ needs.prepare.outputs.docker-hash }}
+      deploy_hash: ${{ needs.prepare.outputs.deploy-hash }}
+      checkout_ref: ${{ github.event.merge_group.head_sha }}
+      checkout_repo: ${{ github.repository }}
+      artifact_key: ${{ needs.prepare.outputs.artifact-key }}
+      cache_readonly: true
+    secrets: inherit
+
+  basic-gate:
+    name: ci/basic
+    if: always()
+    needs: [prepare, build, quality]
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      - name: Evaluate basic gate
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+        run: |
+          echo "prepare: $PREPARE_RESULT"
+          echo "build: $BUILD_RESULT"
+          echo "quality: $QUALITY_RESULT"
+
+          for result in "$PREPARE_RESULT" "$BUILD_RESULT" "$QUALITY_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              echo "::error::One or more basic merge queue checks did not succeed"
+              exit 1
+            fi
+          done
+
+          echo "All basic merge queue checks passed"
+
+  gate:
+    name: ci/gate
+    if: always()
+    needs: [prepare, build, e2e]
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      - name: Evaluate privileged gate
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "prepare: $PREPARE_RESULT"
+          echo "build: $BUILD_RESULT"
+          echo "e2e: $E2E_RESULT"
+
+          for result in "$PREPARE_RESULT" "$BUILD_RESULT" "$E2E_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              echo "::error::One or more privileged merge queue checks did not succeed"
+              exit 1
+            fi
+          done
+
+          echo "All privileged merge queue checks passed"

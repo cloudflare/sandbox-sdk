@@ -20,6 +20,7 @@ e2e-tests:
   - 'tests/e2e/**'
   - 'vitest.e2e.config.ts'
 ci-config:
+  - '.github/workflows/merge-queue.yml'
   - '.github/workflows/reusable-e2e.yml'
   - '.github/workflows/pr-privileged.yml'
   - '.github/path-filters.yml'
