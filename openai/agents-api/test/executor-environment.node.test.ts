@@ -416,6 +416,12 @@ describe('ExecutorEnvironment snapshots', () => {
       size: 1,
       name: 'sess_1'
     });
+    expect(spanAttributes).toContainEqual(['container.snapshot.created', true]);
+    expect(spanAttributes).toContainEqual([
+      'container.snapshot.id',
+      'snapshot_1'
+    ]);
+    expect(spanAttributes).toContainEqual(['container.snapshot.size', 1]);
     expect(container.destroy).not.toHaveBeenCalled();
     expect(storage.alarm).toBeDefined();
   });
@@ -502,6 +508,15 @@ describe('ExecutorEnvironment snapshots', () => {
         }
       })
     );
+    expect(spanAttributes).toContainEqual([
+      'container.snapshot.restored',
+      true
+    ]);
+    expect(spanAttributes).toContainEqual([
+      'container.snapshot.id',
+      'snapshot_1'
+    ]);
+    expect(spanAttributes).toContainEqual(['container.snapshot.size', 1]);
   });
 
   it('does not restore a snapshot when snapshots are disabled', async () => {

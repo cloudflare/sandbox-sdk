@@ -6,6 +6,8 @@
 
 Run self-hosted OpenAI Agents API sessions in Cloudflare Containers. Each Durable Object is backed by a container running `codex exec-server`. Session orchestration is managed via signed OpenAI webhooks.
 
+<img width="50%" src="https://developers.cloudflare.com/cdn-cgi/image/onerror=redirect,width=4160,height=4000,format=webp/_astro/openai-agents-api-arch.CCqSDnZe.jpg">
+
 > [!IMPORTANT]
 > This template uses Cloudflare Workers, Durable Objects, and Containers directly. It does not require the Sandbox SDK package at runtime. The codex binary running in the container provides all the functionality required.
 
