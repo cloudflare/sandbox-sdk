@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.12.10
+
+### Patch Changes
+
+- [#895](https://github.com/cloudflare/sandbox-sdk/pull/895) [`db0e68e`](https://github.com/cloudflare/sandbox-sdk/commit/db0e68ef4e9009558cf0e90ae994790c0af03f7c) Thanks [@scuffi](https://github.com/scuffi)! - Allow multipart backup uploads to trust the runtime HTTPS interception certificate, so backups larger than 10 MiB work when `interceptHttps` is enabled.
+
+- [#919](https://github.com/cloudflare/sandbox-sdk/pull/919) [`08ab8c9`](https://github.com/cloudflare/sandbox-sdk/commit/08ab8c9430a782683f0937aa13b2d07841f9a459) Thanks [@scuffi](https://github.com/scuffi)! - Reject bucket-level mutations sent through `credentialProxy` mounts while preserving object writes, bucket probes, and scoped listings.
+
+- [#922](https://github.com/cloudflare/sandbox-sdk/pull/922) [`f61e8bc`](https://github.com/cloudflare/sandbox-sdk/commit/f61e8bc3a3e25e78b709d28e7f1838d23aa621c1) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `File exists` errors when git or other tools recreate files in a directory restored with `restoreBackup()`, such as running `git reset --hard` while a dev server watches the project.
+
 ## 0.12.9
 
 ### Patch Changes
