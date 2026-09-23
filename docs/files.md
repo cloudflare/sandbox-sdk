@@ -48,6 +48,20 @@ Return immediate entries in native order. The directory path may follow a symlin
 
 Invalid UTF-8 names throw `SandboxFileError` with `EILSEQ`.
 
+Entries include hidden files, and exclude `.` and `..`. To list a tree, walk it yourself. This walk does not follow symlinked directories:
+
+```ts
+async function* walk(files: Files, directory: string): AsyncGenerator<string> {
+  for (const entry of await files.readDirectory(directory)) {
+    const path = `${directory}/${entry.name}`;
+    yield path;
+    if (entry.type === "directory") yield* walk(files, path);
+  }
+}
+```
+
+Each call starts one process in the Container. For a large tree, one `container.exec(["find", directory])` is faster.
+
 ### `mkdir(path, options?): Promise<void>`
 
 Create one directory. With `recursive: true`, create missing parents and accept an existing directory. A failure can leave some parents.
