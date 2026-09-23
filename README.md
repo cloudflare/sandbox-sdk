@@ -15,6 +15,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [S3Mounts API](docs/s3-mounts-api.md)
 - [Checkpoint a workspace](docs/checkpoint-a-workspace.md)
 - [Preview a web app](docs/preview-a-web-app.md)
+- [Open a terminal in a sandbox](docs/open-a-terminal.md)
 - [Run a coding agent on a repository](docs/run-a-coding-agent.md)
 
 ## Examples
@@ -23,6 +24,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Artifact workspace](examples/artifact-workspace): process files in a job-scoped S3 prefix
 - [Checkpoint a workspace](examples/checkpoint-workspace): save the disk and start from that snapshot
 - [Preview workspace](examples/preview-workspace): run a dev server and open its live preview
+- [Terminal workspace](examples/terminal-workspace): open a live shell in the browser
 - [Coding agents](examples/coding-agents): run a coding agent on a GitHub repository
 
 ## In this repository

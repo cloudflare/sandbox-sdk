@@ -1,0 +1,36 @@
+{
+  "name": "sandbox-terminal-workspace-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "TerminalSandbox",
+      },
+    ],
+  },
+  "containers": [
+    {
+      "class_name": "TerminalSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": {
+          "dockerfile": "./Dockerfile",
+        },
+      },
+    },
+  ],
+  "exports": {
+    "TerminalSandbox": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true,
+    },
+  },
+}
