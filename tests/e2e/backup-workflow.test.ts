@@ -1227,7 +1227,11 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `mkdir -p ${TEST_DIR}/src && echo "original" > ${TEST_DIR}/src/file.txt`
+          command: [
+            '/bin/bash',
+            '-lc',
+            `mkdir -p ${TEST_DIR}/src && echo "original" > ${TEST_DIR}/src/file.txt`
+          ]
         })
       });
 
@@ -1242,7 +1246,9 @@ describe('Backup Workflow E2E', () => {
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ command: `rm -rf ${TEST_DIR}/*` })
+        body: JSON.stringify({
+          command: ['/bin/bash', '-lc', `rm -rf ${TEST_DIR}/*`]
+        })
       });
 
       const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
@@ -1259,12 +1265,16 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           command: [
-            `rm -rf ${TEST_DIR}/src`,
-            `mkdir ${TEST_DIR}/src`,
-            `ls ${TEST_DIR}/src`,
-            `(set -C; echo "recreated" > ${TEST_DIR}/src/file.txt)`,
-            `cat ${TEST_DIR}/src/file.txt`
-          ].join(' && ')
+            '/bin/bash',
+            '-lc',
+            [
+              `rm -rf ${TEST_DIR}/src`,
+              `mkdir ${TEST_DIR}/src`,
+              `ls ${TEST_DIR}/src`,
+              `(set -C; echo "recreated" > ${TEST_DIR}/src/file.txt)`,
+              `cat ${TEST_DIR}/src/file.txt`
+            ].join(' && ')
+          ]
         })
       });
       const recreateResult = (await recreateResponse.json()) as ExecuteResponse;
