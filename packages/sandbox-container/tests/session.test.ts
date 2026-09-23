@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Logger } from '@repo/shared';
 import { Session } from '../src/session';
 
 describe('Session', () => {
@@ -636,6 +637,38 @@ describe('Session', () => {
       const afterSymlink = await session.exec('echo "after symlink"');
       expect(afterSymlink.exitCode).toBe(0);
       expect(afterSymlink.stdout.trim()).toBe('after symlink');
+    });
+  });
+
+  describe('logging', () => {
+    it('logs exec and stream events without command text or output', async () => {
+      const calls: unknown[][] = [];
+      const logger: Logger = {
+        debug: (...args) => calls.push(args),
+        info: (...args) => calls.push(args),
+        warn: (...args) => calls.push(args),
+        error: (...args) => calls.push(args),
+        child: () => logger
+      };
+      session = new Session({ id: 'test-logging', cwd: testDir, logger });
+      await session.initialize();
+
+      const command =
+        'API_TOKEN=tok-secret sh -c \'echo "$API_TOKEN" >&2; exit 3\'';
+      const result = await session.exec(command);
+      for await (const _event of session.execStream(command)) {
+      }
+
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr).toContain('tok-secret');
+      const events = calls.map(([, context]) => context);
+      expect(events).toContainEqual(
+        expect.objectContaining({ event: 'command.exec', exitCode: 3 })
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({ event: 'command.stream', exitCode: 3 })
+      );
+      expect(JSON.stringify(calls)).not.toContain('tok-secret');
     });
   });
 

@@ -5,6 +5,11 @@
  * Common optional fields are typed for autocomplete and typo detection.
  * The index signature allows event-specific fields (e.g., labelerTimeout,
  * mountResults) without requiring them in the shared interface.
+ *
+ * Command text and process output are caller data that can carry secrets in
+ * arguments, headers, or environment assignments, so they are typed `never`
+ * and cannot be logged. Describe executions with IDs, exit codes, and output
+ * lengths instead.
  */
 export interface CanonicalEventPayload {
   /** domain.operation name (e.g., "sandbox.exec", "command.exec") */
@@ -17,7 +22,7 @@ export interface CanonicalEventPayload {
   durationMs: number;
 
   // Common fields used across multiple event types
-  command?: string;
+  command?: never;
   path?: string;
   sessionId?: string;
   port?: number;
@@ -39,7 +44,7 @@ export interface CanonicalEventPayload {
   cwd?: string;
   stdoutLen?: number;
   stderrLen?: number;
-  stderrPreview?: string;
+  stderrPreview?: never;
   backupId?: string;
   repoPath?: string;
   mountPath?: string;

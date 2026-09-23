@@ -52,7 +52,15 @@ Don't construct real loggers in unit tests — they add noise and can mask real 
 ## When Adding Logs
 
 - Log at **info** for significant lifecycle events (operation started/completed)
-- Log at **debug** for fine-grained tracing (request bodies, intermediate state)
+- Log at **debug** for fine-grained tracing (intermediate state)
 - Log at **warn** for recoverable anomalies
 - Log at **error** for failures that surface to the caller; include the error object as structured context: `logger.error('Failed', { err })`
 - Pass structured context as the second argument, not via string interpolation
+
+## Never Log Caller Data
+
+Logs never contain data the caller passes through the SDK: command text, argument values, environment variable values, stdout/stderr, file contents, or request bodies. Commands and output can carry secrets anywhere, so no redaction pattern makes them safe. This holds at every level, including debug, and for plain `logger.*` calls as well as `logCanonicalEvent()`.
+
+Describe the operation instead: IDs (`processId`, `commandId`, `sessionId`), outcome, `exitCode`, `durationMs`, sizes and lengths (`sizeBytes`, `stdoutLen`, `stderrLen`), file paths and ports, and names the SDK chose (event names, environment variable keys). `CanonicalEventPayload` types `command` and `stderrPreview` as `never`; keep new fields to the same rule. Callers who want command text in their logs log it in their own Worker.
+
+`redactCommand()` is for text the SDK builds and cannot avoid logging, such as error messages and git URLs. It does not make caller data safe to log.

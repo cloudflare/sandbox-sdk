@@ -4211,7 +4211,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
         outcome: execError ? 'error' : 'success',
-        command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
         sessionId: this.getPublicExecutionSessionId(sessionId),
