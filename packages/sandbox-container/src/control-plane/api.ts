@@ -347,9 +347,14 @@ class FilesRPCAPI extends RpcTarget {
 
   async readFileStream(
     path: string,
-    sessionId: string
+    sessionId: string,
+    options?: { encoding?: 'base64' }
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.#svc.readFileStreamOperation(path, sessionId);
+    return this.#svc.readFileStreamOperation(
+      path,
+      sessionId,
+      options?.encoding
+    );
   }
 
   async writeFile(
