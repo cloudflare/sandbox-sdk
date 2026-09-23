@@ -40,6 +40,10 @@ An S3 mount is part of that sandbox, not a shared volume across jobs. See [Mount
 
 The `ExecProcess` handle lives in this Durable Object isolate. If the request is canceled after `exec()` returns, the process may still be running.
 
+## Inactivity
+
+`setInactivityTimeout()` applies to the Durable Object instance that calls it. A restarted instance does not inherit it. If that instance reaches the Container without setting a timeout, the Container stops after the platform default once the instance goes idle. Set the timeout whenever a new instance finds the Container running, for example in the constructor.
+
 ## Deploys and images
 
 A new Worker version does not replace a running Container. The image and instance you pass to `start()` apply when that Container starts. A running instance keeps the image it started with.

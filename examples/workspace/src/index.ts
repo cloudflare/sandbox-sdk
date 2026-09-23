@@ -21,7 +21,12 @@ export class WorkspaceSandbox extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.files = new Files(this.requireContainer());
+    const container = this.requireContainer();
+    this.files = new Files(container);
+    // Each Durable Object instance must set its own timeout; it is not inherited.
+    if (container.running) {
+      void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS));
+    }
   }
 
   async writeSource(source: ReadableStream<Uint8Array>, sandboxName: string): Promise<void> {

@@ -41,6 +41,12 @@ export class ArtifactSandbox extends DurableObject<Env> {
     this.#container = requireContainer(ctx);
     this.#files = new Files(this.#container);
     this.#mounts = new S3Mounts(this.#container, ctx.exports.S3Gateway);
+    // Each Durable Object instance must set its own timeout; it is not inherited.
+    if (this.#container.running) {
+      void ctx.blockConcurrencyWhile(() =>
+        this.#container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS),
+      );
+    }
   }
 
   async writeInput(source: ReadableStream<Uint8Array>, sandboxName: string): Promise<void> {
