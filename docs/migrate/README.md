@@ -17,5 +17,6 @@ Start with the first page. Then do the pages for the features you use.
 
 1. [Move to your own Durable Object](your-own-durable-object.md): image, configuration, class, deploy
 2. [Change commands and file calls](commands-and-files.md): `exec()`, sessions, timeouts, files, watching
+3. [Move background processes](background-processes.md): `startProcess()`, status, logs, waits, kills, callbacks
 
 For every 0.12 API and what replaces it, see the [API map](api-map.md).
