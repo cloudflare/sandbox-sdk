@@ -3,6 +3,8 @@ import { z } from "zod";
 import { terminalPage } from "./page.js";
 
 const SANDBOX_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// tmux session names cannot contain "." or ":".
+const SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const WORKSPACE_DIRECTORY = "/workspace";
 const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
 
@@ -33,7 +35,36 @@ export class TerminalSandbox extends DurableObject<Env> {
     if (this.#container.running) await this.#container.destroy();
   }
 
-  // Each WebSocket gets its own shell in this sandbox's Container.
+  async listSessions(): Promise<{ name: string; attachedClients: number }[]> {
+    if (!this.#container.running) return [];
+    const result = await this.#tmux(["list-sessions", "-F", "#{session_name} #{session_attached}"]);
+    // tmux exits 1 when no session exists, because its server is not running.
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => {
+        const [name, attachedClients] = line.split(" ");
+        return { name, attachedClients: Number(attachedClients) };
+      });
+  }
+
+  // Ends the session's shell and every process in it. Attached terminals close.
+  async killSession(session: string): Promise<boolean> {
+    if (!this.#container.running) return false;
+    // "=" matches the name exactly instead of as a prefix.
+    const result = await this.#tmux(["kill-session", "-t", `=${session}`]);
+    return result.exitCode === 0;
+  }
+
+  async #tmux(args: string[]): Promise<{ exitCode: number; stdout: string }> {
+    const process = await this.#container.exec(["tmux", ...args]);
+    const output = await process.output();
+    return { exitCode: output.exitCode, stdout: new TextDecoder().decode(output.stdout) };
+  }
+
+  // Each WebSocket attaches a tmux client to a named session. The session, its shell, and
+  // its processes outlive the WebSocket, so a new WebSocket can attach again.
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
@@ -47,18 +78,27 @@ export class TerminalSandbox extends DurableObject<Env> {
       return new Response("cols and rows must be integers from 1 through 500", { status: 400 });
     }
 
+    const session = url.searchParams.get("session") ?? "main";
+    if (!SESSION_NAME_PATTERN.test(session)) {
+      return new Response(
+        "session must contain 1-63 lowercase letters, digits, or hyphens and start with a letter or digit",
+        { status: 400 },
+      );
+    }
+
     const sandboxName = url.searchParams.get("sandbox") ?? "";
     this.#ensureExecution(sandboxName);
     await this.#container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
 
     const abort = new AbortController();
-    const shell = await this.#container.exec(["bash", "--login"], {
+    // -A attaches to the session if it exists, and creates it otherwise.
+    const tmuxClient = await this.#container.exec(["tmux", "new-session", "-A", "-s", session], {
       pty: size.data,
       env: { TERM: "xterm-256color" },
       cwd: WORKSPACE_DIRECTORY,
       signal: abort.signal,
     });
-    if (shell.stdin === null || shell.stdout === null) {
+    if (tmuxClient.stdin === null || tmuxClient.stdout === null) {
       abort.abort();
       throw new Error("exec() did not return the terminal streams");
     }
@@ -66,10 +106,10 @@ export class TerminalSandbox extends DurableObject<Env> {
     const [client, server] = Object.values(new WebSocketPair());
     // Binary messages arrive as Blob unless the socket asks for ArrayBuffer.
     server.binaryType = "arraybuffer";
-    // A hibernating WebSocket would discard the shell's process handle.
+    // A hibernating WebSocket would discard the tmux client's process handle.
     // An accepted one keeps this instance, and the handle, in memory.
     server.accept();
-    bridge(server, shell, shell.stdin, shell.stdout, abort);
+    bridge(server, tmuxClient, tmuxClient.stdin, tmuxClient.stdout, abort);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -87,16 +127,21 @@ export class TerminalSandbox extends DurableObject<Env> {
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
-    const match = /^\/sandboxes\/([^/]+)\/(terminal|execution)?$/.exec(url.pathname);
+    const match = /^\/sandboxes\/([^/]+)\/(terminal|sessions|execution)?(?:\/([^/]+))?$/.exec(
+      url.pathname,
+    );
     if (match === null) return new Response("Not found", { status: 404 });
 
-    const sandboxName = match[1];
-    const resource = match[2];
+    const [, sandboxName, resource, session] = match;
     if (!SANDBOX_NAME_PATTERN.test(sandboxName)) {
       return new Response(
         "sandbox name must contain 1-63 lowercase letters, digits, or hyphens and start with a letter or digit",
         { status: 400 },
       );
+    }
+
+    if (session !== undefined && (resource !== "sessions" || !SESSION_NAME_PATTERN.test(session))) {
+      return new Response("Not found", { status: 404 });
     }
 
     if (resource === undefined && request.method === "GET") {
@@ -110,6 +155,14 @@ export default {
       if (resource === "terminal" && request.method === "GET") {
         url.searchParams.set("sandbox", sandboxName);
         return await sandbox.fetch(new Request(url, request));
+      }
+      if (resource === "sessions" && session === undefined && request.method === "GET") {
+        return Response.json(await sandbox.listSessions());
+      }
+      if (resource === "sessions" && session !== undefined && request.method === "DELETE") {
+        return (await sandbox.killSession(session))
+          ? new Response(null, { status: 204 })
+          : new Response("Session not found", { status: 404 });
       }
       if (resource === "execution" && request.method === "DELETE") {
         await sandbox.resetExecution();
@@ -131,7 +184,7 @@ export default {
 // Binary messages are keystrokes. Text messages are resize requests.
 function bridge(
   server: WebSocket,
-  shell: ExecProcess,
+  client: ExecProcess,
   stdin: WritableStream<Uint8Array>,
   stdout: ReadableStream<Uint8Array>,
   abort: AbortController,
@@ -141,22 +194,23 @@ function bridge(
   const markExited = () => {
     exited = true;
   };
-  shell.exitCode.then(markExited, markExited);
-  // Aborting exec() sends SIGKILL to the shell; its background jobs keep running. Signalling a
-  // shell that already exited records an internal error, so stop only a running one.
+  client.exitCode.then(markExited, markExited);
+  // Aborting exec() sends SIGKILL to the tmux client. The session keeps running for the next
+  // WebSocket. Signalling a client that already exited records an internal error, so stop
+  // only a running one.
   const stop = () => {
     if (!exited) abort.abort();
   };
 
   // A listener that throws closes the socket without running "close", which would leave
-  // the shell running. Neither listener throws.
+  // the client running. Neither listener throws.
   server.addEventListener("message", (event) => {
     if (event.data instanceof ArrayBuffer) {
       input.write(new Uint8Array(event.data)).catch(stop);
       return;
     }
     const size = parseSize(event.data);
-    if (size !== undefined) shell.resize(size.cols, size.rows);
+    if (size !== undefined) client.resize(size.cols, size.rows);
   });
   server.addEventListener("close", stop);
   server.addEventListener("error", stop);
@@ -165,12 +219,13 @@ function bridge(
     try {
       // PTY output passes through unchanged. The browser is the terminal emulator.
       for await (const chunk of stdout) server.send(chunk);
-      server.close(1000, `Shell exited with code ${await shell.exitCode}`);
+      // The tmux client exits when its session ends or it detaches. Either way, do not reconnect.
+      server.close(1000, `Terminal closed with code ${await client.exitCode}`);
     } catch (cause) {
       if (abort.signal.aborted) return;
       console.error({ event: "terminal.output.failed", error: describeError(cause) });
       stop();
-      server.close(1011, "Shell output failed");
+      server.close(1011, "Terminal output failed");
     }
   })();
 }

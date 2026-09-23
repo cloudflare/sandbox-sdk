@@ -106,11 +106,12 @@ In the tables, `container` is `this.ctx.container` and `files` is a `Files` inst
 
 ## Terminals
 
-| 0.12                            | Kind    | Replacement                                     | Notes                                                  |
-| ------------------------------- | ------- | ----------------------------------------------- | ------------------------------------------------------ |
-| `terminal()`, `proxyTerminal()` | Pattern | `container.exec(argv, { pty })` and a WebSocket | [Open a terminal in a sandbox](../open-a-terminal.md). |
-| Terminal reconnect and replay   | None    | —                                               |                                                        |
-| `@cloudflare/sandbox/xterm`     | None    | —                                               | The terminal page uses xterm.js directly.              |
+| 0.12                                        | Kind    | Replacement                                                            | Notes                                                                    |
+| ------------------------------------------- | ------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `terminal()`, `proxyTerminal()`             | Pattern | tmux client on `container.exec(argv, { pty })`, bridged to a WebSocket | [Terminals](terminals.md).                                               |
+| `session.terminal()`                        | Pattern | A tmux session per name                                                | `cwd` and `env` become `-c` and `-e`. [Terminals](terminals.md).         |
+| Terminal reconnect and replay               | Pattern | tmux keeps the session; the page reconnects                            | tmux redraws the screen and keeps scrollback. [Terminals](terminals.md). |
+| `@cloudflare/sandbox/xterm`, `SandboxAddon` | Pattern | xterm.js with a WebSocket the page reopens                             | [Terminals](terminals.md).                                               |
 
 ## Outbound network and Git
 

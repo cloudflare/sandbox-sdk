@@ -27,7 +27,7 @@ Cloudflare also sandboxes work with [Dynamic Workers](https://developers.cloudfl
 - [Checkpoint a workspace](examples/checkpoint-workspace): save the disk and start from that snapshot
 - [Preview workspace](examples/preview-workspace): run a dev server and open its live preview
 - [Process workspace](examples/process-workspace): start, follow, wait for, and stop background processes
-- [Terminal workspace](examples/terminal-workspace): open a live shell in the browser
+- [Terminal workspace](examples/terminal-workspace): open a live shell in the browser that survives reconnects
 - [Coding agents](examples/coding-agents): run a coding agent on a GitHub repository
 
 ## In this repository
