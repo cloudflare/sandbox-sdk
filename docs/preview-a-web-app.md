@@ -122,13 +122,17 @@ override async fetch(request: Request): Promise<Response> {
   try {
     return await this.#container.getTcpPort(DEV_SERVER_PORT).fetch(new Request(url, request));
   } catch (cause) {
-    if (!isNotListening(cause)) console.error({ event: "preview.forward.failed", cause });
+    if (!isNotListening(cause)) {
+      console.error({ event: "preview.forward.failed", error: describeError(cause) });
+    }
     return new Response("Preview is not running", { status: 503 });
   }
 }
 ```
 
 Preview requests do not start the Container or the dev server. Only the control request does.
+
+Log the error's stack, not the `Error` itself. Workers Logs drops an `Error`'s message and stack when it is nested in a logged object. The example's `describeError()` does this.
 
 ## 5. Edit the app
 

@@ -130,11 +130,21 @@ export default {
       }
       return new Response("Method not allowed", { status: 405 });
     } catch (cause) {
-      console.error({ event: "sandbox.request.failed", sandboxName, resource, cause });
+      console.error({
+        event: "sandbox.request.failed",
+        sandboxName,
+        resource,
+        error: describeError(cause),
+      });
       return errorResponse(cause);
     }
   },
 } satisfies ExportedHandler<Env>;
+
+// Structured logs drop an Error's message and stack because they are not enumerable.
+function describeError(cause: unknown): string {
+  return cause instanceof Error && cause.stack !== undefined ? cause.stack : String(cause);
+}
 
 function errorResponse(cause: unknown): Response {
   if (SandboxFileError.is(cause)) {
